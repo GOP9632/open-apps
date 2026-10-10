@@ -81,8 +81,6 @@ private struct CategorySection: View {
     @Binding var category: JunkCategory
     @State private var expanded = false
 
-    private var allSelected: Bool { !category.items.isEmpty && category.items.allSatisfy(\.isSelected) }
-
     var body: some View {
         Section {
             DisclosureGroup(isExpanded: $expanded) {
@@ -91,10 +89,8 @@ private struct CategorySection: View {
                 }
             } label: {
                 HStack(spacing: 10) {
-                    Toggle("", isOn: Binding(
-                        get: { allSelected },
-                        set: { v in for i in category.items.indices { category.items[i].isSelected = v } }
-                    ))
+                    // 用 sources 版本，部分勾選時會顯示「－」
+                    Toggle(sources: $category.items, isOn: \.isSelected) { EmptyView() }
                     .labelsHidden()
                     .disabled(category.items.isEmpty)
                     VStack(alignment: .leading, spacing: 2) {
