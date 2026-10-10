@@ -339,7 +339,7 @@ struct SpaceMapView: View {
                     icon: "chart.pie",
                     title: "空間地圖",
                     detail: "用圓環圖看哪個資料夾最佔空間。越外圈越深層，點一塊就鑽進去，點中間回上一層。只會讀取，不會動任何東西。",
-                    buttonTitle: "掃描我的家目錄",
+                    buttonTitle: "掃描",
                     action: { model.scan(Safety.home) }
                 )
             }
@@ -407,6 +407,7 @@ struct SpaceMapView: View {
             .onTapGesture(count: 2) { model.open(n) }
             .background(model.hovered === n ? Color.accentColor.opacity(0.12) : .clear)
         }
+        .scrollContentBackground(.hidden)
     }
 }
 

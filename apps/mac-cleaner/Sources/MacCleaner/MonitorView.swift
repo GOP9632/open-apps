@@ -296,7 +296,7 @@ struct MonitorView: View {
             }
         }
         .padding(16)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+        .glassCard()
     }
 
     private func row(_ label: String, _ value: UInt64) -> some View {
@@ -340,7 +340,7 @@ private struct Card<Content: View>: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(16)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+        .glassCard()
     }
 }
 

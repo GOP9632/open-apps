@@ -73,7 +73,7 @@ struct ResultBanner: View {
             }
         }
         .padding(12)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .glassCard(cornerRadius: 12)
     }
 }
 
@@ -120,20 +120,24 @@ struct BottomBar: View {
     let action: () -> Void
 
     var body: some View {
-        HStack {
-            Text(selectedCount == 0 ? "還沒有勾選任何項目" : "已勾選 \(selectedCount) 個，共 \(formatBytes(selectedSize))")
-                .foregroundStyle(.secondary)
-            Spacer()
-            Button(buttonTitle, action: action)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(selectedCount == 0)
+        ZStack {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(selectedCount == 0 ? "還沒有勾選任何項目" : formatBytes(selectedSize))
+                        .font(.title2.weight(.semibold)).monospacedDigit()
+                    if selectedCount > 0 {
+                        Text("已勾選 \(selectedCount) 個項目").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+            }
+            BigRoundButton(title: buttonTitle, size: 78, disabled: selectedCount == 0, action: action)
         }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .background(.bar)
+        .padding(.horizontal, 24).padding(.vertical, 12)
     }
 }
 
+/// 仿 CleanMyMac 的模組首頁：大圖示、標題、說明、大圓形按鈕。
 struct ScanPrompt: View {
     let icon: String
     let title: String
@@ -142,11 +146,15 @@ struct ScanPrompt: View {
     let action: () -> Void
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: icon).font(.system(size: 56)).foregroundStyle(.tint)
-            Text(title).font(.title2.weight(.semibold))
-            Text(detail).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 460)
-            Button(buttonTitle, action: action).buttonStyle(.borderedProminent).controlSize(.large)
+        VStack(spacing: 18) {
+            Spacer()
+            HeroIcon(systemName: icon)
+            Text(title).font(.system(size: 30, weight: .bold))
+            Text(detail).font(.title3).foregroundStyle(.white.opacity(0.75))
+                .multilineTextAlignment(.center).frame(maxWidth: 520)
+            Spacer()
+            BigRoundButton(title: buttonTitle, action: action)
+                .padding(.bottom, 28)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

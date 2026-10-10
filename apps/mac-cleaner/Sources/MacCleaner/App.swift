@@ -25,30 +25,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 enum Page: String, CaseIterable, Identifiable {
-    case monitor, junk, large, space, uninstall
+    case smart, junk, large, monitor, uninstall, space
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .monitor: "系統狀態"
+        case .smart: "智慧掃描"
         case .junk: "系統垃圾"
         case .large: "大型檔案"
-        case .space: "空間地圖"
+        case .monitor: "系統狀態"
         case .uninstall: "解除安裝 App"
+        case .space: "空間地圖"
         }
     }
     var icon: String {
         switch self {
-        case .monitor: "gauge.with.dots.needle.33percent"
-        case .junk: "trash.circle"
-        case .large: "doc.circle"
+        case .smart: "sparkles"
+        case .junk: "trash"
+        case .large: "doc.on.doc"
+        case .monitor: "gauge.with.dots.needle.67percent"
+        case .uninstall: "square.grid.2x2"
         case .space: "chart.pie"
-        case .uninstall: "app.badge.checkmark"
         }
     }
+
+    /// 側欄分組，跟 CleanMyMac 一樣把功能歸到幾個模組底下
+    static let groups: [(title: String, pages: [Page])] = [
+        ("清理", [.junk, .large]),
+        ("效能", [.monitor]),
+        ("應用程式", [.uninstall]),
+        ("空間", [.space]),
+    ]
 }
 
 struct ContentView: View {
-    @State private var section: Page? = .monitor
+    @State private var section: Page? = .smart
     @StateObject private var junk = JunkModel()
     @StateObject private var large = LargeFilesModel()
     @StateObject private var apps = UninstallModel()
@@ -56,27 +66,45 @@ struct ContentView: View {
     @StateObject private var space = SpaceModel()
     @State private var volume = DiskUsage.volume()
 
+    private var page: Page { section ?? .smart }
+
     var body: some View {
         NavigationSplitView {
-            List(Page.allCases, selection: $section) { s in
-                Label(s.title, systemImage: s.icon).tag(s)
-            }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-            .safeAreaInset(edge: .bottom) { DiskBar(volume: volume).padding(12) }
-        } detail: {
-            Group {
-                switch section ?? .monitor {
-                case .monitor: MonitorView(model: monitor)
-                case .space: SpaceMapView(model: space)
-                case .junk: JunkView(model: junk)
-                case .large: LargeFilesView(model: large)
-                case .uninstall: UninstallView(model: apps)
+            List(selection: $section) {
+                Label(Page.smart.title, systemImage: Page.smart.icon).tag(Page.smart)
+                ForEach(Page.groups, id: \.title) { group in
+                    Section(group.title) {
+                        ForEach(group.pages) { p in
+                            Label(p.title, systemImage: p.icon).tag(p)
+                        }
+                    }
                 }
             }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 190, ideal: 210)
+            .safeAreaInset(edge: .bottom) { DiskBar(volume: volume).padding(12) }
+        } detail: {
+            ZStack {
+                page.theme.background.ignoresSafeArea()
+                Group {
+                    switch page {
+                    case .smart: SmartCareView(junk: junk, go: { section = $0 })
+                    case .monitor: MonitorView(model: monitor)
+                    case .space: SpaceMapView(model: space)
+                    case .junk: JunkView(model: junk)
+                    case .large: LargeFilesView(model: large)
+                    case .uninstall: UninstallView(model: apps)
+                    }
+                }
+                .foregroundStyle(.white)
+            }
+            .animation(.easeInOut(duration: 0.25), value: page)
+            .toolbarBackground(.hidden, for: .windowToolbar)
             .onReceive(NotificationCenter.default.publisher(for: .didMoveToTrash)) { _ in
                 volume = DiskUsage.volume()
             }
         }
+        .preferredColorScheme(.dark)
     }
 }
 

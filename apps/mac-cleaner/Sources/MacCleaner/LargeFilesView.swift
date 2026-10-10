@@ -64,7 +64,7 @@ struct LargeFilesView: View {
                     icon: "externaldrive",
                     title: "大型檔案",
                     detail: "在你的家目錄裡找出很大的檔案（會略過系統資料庫和雲端資料夾）。macOS 可能會問能不能讀「桌面」「文件」「下載」，請按允許。找到的檔案預設都不勾。",
-                    buttonTitle: "開始掃描",
+                    buttonTitle: "掃描",
                     action: model.scan
                 )
             } else {
@@ -77,11 +77,12 @@ struct LargeFilesView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     List($model.items) { $item in ItemRow(item: $item) }
+                        .scrollContentBackground(.hidden)
                 }
                 BottomBar(
                     selectedCount: model.selected.count,
                     selectedSize: model.selected.reduce(0) { $0 + $1.size },
-                    buttonTitle: "預覽並移到垃圾桶…",
+                    buttonTitle: "移除",
                     action: { confirming = true }
                 )
             }
