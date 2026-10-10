@@ -24,8 +24,10 @@ extension Page {
         case .smart: PageTheme(top: .hex(0x2B1055), bottom: .hex(0x7A1E62), glow: .hex(0xE0569B))
         case .junk: PageTheme(top: .hex(0x06382F), bottom: .hex(0x0E7558), glow: .hex(0x34D399))
         case .large: PageTheme(top: .hex(0x082F49), bottom: .hex(0x0E6E8C), glow: .hex(0x38BDF8))
+        case .duplicates: PageTheme(top: .hex(0x083344), bottom: .hex(0x0F766E), glow: .hex(0x2DD4BF))
         case .monitor: PageTheme(top: .hex(0x3B1206), bottom: .hex(0x9A3412), glow: .hex(0xFB923C))
         case .uninstall: PageTheme(top: .hex(0x0F1A4D), bottom: .hex(0x2948B8), glow: .hex(0x60A5FA))
+        case .orphans: PageTheme(top: .hex(0x172554), bottom: .hex(0x3730A3), glow: .hex(0x818CF8))
         case .space: PageTheme(top: .hex(0x1E1250), bottom: .hex(0x5B3CC4), glow: .hex(0xA78BFA))
         }
     }

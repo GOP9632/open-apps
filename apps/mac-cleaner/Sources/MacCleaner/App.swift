@@ -25,13 +25,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 enum Page: String, CaseIterable, Identifiable {
-    case smart, junk, large, monitor, uninstall, space
+    case smart, junk, large, duplicates, monitor, uninstall, orphans, space
     var id: String { rawValue }
     var title: String {
         switch self {
         case .smart: "智慧掃描"
         case .junk: "系統垃圾"
         case .large: "大型檔案"
+        case .duplicates: "重複檔案"
+        case .orphans: "App 殘留檔"
         case .monitor: "系統狀態"
         case .uninstall: "解除安裝 App"
         case .space: "空間地圖"
@@ -41,7 +43,9 @@ enum Page: String, CaseIterable, Identifiable {
         switch self {
         case .smart: "sparkles"
         case .junk: "trash"
-        case .large: "doc.on.doc"
+        case .large: "doc"
+        case .duplicates: "doc.on.doc"
+        case .orphans: "shippingbox"
         case .monitor: "gauge.with.dots.needle.67percent"
         case .uninstall: "square.grid.2x2"
         case .space: "chart.pie"
@@ -50,9 +54,9 @@ enum Page: String, CaseIterable, Identifiable {
 
     /// 側欄分組，跟 CleanMyMac 一樣把功能歸到幾個模組底下
     static let groups: [(title: String, pages: [Page])] = [
-        ("清理", [.junk, .large]),
+        ("清理", [.junk, .large, .duplicates]),
         ("效能", [.monitor]),
-        ("應用程式", [.uninstall]),
+        ("應用程式", [.uninstall, .orphans]),
         ("空間", [.space]),
     ]
 }
@@ -64,6 +68,8 @@ struct ContentView: View {
     @StateObject private var apps = UninstallModel()
     @StateObject private var monitor = MonitorModel()
     @StateObject private var space = SpaceModel()
+    @StateObject private var duplicates = DuplicatesModel()
+    @StateObject private var orphans = OrphansModel()
     @State private var volume = DiskUsage.volume()
 
     private var page: Page { section ?? .smart }
@@ -94,6 +100,8 @@ struct ContentView: View {
                     case .junk: JunkView(model: junk)
                     case .large: LargeFilesView(model: large)
                     case .uninstall: UninstallView(model: apps)
+                    case .duplicates: DuplicatesView(model: duplicates)
+                    case .orphans: OrphansView(model: orphans)
                     }
                 }
                 .foregroundStyle(.white)
