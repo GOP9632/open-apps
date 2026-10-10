@@ -17,6 +17,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/MacCleaner" "$APP/Contents/MacOS/MacCleaner"
 cp Info.plist "$APP/Contents/Info.plist"
+if [ -f Resources/AppIcon.icns ]; then
+  cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+fi
 codesign --force --sign - "$APP" >/dev/null
 
 echo "完成：$(pwd)/$APP"
