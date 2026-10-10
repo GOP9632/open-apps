@@ -7,7 +7,7 @@ struct AppUsage: Identifiable {
     let key: String          // .app 路徑或執行檔路徑
     let name: String
     var memory: UInt64
-    var cpu: Double          // 百分比，多核心可以超過 100
+    var cpu: Double          // 佔整台電腦 CPU 的百分比
     var isApp: Bool { key.hasSuffix(".app") }
 }
 
@@ -66,11 +66,13 @@ final class MonitorModel: ObservableObject {
         let samples = await Task.detached(priority: .utility) { SystemStats.sampleProcesses() }.value
         let now = Date()
         let elapsed = now.timeIntervalSince(lastSampleTime) * 1_000_000_000
+        let cores = Double(max(ProcessInfo.processInfo.activeProcessorCount, 1))
         var list: [AppUsage] = []
         for (key, s) in samples {
             var cpu = 0.0
             if let prev = lastSamples[key], s.cpuNanos >= prev.cpuNanos, elapsed > 0, !lastSamples.isEmpty {
-                cpu = Double(s.cpuNanos - prev.cpuNanos) / elapsed * 100
+                // 除以核心數，跟上面整台的 CPU 一樣不會超過 100%
+                cpu = Double(s.cpuNanos - prev.cpuNanos) / elapsed * 100 / cores
             }
             list.append(AppUsage(key: key, name: SystemStats.displayName(forGroup: key), memory: s.memory, cpu: cpu))
         }
@@ -123,6 +125,7 @@ struct MonitorView: View {
                     memoryCard
                     diskCard
                 }
+                .fixedSize(horizontal: false, vertical: true)
                 appsCard
             }
             .padding(20)
@@ -145,6 +148,7 @@ struct MonitorView: View {
     private var cpuCard: some View {
         Card(title: "CPU", icon: "cpu") {
             Text("\(Int(model.cpu.rounded()))%").font(.system(size: 34, weight: .semibold)).monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.5)
             Text(cpuHint).font(.caption).foregroundStyle(.secondary)
             Sparkline(points: model.cpuHistory, color: .blue)
         }
@@ -163,7 +167,8 @@ struct MonitorView: View {
             if let m = model.memory {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(formatMemory(m.used)).font(.system(size: 34, weight: .semibold)).monospacedDigit()
-                    Text("/ \(formatMemory(m.total))").foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.5)
+                    Text("/ \(formatMemory(m.total))").foregroundStyle(.secondary).lineLimit(1).fixedSize()
                 }
                 Label(pressureText(m.pressure), systemImage: "circle.fill")
                     .font(.caption)
@@ -188,7 +193,8 @@ struct MonitorView: View {
             if let v = model.volume {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(formatBytes(v.free)).font(.system(size: 34, weight: .semibold)).monospacedDigit()
-                    Text("可用").foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.5)
+                    Text("可用").foregroundStyle(.secondary).lineLimit(1).fixedSize()
                 }
                 ProgressView(value: Double(v.total - v.free), total: Double(max(v.total, 1)))
                 Text("共 \(formatBytes(v.total))，已用 \(formatBytes(v.total - v.free))")
@@ -278,7 +284,7 @@ private struct Card<Content: View>: View {
             Label(title, systemImage: icon).font(.headline)
             content
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(16)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
     }
