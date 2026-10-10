@@ -72,22 +72,29 @@ struct UninstallView: View {
     @State private var confirming = false
 
     var body: some View {
-        HSplitView {
-            List(model.filtered, selection: Binding(get: { model.selection }, set: { model.select($0) })) { app in
-                HStack {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: app.url.path))
-                        .resizable().frame(width: 24, height: 24)
-                    Text(app.name).lineLimit(1)
-                    Spacer()
-                    Text(app.size.map(formatBytes) ?? "…").font(.caption).foregroundStyle(.secondary)
+        // 不用 HSplitView：它的最小寬度加上側欄會把整個視窗內容擠出畫面
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                TextField("搜尋 App", text: $model.search)
+                    .textFieldStyle(.roundedBorder)
+                    .padding(10)
+                List(model.filtered, selection: Binding(get: { model.selection }, set: { model.select($0) })) { app in
+                    HStack {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: app.url.path))
+                            .resizable().frame(width: 24, height: 24)
+                        Text(app.name).lineLimit(1)
+                        Spacer()
+                        Text(app.size.map(formatBytes) ?? "…").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .tag(app.id)
                 }
-                .tag(app.id)
+                .overlay { if model.isLoadingApps { ProgressView() } }
             }
-            .searchable(text: $model.search, placement: .sidebar, prompt: "搜尋 App")
-            .overlay { if model.isLoadingApps { ProgressView() } }
-            .frame(minWidth: 260, idealWidth: 300)
+            .frame(width: 280)
 
-            detail.frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+
+            detail.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle("解除安裝 App")
         .onAppear { if model.apps.isEmpty { model.loadApps() } }
