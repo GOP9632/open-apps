@@ -74,7 +74,7 @@ struct TrashResult {
 
 enum Trasher {
     static let logURL = Safety.library
-        .appendingPathComponent("Application Support/MacCleaner/清理紀錄.log")
+        .appendingPathComponent("Application Support/Mop/清理紀錄.log")
 
     /// 把項目移到垃圾桶。每個項目都會再過一次安全門。
     static func moveToTrash(_ items: [CleanItem]) -> TrashResult {

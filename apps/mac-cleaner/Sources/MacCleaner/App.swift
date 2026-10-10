@@ -6,7 +6,7 @@ struct MacCleanerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
     var body: some Scene {
-        WindowGroup("Mac 清理") {
+        WindowGroup("Mop") {
             ContentView()
                 .frame(minWidth: 920, minHeight: 620)
         }
@@ -25,29 +25,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 enum Page: String, CaseIterable, Identifiable {
-    case junk, large, uninstall
+    case monitor, junk, large, space, uninstall
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .monitor: "系統狀態"
         case .junk: "系統垃圾"
         case .large: "大型檔案"
+        case .space: "空間地圖"
         case .uninstall: "解除安裝 App"
         }
     }
     var icon: String {
         switch self {
+        case .monitor: "gauge.with.dots.needle.33percent"
         case .junk: "trash.circle"
         case .large: "doc.circle"
+        case .space: "chart.pie"
         case .uninstall: "app.badge.checkmark"
         }
     }
 }
 
 struct ContentView: View {
-    @State private var section: Page? = .junk
+    @State private var section: Page? = .monitor
     @StateObject private var junk = JunkModel()
     @StateObject private var large = LargeFilesModel()
     @StateObject private var apps = UninstallModel()
+    @StateObject private var monitor = MonitorModel()
+    @StateObject private var space = SpaceModel()
     @State private var volume = DiskUsage.volume()
 
     var body: some View {
@@ -59,7 +65,9 @@ struct ContentView: View {
             .safeAreaInset(edge: .bottom) { DiskBar(volume: volume).padding(12) }
         } detail: {
             Group {
-                switch section ?? .junk {
+                switch section ?? .monitor {
+                case .monitor: MonitorView(model: monitor)
+                case .space: SpaceMapView(model: space)
                 case .junk: JunkView(model: junk)
                 case .large: LargeFilesView(model: large)
                 case .uninstall: UninstallView(model: apps)

@@ -1,5 +1,5 @@
 #!/bin/bash
-# 編譯並打包成 build/MacCleaner.app
+# 編譯並打包成 build/Mop.app
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -10,7 +10,8 @@ fi
 
 swift build -c release
 BIN_DIR="$(swift build -c release --show-bin-path)"
-APP="build/MacCleaner.app"
+APP="build/Mop.app"
+rm -rf build/MacCleaner.app   # 舊名字
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

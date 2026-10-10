@@ -56,7 +56,7 @@ enum JunkScanner {
         // 記錄檔
         var logs: [CleanItem] = []
         for url in DiskUsage.children(of: lib.appendingPathComponent("Logs")) {
-            if url.lastPathComponent == "MacCleaner" { continue }
+            if url.lastPathComponent == "Mop" { continue }
             if Task.isCancelled { return [] }
             let size = DiskUsage.size(of: url)
             guard size >= minimumSize else { continue }

@@ -18,15 +18,17 @@ final class LargeFilesModel: ObservableObject {
         isScanning = true
         checkedCount = 0
         let min = threshold
-        task = Task {
-            let found = await Task.detached(priority: .userInitiated) {
-                LargeFileScanner.scan(minimumSize: min) { n in
-                    Task { @MainActor in self.checkedCount = n }
-                }
-            }.value
-            if !Task.isCancelled { items = found }
-            isScanning = false
-            hasScanned = true
+        // 直接用 detached task，按「停止」時取消才傳得進掃描迴圈
+        task = Task.detached(priority: .userInitiated) {
+            let found = LargeFileScanner.scan(minimumSize: min) { n in
+                Task { @MainActor in self.checkedCount = n }
+            }
+            let cancelled = Task.isCancelled
+            await MainActor.run {
+                if !cancelled { self.items = found }
+                self.isScanning = false
+                self.hasScanned = true
+            }
         }
     }
 

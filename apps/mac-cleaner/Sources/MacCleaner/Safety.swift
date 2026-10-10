@@ -21,7 +21,7 @@ enum Safety {
         "Library/Application Support/AddressBook",
         "Library/Application Support/MobileSync",   // iPhone 備份
         "Library/Application Support/CallHistoryDB",
-        "Library/Application Support/MacCleaner",   // 自己的清理紀錄
+        "Library/Application Support/Mop",          // 自己的清理紀錄
         "Library/Group Containers/group.com.apple",
         "Library/Containers/com.apple",
         "Pictures/Photos Library.photoslibrary",
