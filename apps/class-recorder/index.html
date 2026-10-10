@@ -266,7 +266,7 @@ const Engines = {
   async gemini(wav, folder) {
     if (!S.geminiKey) throw new Error('請先在設定填入 Gemini API key（aistudio.google.com 免費申請）。');
     const words = (folder?.glossary || '').split(/[\n,，、]/).map(x => x.trim()).filter(Boolean);
-    let instr = '請把上課錄音逐字轉寫成台灣繁體中文，英文詞保留英文原文、不要翻譯，不要摘要或省略。依說話者與句子切段，每段給 start、end（相對於這段錄音開頭的秒數）、speaker、text。';
+    let instr = '請把上課錄音逐字轉寫成台灣繁體中文，英文詞保留英文原文、不要翻譯，不要摘要或省略。用台灣慣用詞（例如迴歸、變異數、程式、影片）。依說話者與句子切段，每段給 start、end（相對於這段錄音開頭的秒數）、speaker、text。';
     instr += folder?.teacherSample ? '第一段音檔是老師的聲音樣本，只用來辨認誰是老師，不要轉寫。上課錄音裡老師的 speaker 一律寫「老師」，其他人寫「學生A」「學生B」依此類推。' : 'speaker 用「A」「B」「C」區分不同的人。';
     if (words.length) instr += '可能出現的專有名詞：' + words.join('、') + '。';
     const parts = [{ text: instr }];
@@ -342,6 +342,19 @@ function markTeacher(segs, hasSample) {
   segs.forEach(s => s.role = !s.label ? null : (s.label === top ? 'teacher' : 'other'));
 }
 
+// 同一個人連續講的話併成一段，但每段最多約 180 字或 90 秒，換人或停頓超過 3 秒就分段
+function mergeSegments(segs) {
+  const out = [];
+  for (const g of segs) {
+    const p = out[out.length - 1];
+    if (p && p.label === g.label && p.role === g.role && g.start - p.end < 3 && (p.text + g.text).length <= 180 && g.end - p.start <= 90) {
+      p.text += (/[A-Za-z0-9]$/.test(p.text) && /^[A-Za-z0-9]/.test(g.text) ? ' ' : '') + g.text;
+      p.end = Math.max(p.end, g.end);
+    } else out.push({ ...g });
+  }
+  return out;
+}
+
 async function transcribeSession(id, onProgress) {
   const s = await DB.get('sessions', id);
   const folder = s.folderId ? await DB.get('folders', s.folderId) : null;
@@ -359,7 +372,7 @@ async function transcribeSession(id, onProgress) {
     markTeacher(segs, !!folder?.teacherSample);
     for (const g of segs) out.push({ start: g.start + offset, end: g.end + offset, text: await toTW((g.text || '').trim()), role: g.role || null, label: g.label ? `${i + 1}-${g.label}` : null });
   }
-  s.transcript = { engine: S.engine, createdAt: Date.now(), segments: out.filter(x => x.text) };
+  s.transcript = { engine: S.engine, createdAt: Date.now(), segments: mergeSegments(out.filter(x => x.text)), merged: true };
   if (!s.duration) s.duration = pcm.length / 16000;
   await DB.put('sessions', s);
   return s;
@@ -371,7 +384,7 @@ function transcriptText(s, teacherOnly) {
 }
 async function summarize(s) {
   const bms = s.bookmarks.map(b => `[${fmt(b.t)}] ${b.label}`).join('\n') || '（無）';
-  const prompt = `你是幫大學生整理上課筆記的助教。下面是一堂課的逐字稿（可能有辨識錯字，請依上下文修正理解）。請用台灣繁體中文、Markdown 輸出：
+  const prompt = `你是幫大學生整理上課筆記的助教。下面是一堂課的逐字稿（可能有辨識錯字，請依上下文修正理解）。請用台灣繁體中文、Markdown 輸出。規則：不要開場白或問候，直接從第一個標題開始；不要用 LaTeX 或 $ 符號，數學式寫成一般文字（例如 p < 0.05、α）；不要用 --- 分隔線；用台灣慣用詞（例如迴歸、變異數）；複習問題的答案寫成縮排的子項目。
 
 ## 一句話摘要
 ## 重點整理
@@ -413,16 +426,26 @@ ${transcriptText(s)}`;
 
 // 簡易 Markdown 顯示（標題、條列、粗體）
 function mdToHtml(md) {
-  let html = '', inList = false;
+  // 模型偶爾還是會吐 LaTeX，轉成一般文字
+  const tex = t => t.replace(/\\text\{([^}]*)\}/g, '$1').replace(/\\(le|leq)\b/g, '≤').replace(/\\(ge|geq)\b/g, '≥').replace(/\\neq?\b/g, '≠').replace(/\\alpha\b/g, 'α').replace(/\\beta\b/g, 'β').replace(/\\mu\b/g, 'μ').replace(/\\sigma\b/g, 'σ').replace(/\\times\b/g, '×').replace(/\$/g, '');
+  let html = '', depth = 0;
+  const close = to => { while (depth > to) { html += '</ul>'; depth--; } };
   for (const raw of String(md || '').split('\n')) {
-    let line = esc(raw).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-    const li = line.match(/^\s*(?:[-*]|\d+\.)\s+(.*)/);
-    if (li) { if (!inList) { html += '<ul>'; inList = true; } html += `<li>${li[1]}</li>`; continue; }
-    if (inList) { html += '</ul>'; inList = false; }
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(raw)) continue;
+    const line = esc(tex(raw)).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    const li = line.match(/^(\s*)(?:[-*+]|\d+\.)\s+(.*)/);
+    if (li) {
+      const want = li[1].replace(/\t/g, '  ').length >= 2 ? 2 : 1;
+      while (depth < want) { html += '<ul>'; depth++; }
+      close(want);
+      html += `<li>${li[2]}</li>`; continue;
+    }
+    close(0);
     const h = line.match(/^(#{1,4})\s+(.*)/);
     if (h) html += `<h3>${h[2]}</h3>`; else if (line.trim()) html += `<p>${line}</p>`;
   }
-  return html + (inList ? '</ul>' : '');
+  close(0);
+  return html;
 }
 
 // ===================== 匯出 =====================
@@ -574,6 +597,7 @@ const UI = {
     const s = await DB.get('sessions', id); if (!s) return this.showFolder('all');
     const photos = (await DB.byIndex('photos', 'sessionId', id)).sort((a, b) => a.t - b.t);
     const audioUrl = URL.createObjectURL(await sessionAudio(id));
+    if (s.transcript && !s.transcript.merged) { s.transcript.segments = mergeSegments(s.transcript.segments); s.transcript.merged = true; await DB.put('sessions', s); }
     const segs = s.transcript?.segments || [];
     const hasRoles = segs.some(g => g.role);
     main.innerHTML = `
