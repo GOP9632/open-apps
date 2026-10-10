@@ -253,7 +253,13 @@ async function post(url, opts, onWait) {
   }
 }
 const b64 = async blob => (await blobToDataURL(blob)).split(',')[1];
-async function apiError(r) { let t = ''; try { t = await r.text(); } catch {} return new Error(`${r.status} ${r.statusText}\n${t.slice(0, 500)}`); }
+async function apiError(r) {
+  let t = ''; try { t = await r.text(); } catch {}
+  let hint = '';
+  if (r.status === 402 && r.url.includes('generativelanguage')) hint = '這把 Gemini key 所在的專案綁了預付帳單，但額度是 0。到 AI Studio 把專案和帳單解除連結，或建一個沒綁帳單的新專案再產生 key，就會回到免費方案。也可以先改用 Groq。\n\n';
+  if (r.status === 429) hint = '免費額度用完了，等一下再試，或改用其他引擎。\n\n';
+  return new Error(`${hint}${r.status} ${r.statusText}\n${t.slice(0, 500)}`);
+}
 
 const Engines = {
   // Google Gemini：有免費額度，會分說話者，可用老師的聲音樣本認出老師
