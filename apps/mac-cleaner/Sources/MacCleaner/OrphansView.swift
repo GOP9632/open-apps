@@ -55,11 +55,12 @@ enum OrphanScanner {
         return found.map { id, urls in
             let items = urls.map { url in
                 CleanItem(url: url, name: url.lastPathComponent, size: DiskUsage.size(of: url), isSelected: true,
+                          note: FullDiskAccess.shouldSkipContents(url) ? "沒有完整磁碟取用權限，算不出大小" : nil,
                           explanation: "在「\(url.deletingLastPathComponent().lastPathComponent)」裡")
             }
             return OrphanGroup(bundleID: id, items: items.sorted { $0.size > $1.size })
         }
-        .filter { $0.size > 0 }
+        .filter { $0.size > 0 || $0.items.contains { FullDiskAccess.shouldSkipContents($0.url) } }
         .sorted { $0.size > $1.size }
     }
 

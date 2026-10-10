@@ -64,7 +64,7 @@ final class SpaceScanner: @unchecked Sendable {
             return SpaceNode(url: url, name: name, size: size, isDirectory: false)
         }
         let node = SpaceNode(url: url, name: name, size: 0, isDirectory: true)
-        if Self.skipped.contains(url.path) || Task.isCancelled { return node }
+        if Self.skipped.contains(url.path) || FullDiskAccess.shouldSkipContents(url) || Task.isCancelled { return node }
 
         let kids = (try? FileManager.default.contentsOfDirectory(
             at: url, includingPropertiesForKeys: Array(keys), options: []

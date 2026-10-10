@@ -92,16 +92,20 @@ struct ContentView: View {
         } detail: {
             ZStack {
                 page.theme.background.ignoresSafeArea()
-                Group {
-                    switch page {
-                    case .smart: SmartCareView(junk: junk, go: { section = $0 })
-                    case .monitor: MonitorView(model: monitor)
-                    case .space: SpaceMapView(model: space)
-                    case .junk: JunkView(model: junk)
-                    case .large: LargeFilesView(model: large)
-                    case .uninstall: UninstallView(model: apps)
-                    case .duplicates: DuplicatesView(model: duplicates)
-                    case .orphans: OrphansView(model: orphans)
+                VStack(spacing: 0) {
+                    // 會掃描檔案的頁面，沒有完整磁碟取用權限時在頂端提示
+                    if page != .monitor { FullDiskAccessBanner() }
+                    Group {
+                        switch page {
+                        case .smart: SmartCareView(junk: junk, go: { section = $0 })
+                        case .monitor: MonitorView(model: monitor)
+                        case .space: SpaceMapView(model: space)
+                        case .junk: JunkView(model: junk)
+                        case .large: LargeFilesView(model: large)
+                        case .uninstall: UninstallView(model: apps)
+                        case .duplicates: DuplicatesView(model: duplicates)
+                        case .orphans: OrphansView(model: orphans)
+                        }
                     }
                 }
                 .foregroundStyle(.white)
