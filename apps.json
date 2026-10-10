@@ -9,10 +9,10 @@
     "guide": "https://gop9632.github.io/open-apps/apps/class-recorder/guide/"
   },
   {
-    "name": "Mop（Mac 清理）",
+    "name": "Mop",
     "icon": "🧹",
-    "like": "CleanMyMac",
-    "desc": "清系統垃圾、找大型檔案、把 App 和殘留一起移除。東西只會移到垃圾桶。",
+    "like": "CleanMyMac、DaisyDisk",
+    "desc": "看 CPU、記憶體、磁碟狀態，清系統垃圾、找大型檔案、看空間用在哪，把 App 和殘留一起移除。東西只會移到垃圾桶。",
     "type": "local",
     "platform": "Mac",
     "steps": [
