@@ -5,85 +5,207 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>課堂錄音</title>
 <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#1f6feb">
+<meta name="theme-color" content="#3b5bdb">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <style>
-:root{--bg:#f6f7f9;--panel:#fff;--text:#1d2129;--muted:#6b7280;--line:#e5e7eb;--accent:#1f6feb;--accent-soft:#e8f0fe;--danger:#d93025;--teacher:#0b7a3e;--teacher-soft:#e6f4ea;--warn:#a15c00}
-@media (prefers-color-scheme:dark){:root{--bg:#111418;--panel:#1a1e24;--text:#e6e8eb;--muted:#9aa3ad;--line:#2b313a;--accent:#5b9dff;--accent-soft:#1d2a3f;--danger:#ff6b5e;--teacher:#5fd38d;--teacher-soft:#15301f;--warn:#e0a23a}}
+:root{--bg:#f7f8fa;--panel:#fff;--side:#f1f3f6;--text:#1d2129;--muted:#6b7280;--line:#e5e7eb;--accent:#3b5bdb;--accent-soft:#edf2ff;--danger:#d93025;--teacher:#0b7a3e;--teacher-soft:#e6f4ea;--warn:#a15c00;--hl:#fff3a3;--kw:#ffd8a8;--rec:#e03131}
+@media (prefers-color-scheme:dark){:root{--bg:#111418;--panel:#1a1e24;--side:#15191e;--text:#e6e8eb;--muted:#9aa3ad;--line:#2b313a;--accent:#748ffc;--accent-soft:#1f2747;--danger:#ff6b5e;--teacher:#5fd38d;--teacher-soft:#15301f;--warn:#e0a23a;--hl:#5c5214;--kw:#6b4210;--rec:#ff6b6b}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif}
 button,select,input,textarea{font:inherit;color:inherit}
-button{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer}
+button{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
 button:hover{border-color:var(--accent)}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.rec{background:var(--rec);border-color:var(--rec);color:#fff;font-weight:600}
+button.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+button.ghost:hover{background:var(--accent-soft);color:var(--text)}
 button.danger{color:var(--danger)}
 button:disabled{opacity:.5;cursor:default}
 input,select,textarea{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 10px;width:100%}
 label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
-.app{display:grid;grid-template-columns:280px 1fr;min-height:100vh;align-content:start}
-aside{border-right:1px solid var(--line);background:var(--panel);padding:16px;overflow:auto;height:100vh;position:sticky;top:0}
-main{padding:20px;max-width:980px;width:100%}
-h1{font-size:18px;margin:0 0 12px}
-h2{font-size:17px;margin:0 0 10px}
-h3{font-size:15px;margin:18px 0 8px}
+a{color:var(--accent)}
+h1{font-size:17px;margin:0}
+h2{font-size:20px;margin:0 0 12px}
+h3{font-size:15px;margin:0 0 8px}
 .muted{color:var(--muted);font-size:13px}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .grow{flex:1}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
-.folder{padding:6px 8px;border-radius:8px;cursor:pointer;display:flex;justify-content:space-between;gap:6px}
-.folder:hover{background:var(--accent-soft)}
-.folder.active{background:var(--accent-soft);font-weight:600}
-.tag{font-size:11px;padding:1px 6px;border-radius:99px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
-.sess{padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px;cursor:pointer;background:var(--panel)}
-.sess:hover{border-color:var(--accent)}
-.big-time{font-size:42px;font-variant-numeric:tabular-nums;font-weight:600;letter-spacing:1px}
-.meter{height:8px;background:var(--line);border-radius:99px;overflow:hidden}
-.meter>div{height:100%;width:0;background:var(--accent);transition:width .08s}
-.seg{display:grid;grid-template-columns:62px 1fr;gap:10px;padding:6px 8px;border-radius:8px}
-.seg:hover{background:var(--accent-soft)}
-.seg .t{color:var(--accent);cursor:pointer;font-variant-numeric:tabular-nums;font-size:13px;padding-top:2px}
-.seg .who{font-size:12px;font-weight:600;color:var(--muted)}
-.seg.teacher .who{color:var(--teacher)}
-.seg.teacher{border-left:3px solid var(--teacher)}
-.seg.other{opacity:.8}
-.seg.playing{background:var(--accent-soft)}
-.bm{display:inline-flex;gap:4px;align-items:center;font-size:13px;padding:3px 8px;border-radius:99px;background:var(--accent-soft);cursor:pointer;margin:2px}
-.photos{display:flex;gap:8px;flex-wrap:wrap}
-.photos img{height:90px;border-radius:8px;border:1px solid var(--line);cursor:pointer}
-.summary{}
+.hidden{display:none!important}
 .err{color:var(--danger);font-size:13px;white-space:pre-wrap}
 .note{background:var(--accent-soft);border-radius:8px;padding:8px 10px;font-size:13px}
-.hidden{display:none!important}
-.tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
-.tabs button.on{background:var(--accent-soft);border-color:var(--accent)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+.tag{font-size:11px;padding:1px 7px;border-radius:99px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+
+/* 版面：左側欄、上方工具列、主畫面 */
+.app{display:grid;grid-template-columns:240px 1fr;min-height:100vh}
+aside#aside{background:var(--side);border-right:1px solid var(--line);padding:16px 12px;height:100vh;position:sticky;top:0;overflow:auto;display:flex;flex-direction:column;gap:4px}
+.brand{display:flex;align-items:center;gap:8px;padding:2px 8px 10px;cursor:pointer}
+.nav{padding:7px 10px;border-radius:8px;cursor:pointer;display:flex;justify-content:space-between;gap:6px;align-items:center}
+.nav:hover{background:var(--accent-soft)}
+.nav.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.nav .n{color:var(--muted);font-size:12px}
+.side-h{display:flex;align-items:center;justify-content:space-between;margin:14px 10px 4px;font-size:12px;color:var(--muted);font-weight:600}
+.side-h button{padding:0 8px;font-size:16px;line-height:22px}
+.side-foot{margin-top:auto;padding-top:12px}
+.mainwrap{min-width:0;display:flex;flex-direction:column}
+.topbar{position:sticky;top:0;z-index:20;background:var(--bg);display:flex;gap:8px;align-items:center;padding:12px 24px;border-bottom:1px solid var(--line)}
+.topbar .search{max-width:420px;border-radius:99px;padding:8px 14px;background:var(--panel)}
 .menu-btn{display:none}
-.summary h2,.summary h3{font-size:15px;margin:14px 0 6px}.summary ul{margin:4px 0;padding-left:20px}.summary p{margin:4px 0}
+main{padding:20px 24px 110px;width:100%}
+.narrow{max-width:900px}
+#scrim{display:none}
+
+/* 首頁清單 */
+.day{font-size:13px;font-weight:600;color:var(--muted);margin:18px 0 8px}
+.sess{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:border-color .1s,box-shadow .1s}
+.sess:hover{border-color:var(--accent);box-shadow:0 2px 10px rgba(0,0,0,.05)}
+.sess .t1{display:flex;gap:8px;align-items:baseline}
+.sess .t1 b{flex:1;font-size:16px}
+.sess .pv{color:var(--muted);font-size:14px;margin-top:6px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.badges{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.empty{text-align:center;padding:48px 16px;color:var(--muted)}
+.empty .big{font-size:40px}
+details.fset{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 16px;margin-bottom:14px}
+details.fset summary{cursor:pointer;font-weight:600}
+
+/* 單一錄音 */
+.sess-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:24px;align-items:start}
+.sess-layout.one{grid-template-columns:minmax(0,1fr)}
+.title-input{font-size:22px;font-weight:700;border:0;padding:4px 0;background:transparent;border-radius:0}
+.title-input:focus{outline:none;border-bottom:2px solid var(--accent)}
+.folder-sel{width:auto;padding:3px 8px;font-size:13px}
+.speakers,.kws{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px}
+.spk{display:inline-flex;gap:6px;align-items:center;border-radius:99px;padding:3px 10px 3px 3px;font-size:13px}
+.av{width:24px;height:24px;border-radius:50%;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none}
+.chip{border-radius:99px;padding:3px 11px;font-size:13px}
+.chip.on{background:var(--kw);border-color:var(--warn)}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin:16px 0 14px;overflow-x:auto;scrollbar-width:none}
+.tabs button{white-space:nowrap;border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;padding:8px 14px;color:var(--muted);font-weight:600}
+.tabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
+.ncard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:12px}
+.ncard h3{display:flex;align-items:center;gap:8px}
+.ncard ul{margin:4px 0;padding-left:20px}
+.ncard p{margin:4px 0}
+.ts{color:var(--accent);cursor:pointer;font-variant-numeric:tabular-nums;font-size:13px;text-decoration:none;white-space:nowrap}
+.ts:hover{text-decoration:underline}
+.todo{display:flex;gap:8px;align-items:flex-start;margin:6px 0;color:var(--text);font-size:15px}
+.todo input{width:auto;margin-top:5px}
+.todo.done span{text-decoration:line-through;color:var(--muted)}
+.todo .x{margin-left:auto;padding:0 6px;visibility:hidden}
+.todo:hover .x{visibility:visible}
+.ol{margin:10px 0}
+.ol b{margin-left:6px}
+details.qa{border-top:1px solid var(--line);padding:8px 0}
+details.qa summary{cursor:pointer}
+details.qa div{color:var(--muted);margin-top:4px}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.toggle{display:inline-flex;gap:6px;align-items:center;margin:0;font-size:13px;color:var(--text);cursor:pointer}
+.toggle input{width:auto}
+.seg{padding:8px 10px;border-radius:10px;margin-bottom:2px}
+.seg:hover{background:var(--panel)}
+.seg.playing{background:var(--accent-soft)}
+.seg.other{opacity:.82}
+.seg-head{display:flex;gap:8px;align-items:center;margin-bottom:2px}
+.seg-head .who{border:0;background:transparent;padding:0;font-size:13px;font-weight:700;color:var(--muted)}
+.seg.teacher .who{color:var(--teacher)}
+.seg-head .mini{padding:0 6px;font-size:12px;visibility:hidden}
+.seg:hover .mini{visibility:visible}
+.seg-text{padding-left:32px;white-space:pre-wrap}
+.seg-text.nolabel{padding-left:0}
+.seg-text[contenteditable]{outline:1px dashed var(--line);border-radius:6px}
+mark{color:inherit;border-radius:3px}
+mark.hl{background:var(--hl);cursor:pointer}
+mark.kw{background:var(--kw)}
+.bm{display:inline-flex;gap:4px;align-items:center;font-size:12px;padding:1px 8px;border-radius:99px;background:var(--accent-soft);cursor:pointer}
+.rpanel{position:sticky;top:76px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:4px 14px 14px;height:calc(100vh - 180px);display:flex;flex-direction:column}
+.rpanel .tabs{margin:0 0 10px}
+.rbody{flex:1;min-height:0;display:flex;flex-direction:column}
+.chat{display:flex;flex-direction:column;flex:1;min-height:0}
+.chat-log{flex:1;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:4px 0 10px}
+.tabbody-chat .chat-log{max-height:none;min-height:200px}
+.msg{padding:9px 12px;border-radius:12px;max-width:92%}
+.msg.user{align-self:flex-end;background:var(--accent);color:#fff}
+.msg.ai{align-self:flex-start;background:var(--bg);border:1px solid var(--line)}
+.msg ul{margin:4px 0;padding-left:18px}.msg p{margin:2px 0}.msg h3{font-size:14px;margin:6px 0 2px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.chips button{font-size:13px;border-radius:99px;padding:4px 10px}
+.chat-input{display:flex;gap:6px;align-items:flex-end}
+.chat-input textarea{resize:none;border-radius:12px}
+.chat-input button{white-space:nowrap}
+.photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.photos img{width:100%;border-radius:8px;border:1px solid var(--line);cursor:pointer;display:block}
+.marks-list .bm{margin:3px 4px 3px 0;font-size:13px;padding:3px 10px}
+.summary h3{font-size:15px;margin:14px 0 6px}.summary ul{margin:4px 0;padding-left:20px}.summary p{margin:4px 0}
+.spinner{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+details.menu{position:relative}
+details.menu summary{list-style:none;cursor:pointer;padding:6px 12px;border-radius:8px;color:var(--muted)}
+details.menu summary::-webkit-details-marker{display:none}
+details.menu summary:hover{background:var(--accent-soft)}
+.menu-pop{position:absolute;right:0;top:36px;z-index:30;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px;min-width:200px;display:flex;flex-direction:column}
+.menu-pop button{border:0;text-align:left;background:transparent}
+.menu-pop button:hover{background:var(--accent-soft)}
+
+/* 底部播放列 */
+.player{position:fixed;left:240px;right:0;bottom:0;z-index:25;background:var(--panel);border-top:1px solid var(--line);display:flex;gap:8px;align-items:center;padding:10px 24px calc(10px + env(safe-area-inset-bottom))}
+.player .pbtn{border:0;background:transparent;font-size:15px;padding:6px 8px}
+.player .play{width:42px;height:42px;border-radius:50%;background:var(--accent);color:#fff;font-size:16px}
+.player .ptime{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.player input[type=range]{flex:1;padding:0;border:0;accent-color:var(--accent);background:transparent}
+#hlBtn{position:fixed;z-index:40;transform:translateX(-50%);box-shadow:0 4px 14px rgba(0,0,0,.18);background:var(--text);color:var(--bg);border:0;border-radius:99px;padding:6px 14px}
+
+/* 錄音中 */
+.rec-wrap{max-width:560px;margin:30px auto;text-align:center}
+.rec-dot{width:16px;height:16px;border-radius:50%;background:var(--rec);display:inline-block;animation:pulse 1.2s ease-in-out infinite;vertical-align:middle;margin-right:8px}
+.rec-dot.paused{animation:none;background:var(--muted)}
+@keyframes pulse{50%{opacity:.25}}
+.big-time{font-size:56px;font-variant-numeric:tabular-nums;font-weight:700;letter-spacing:1px;margin:8px 0}
+.meter{height:8px;background:var(--line);border-radius:99px;overflow:hidden}
+.meter>div{height:100%;width:0;background:var(--accent);transition:width .08s}
+.rec-btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:18px}
+.rec-btns button{padding:10px 16px;border-radius:99px}
+
+@media (max-width:1099px){.sess-layout{grid-template-columns:minmax(0,1fr)}.rpanel{display:none}}
 @media (max-width:760px){
   .app{grid-template-columns:1fr}
-  aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line);padding:12px 16px}
-  .app{grid-template-rows:auto 1fr}
-  aside.collapsed .aside-body{display:none}
+  aside#aside{position:fixed;left:0;top:0;z-index:50;width:270px;transform:translateX(-105%);transition:transform .2s}
+  aside#aside.open{transform:none;box-shadow:0 0 40px rgba(0,0,0,.25)}
+  #scrim.on{display:block;position:fixed;inset:0;z-index:45;background:rgba(0,0,0,.3)}
   .menu-btn{display:inline-block}
-  main{padding:14px 16px}
-  .big-time{font-size:34px}
+  .topbar{padding:10px 12px}
+  .topbar .lbl{display:none}
+  main{padding:14px 16px 120px}
+  .player{left:0;padding:8px 10px calc(8px + env(safe-area-inset-bottom));gap:4px}
+  .player .ptime{font-size:12px}
+  .big-time{font-size:44px}
+  .seg-text{padding-left:0}
+  input,select,textarea{font-size:16px}
 }
 </style>
 </head>
 <body>
 <div class="app">
 <aside id="aside">
-  <div class="row"><h1 class="grow" style="margin:0" onclick="UI.showFolder('all')">🎙️ 課堂錄音</h1><button class="menu-btn primary" onclick="UI.showRecorder()">● 錄音</button><button class="menu-btn" onclick="aside.classList.toggle('collapsed')">☰</button></div>
-  <div class="aside-body">
-    <button class="primary" style="width:100%;margin:12px 0" onclick="UI.showRecorder()">＋ 開始新錄音</button>
-    <div class="row" style="margin-bottom:6px"><b class="grow">分類</b><button onclick="UI.newFolder()">＋</button></div>
-    <div id="folderList"></div>
-    <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
-    <div class="row"><button class="grow" onclick="UI.showSettings()">⚙️ 設定</button><button class="grow" onclick="UI.importFile()">⬆ 匯入音檔</button></div>
-    <p class="muted" id="storageInfo"></p>
+  <div class="brand" onclick="UI.showFolder('all')"><span style="font-size:22px">🎙️</span><h1>課堂錄音</h1></div>
+  <button class="rec" style="margin:0 4px 10px;padding:9px" onclick="UI.showRecorder()">● 開始錄音</button>
+  <div id="folderList"></div>
+  <div class="side-foot">
+    <div class="nav" onclick="UI.showSettings()">⚙️ 設定</div>
+    <p class="muted" id="storageInfo" style="padding:0 10px"></p>
   </div>
 </aside>
-<main id="main"></main>
+<div id="scrim" onclick="UI.closeDrawer()"></div>
+<div class="mainwrap">
+  <header class="topbar">
+    <button class="menu-btn ghost" onclick="UI.openDrawer()" aria-label="選單">☰</button>
+    <input id="q" class="search grow" type="search" placeholder="🔍 搜尋標題、逐字稿、筆記" oninput="UI.search(this.value)">
+    <button onclick="UI.importFile()" title="匯入音檔">⬆<span class="lbl"> 匯入</span></button>
+    <button class="rec" onclick="UI.showRecorder()">●<span class="lbl"> 錄音</span></button>
+  </header>
+  <main id="main"></main>
 </div>
+</div>
+<button id="hlBtn" class="hidden" onmousedown="event.preventDefault()" onclick="UI.addHL()">🖍 畫重點</button>
 <input type="file" id="fileInput" accept="audio/*,video/*,.m4a,.mp3,.wav,.webm" class="hidden">
 <input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden">
 <input type="file" id="sampleInput" accept="audio/*,.m4a" class="hidden">
@@ -139,7 +261,7 @@ const fmtDate = ts => new Date(ts).toLocaleString('zh-TW', { month: 'numeric', d
 
 // ===================== 設定（存在這個瀏覽器的 localStorage） =====================
 const Settings = {
-  defaults: { engine: 'gemini', geminiKey: '', geminiModel: 'gemini-3.8-flash', openaiKey: '', whisperBase: 'https://api.groq.com/openai/v1', whisperKey: '', whisperModel: 'whisper-large-v3-turbo', localUrl: 'http://127.0.0.1:8080', language: '', toTraditional: true, chunkMin: 10, summaryProvider: 'gemini', summaryModel: '', anthropicKey: '', noiseSuppression: false },
+  defaults: { engine: 'gemini', geminiKey: '', geminiModel: 'gemini-3.8-flash', openaiKey: '', whisperBase: 'https://api.groq.com/openai/v1', whisperKey: '', whisperModel: 'whisper-large-v3-turbo', localUrl: 'http://127.0.0.1:8080', language: '', toTraditional: true, chunkMin: 10, summaryProvider: 'gemini', summaryModel: '', anthropicKey: '', noiseSuppression: false, chatProvider: 'groq', chatModel: '', geminiTextKey: '' },
   load() { try { return { ...this.defaults, ...JSON.parse(localStorage.getItem('cr-settings') || '{}') }; } catch { return { ...this.defaults }; } },
   save(v) { try { localStorage.setItem('cr-settings', JSON.stringify(v)); } catch {} },
 };
@@ -378,42 +500,54 @@ async function transcribeSession(id, onProgress) {
   return s;
 }
 
-// ===================== AI 整理重點 =====================
-function transcriptText(s, teacherOnly) {
-  return (s.transcript?.segments || []).filter(g => !teacherOnly || g.role !== 'other').map(g => `[${fmt(g.start)}] ${g.role === 'teacher' ? '老師' : g.role === 'other' ? '其他人' : ''}${g.role ? '：' : ''}${g.text}`).join('\n');
+// ===================== 說話者 =====================
+// 老師固定用 'teacher' 當代號，其他人用轉寫時的標籤（例如 1-A）；改過的名字存在 s.speakerNames
+const spkKey = g => g.role === 'teacher' ? 'teacher' : g.label || null;
+function spkName(s, key) {
+  if (!key) return '';
+  if (s.speakerNames?.[key]) return s.speakerNames[key];
+  if (key === 'teacher') return '老師';
+  const l = key.replace(/^\d+-/, '');
+  return /^[A-Za-z]$/.test(l) ? '說話者 ' + l.toUpperCase() : l;
 }
-async function summarize(s) {
-  const bms = s.bookmarks.map(b => `[${fmt(b.t)}] ${b.label}`).join('\n') || '（無）';
-  const prompt = `你是幫大學生整理上課筆記的助教。下面是一堂課的逐字稿（可能有辨識錯字，請依上下文修正理解）。請用台灣繁體中文、Markdown 輸出。規則：不要開場白或問候，直接從第一個標題開始；不要用 LaTeX 或 $ 符號，數學式寫成一般文字（例如 p < 0.05、α）；不要用 --- 分隔線；用台灣慣用詞（例如迴歸、變異數）；複習問題的答案寫成縮排的子項目。
+const PALETTE = ['#4c6ef5', '#e8590c', '#9c36b5', '#0c8599', '#d6336c', '#5c940d', '#1971c2', '#c2255c'];
+const colorFor = name => { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0; return PALETTE[h % PALETTE.length]; };
+const initial = name => (name.match(/([A-Z0-9])$/) || [, name.slice(0, 1)])[1];
 
-## 一句話摘要
-## 重點整理
-（條列，每點後面標註時間，例如 [12:30]）
-## 名詞解釋
-（課堂出現的專有名詞，保留英文原文）
-## 作業、考試、期限
-（老師提到的作業、考試範圍、繳交日期；沒有就寫「無」）
-## 我可能還沒懂的地方
-（老師講得快或學生有發問的段落）
-## 複習問題
-（5 題，附簡短答案）
-
-學生在上課時按下的重點標記：
-${bms}
-
-逐字稿：
-${transcriptText(s)}`;
-  const model = S.summaryModel || { openai: 'gpt-5-mini', anthropic: 'claude-haiku-5-5', gemini: S.geminiModel }[S.summaryProvider];
-  if (S.summaryProvider === 'gemini') {
-    if (!S.geminiKey) throw new Error('請先在設定填入 Gemini API key。');
-    const r = await post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': S.geminiKey }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
+// ===================== AI 筆記與問答 =====================
+function transcriptText(s, opt = {}) {
+  return (s.transcript?.segments || []).filter(g => !opt.teacherOnly || g.role !== 'other').map(g => {
+    const n = spkName(s, spkKey(g));
+    return `[${fmt(g.start)}${opt.sec ? '|' + Math.round(g.start) : ''}] ${n ? n + '：' : ''}${g.text}`;
+  }).join('\n');
+}
+// 筆記與問答可以用另一把沒綁帳單的免費 Gemini key（例如另一個 Google 帳號申請的）
+const textGeminiKey = () => S.geminiTextKey || S.geminiKey;
+const keyFor = p => ({ gemini: textGeminiKey(), openai: S.openaiKey, anthropic: S.anthropicKey, groq: S.whisperKey })[p];
+const llmKey = () => keyFor(S.summaryProvider);
+// schema 只有 Gemini 用得到；其他服務改用文字說明格式
+async function callLLM(prompt, { schema, shape, provider = S.summaryProvider, model } = {}) {
+  const p = provider;
+  model ||= { openai: 'gpt-5-mini', anthropic: 'claude-haiku-5-5', gemini: S.geminiModel, groq: 'openai/gpt-oss-120b' }[p];
+  if (schema && p !== 'gemini') prompt += '\n\n只輸出 JSON，不要任何其他文字，格式如下：\n' + shape;
+  if (p === 'gemini') {
+    if (!textGeminiKey()) throw new Error('請先在設定填入 Gemini API key。');
+    const body = { contents: [{ parts: [{ text: prompt }] }] };
+    if (schema) body.generationConfig = { responseMimeType: 'application/json', responseSchema: schema };
+    const r = await post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': textGeminiKey() }, body: JSON.stringify(body) });
     if (!r.ok) throw await apiError(r);
     const j = await r.json();
     return (j.candidates?.[0]?.content?.parts || []).map(x => x.text || '').join('');
   }
-  if (S.summaryProvider === 'anthropic') {
+  if (p === 'groq') {
+    if (!S.whisperKey) throw new Error('請先在設定填入 Groq API key（console.groq.com/keys 免費申請）。');
+    const r = await post(S.whisperBase.replace(/\/$/, '') + '/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + S.whisperKey }, body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], reasoning_effort: 'low', max_completion_tokens: 2000 }) });
+    if (!r.ok) throw await apiError(r);
+    return (await r.json()).choices[0].message.content || '';
+  }
+  if (p === 'anthropic') {
     if (!S.anthropicKey) throw new Error('請先在設定填入 Anthropic API key。');
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': S.anthropicKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model, max_tokens: 4000, messages: [{ role: 'user', content: prompt }] }) });
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': S.anthropicKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model, max_tokens: 6000, messages: [{ role: 'user', content: prompt }] }) });
     if (!r.ok) throw await apiError(r);
     const j = await r.json();
     return j.content.map(c => c.text || '').join('');
@@ -423,7 +557,87 @@ ${transcriptText(s)}`;
   if (!r.ok) throw await apiError(r);
   return (await r.json()).choices[0].message.content;
 }
+function parseJSON(t) {
+  t = String(t || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  try { return JSON.parse(a >= 0 ? t.slice(a, b + 1) : t); } catch { throw new Error('AI 回傳的格式看不懂：' + t.slice(0, 200)); }
+}
 
+const STR = { type: 'STRING' }, NUM = { type: 'NUMBER' };
+const arr = items => ({ type: 'ARRAY', items });
+const obj = props => ({ type: 'OBJECT', properties: props, required: Object.keys(props) });
+const NOTES_SCHEMA = obj({
+  overview: STR,
+  keywords: arr(STR),
+  actionItems: arr(obj({ text: STR, start: NUM })),
+  outline: arr(obj({ start: NUM, title: STR, bullets: arr(STR) })),
+  glossary: arr(obj({ term: STR, meaning: STR })),
+  unclear: arr(obj({ text: STR, start: NUM })),
+  questions: arr(obj({ q: STR, a: STR })),
+});
+const NOTES_SHAPE = '{"overview":"...","keywords":["..."],"actionItems":[{"text":"...","start":123}],"outline":[{"start":0,"title":"...","bullets":["..."]}],"glossary":[{"term":"...","meaning":"..."}],"unclear":[{"text":"...","start":456}],"questions":[{"q":"...","a":"..."}]}';
+
+async function makeNotes(s) {
+  const bms = s.bookmarks.map(b => `[${fmt(b.t)}] ${b.label}`).join('\n') || '（無）';
+  const prompt = `你是幫大學生整理上課筆記的助教。下面是一段錄音的逐字稿，每行開頭是 [時間|秒數] 說話者：內容（可能有辨識錯字，請依上下文理解）。
+請用台灣繁體中文整理成 JSON。規則：不要開場白或問候；不要用 LaTeX 或 $ 符號，數學式寫成一般文字（例如 p < 0.05、α）；用台灣慣用詞（例如迴歸、變異數）；英文術語保留原文。所有 start 欄位填那句話開頭「|」後面的秒數，對不到就填 -1。
+- overview：3 到 5 句的概述，說這段在講什麼、結論是什麼
+- keywords：5 到 10 個關鍵字，必須是逐字稿裡原樣出現過的詞
+- actionItems：老師交代的作業、考試範圍、繳交期限、要準備的事；沒有就給空陣列
+- outline：依時間順序分成 3 到 8 個段落，每段一個短標題和 2 到 4 個重點
+- glossary：出現的專有名詞與一句話解釋
+- unclear：講得很快、有人發問或可能沒聽懂的地方；沒有就給空陣列
+- questions：5 題複習問題與簡短答案
+
+使用者在錄音時按下的重點標記：
+${bms}
+
+逐字稿：
+${transcriptText(s, { sec: true })}`;
+  const n = parseJSON(await toTW(await callLLM(prompt, { schema: NOTES_SCHEMA, shape: NOTES_SHAPE, model: S.summaryModel })));
+  const list = x => Array.isArray(x) ? x : [];
+  const t = x => Number.isFinite(+x) ? +x : -1;
+  return {
+    createdAt: Date.now(),
+    overview: String(n.overview || ''),
+    keywords: [...new Set(list(n.keywords).map(String).map(k => k.trim()).filter(Boolean))],
+    actionItems: list(n.actionItems).map(a => ({ text: String(a.text || ''), start: t(a.start), done: false })).filter(a => a.text),
+    outline: list(n.outline).map(o => ({ start: t(o.start), title: String(o.title || ''), bullets: list(o.bullets).map(String) })),
+    glossary: list(n.glossary).map(g => ({ term: String(g.term || ''), meaning: String(g.meaning || '') })),
+    unclear: list(n.unclear).map(u => ({ text: String(u.text || ''), start: t(u.start) })),
+    questions: list(n.questions).map(q => ({ q: String(q.q || ''), a: String(q.a || '') })),
+  };
+}
+
+// Groq 免費方案每分鐘只收約 8000 token，整堂課放不下，所以只挑跟問題最相關的段落，再附上 AI 筆記的大綱
+function relevantText(s, q, budget) {
+  const segs = s.transcript?.segments || [];
+  const line = g => { const n = spkName(s, spkKey(g)); return `[${fmt(g.start)}] ${n ? n + '：' : ''}${g.text}`; };
+  if (segs.reduce((n, g) => n + g.text.length + 12, 0) <= budget) return segs.map(line).join('\n');
+  const grams = t => { const x = t.toLowerCase().replace(/\s+/g, ''), set = new Set(x.match(/[a-z0-9][a-z0-9.\-]+/g) || []); for (let i = 0; i < x.length - 1; i++) set.add(x.slice(i, i + 2)); return set; };
+  const qg = grams(q);
+  const score = segs.map((g, i) => { const sg = grams(g.text); let n = 0; for (const w of qg) if (sg.has(w)) n += w.length > 2 ? 3 : 1; return { i, v: n / Math.sqrt(1 + g.text.length / 40) + (g.role === 'teacher' ? 0.01 : 0) }; }).sort((a, b) => b.v - a.v);
+  const pick = new Set(); let used = 0;
+  for (const { i, v } of score) {
+    if (v <= 0 && pick.size) break;
+    for (const j of [i, i - 1, i + 1]) { const g = segs[j]; if (!g || pick.has(j)) continue; if (used + g.text.length > budget) continue; pick.add(j); used += g.text.length + 12; }
+    if (used > budget * 0.9) break;
+  }
+  return [...pick].sort((a, b) => a - b).map(j => line(segs[j])).join('\n');
+}
+async function askAI(s, q) {
+  const p = S.chatProvider || S.summaryProvider;
+  const small = p === 'groq';
+  const hist = (s.chat || []).slice(small ? -2 : -6).map(m => (m.role === 'user' ? '問：' : '答：') + (small ? m.text.slice(0, 300) : m.text)).join('\n');
+  const n = s.notes;
+  const notes = small && n ? `AI 筆記：\n${n.overview}\n${n.outline.map(o => `[${o.start >= 0 ? fmt(o.start) : '?'}] ${o.title}：${o.bullets.join('；')}`).join('\n')}\n${n.actionItems.length ? '待辦：' + n.actionItems.map(a => a.text).join('；') : ''}\n` : '';
+  const prompt = `你是這段錄音的助理。只根據下面的內容回答，用台灣繁體中文，簡短、能條列就條列。引用內容時在句尾標註時間，格式 [12:34]，照每行開頭的時間。內容裡沒提到的，就說「錄音裡沒有提到」，不要自己編。不要開場白，不要用 LaTeX 或 $ 符號。
+${small ? '\n' + notes + '\n逐字稿（只節錄和問題相關的段落）：' : '\n逐字稿：'}
+${small ? relevantText(s, q + ' ' + (s.chat || []).slice(-2).map(m => m.text).join(' '), 3000) : transcriptText(s)}
+${hist ? '\n之前的對話：\n' + hist + '\n' : ''}
+問題：${q}`;
+  return (await toTW(await callLLM(prompt, { provider: p, model: S.chatModel }))).trim();
+}
 // 簡易 Markdown 顯示（標題、條列、粗體）
 function mdToHtml(md) {
   // 模型偶爾還是會吐 LaTeX，轉成一般文字
@@ -450,9 +664,23 @@ function mdToHtml(md) {
 
 // ===================== 匯出 =====================
 function download(name, blob) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }
+const tsMd = t => t >= 0 ? ` [${fmt(t)}]` : '';
+function notesToMd(n) {
+  let md = '';
+  if (n.overview) md += '## 概述\n\n' + n.overview + '\n\n';
+  if (n.keywords.length) md += '關鍵字：' + n.keywords.join('、') + '\n\n';
+  if (n.actionItems.length) md += '## 待辦事項\n\n' + n.actionItems.map(a => `- [${a.done ? 'x' : ' '}] ${a.text}${tsMd(a.start)}`).join('\n') + '\n\n';
+  if (n.outline.length) md += '## 大綱\n\n' + n.outline.map(o => `### ${o.title}${tsMd(o.start)}\n\n` + o.bullets.map(b => '- ' + b).join('\n')).join('\n\n') + '\n\n';
+  if (n.glossary.length) md += '## 名詞解釋\n\n' + n.glossary.map(g => `- **${g.term}**：${g.meaning}`).join('\n') + '\n\n';
+  if (n.unclear.length) md += '## 可能還沒懂的地方\n\n' + n.unclear.map(u => `- ${u.text}${tsMd(u.start)}`).join('\n') + '\n\n';
+  if (n.questions.length) md += '## 複習問題\n\n' + n.questions.map((q, i) => `${i + 1}. ${q.q}\n   - ${q.a}`).join('\n') + '\n\n';
+  return md;
+}
 function toMarkdown(s, folder) {
   let md = `# ${s.title}\n\n- 分類：${folder ? KIND[folder.kind] + '／' + folder.name : '未分類'}\n- 時間：${new Date(s.createdAt).toLocaleString('zh-TW')}\n- 長度：${fmt(s.duration)}\n\n`;
-  if (s.summary) md += s.summary + '\n\n';
+  if (s.notes) md += notesToMd(s.notes); else if (s.summary) md += s.summary + '\n\n';
+  const hls = (s.transcript?.segments || []).flatMap(g => (g.hl || []).map(([a, b]) => `- [${fmt(g.start)}] ${g.text.slice(a, b)}`));
+  if (hls.length) md += '## 我畫的重點\n\n' + hls.join('\n') + '\n\n';
   if (s.bookmarks.length) md += '## 我的標記\n\n' + s.bookmarks.map(b => `- [${fmt(b.t)}] ${b.label}`).join('\n') + '\n\n';
   if (s.transcript) md += '## 逐字稿\n\n' + transcriptText(s).split('\n').join('\n\n') + '\n';
   return md;
@@ -465,75 +693,138 @@ function toSrt(s) {
 // ===================== 介面 =====================
 const main = document.getElementById('main');
 const aside = document.getElementById('aside');
+const $ = id => document.getElementById(id);
+const WIDE = matchMedia('(min-width:1100px)');
+const KIND_ICON = { course: '📘', meeting: '💼', project: '📁' };
+const tsLink = t => t >= 0 ? `<a class="ts" onclick="UI.seek(${t})">${fmt(t)}</a>` : '';
+// 把畫重點和關鍵字標成 <mark>，文字本身不變，選取範圍的字數位置才對得上
+function richText(text, hl = [], kw = '') {
+  const n = text.length, H = new Int16Array(n).fill(-1), K = new Uint8Array(n);
+  hl.forEach(([a, b], i) => { for (let j = Math.max(0, a); j < Math.min(n, b); j++) H[j] = i; });
+  if (kw) { const lt = text.toLowerCase(), lk = kw.toLowerCase(); for (let i = lt.indexOf(lk); i >= 0; i = lt.indexOf(lk, i + lk.length)) K.fill(1, i, i + lk.length); }
+  let out = '';
+  for (let i = 0; i < n;) {
+    let j = i; while (j < n && H[j] === H[i] && K[j] === K[i]) j++;
+    let t = esc(text.slice(i, j));
+    if (K[i]) t = `<mark class="kw">${t}</mark>`;
+    if (H[i] >= 0) t = `<mark class="hl" title="點一下取消重點" data-h="${H[i]}">${t}</mark>`;
+    out += t; i = j;
+  }
+  return out;
+}
+const dayLabel = ts => {
+  const d = new Date(ts), today = new Date(); today.setHours(0, 0, 0, 0);
+  const diff = Math.round((today - new Date(d).setHours(0, 0, 0, 0)) / 864e5);
+  if (diff === 0) return '今天'; if (diff === 1) return '昨天';
+  return `${d.getMonth() + 1}月${d.getDate()}日 週${'日一二三四五六'[d.getDay()]}${d.getFullYear() !== today.getFullYear() ? '（' + d.getFullYear() + '）' : ''}`;
+};
+const hhmm = ts => new Date(ts).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+
 const UI = {
   current: { folderId: 'all' },
+  view: 'list', q: '',
+  openDrawer() { aside.classList.add('open'); $('scrim').classList.add('on'); },
+  closeDrawer() { aside.classList.remove('open'); $('scrim').classList.remove('on'); },
+  leave(view) { this.view = view; this.closeDrawer(); this.hideHL(); clearInterval(this._tick); window.scrollTo(0, 0); },
+
   async refreshSidebar() {
     const folders = (await DB.all('folders')).sort((a, b) => a.createdAt - b.createdAt);
     const sessions = await DB.all('sessions');
     const count = id => sessions.filter(s => id === 'all' ? true : id === 'none' ? !s.folderId : s.folderId === id).length;
-    const item = (id, name, tag) => `<div class="folder ${this.current.folderId === id ? 'active' : ''}" onclick="UI.showFolder('${id}')"><span>${esc(name)} ${tag ? `<span class="tag">${tag}</span>` : ''}</span><span class="muted">${count(id)}</span></div>`;
-    document.getElementById('folderList').innerHTML = item('all', '全部錄音') + folders.map(f => item(f.id, f.name, KIND[f.kind])).join('') + item('none', '未分類');
-    if (navigator.storage?.estimate) { const e = await navigator.storage.estimate(); document.getElementById('storageInfo').textContent = `已用 ${(e.usage / 1048576).toFixed(0)} MB／可用約 ${(e.quota / 1073741824).toFixed(1)} GB（存在這台裝置）`; }
+    const on = id => this.view === 'list' && this.current.folderId === id ? 'active' : '';
+    const item = (id, icon, name) => `<div class="nav ${on(id)}" onclick="UI.showFolder('${id}')"><span>${icon} ${esc(name)}</span><span class="n">${count(id)}</span></div>`;
+    $('folderList').innerHTML = item('all', '🏠', '全部錄音')
+      + `<div class="side-h"><span>課程・會議・專案</span><button class="ghost" title="新增分類" onclick="UI.newFolder()">＋</button></div>`
+      + folders.map(f => item(f.id, KIND_ICON[f.kind] || '📁', f.name)).join('') + item('none', '🗂️', '未分類');
+    if (navigator.storage?.estimate) { const e = await navigator.storage.estimate(); $('storageInfo').textContent = `已用 ${(e.usage / 1048576).toFixed(0)} MB／可用約 ${(e.quota / 1073741824).toFixed(1)} GB（存在這台裝置）`; }
   },
   async folderOptions(sel) {
     const folders = await DB.all('folders');
     return `<option value="">未分類</option>` + folders.map(f => `<option value="${f.id}" ${f.id === sel ? 'selected' : ''}>${KIND[f.kind]}｜${esc(f.name)}</option>`).join('');
   },
   async newFolder() {
-    main.innerHTML = `<div class="card"><h2>新增分類</h2>
+    this.leave('newFolder'); await this.refreshSidebar();
+    main.innerHTML = `<div class="narrow"><div class="card"><h2>新增分類</h2>
       <label>名稱</label><input id="fName" placeholder="例如：統計學、週會、畢業專題">
       <label>類型</label><select id="fKind"><option value="course">課程</option><option value="meeting">會議</option><option value="project">專案</option></select>
-      <div class="row" style="margin-top:14px"><button class="primary" onclick="UI.saveNewFolder()">建立</button><button onclick="UI.showFolder('all')">取消</button></div></div>`;
-    document.getElementById('fName').focus();
+      <div class="row" style="margin-top:14px"><button class="primary" onclick="UI.saveNewFolder()">建立</button><button onclick="UI.showFolder('all')">取消</button></div></div></div>`;
+    $('fName').focus();
   },
   async saveNewFolder() {
-    const name = document.getElementById('fName').value.trim(); if (!name) return;
-    const f = { id: uid(), name, kind: document.getElementById('fKind').value, glossary: '', teacherSample: null, createdAt: Date.now() };
+    const name = $('fName').value.trim(); if (!name) return;
+    const f = { id: uid(), name, kind: $('fKind').value, glossary: '', teacherSample: null, createdAt: Date.now() };
     await DB.put('folders', f); this.showFolder(f.id);
   },
+
+  // ---------- 首頁與分類：依日期分組的卡片 ----------
   async showFolder(id) {
     if (Rec.state !== 'idle') return this.showRecorder();
-    this.current.folderId = id; aside.classList.add('collapsed'); await this.refreshSidebar();
+    this.current.folderId = id; this.leave('list'); await this.refreshSidebar();
     const folder = ['all', 'none'].includes(id) ? null : await DB.get('folders', id);
-    let sessions = await DB.all('sessions');
-    sessions = sessions.filter(s => id === 'all' ? true : id === 'none' ? !s.folderId : s.folderId === id).sort((a, b) => b.createdAt - a.createdAt);
+    const sessions = (await DB.all('sessions')).filter(s => id === 'all' ? true : id === 'none' ? !s.folderId : s.folderId === id).sort((a, b) => b.createdAt - a.createdAt);
     const folders = Object.fromEntries((await DB.all('folders')).map(f => [f.id, f]));
-    main.innerHTML = `
-      <div class="row" style="margin-bottom:12px"><h2 class="grow" style="margin:0">${folder ? esc(folder.name) + ` <span class="tag">${KIND[folder.kind]}</span>` : id === 'all' ? '全部錄音' : '未分類'}</h2>
-      <input id="q" placeholder="搜尋標題與逐字稿" style="max-width:260px" oninput="UI.filterList()"></div>
-      ${folder ? `<div class="card"><h3 style="margin-top:0">這個${KIND[folder.kind]}的設定</h3>
+    let html = '', lastDay = '';
+    for (const s of sessions) {
+      const day = dayLabel(s.createdAt);
+      if (day !== lastDay) { html += `<div class="day">${day}</div>`; lastDay = day; }
+      const segs = s.transcript?.segments || [];
+      const pv = s.notes?.overview || segs.slice(0, 6).map(g => g.text).join(' ') || (s.summary || '').replace(/[#*\-]/g, '').slice(0, 200);
+      const hl = segs.reduce((n, g) => n + (g.hl?.length || 0), 0);
+      const todo = s.notes?.actionItems?.filter(a => !a.done).length || 0;
+      const q = [s.title, s.notes?.overview, (s.notes?.keywords || []).join(' '), segs.map(g => g.text).join(' ')].join(' ').toLowerCase();
+      html += `<div class="sess" data-q="${esc(q)}" onclick="UI.showSession('${s.id}')">
+        <div class="t1"><b>${esc(s.title)}</b><span class="muted">${hhmm(s.createdAt)}</span></div>
+        <div class="muted">${fmt(s.duration)}${s.folderId && folders[s.folderId] && id === 'all' ? ' · ' + (KIND_ICON[folders[s.folderId].kind] || '') + ' ' + esc(folders[s.folderId].name) : ''}</div>
+        ${pv ? `<div class="pv">${esc(pv)}</div>` : `<div class="pv">還沒有逐字稿，點進去按「開始轉寫」。</div>`}
+        <div class="badges">${s.status === 'recording' ? '<span class="tag" style="color:var(--warn)">未正常結束</span>' : ''}${s.notes ? '<span class="tag">AI 筆記</span>' : ''}${todo ? `<span class="tag">☐ 待辦 ${todo}</span>` : ''}${s.bookmarks.length ? `<span class="tag">★ ${s.bookmarks.length}</span>` : ''}${hl ? `<span class="tag">🖍 ${hl}</span>` : ''}</div></div>`;
+    }
+    main.innerHTML = `<div class="narrow">
+      <div class="row" style="margin-bottom:6px"><h2 class="grow" style="margin:0">${folder ? (KIND_ICON[folder.kind] || '') + ' ' + esc(folder.name) + ` <span class="tag">${KIND[folder.kind]}</span>` : id === 'all' ? '全部錄音' : '未分類'}</h2><span class="muted" id="cnt">${sessions.length} 段錄音</span></div>
+      ${folder ? `<details class="fset"><summary>這個${KIND[folder.kind]}的設定（專有名詞、老師聲音）</summary>
         <label>專有名詞詞表（一行一個，轉寫前會先給模型，大幅減少英文術語聽錯）</label>
         <textarea id="gloss" rows="3" placeholder="例如：regression、p-value、ANOVA、林教授">${esc(folder.glossary)}</textarea>
         <label>老師的聲音樣本（2 到 10 秒，只有老師在講話）</label>
         <div class="row">${folder.teacherSample ? `<audio controls src="${URL.createObjectURL(folder.teacherSample)}"></audio><button onclick="UI.clearSample('${folder.id}')">移除</button>` : `<span class="muted">尚未設定。設定後，用 Gemini 或 OpenAI 轉寫時，每一週都會把老師固定標成「老師」。</span>`}
           <button onclick="UI.pickSample('${folder.id}')">從檔案選</button><button onclick="UI.recordSample('${folder.id}')">現在錄 8 秒</button></div>
-        <div class="row" style="margin-top:12px"><button onclick="UI.saveFolder('${folder.id}')">儲存設定</button><button class="danger" onclick="UI.deleteFolder('${folder.id}')">刪除分類</button><span id="fMsg" class="muted"></span></div></div>` : ''}
-      <div id="list">${sessions.length ? sessions.map(s => `<div class="sess" data-q="${esc((s.title + ' ' + (s.transcript?.segments || []).map(g => g.text).join(' ')).toLowerCase())}" onclick="UI.showSession('${s.id}')">
-        <div class="row"><b class="grow">${esc(s.title)}</b>${s.transcript ? '<span class="tag">有逐字稿</span>' : ''}${s.summary ? '<span class="tag">有重點</span>' : ''}${s.status === 'recording' ? '<span class="tag" style="color:var(--warn)">未正常結束</span>' : ''}</div>
-        <div class="muted">${fmtDate(s.createdAt)} · ${fmt(s.duration)}${s.folderId && folders[s.folderId] && id === 'all' ? ' · ' + esc(folders[s.folderId].name) : ''}${s.bookmarks.length ? ' · ★' + s.bookmarks.length : ''}</div></div>`).join('') : '<p class="muted">還沒有錄音。按左上角「開始新錄音」。</p>'}</div>`;
+        <div class="row" style="margin-top:12px"><button class="primary" onclick="UI.saveFolder('${folder.id}')">儲存設定</button><button class="danger" onclick="UI.deleteFolder('${folder.id}')">刪除分類</button><span id="fMsg" class="muted"></span></div></details>` : ''}
+      <div id="list">${html || `<div class="empty"><div class="big">🎙️</div><p>還沒有錄音。</p><button class="rec" onclick="UI.showRecorder()">● 開始錄音</button> <button onclick="UI.importFile()">⬆ 匯入音檔</button></div>`}</div>
+      <p id="noHit" class="muted hidden">找不到符合的錄音。</p></div>`;
+    if (this.q) this.filterList();
   },
-  filterList() { const q = document.getElementById('q').value.trim().toLowerCase(); document.querySelectorAll('#list .sess').forEach(e => e.classList.toggle('hidden', q && !e.dataset.q.includes(q))); },
-  async saveFolder(id) { const f = await DB.get('folders', id); f.glossary = document.getElementById('gloss').value; await DB.put('folders', f); document.getElementById('fMsg').textContent = '已儲存'; },
+  search(v) {
+    this.q = v.trim().toLowerCase();
+    if (this.view !== 'list') return this.showFolder(this.current.folderId);
+    this.filterList();
+  },
+  filterList() {
+    let shown = 0;
+    document.querySelectorAll('#list .sess').forEach(e => { const hit = !this.q || e.dataset.q.includes(this.q); e.classList.toggle('hidden', !hit); shown += hit; });
+    // 某一天全部被濾掉時，日期標題也收起來
+    document.querySelectorAll('#list .day').forEach(d => { let n = d.nextElementSibling, any = false; while (n && n.classList.contains('sess')) { any ||= !n.classList.contains('hidden'); n = n.nextElementSibling; } d.classList.toggle('hidden', !any); });
+    const has = document.querySelector('#list .sess');
+    $('noHit')?.classList.toggle('hidden', !has || shown > 0);
+  },
+  async saveFolder(id) { const f = await DB.get('folders', id); f.glossary = $('gloss').value; await DB.put('folders', f); $('fMsg').textContent = '已儲存'; },
   async deleteFolder(id) { if (!confirm('刪除這個分類？裡面的錄音會移到「未分類」，不會被刪掉。')) return; for (const s of await DB.byIndex('sessions', 'folderId', id)) { s.folderId = null; await DB.put('sessions', s); } await DB.del('folders', id); this.showFolder('all'); },
-  async clearSample(id) { const f = await DB.get('folders', id); f.teacherSample = null; await DB.put('folders', f); this.showFolder(id); },
-  pickSample(id) { const inp = document.getElementById('sampleInput'); inp.onchange = async () => { const file = inp.files[0]; inp.value = ''; if (!file) return; const pcm = await decode16k(file); const f = await DB.get('folders', id); f.teacherSample = encodeWav(pcm.subarray(0, 16000 * 10), 16000); await DB.put('folders', f); this.showFolder(id); }; inp.click(); },
+  async clearSample(id) { const f = await DB.get('folders', id); f.teacherSample = null; await DB.put('folders', f); await this.showFolder(id); main.querySelector('details.fset').open = true; },
+  pickSample(id) { const inp = $('sampleInput'); inp.onchange = async () => { const file = inp.files[0]; inp.value = ''; if (!file) return; const pcm = await decode16k(file); const f = await DB.get('folders', id); f.teacherSample = encodeWav(pcm.subarray(0, 16000 * 10), 16000); await DB.put('folders', f); await this.showFolder(id); main.querySelector('details.fset').open = true; }; inp.click(); },
   async recordSample(id) {
     const st = await navigator.mediaDevices.getUserMedia({ audio: true });
     const mr = new MediaRecorder(st), parts = [];
     mr.ondataavailable = e => parts.push(e.data);
-    document.getElementById('fMsg').textContent = '錄音中，請讓老師講話（或播放老師的影片）…';
+    $('fMsg').textContent = '錄音中，請讓老師講話（或播放老師的影片）…';
     mr.start(); await new Promise(r => setTimeout(r, 8000)); await new Promise(r => { mr.onstop = r; mr.stop(); }); st.getTracks().forEach(t => t.stop());
     const pcm = await decode16k(new Blob(parts, { type: mr.mimeType }));
-    const f = await DB.get('folders', id); f.teacherSample = encodeWav(pcm, 16000); await DB.put('folders', f); this.showFolder(id);
+    const f = await DB.get('folders', id); f.teacherSample = encodeWav(pcm, 16000); await DB.put('folders', f); await this.showFolder(id); main.querySelector('details.fset').open = true;
   },
 
   // ---------- 錄音畫面 ----------
   async showRecorder() {
-    aside.classList.add('collapsed');
-    if (Rec.state !== 'idle') return this.renderRecording();
+    if (Rec.state !== 'idle') { this.leave('rec'); return this.renderRecording(); }
+    this.leave('recSetup'); await this.refreshSidebar();
     const def = ['all', 'none'].includes(this.current.folderId) ? '' : this.current.folderId;
     const canSystem = !!navigator.mediaDevices?.getDisplayMedia && !/iPhone|iPad|Android/i.test(navigator.userAgent);
-    main.innerHTML = `<div class="card"><h2>開始新錄音</h2>
+    main.innerHTML = `<div class="rec-wrap" style="text-align:left"><div class="card"><h2>開始新錄音</h2>
       <label>標題</label><input id="rTitle" value="${esc(new Date().toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }))} 上課">
       <label>存到哪個分類</label><select id="rFolder">${await this.folderOptions(def)}</select>
       <label>錄哪裡的聲音</label>
@@ -542,41 +833,41 @@ const UI = {
         ${canSystem ? `<option value="system">電腦播放的聲音（影片、線上課）</option><option value="both">麥克風＋電腦聲音（線上會議）</option>` : ''}
       </select>
       ${canSystem ? `<p class="muted">錄電腦聲音時會跳出分享視窗：選要錄的瀏覽器分頁並勾選「分享分頁音訊」。Windows 可選整個螢幕並勾「分享系統音訊」。Mac 上錄其他 app（例如 Zoom 桌面版）的聲音，要等之後的 Mac 版。</p>` : `<p class="muted">手機只能錄麥克風。錄音時請保持螢幕開著（已自動防止休眠），手機盡量靠近講台。</p>`}
-      <div class="row" style="margin-top:14px"><button class="primary" onclick="UI.startRec()">● 開始錄音</button></div>
-      <p id="rErr" class="err"></p></div>`;
+      <div class="row" style="margin-top:14px"><button class="rec" style="padding:10px 22px;border-radius:99px" onclick="UI.startRec()">● 開始錄音</button></div>
+      <p id="rErr" class="err"></p></div></div>`;
   },
   async startRec() {
     try {
-      await Rec.start({ source: document.getElementById('rSource').value, folderId: document.getElementById('rFolder').value, title: document.getElementById('rTitle').value.trim() });
-      this.renderRecording();
-    } catch (e) { document.getElementById('rErr').textContent = (e.name === 'NotAllowedError' ? '沒有取得錄音權限。' : '') + e.message; }
+      await Rec.start({ source: $('rSource').value, folderId: $('rFolder').value, title: $('rTitle').value.trim() });
+      this.view = 'rec'; this.renderRecording();
+    } catch (e) { $('rErr').textContent = (e.name === 'NotAllowedError' ? '沒有取得錄音權限。' : '') + e.message; }
   },
   renderRecording() {
-    main.innerHTML = `<div class="card" style="text-align:center">
-      <div class="muted">${esc(Rec.session.title)}</div>
+    main.innerHTML = `<div class="rec-wrap"><div class="card" style="padding:28px 20px">
+      <div><span id="recDot" class="rec-dot ${Rec.state === 'paused' ? 'paused' : ''}"></span><b>${esc(Rec.session.title)}</b></div>
       <div class="big-time" id="recTime">0:00</div>
-      <div class="meter" style="max-width:360px;margin:8px auto 16px"><div id="recLvl"></div></div>
-      <div class="row" style="justify-content:center">
-        <button id="pauseBtn" onclick="UI.togglePause()">❚❚ 暫停</button>
+      <div class="meter" style="max-width:360px;margin:0 auto"><div id="recLvl"></div></div>
+      <div class="rec-btns">
+        <button id="pauseBtn" onclick="UI.togglePause()">${Rec.state === 'paused' ? '▶ 繼續' : '❚❚ 暫停'}</button>
         <button onclick="UI.mark()">★ 標記重點</button>
         <button onclick="UI.snap()">📷 拍白板</button>
-        <button class="primary" onclick="UI.stopRec()">■ 結束並儲存</button>
+        <button class="rec" onclick="UI.stopRec()">■ 結束並儲存</button>
       </div>
-      <input id="markLabel" placeholder="標記說明（選填，例如：會考）" style="max-width:360px;margin-top:12px">
+      <input id="markLabel" placeholder="標記說明（選填，例如：會考）" style="max-width:360px;margin-top:16px">
       <div id="marks" style="margin-top:10px"></div>
-      <p class="muted">錄音每 5 秒自動存一次，不會因為當機整段消失。快捷鍵：空白鍵＝標記重點。</p></div>`;
+      <p class="muted">錄音每 5 秒自動存一次，不會因為當機整段消失。快捷鍵：空白鍵＝標記重點。</p></div></div>`;
     this.drawMarks();
     clearInterval(this._tick);
-    this._tick = setInterval(() => { const t = document.getElementById('recTime'); if (!t) return; t.textContent = fmt(Rec.elapsed()); document.getElementById('recLvl').style.width = Math.min(100, Rec.level() * 160) + '%'; }, 100);
+    this._tick = setInterval(() => { const t = $('recTime'); if (!t) return; t.textContent = fmt(Rec.elapsed()); $('recLvl').style.width = Math.min(100, Rec.level() * 160) + '%'; }, 100);
   },
-  drawMarks() { const el = document.getElementById('marks'); if (el) el.innerHTML = Rec.session.bookmarks.map(b => `<span class="bm">★ ${fmt(b.t)} ${esc(b.label)}</span>`).join(''); },
-  togglePause() { if (Rec.state === 'recording') { Rec.pause(); document.getElementById('pauseBtn').textContent = '▶ 繼續'; } else { Rec.resume(); document.getElementById('pauseBtn').textContent = '❚❚ 暫停'; } },
-  async mark() { const l = document.getElementById('markLabel'); await Rec.bookmark(l.value.trim()); l.value = ''; this.drawMarks(); },
-  snap() { const inp = document.getElementById('photoInput'); inp.onchange = async () => { if (inp.files[0]) await Rec.addPhoto(inp.files[0]); inp.value = ''; }; inp.click(); },
+  drawMarks() { const el = $('marks'); if (el) el.innerHTML = Rec.session.bookmarks.map(b => `<span class="bm" style="margin:2px">★ ${fmt(b.t)} ${esc(b.label)}</span>`).join(''); },
+  togglePause() { if (Rec.state === 'recording') { Rec.pause(); $('pauseBtn').textContent = '▶ 繼續'; } else { Rec.resume(); $('pauseBtn').textContent = '❚❚ 暫停'; } $('recDot').classList.toggle('paused', Rec.state === 'paused'); },
+  async mark() { const l = $('markLabel'); if (!l) return; await Rec.bookmark(l.value.trim()); l.value = ''; this.drawMarks(); },
+  snap() { const inp = $('photoInput'); inp.onchange = async () => { if (inp.files[0]) await Rec.addPhoto(inp.files[0]); inp.value = ''; }; inp.click(); },
   async stopRec() { clearInterval(this._tick); const s = await Rec.stop(); this.showSession(s.id); },
 
   importFile() {
-    const inp = document.getElementById('fileInput');
+    const inp = $('fileInput');
     inp.onchange = async () => {
       const file = inp.files[0]; inp.value = ''; if (!file) return;
       const id = uid();
@@ -584,97 +875,295 @@ const UI = {
       const def = ['all', 'none'].includes(this.current.folderId) ? null : this.current.folderId;
       const s = { id, folderId: def, title: file.name.replace(/\.[^.]+$/, ''), createdAt: file.lastModified || Date.now(), duration: 0, mimeType: file.type || 'audio/mp4', source: 'import', bookmarks: [], transcript: null, summary: '', status: 'saved' };
       await DB.put('sessions', s);
-      const a = new Audio(URL.createObjectURL(file)); a.onloadedmetadata = async () => { if (isFinite(a.duration)) { s.duration = a.duration; await DB.put('sessions', s); this.showSession(id); } };
+      const a = new Audio(URL.createObjectURL(file)); a.onloadedmetadata = async () => { if (isFinite(a.duration)) { s.duration = a.duration; await DB.put('sessions', s); if (this.s?.id === id) { this.s.duration = a.duration; $('sDur').textContent = fmt(a.duration); } } };
       this.showSession(id);
     };
     inp.click();
   },
 
-  // ---------- 單一錄音 ----------
-  teacherOnly: false,
+  // ---------- 單一錄音：左邊摘要／逐字稿，右邊 AI 問答，底下播放列 ----------
+  teacherOnly: false, hlOnly: false, editing: false, kw: '', busy: null, busyMsg: '', err: '',
   async showSession(id) {
-    aside.classList.add('collapsed'); await this.refreshSidebar();
+    this.leave('session'); await this.refreshSidebar();
     const s = await DB.get('sessions', id); if (!s) return this.showFolder('all');
-    const photos = (await DB.byIndex('photos', 'sessionId', id)).sort((a, b) => a.t - b.t);
-    const audioUrl = URL.createObjectURL(await sessionAudio(id));
     if (s.transcript && !s.transcript.merged) { s.transcript.segments = mergeSegments(s.transcript.segments); s.transcript.merged = true; await DB.put('sessions', s); }
-    const segs = s.transcript?.segments || [];
-    const hasRoles = segs.some(g => g.role);
-    main.innerHTML = `
-      <div class="row" style="margin-bottom:10px"><button onclick="UI.showFolder(UI.current.folderId)">← 返回</button><span class="grow"></span><button class="danger" onclick="UI.deleteSession('${id}')">刪除</button></div>
-      <div class="card">
-        <input id="sTitle" value="${esc(s.title)}" style="font-size:18px;font-weight:600;border:0;padding:0;margin-bottom:6px" onchange="UI.patch('${id}',{title:this.value})">
-        <div class="row"><span class="muted">${fmtDate(s.createdAt)} · ${fmt(s.duration)}</span><span class="grow"></span><select style="width:auto" onchange="UI.patch('${id}',{folderId:this.value||null})">${await this.folderOptions(s.folderId)}</select></div>
-        <audio id="player" controls src="${audioUrl}" style="width:100%;margin-top:10px"></audio>
-        <div class="row" style="margin-top:6px"><span class="muted">速度</span>${[1, 1.25, 1.5, 2].map(r => `<button onclick="player.playbackRate=${r}">${r}×</button>`).join('')}</div>
-        ${s.bookmarks.length ? `<h3>我的標記</h3>${s.bookmarks.map(b => `<span class="bm" onclick="UI.seek(${b.t})">★ ${fmt(b.t)} ${esc(b.label)}</span>`).join('')}` : ''}
-        ${photos.length ? `<h3>照片</h3><div class="photos">${photos.map(p => `<div><img src="${URL.createObjectURL(p.blob)}" onclick="UI.seek(${p.t})"><div class="muted">${fmt(p.t)}</div></div>`).join('')}</div>` : ''}
+    if (this.sid !== id) { this.tab = s.transcript && !s.notes && !s.summary ? 'transcript' : 'summary'; this.rtab = 'chat'; this.kw = ''; this.editing = false; this.hlOnly = false; this.err = ''; }
+    this.sid = id; this.s = s;
+    this.photos = (await DB.byIndex('photos', 'sessionId', id)).sort((a, b) => a.t - b.t);
+    const audioUrl = URL.createObjectURL(await sessionAudio(id));
+    main.innerHTML = `<div class="sess-layout">
+      <div>
+        <div class="row"><button class="ghost" onclick="UI.showFolder(UI.current.folderId)">← 返回</button><span class="grow"></span>
+          <details class="menu"><summary>⤓ 匯出</summary><div class="menu-pop">
+            <button onclick="UI.copyMd()">複製筆記（貼到 Notion）</button>
+            <button onclick="UI.exportMd()">下載筆記 Markdown</button>
+            <button onclick="UI.exportSrt()">下載字幕 SRT</button>
+            <button onclick="UI.exportAudio()">下載原始音檔</button></div></details>
+          <button class="ghost danger" onclick="UI.deleteSession()">刪除</button></div>
+        <input id="sTitle" class="title-input" value="${esc(s.title)}" onchange="UI.patch({title:this.value})">
+        <div class="row"><span class="muted">${fmtDate(s.createdAt)} · <span id="sDur">${fmt(s.duration)}</span></span><select class="folder-sel" onchange="UI.patch({folderId:this.value||null})">${await this.folderOptions(s.folderId)}</select></div>
+        <div id="sHead"></div>
+        <div class="tabs" id="tabs"></div>
+        <div id="tabBody"></div>
       </div>
-      <div class="card">
-        <div class="row"><h3 class="grow" style="margin:0">逐字稿</h3>
-          ${hasRoles ? `<label style="margin:0;display:flex;gap:6px;align-items:center"><input type="checkbox" style="width:auto" ${this.teacherOnly ? 'checked' : ''} onchange="UI.teacherOnly=this.checked;UI.showSession('${id}')">只看老師</label>` : ''}
-          <button class="${segs.length ? '' : 'primary'}" onclick="UI.doTranscribe('${id}')">${segs.length ? '重新轉寫' : '開始轉寫'}</button></div>
-        <p id="tMsg" class="muted"></p>
-        ${hasRoles ? `<p class="muted">綠色是推定的老師。認錯人的話，點那一段的名字可以切換。</p>` : ''}
-        <div id="segs">${segs.map((g, i) => (this.teacherOnly && g.role === 'other') ? '' : `<div class="seg ${g.role || ''}" data-s="${g.start}" data-e="${g.end}"><span class="t" onclick="UI.seek(${g.start})">${fmt(g.start)}</span><div>${g.role ? `<div class="who" style="cursor:pointer" onclick="UI.flipRole('${id}','${esc(g.label)}')">${g.role === 'teacher' ? '老師' : '其他人'}</div>` : ''}<div contenteditable="true" onblur="UI.editSeg('${id}',${i},this.innerText)">${esc(g.text)}</div></div></div>`).join('')}</div>
-      </div>
-      <div class="card">
-        <div class="row"><h3 class="grow" style="margin:0">AI 整理重點</h3>
-          ${s.summary ? `<button onclick="UI.speak()">🔊 朗讀</button>` : ''}
-          <button ${segs.length ? '' : 'disabled'} onclick="UI.doSummary('${id}')">${s.summary ? '重新整理' : '產生重點'}</button></div>
-        <p id="sMsg" class="muted">${segs.length ? '' : '先轉寫才能整理重點。'}</p>
-        <div id="summary" class="summary">${mdToHtml(s.summary)}</div>
-      </div>
-      <div class="card"><h3 style="margin-top:0">匯出</h3><div class="row">
-        <button onclick="UI.exportMd('${id}')">筆記 Markdown</button>
-        <button ${segs.length ? '' : 'disabled'} onclick="UI.exportSrt('${id}')">字幕 SRT</button>
-        <button onclick="UI.exportAudio('${id}')">原始音檔</button>
-        <button onclick="UI.copyMd('${id}')">複製筆記（貼到 Notion）</button></div></div>`;
-    const player = document.getElementById('player');
+      <aside class="rpanel" id="rpanel"></aside>
+    </div>
+    <div class="player">
+      <audio id="player" src="${audioUrl}" preload="metadata"></audio>
+      <button class="pbtn" title="倒退 5 秒（←）" onclick="UI.skip(-5)">↺ 5</button>
+      <button class="pbtn play" id="playBtn" title="播放／暫停（空白鍵）" onclick="UI.togglePlay()">▶</button>
+      <button class="pbtn" title="快轉 5 秒（→）" onclick="UI.skip(5)">5 ↻</button>
+      <span class="ptime" id="pTime">0:00 / ${fmt(s.duration)}</span>
+      <input type="range" id="pRange" min="0" max="1000" value="0" oninput="UI.scrub(this.value)">
+      <button class="pbtn" id="pRate" title="播放速度" onclick="UI.cycleRate()">${this.rate || 1}×</button>
+    </div>`;
+    const player = $('player');
+    player.playbackRate = this.rate || 1;
     // MediaRecorder 錄出的 webm 沒有長度資訊，先跳到最後讓瀏覽器算出長度
     player.addEventListener('loadedmetadata', () => { if (player.duration === Infinity) { player.currentTime = 1e101; player.addEventListener('timeupdate', function f() { player.removeEventListener('timeupdate', f); player.currentTime = 0; }); } });
-    player.addEventListener('timeupdate', () => { const t = player.currentTime; document.querySelectorAll('.seg').forEach(e => e.classList.toggle('playing', t >= +e.dataset.s && t < +e.dataset.e)); });
+    player.addEventListener('timeupdate', () => this.onTime());
+    player.addEventListener('play', () => $('playBtn').textContent = '❚❚');
+    player.addEventListener('pause', () => $('playBtn').textContent = '▶');
+    this.paint();
   },
-  seek(t) { const p = document.getElementById('player'); p.currentTime = t; p.play(); },
-  async patch(id, v) { const s = await DB.get('sessions', id); Object.assign(s, v); await DB.put('sessions', s); this.refreshSidebar(); },
-  async editSeg(id, i, text) { const s = await DB.get('sessions', id); if (s.transcript.segments[i].text !== text) { s.transcript.segments[i].text = text; await DB.put('sessions', s); } },
-  async flipRole(id, label) {
-    const s = await DB.get('sessions', id);
-    const cur = s.transcript.segments.find(g => g.label === label)?.role;
-    s.transcript.segments.forEach(g => { if (g.label === label) g.role = cur === 'teacher' ? 'other' : 'teacher'; });
-    await DB.put('sessions', s); this.showSession(id);
+  dur() { const p = $('player'); return p && isFinite(p.duration) && p.duration > 0 ? p.duration : this.s?.duration || 0; },
+  onTime() {
+    const p = $('player'); if (!p) return; const t = p.currentTime, d = this.dur();
+    $('pTime').textContent = `${fmt(t)} / ${fmt(d)}`;
+    if (d && document.activeElement !== $('pRange')) $('pRange').value = Math.round(t / d * 1000);
+    document.querySelectorAll('.seg[data-s]').forEach(e => e.classList.toggle('playing', t >= +e.dataset.s && t < +e.dataset.e));
   },
-  async doTranscribe(id) {
-    const msg = document.getElementById('tMsg');
-    document.querySelectorAll('button').forEach(b => b.disabled = true);
-    try { await transcribeSession(id, t => msg.textContent = t); document.querySelectorAll('button').forEach(b => b.disabled = false); this.showSession(id); }
-    catch (e) { document.querySelectorAll('button').forEach(b => b.disabled = false); msg.innerHTML = `<span class="err">轉寫失敗：${esc(e.message)}</span>`; }
+  togglePlay() { const p = $('player'); if (!p) return; p.paused ? p.play() : p.pause(); },
+  skip(d) { const p = $('player'); if (p) p.currentTime = Math.max(0, Math.min(this.dur(), p.currentTime + d)); },
+  scrub(v) { const p = $('player'); if (p) p.currentTime = v / 1000 * this.dur(); },
+  cycleRate() { const r = [1, 1.25, 1.5, 2, 0.75]; this.rate = r[(r.indexOf(this.rate || 1) + 1) % r.length]; $('player').playbackRate = this.rate; $('pRate').textContent = this.rate + '×'; },
+  seek(t) { const p = $('player'); if (!p) return; p.currentTime = t; p.play(); },
+  async save() { await DB.put('sessions', this.s); },
+  async patch(v) { Object.assign(this.s, v); await this.save(); this.refreshSidebar(); },
+
+  paint() { this.paintHead(); this.paintTabs(); this.paintTab(); this.paintRight(); },
+  paintHead() {
+    const s = this.s, segs = s.transcript?.segments || [];
+    const stats = {}; let total = 0;
+    for (const g of segs) { const k = spkKey(g); if (!k) continue; const n = spkName(s, k), d = Math.max(0.5, g.end - g.start); (stats[n] ||= { d: 0, teacher: false }).d += d; if (g.role === 'teacher') stats[n].teacher = true; total += d; }
+    this._spk = Object.entries(stats).sort((a, b) => b[1].d - a[1].d);
+    const spk = this._spk.length ? `<div class="speakers">${this._spk.map(([n, v], i) => `<button class="spk" title="點一下改名" onclick="UI.renameSpk(${i})"><span class="av" style="background:${v.teacher ? 'var(--teacher)' : colorFor(n)}">${esc(initial(n))}</span>${esc(n)} <span class="muted">${Math.round(v.d / total * 100)}%</span></button>`).join('')}</div>` : '';
+    const kws = s.notes?.keywords || [];
+    const kw = kws.length ? `<div class="kws"><span class="muted">關鍵字</span>${kws.map((k, i) => `<button class="chip ${this.kw === k ? 'on' : ''}" onclick="UI.toggleKw(${i})">${esc(k)}</button>`).join('')}</div>` : '';
+    $('sHead').innerHTML = spk + kw;
   },
-  async doSummary(id) {
-    const msg = document.getElementById('sMsg'); msg.textContent = '整理中…';
-    try { const s = await DB.get('sessions', id); s.summary = await toTW(await summarize(s)); await DB.put('sessions', s); this.showSession(id); }
-    catch (e) { msg.innerHTML = `<span class="err">整理失敗：${esc(e.message)}</span>`; }
+  tabsList() {
+    const t = [['summary', '摘要'], ['transcript', '逐字稿']];
+    if (!WIDE.matches) t.push(['chat', '💬 AI 問答'], ['marks', '標記與照片']);
+    return t;
+  },
+  paintTabs() {
+    if (!this.tabsList().some(([k]) => k === this.tab)) this.tab = 'summary';
+    $('tabs').innerHTML = this.tabsList().map(([k, n]) => `<button class="${this.tab === k ? 'on' : ''}" onclick="UI.setTab('${k}')">${n}</button>`).join('');
+  },
+  setTab(k) { this.tab = k; this.hideHL(); this.paintTabs(); this.paintTab(); },
+  paintTab() {
+    const b = $('tabBody'); if (!b) return;
+    b.className = this.tab === 'chat' ? 'tabbody-chat' : '';
+    b.innerHTML = this.tab === 'summary' ? this.renderSummary() : this.tab === 'transcript' ? this.renderTranscript() : this.tab === 'chat' ? this.renderChat() : this.renderMarks();
+    if (this.tab === 'chat') this.scrollChat();
+    this.onTime();
+  },
+  paintRight() {
+    const r = $('rpanel'); if (!r) return;
+    if (!WIDE.matches) { r.innerHTML = ''; return; }
+    r.innerHTML = `<div class="tabs">${[['chat', '💬 AI 問答'], ['marks', `標記與照片${this.s.bookmarks.length + this.photos.length ? ' ' + (this.s.bookmarks.length + this.photos.length) : ''}`]].map(([k, n]) => `<button class="${this.rtab === k ? 'on' : ''}" onclick="UI.rtab='${k}';UI.paintRight()">${n}</button>`).join('')}</div>
+      <div class="rbody">${this.rtab === 'chat' ? this.renderChat() : `<div style="overflow:auto">${this.renderMarks()}</div>`}</div>`;
+    if (this.rtab === 'chat') this.scrollChat();
+  },
+  repaintChat() { if (WIDE.matches) this.paintRight(); else if (this.tab === 'chat') this.paintTab(); },
+  isBusy() { return this.busy && this.busyId === this.s?.id; },
+  busyBox() { return `<div class="empty"><div class="spinner"></div><p id="busyMsg">${esc(this.busyMsg || '處理中…')}</p></div>`; },
+  errBox() { return this.err ? `<p class="err">${esc(this.err)}</p>` : ''; },
+
+  // ----- 摘要分頁 -----
+  renderSummary() {
+    const s = this.s, n = s.notes;
+    if (this.isBusy()) return this.busyBox();
+    if (!s.transcript) return `${this.errBox()}<div class="empty"><div class="big">📝</div><p>這段錄音還沒有逐字稿。</p><button class="primary" onclick="UI.doTranscribe()">開始轉寫</button><p class="muted">轉寫完會自動產生 AI 筆記。引擎可在設定裡換。</p></div>`;
+    if (!n) return `${this.errBox()}${s.summary ? `<div class="ncard"><div class="row"><h3 class="grow" style="margin:0">AI 整理重點（舊版）</h3><button onclick="UI.speak()">🔊 朗讀</button><button class="primary" onclick="UI.doNotes()">產生新版筆記</button></div><div class="summary">${mdToHtml(s.summary)}</div></div>`
+      : `<div class="empty"><div class="big">✨</div><p>還沒有 AI 筆記。</p><button class="primary" ${llmKey() ? '' : 'disabled'} onclick="UI.doNotes()">產生 AI 筆記</button>${llmKey() ? '' : '<p class="muted">先到設定填入 AI 的 API key。</p>'}</div>`}`;
+    const todo = n.actionItems.map((a, i) => `<label class="todo ${a.done ? 'done' : ''}"><input type="checkbox" ${a.done ? 'checked' : ''} onchange="UI.todo(${i},this.checked)"><span>${esc(a.text)} ${tsLink(a.start)}</span><button class="ghost x" title="刪除" onclick="event.preventDefault();UI.delTodo(${i})">✕</button></label>`).join('');
+    return `${this.errBox()}
+      <div class="ncard"><h3>概述<span class="grow"></span><button class="ghost" onclick="UI.speak()">🔊 朗讀</button><button class="ghost" onclick="UI.doNotes()">↻ 重新整理</button></h3><p>${esc(n.overview)}</p></div>
+      <div class="ncard"><h3>☑️ 待辦事項</h3>${todo || '<p class="muted">沒有提到作業或期限。</p>'}
+        <input id="todoIn" placeholder="＋ 新增待辦，按 Enter" style="margin-top:8px" onkeydown="if(event.key==='Enter'&&!event.isComposing)UI.addTodo(this.value)"></div>
+      ${n.outline.length ? `<div class="ncard"><h3>🧭 大綱</h3>${n.outline.map(o => `<div class="ol">${tsLink(o.start)}<b>${esc(o.title)}</b><ul>${o.bullets.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`).join('')}</div>` : ''}
+      ${n.glossary.length ? `<div class="ncard"><h3>📖 名詞解釋</h3><ul>${n.glossary.map(g => `<li><b>${esc(g.term)}</b>：${esc(g.meaning)}</li>`).join('')}</ul></div>` : ''}
+      ${n.unclear.length ? `<div class="ncard"><h3>🤔 可能還沒懂的地方</h3><ul>${n.unclear.map(u => `<li>${esc(u.text)} ${tsLink(u.start)}</li>`).join('')}</ul></div>` : ''}
+      ${n.questions.length ? `<div class="ncard"><h3>📝 複習問題</h3>${n.questions.map((q, i) => `<details class="qa"><summary>${i + 1}. ${esc(q.q)}</summary><div>${esc(q.a)}</div></details>`).join('')}</div>` : ''}`;
+  },
+  async todo(i, done) { this.s.notes.actionItems[i].done = done; await this.save(); this.paintTab(); },
+  async delTodo(i) { this.s.notes.actionItems.splice(i, 1); await this.save(); this.paintTab(); },
+  async addTodo(text) { text = text.trim(); if (!text) return; this.s.notes.actionItems.push({ text, start: -1, done: false }); await this.save(); this.paintTab(); $('todoIn')?.focus(); },
+
+  // ----- 逐字稿分頁 -----
+  renderTranscript() {
+    const s = this.s, segs = s.transcript?.segments || [];
+    if (this.isBusy()) return this.busyBox();
+    if (!segs.length) return `${this.errBox()}<div class="empty"><div class="big">📝</div><p>還沒有逐字稿。</p><button class="primary" onclick="UI.doTranscribe()">開始轉寫</button></div>`;
+    const hasRoles = segs.some(g => g.role), hasHL = segs.some(g => g.hl?.length);
+    if (!hasHL) this.hlOnly = false;
+    const rows = segs.map((g, i) => {
+      if ((this.teacherOnly && g.role === 'other') || (this.hlOnly && !g.hl?.length)) return '';
+      const name = spkName(s, spkKey(g));
+      const bms = s.bookmarks.filter(b => b.t >= g.start && b.t < g.end).map(b => `<span class="bm" title="錄音時的標記">★ ${esc(b.label)}</span>`).join('');
+      return `<div class="seg ${g.role || ''}" data-s="${g.start}" data-e="${g.end}">
+        <div class="seg-head">${name ? `<span class="av" style="background:${g.role === 'teacher' ? 'var(--teacher)' : colorFor(name)}">${esc(initial(name))}</span><button class="who" title="點一下改名" onclick="UI.renameSeg(${i})">${esc(name)}</button>` : ''}${tsLink(g.start)}${bms}${g.role ? `<button class="ghost mini" title="切換這個人是不是老師" onclick="UI.flipRole(${i})">${g.role === 'teacher' ? '不是老師' : '設成老師'}</button>` : ''}</div>
+        <div class="seg-text ${name ? '' : 'nolabel'}" data-i="${i}" ${this.editing ? `contenteditable="true" onblur="UI.editSeg(${i},this.innerText)">${esc(g.text)}` : `>${richText(g.text, g.hl, this.kw)}`}</div></div>`;
+    }).join('');
+    return `${this.errBox()}<div class="toolbar">
+      ${hasRoles ? `<label class="toggle"><input type="checkbox" ${this.teacherOnly ? 'checked' : ''} onchange="UI.teacherOnly=this.checked;UI.paintTab()">只看老師</label>` : ''}
+      ${hasHL ? `<label class="toggle"><input type="checkbox" ${this.hlOnly ? 'checked' : ''} onchange="UI.hlOnly=this.checked;UI.paintTab()">只看重點</label>` : ''}
+      <label class="toggle"><input type="checkbox" ${this.editing ? 'checked' : ''} onchange="UI.editing=this.checked;UI.paintTab()">編輯文字</label>
+      ${this.kw ? `<button class="chip on" onclick="UI.kw='';UI.paintHead();UI.paintTab()">「${esc(this.kw)}」${segs.filter(g => g.text.toLowerCase().includes(this.kw.toLowerCase())).length} 處 ✕</button>` : ''}
+      <span class="grow"></span><button onclick="UI.doTranscribe()">重新轉寫</button></div>
+      <p class="muted" style="margin-top:0">${this.editing ? '直接點文字修改，離開那一段就會存檔。改過的段落，重點會被清掉。' : '用滑鼠或手指選取文字可以畫重點，點黃色的地方取消。點名字可以改名。'}</p>
+      <div id="segs">${rows || '<p class="muted">沒有符合的段落。</p>'}</div>`;
+  },
+  async editSeg(i, text) { const g = this.s.transcript.segments[i]; if (g.text !== text) { g.text = text; g.hl = []; await this.save(); } },
+  async flipRole(i) {
+    const segs = this.s.transcript.segments, label = segs[i].label, cur = segs[i].role;
+    segs.forEach(g => { if (g.label === label) g.role = cur === 'teacher' ? 'other' : 'teacher'; });
+    await this.save(); this.paintHead(); this.paintTab();
+  },
+  renameSpk(i) { this.rename(this._spk[i][0]); },
+  renameSeg(i) { this.rename(spkName(this.s, spkKey(this.s.transcript.segments[i]))); },
+  async rename(old) {
+    const n = prompt('這位說話者叫什麼名字？', old)?.trim();
+    if (!n || n === old) return;
+    const s = this.s; s.speakerNames ||= {};
+    for (const g of s.transcript.segments) { const k = spkKey(g); if (k && spkName(s, k) === old) s.speakerNames[k] = n; }
+    await this.save(); this.paintHead(); this.paintTab();
+  },
+  toggleKw(i) {
+    const k = this.s.notes.keywords[i];
+    this.kw = this.kw === k ? '' : k;
+    if (this.kw) { this.tab = 'transcript'; this.hlOnly = false; }
+    this.paintHead(); this.paintTabs(); this.paintTab();
+    document.querySelector('#segs mark.kw')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  },
+
+  // 選取逐字稿文字時，在旁邊出現「畫重點」按鈕
+  checkSel() {
+    const sel = getSelection();
+    if (this.view !== 'session' || this.editing || !sel.rangeCount || sel.isCollapsed) return this.hideHL();
+    const r = sel.getRangeAt(0), elOf = n => n.nodeType === 1 ? n : n.parentElement;
+    const el = elOf(r.startContainer)?.closest('.seg-text');
+    if (!el || el !== elOf(r.endContainer)?.closest('.seg-text')) return this.hideHL();
+    const off = (node, o) => { const x = document.createRange(); x.selectNodeContents(el); x.setEnd(node, o); return x.toString().length; };
+    const a = off(r.startContainer, r.startOffset), b = off(r.endContainer, r.endOffset);
+    if (b - a < 1) return this.hideHL();
+    this._sel = { i: +el.dataset.i, a, b };
+    const rect = r.getBoundingClientRect(), btn = $('hlBtn');
+    btn.style.left = Math.min(innerWidth - 70, Math.max(70, rect.left + rect.width / 2)) + 'px';
+    btn.style.top = (rect.top > 60 ? rect.top - 44 : rect.bottom + 8) + 'px';
+    btn.classList.remove('hidden');
+  },
+  hideHL() { $('hlBtn')?.classList.add('hidden'); },
+  async addHL() {
+    if (!this._sel) return;
+    const { i, a, b } = this._sel, g = this.s.transcript.segments[i];
+    const list = [...(g.hl || []), [a, b]].sort((x, y) => x[0] - y[0]), m = [];
+    for (const r of list) { const l = m[m.length - 1]; if (l && r[0] <= l[1]) l[1] = Math.max(l[1], r[1]); else m.push([...r]); }
+    g.hl = m; this._sel = null;
+    getSelection().removeAllRanges(); this.hideHL();
+    await this.save(); this.paintTab();
+  },
+  async removeHL(i, h) {
+    const g = this.s.transcript.segments[i]; g.hl.splice(h, 1);
+    await this.save(); this.paintTab();
+  },
+
+  // ----- AI 問答 -----
+  renderChat() {
+    const s = this.s;
+    if (!s.transcript) return `<div class="empty"><p>轉寫完就可以問這段錄音任何問題。</p></div>`;
+    const chat = s.chat || [];
+    const cp = S.chatProvider || S.summaryProvider;
+    if (!keyFor(cp)) return `<div class="empty"><p>AI 問答要先到設定填入${cp === 'groq' ? ' Groq（免費）' : ''} API key。</p><button onclick="UI.showSettings()">⚙️ 去設定</button></div>`;
+    const msgs = chat.map(m => m.role === 'user' ? `<div class="msg user">${esc(m.text)}</div>` : `<div class="msg ai">${this.linkTimes(mdToHtml(m.text))}</div>`).join('');
+    const sugg = ['老師說哪些會考？', '幫我列出作業和期限', '用三句話解釋今天的重點', '有哪些地方我可能沒聽懂？'];
+    return `<div class="chat"><div class="chat-log" id="chatLog">
+        ${msgs || `<div class="muted" style="padding:6px 2px">問這段錄音任何問題，AI 只根據逐字稿回答，並附上時間，點時間可以跳去聽。</div>`}
+        ${this.asking === s.id ? '<div class="msg ai muted">思考中…</div>' : ''}</div>
+      ${chat.length ? '' : `<div class="chips">${sugg.map(q => `<button onclick="UI.ask('${q}')">${q}</button>`).join('')}</div>`}
+      <p id="chatErr" class="err">${esc(this.chatErr || '')}</p>
+      <div class="chat-input"><textarea id="chatIn" rows="2" placeholder="問這段錄音…（Enter 送出）" onkeydown="if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();UI.ask()}"></textarea><button class="primary" ${this.asking ? 'disabled' : ''} onclick="UI.ask()">送出</button></div>
+      ${chat.length ? `<div style="text-align:right"><button class="ghost" style="font-size:12px" onclick="UI.clearChat()">清除對話</button></div>` : ''}</div>`;
+  },
+  linkTimes(html) { return html.replace(/\[(\d{1,2}(?::\d{2}){1,2})\]/g, (m, t) => `<a class="ts" onclick="UI.seek(${t.split(':').reduce((a, x) => a * 60 + +x, 0)})">${t}</a>`); },
+  scrollChat() { const l = $('chatLog'); if (l) l.scrollTop = l.scrollHeight; if (!WIDE.matches && this.tab === 'chat' && this.asking) l?.lastElementChild?.scrollIntoView({ block: 'nearest' }); },
+  async ask(q) {
+    const s = this.s, inp = $('chatIn');
+    q = (q ?? inp?.value ?? '').trim();
+    if (!q || this.asking) return;
+    s.chat ||= []; s.chat.push({ role: 'user', text: q });
+    this.asking = s.id; this.chatErr = ''; this.repaintChat();
+    try { s.chat.push({ role: 'ai', text: await askAI(s, q) }); }
+    catch (e) { s.chat.pop(); this.chatErr = '回答失敗：' + e.message; }
+    this.asking = null;
+    await DB.put('sessions', s);
+    if (this.s === s) { this.repaintChat(); if (this.chatErr) $('chatIn').value = q; }
+  },
+  async clearChat() { if (!confirm('清除這段錄音的問答紀錄？')) return; this.s.chat = []; await this.save(); this.repaintChat(); },
+
+  // ----- 標記與照片 -----
+  renderMarks() {
+    const s = this.s;
+    if (!s.bookmarks.length && !this.photos.length) return `<div class="empty"><p>錄音時按「★ 標記重點」或「📷 拍白板」，會出現在這裡。</p></div>`;
+    return `${s.bookmarks.length ? `<h3>★ 錄音時的標記</h3><div class="marks-list">${s.bookmarks.map(b => `<span class="bm" onclick="UI.seek(${b.t})">★ ${fmt(b.t)} ${esc(b.label)}</span>`).join('')}</div>` : ''}
+      ${this.photos.length ? `<h3 style="margin-top:14px">📷 照片</h3><div class="photos">${this.photos.map(p => `<div><img src="${URL.createObjectURL(p.blob)}" onclick="UI.seek(${p.t})"><div class="muted">${fmt(p.t)}</div></div>`).join('')}</div>` : ''}`;
+  },
+
+  // ----- 轉寫與 AI 筆記 -----
+  async doTranscribe() {
+    const id = this.s.id;
+    this.busy = 'transcribe'; this.busyId = id; this.busyMsg = '準備中…'; this.err = ''; this.paint();
+    try {
+      const s = await transcribeSession(id, t => { this.busyMsg = t; const el = $('busyMsg'); if (el) el.textContent = t; });
+      this.busy = null;
+      if (this.sid === id) this.s = s;
+      if (llmKey()) { if (this.sid === id) this.tab = 'summary'; await this.doNotes(s); }
+      else if (this.sid === id) { this.tab = 'transcript'; this.paint(); }
+    } catch (e) { this.busy = null; this.err = '轉寫失敗：' + e.message; if (this.sid === id) this.paint(); }
+  },
+  async doNotes(s = this.s) {
+    this.busy = 'notes'; this.busyId = s.id; this.busyMsg = 'AI 正在整理筆記…'; this.err = '';
+    if (this.s === s) this.paint();
+    try { s.notes = await makeNotes(s); await DB.put('sessions', s); }
+    catch (e) { this.err = '整理筆記失敗：' + e.message; }
+    this.busy = null;
+    if (this.s === s) this.paint();
   },
   speak() {
+    const n = this.s.notes;
+    const text = n ? [n.overview, ...n.outline.map(o => o.title + '。' + o.bullets.join('。'))].join('\n') : document.querySelector('.summary')?.innerText || '';
     speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(document.getElementById('summary').innerText.replace(/[#*]/g, ''));
+    const u = new SpeechSynthesisUtterance(text.replace(/[#*]/g, ''));
     u.lang = 'zh-TW'; u.voice = speechSynthesis.getVoices().find(v => v.lang === 'zh-TW') || null; speechSynthesis.speak(u);
   },
-  async deleteSession(id) { if (!confirm('確定刪除這段錄音與逐字稿？無法復原。')) return; await DB.delByIndex('chunks', 'sessionId', id); await DB.delByIndex('photos', 'sessionId', id); await DB.del('sessions', id); this.showFolder(this.current.folderId); },
-  async exportMd(id) { const s = await DB.get('sessions', id); const f = s.folderId && await DB.get('folders', s.folderId); download(s.title + '.md', new Blob([toMarkdown(s, f)], { type: 'text/markdown' })); },
-  async copyMd(id) { const s = await DB.get('sessions', id); const f = s.folderId && await DB.get('folders', s.folderId); await navigator.clipboard.writeText(toMarkdown(s, f)); alert('已複製，可以直接貼到 Notion。'); },
-  async exportSrt(id) { const s = await DB.get('sessions', id); download(s.title + '.srt', new Blob([toSrt(s)], { type: 'text/plain' })); },
-  async exportAudio(id) { const s = await DB.get('sessions', id); const b = await sessionAudio(id); download(s.title + (b.type.includes('mp4') ? '.m4a' : b.type.includes('wav') ? '.wav' : '.webm'), b); },
+  async deleteSession() { const id = this.s.id; if (!confirm('確定刪除這段錄音與逐字稿？無法復原。')) return; await DB.delByIndex('chunks', 'sessionId', id); await DB.delByIndex('photos', 'sessionId', id); await DB.del('sessions', id); this.showFolder(this.current.folderId); },
+  async mdNow() { const s = this.s; return toMarkdown(s, s.folderId && await DB.get('folders', s.folderId)); },
+  async exportMd() { download(this.s.title + '.md', new Blob([await this.mdNow()], { type: 'text/markdown' })); },
+  async copyMd() { await navigator.clipboard.writeText(await this.mdNow()); alert('已複製，可以直接貼到 Notion。'); },
+  async exportSrt() { if (!this.s.transcript) return alert('還沒有逐字稿。'); download(this.s.title + '.srt', new Blob([toSrt(this.s)], { type: 'text/plain' })); },
+  async exportAudio() { const b = await sessionAudio(this.s.id); download(this.s.title + (b.type.includes('mp4') ? '.m4a' : b.type.includes('wav') ? '.wav' : '.webm'), b); },
 
   // ---------- 設定 ----------
-  showSettings() {
-    aside.classList.add('collapsed');
+  async showSettings() {
+    this.leave('settings'); await this.refreshSidebar();
     const opt = (v, t, cur) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${t}</option>`;
-    main.innerHTML = `<div class="card"><h2>設定</h2>
+    main.innerHTML = `<div class="narrow"><div class="card"><h2>設定</h2>
       <p class="note">API key 只存在這個瀏覽器裡，直接送到你選的服務，不會經過任何其他伺服器。不要在別人的電腦上填。</p>
-      <h3>轉寫引擎</h3>
+      <h3 style="margin-top:16px">轉寫引擎</h3>
       <select id="engine">${opt('gemini', 'Google Gemini（免費額度，分得出老師與學生）', S.engine)}${opt('whisper-api', 'Groq Whisper（免費額度，每天約 8 小時，不分說話者）', S.engine)}${opt('whispercpp', '我 Mac 上的 whisper.cpp（完全免費、不上網，不分說話者）', S.engine)}${opt('openai-diarize', 'OpenAI（付費約 US$0.36／小時，分得出老師與學生）', S.engine)}</select>
-      <label>Gemini API key（轉寫與整理重點共用，到 <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> 免費申請）</label><input id="geminiKey" type="password" value="${esc(S.geminiKey)}" placeholder="AIza...">
+      <label>Gemini API key（轉寫、AI 筆記、問答共用，到 <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> 免費申請）</label><input id="geminiKey" type="password" value="${esc(S.geminiKey)}" placeholder="AIza...">
       <p class="muted">免費方案的錄音會被 Google 拿去改進模型。不想這樣就選 Groq 或 Mac 本機。</p>
       <label>Gemini 模型</label><input id="geminiModel" value="${esc(S.geminiModel)}">
       <label>OpenAI API key</label><input id="openaiKey" type="password" value="${esc(S.openaiKey)}" placeholder="sk-...">
@@ -684,21 +1173,47 @@ const UI = {
       <label>本機 whisper-server 網址</label><input id="localUrl" value="${esc(S.localUrl)}">
       <label>語言</label><select id="language">${opt('', '自動（中英夾雜選這個）', S.language)}${opt('zh', '中文', S.language)}${opt('en', '英文', S.language)}</select>
       <label>每次送出的長度（分鐘）</label><input id="chunkMin" type="number" min="1" max="20" value="${S.chunkMin}">
-      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="toTraditional" style="width:auto" ${S.toTraditional ? 'checked' : ''}>把簡體字轉成台灣繁體（OpenCC）</label>
-      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="noiseSuppression" style="width:auto" ${S.noiseSuppression ? 'checked' : ''}>錄音時開啟降噪（教室吵時試試；老師離很遠時可能反而聽不清楚）</label>
-      <h3>AI 整理重點</h3>
-      <select id="summaryProvider">${opt('gemini', 'Google Gemini（免費）', S.summaryProvider)}${opt('openai', 'OpenAI', S.summaryProvider)}${opt('anthropic', 'Anthropic（Claude）', S.summaryProvider)}</select>
-      <label>模型名稱（空白＝用預設）</label><input id="summaryModel" value="${esc(S.summaryModel)}">
+      <label class="toggle" style="margin-top:10px"><input type="checkbox" id="toTraditional" ${S.toTraditional ? 'checked' : ''}>把簡體字轉成台灣繁體（OpenCC）</label>
+      <label class="toggle" style="margin-top:6px"><input type="checkbox" id="noiseSuppression" ${S.noiseSuppression ? 'checked' : ''}>錄音時開啟降噪（教室吵時試試；老師離很遠時可能反而聽不清楚）</label>
+      <h3 style="margin-top:20px">AI 筆記與問答</h3>
+      <label>AI 筆記用</label>
+      <select id="summaryProvider">${opt('gemini', 'Google Gemini', S.summaryProvider)}${opt('openai', 'OpenAI（付費）', S.summaryProvider)}${opt('anthropic', 'Anthropic Claude（付費）', S.summaryProvider)}</select>
+      <label>AI 筆記的模型名稱（空白＝用預設）</label><input id="summaryModel" value="${esc(S.summaryModel)}">
+      <label>AI 問答用</label>
+      <select id="chatProvider">${opt('groq', 'Groq 免費（和轉寫共用 Groq key，只挑相關段落給 AI）', S.chatProvider)}${opt('gemini', 'Google Gemini（看整份逐字稿）', S.chatProvider)}${opt('openai', 'OpenAI（付費）', S.chatProvider)}${opt('anthropic', 'Anthropic Claude（付費）', S.chatProvider)}</select>
+      <label>AI 問答的模型名稱（空白＝用預設；Groq 預設 openai/gpt-oss-120b）</label><input id="chatModel" value="${esc(S.chatModel)}">
+      <label>筆記與問答專用的 Gemini key（選填）</label><input id="geminiTextKey" type="password" value="${esc(S.geminiTextKey)}" placeholder="留空就用上面那把">
+      <p class="muted">上面那把 key 如果綁了帳單會花錢。用另一個 Google 帳號、沒綁帳單的專案申請一把填在這裡，筆記和問答就走免費額度（免費額度的內容會被 Google 拿去改進模型）。</p>
       <label>Anthropic API key</label><input id="anthropicKey" type="password" value="${esc(S.anthropicKey)}">
-      <div class="row" style="margin-top:14px"><button class="primary" onclick="UI.saveSettings()">儲存</button><span id="setMsg" class="muted"></span></div></div>`;
+      <div class="row" style="margin-top:16px"><button class="primary" onclick="UI.saveSettings()">儲存</button><span id="setMsg" class="muted"></span></div>
+      <h3 style="margin-top:20px">快捷鍵</h3>
+      <p class="muted">錄音時：空白鍵＝標記重點。聽錄音時：空白鍵＝播放／暫停，← →＝倒退／快轉 5 秒。</p></div></div>`;
   },
   saveSettings() {
-    const g = id => document.getElementById(id);
-    S = { ...S, engine: g('engine').value, geminiKey: g('geminiKey').value.trim(), geminiModel: g('geminiModel').value.trim() || Settings.defaults.geminiModel, openaiKey: g('openaiKey').value.trim(), whisperBase: g('whisperBase').value.trim(), whisperKey: g('whisperKey').value.trim(), whisperModel: g('whisperModel').value.trim(), localUrl: g('localUrl').value.trim(), language: g('language').value, chunkMin: Math.min(20, Math.max(1, +g('chunkMin').value || 10)), toTraditional: g('toTraditional').checked, noiseSuppression: g('noiseSuppression').checked, summaryProvider: g('summaryProvider').value, summaryModel: g('summaryModel').value.trim(), anthropicKey: g('anthropicKey').value.trim() };
+    const g = id => $(id);
+    S = { ...S, engine: g('engine').value, geminiKey: g('geminiKey').value.trim(), geminiModel: g('geminiModel').value.trim() || Settings.defaults.geminiModel, openaiKey: g('openaiKey').value.trim(), whisperBase: g('whisperBase').value.trim(), whisperKey: g('whisperKey').value.trim(), whisperModel: g('whisperModel').value.trim(), localUrl: g('localUrl').value.trim(), language: g('language').value, chunkMin: Math.min(20, Math.max(1, +g('chunkMin').value || 10)), toTraditional: g('toTraditional').checked, noiseSuppression: g('noiseSuppression').checked, summaryProvider: g('summaryProvider').value, summaryModel: g('summaryModel').value.trim(), chatProvider: g('chatProvider').value, chatModel: g('chatModel').value.trim(), geminiTextKey: g('geminiTextKey').value.trim(), anthropicKey: g('anthropicKey').value.trim() };
     Settings.save(S); g('setMsg').textContent = '已儲存';
   },
 };
-document.addEventListener('keydown', e => { if (e.code === 'Space' && Rec.state !== 'idle' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) { e.preventDefault(); UI.mark(); } });
+
+// 點黃色重點取消（只在沒有選取文字時）
+main.addEventListener('click', e => {
+  const m = e.target.closest('mark.hl'); if (!m || UI.editing || !getSelection().isCollapsed) return;
+  UI.removeHL(+m.closest('.seg-text').dataset.i, +m.dataset.h);
+});
+let _selT; document.addEventListener('selectionchange', () => { clearTimeout(_selT); _selT = setTimeout(() => UI.checkSel(), 120); });
+window.addEventListener('scroll', () => UI.hideHL(), { passive: true });
+document.addEventListener('click', e => { document.querySelectorAll('details.menu[open]').forEach(d => { if (!d.contains(e.target) || e.target.closest('.menu-pop button')) d.open = false; }); });
+WIDE.addEventListener('change', () => { if (UI.view === 'session' && UI.s) { UI.paintTabs(); UI.paintTab(); UI.paintRight(); } });
+document.addEventListener('keydown', e => {
+  const a = document.activeElement;
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName) || a.isContentEditable || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (Rec.state !== 'idle') { if (e.code === 'Space' && UI.view === 'rec') { e.preventDefault(); UI.mark(); } return; }
+  if (UI.view !== 'session') return;
+  if (e.code === 'Space') { e.preventDefault(); a.blur?.(); UI.togglePlay(); }
+  else if (e.code === 'ArrowLeft') { e.preventDefault(); UI.skip(-5); }
+  else if (e.code === 'ArrowRight') { e.preventDefault(); UI.skip(5); }
+});
 
 (async () => {
   await DB.open();
