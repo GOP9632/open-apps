@@ -1,4 +1,64 @@
 <!doctype html>
-<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>open-apps</title>
-<style>body{font:16px/1.6 -apple-system,"PingFang TC","Noto Sans TC",sans-serif;max-width:640px;margin:40px auto;padding:0 16px;color:#1d2129;background:#f6f7f9}@media (prefers-color-scheme:dark){body{color:#e6e8eb;background:#111418}a{color:#5b9dff}}a{display:block;padding:14px 16px;border:1px solid #8884;border-radius:12px;text-decoration:none;margin:10px 0}</style></head>
-<body><h1>open-apps</h1><a href="apps/class-recorder/">🎙️ 課堂錄音<br><small>錄課、逐字稿、分辨老師、AI 整理重點</small></a><a href="https://github.com/GOP9632/open-apps/tree/main/apps/mac-cleaner">🧹 Mop<br><small>Mac 清理：系統狀態、清垃圾、空間地圖、移除 App（Mac App）</small></a></body></html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>open-apps</title>
+<meta name="description" content="把常用的付費軟體做成免費開源的版本">
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#1d2129;--muted:#5f6670;--line:#e3e6ea;--accent:#2f6fec;--tag:#eef3ff;--tag2:#f1f2f4}
+@media (prefers-color-scheme:dark){:root{--bg:#111418;--card:#1a1e24;--text:#e6e8eb;--muted:#9aa1ab;--line:#2a3038;--accent:#5b9dff;--tag:#1e2a40;--tag2:#252a31}}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.6 -apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC",sans-serif;color:var(--text);background:var(--bg)}
+main{max-width:680px;margin:0 auto;padding:48px 16px 64px}
+h1{font-size:28px;margin:0 0 6px}
+.lead{color:var(--muted);margin:0 0 28px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:14px 0}
+.top{display:flex;gap:14px;align-items:flex-start}
+.icon{font-size:30px;line-height:1}
+.card h2{font-size:19px;margin:0}
+.tags{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 8px}
+.tag{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--tag2);color:var(--muted)}
+.tag.web{background:var(--tag);color:var(--accent)}
+.card p{margin:0;color:var(--muted)}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.btn{display:inline-block;padding:8px 16px;border-radius:10px;text-decoration:none;font-weight:600;font-size:15px}
+.btn.primary{background:var(--accent);color:#fff}
+.btn.ghost{border:1px solid var(--line);color:var(--text)}
+details{margin-top:14px}
+summary{cursor:pointer;color:var(--accent);font-weight:600}
+ol{margin:8px 0 0;padding-left:22px;color:var(--text)}
+ol li{margin:4px 0}
+footer{margin-top:36px;font-size:14px;color:var(--muted)}
+footer a{color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <h1>open-apps</h1>
+  <p class="lead">把常用的付費軟體，做成自己和朋友能免費用的開源版本。網頁版點開就能用，Mac App 要在自己電腦上裝。</p>
+  <div id="list">載入中…</div>
+  <footer>原始碼在 <a href="https://github.com/GOP9632/open-apps">GitHub</a>。</footer>
+</main>
+<script>
+// App 清單放在 apps.json，新增 App 只要改那個檔案
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+fetch('apps.json').then(r => r.json()).then(apps => {
+  document.getElementById('list').innerHTML = apps.map(a => {
+    const web = a.type === 'web';
+    const tags = [
+      `<span class="tag ${web ? 'web' : ''}">${web ? '網頁版，點開就能用' : esc(a.platform || '電腦') + ' App，要自己裝'}</span>`,
+      a.like ? `<span class="tag">取代 ${esc(a.like)}</span>` : ''
+    ].join('');
+    const actions = web
+      ? `<a class="btn primary" href="${esc(a.url)}">打開</a>` + (a.guide ? `<a class="btn ghost" href="${esc(a.guide)}">使用說明</a>` : '')
+      : (a.guide ? `<a class="btn ghost" href="${esc(a.guide)}">完整說明</a>` : '');
+    const steps = !web && a.steps ? `<details><summary>怎麼裝</summary><ol>${a.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol></details>` : '';
+    return `<section class="card"><div class="top"><div class="icon">${esc(a.icon || '📦')}</div><div>
+      <h2>${esc(a.name)}</h2><div class="tags">${tags}</div><p>${esc(a.desc)}</p></div></div>
+      ${steps}<div class="actions">${actions}</div></section>`;
+  }).join('');
+}).catch(() => { document.getElementById('list').textContent = '清單讀取失敗，請重新整理。'; });
+</script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+[
+  {
+    "name": "課堂錄音",
+    "icon": "🎙️",
+    "like": "Otter、Notta、Plaud",
+    "desc": "錄課、即時逐字稿、分辨老師和同學、AI 整理重點。",
+    "type": "web",
+    "url": "https://gop9632.github.io/open-apps/apps/class-recorder/",
+    "guide": "https://gop9632.github.io/open-apps/apps/class-recorder/guide/"
+  },
+  {
+    "name": "Mop",
+    "icon": "🧹",
+    "like": "CleanMyMac、DaisyDisk",
+    "desc": "看 CPU、記憶體、磁碟狀態，清系統垃圾、找大型檔案、看空間用在哪，把 App 和殘留一起移除。東西只會移到垃圾桶。",
+    "type": "local",
+    "platform": "Mac",
+    "steps": [
+      "第一次先裝 Xcode 指令列工具：打開「終端機」，輸入 xcode-select --install",
+      "下載這個專案，進到 apps/mac-cleaner 資料夾，執行 ./build.sh",
+      "打開 build 資料夾裡的 Mop.app，想常用就拖進「應用程式」"
+    ],
+    "guide": "https://github.com/GOP9632/open-apps/tree/main/apps/mac-cleaner"
+  }
+]
