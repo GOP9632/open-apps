@@ -114,7 +114,10 @@ enum SystemStats {
             guard proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count)) > 0 else { continue }
             let path = String(cString: pathBuffer)
             let key: String
-            if let r = path.range(of: ".app/") {
+            if path.contains("/claude-code/") {
+                // Claude Code 的執行檔包在 claude.app 裡，但它是指令列工具，不能當一般 App 結束
+                key = claudeCodeKey
+            } else if let r = path.range(of: ".app/") {
                 key = String(path[..<r.lowerBound]) + ".app"
             } else {
                 key = path
@@ -176,7 +179,10 @@ enum SystemStats {
         "qemu-system-aarch64": "虛擬機（QEMU）",
     ]
 
+    static let claudeCodeKey = "cli:claude-code"
+
     static func displayName(forGroup key: String) -> String {
+        if key == claudeCodeKey { return "Claude Code（指令列）" }
         let name = (key as NSString).lastPathComponent
         if name.hasSuffix(".app") { return String(name.dropLast(4)) }
         // Claude Code 的執行檔可能放在 .../claude/versions/1.2.3 這種路徑

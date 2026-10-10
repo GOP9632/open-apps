@@ -24,9 +24,10 @@ struct BatteryInfo {
 
         func int(_ key: String) -> Int? { (dict[key] as? NSNumber)?.intValue }
 
-        // Apple Silicon 上 MaxCapacity 是百分比，真正的 mAh 在 AppleRawMaxCapacity
+        // Apple Silicon 上 MaxCapacity 是百分比。NominalChargeCapacity 是校正過的值，
+        // 跟「系統設定 → 電池」顯示的最大容量一致；讀不到才用電池晶片的原始值
         let design = int("DesignCapacity")
-        var maxCap = int("AppleRawMaxCapacity") ?? int("NominalChargeCapacity")
+        var maxCap = int("NominalChargeCapacity") ?? int("AppleRawMaxCapacity")
         if maxCap == nil, let m = int("MaxCapacity"), m > 100 { maxCap = m }
         var health: Double?
         if let d = design, d > 0, let m = maxCap {
