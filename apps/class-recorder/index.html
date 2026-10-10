@@ -139,7 +139,7 @@ const fmtDate = ts => new Date(ts).toLocaleString('zh-TW', { month: 'numeric', d
 
 // ===================== 設定（存在這個瀏覽器的 localStorage） =====================
 const Settings = {
-  defaults: { engine: 'openai-diarize', openaiKey: '', whisperBase: 'https://api.groq.com/openai/v1', whisperKey: '', whisperModel: 'whisper-large-v3-turbo', localUrl: 'http://127.0.0.1:8080', language: '', toTraditional: true, chunkMin: 10, summaryProvider: 'openai', summaryModel: 'gpt-5-mini', anthropicKey: '', noiseSuppression: false },
+  defaults: { engine: 'gemini', geminiKey: '', geminiModel: 'gemini-3.8-flash', openaiKey: '', whisperBase: 'https://api.groq.com/openai/v1', whisperKey: '', whisperModel: 'whisper-large-v3-turbo', localUrl: 'http://127.0.0.1:8080', language: '', toTraditional: true, chunkMin: 10, summaryProvider: 'gemini', summaryModel: '', anthropicKey: '', noiseSuppression: false },
   load() { try { return { ...this.defaults, ...JSON.parse(localStorage.getItem('cr-settings') || '{}') }; } catch { return { ...this.defaults }; } },
   save(v) { try { localStorage.setItem('cr-settings', JSON.stringify(v)); } catch {} },
 };
@@ -244,9 +244,36 @@ async function decode16k(blob) {
   } finally { ctx.close(); }
 }
 const blobToDataURL = b => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(b); });
+// 免費方案有每分鐘次數限制，碰到 429 就等一下再試
+async function post(url, opts, onWait) {
+  for (let i = 0; ; i++) {
+    const r = await fetch(url, opts);
+    if (r.status !== 429 || i >= 4) return r;
+    onWait?.(); await new Promise(res => setTimeout(res, 20000 * (i + 1)));
+  }
+}
+const b64 = async blob => (await blobToDataURL(blob)).split(',')[1];
 async function apiError(r) { let t = ''; try { t = await r.text(); } catch {} return new Error(`${r.status} ${r.statusText}\n${t.slice(0, 500)}`); }
 
 const Engines = {
+  // Google Gemini：有免費額度，會分說話者，可用老師的聲音樣本認出老師
+  async gemini(wav, folder) {
+    if (!S.geminiKey) throw new Error('請先在設定填入 Gemini API key（aistudio.google.com 免費申請）。');
+    const words = (folder?.glossary || '').split(/[\n,，、]/).map(x => x.trim()).filter(Boolean);
+    let instr = '請把上課錄音逐字轉寫成台灣繁體中文，英文詞保留英文原文、不要翻譯，不要摘要或省略。依說話者與句子切段，每段給 start、end（相對於這段錄音開頭的秒數）、speaker、text。';
+    instr += folder?.teacherSample ? '第一段音檔是老師的聲音樣本，只用來辨認誰是老師，不要轉寫。上課錄音裡老師的 speaker 一律寫「老師」，其他人寫「學生A」「學生B」依此類推。' : 'speaker 用「A」「B」「C」區分不同的人。';
+    if (words.length) instr += '可能出現的專有名詞：' + words.join('、') + '。';
+    const parts = [{ text: instr }];
+    if (folder?.teacherSample) parts.push({ inline_data: { mime_type: 'audio/wav', data: await b64(folder.teacherSample) } }, { text: '以下是要轉寫的上課錄音：' });
+    parts.push({ inline_data: { mime_type: 'audio/wav', data: await b64(wav) } });
+    const body = { contents: [{ parts }], generationConfig: { responseMimeType: 'application/json', responseSchema: { type: 'ARRAY', items: { type: 'OBJECT', properties: { start: { type: 'NUMBER' }, end: { type: 'NUMBER' }, speaker: { type: 'STRING' }, text: { type: 'STRING' } }, required: ['start', 'end', 'speaker', 'text'] } } } };
+    const r = await post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(S.geminiModel)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': S.geminiKey }, body: JSON.stringify(body) });
+    if (!r.ok) throw await apiError(r);
+    const j = await r.json();
+    const txt = (j.candidates?.[0]?.content?.parts || []).map(x => x.text || '').join('');
+    let arr; try { arr = JSON.parse(txt); } catch { throw new Error('Gemini 回傳的格式看不懂：' + txt.slice(0, 200)); }
+    return arr.map(x => ({ start: +x.start || 0, end: +x.end || +x.start || 0, text: x.text, label: x.speaker || null }));
+  },
   // OpenAI：會分出說話者，並可用老師的聲音樣本把老師固定標成「老師」
   async 'openai-diarize'(wav, folder) {
     if (!S.openaiKey) throw new Error('請先在設定填入 OpenAI API key。');
@@ -267,14 +294,14 @@ const Engines = {
   },
   // 任何 OpenAI 相容的 Whisper 服務（預設 Groq，最便宜，但不分說話者）
   async 'whisper-api'(wav, folder) {
-    if (!S.whisperKey) throw new Error('請先在設定填入 Whisper 服務的 API key。');
+    if (!S.whisperKey) throw new Error('請先在設定填入 Groq API key。');
     const f = new FormData();
     f.append('file', wav, 'chunk.wav');
     f.append('model', S.whisperModel);
     f.append('response_format', 'verbose_json');
     if (S.language) f.append('language', S.language);
     const p = glossaryPrompt(folder); if (p) f.append('prompt', p);
-    const r = await fetch(S.whisperBase.replace(/\/$/, '') + '/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + S.whisperKey }, body: f });
+    const r = await post(S.whisperBase.replace(/\/$/, '') + '/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + S.whisperKey }, body: f });
     if (!r.ok) throw await apiError(r);
     const j = await r.json();
     return j.segments ? j.segments.map(s => ({ start: s.start, end: s.end, text: s.text })) : [{ start: 0, end: 0, text: j.text }];
@@ -314,7 +341,8 @@ async function transcribeSession(id, onProgress) {
   const folder = s.folderId ? await DB.get('folders', s.folderId) : null;
   onProgress('解碼音檔中…');
   const pcm = await decode16k(await sessionAudio(id));
-  const per = Math.max(1, S.chunkMin) * 60 * 16000;
+  // Gemini 一次最多送 20 MB，所以每段最多 5 分鐘
+  const per = Math.max(1, S.engine === 'gemini' ? Math.min(5, S.chunkMin) : S.chunkMin) * 60 * 16000;
   const total = Math.ceil(pcm.length / per);
   const out = [];
   for (let i = 0; i < total; i++) {
@@ -356,15 +384,23 @@ ${bms}
 
 逐字稿：
 ${transcriptText(s)}`;
+  const model = S.summaryModel || { openai: 'gpt-5-mini', anthropic: 'claude-haiku-5-5', gemini: S.geminiModel }[S.summaryProvider];
+  if (S.summaryProvider === 'gemini') {
+    if (!S.geminiKey) throw new Error('請先在設定填入 Gemini API key。');
+    const r = await post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': S.geminiKey }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
+    if (!r.ok) throw await apiError(r);
+    const j = await r.json();
+    return (j.candidates?.[0]?.content?.parts || []).map(x => x.text || '').join('');
+  }
   if (S.summaryProvider === 'anthropic') {
     if (!S.anthropicKey) throw new Error('請先在設定填入 Anthropic API key。');
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': S.anthropicKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model: S.summaryModel, max_tokens: 4000, messages: [{ role: 'user', content: prompt }] }) });
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': S.anthropicKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model, max_tokens: 4000, messages: [{ role: 'user', content: prompt }] }) });
     if (!r.ok) throw await apiError(r);
     const j = await r.json();
     return j.content.map(c => c.text || '').join('');
   }
   if (!S.openaiKey) throw new Error('請先在設定填入 OpenAI API key。');
-  const r = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + S.openaiKey }, body: JSON.stringify({ model: S.summaryModel, messages: [{ role: 'user', content: prompt }] }) });
+  const r = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + S.openaiKey }, body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }] }) });
   if (!r.ok) throw await apiError(r);
   return (await r.json()).choices[0].message.content;
 }
@@ -440,7 +476,7 @@ const UI = {
         <label>專有名詞詞表（一行一個，轉寫前會先給模型，大幅減少英文術語聽錯）</label>
         <textarea id="gloss" rows="3" placeholder="例如：regression、p-value、ANOVA、林教授">${esc(folder.glossary)}</textarea>
         <label>老師的聲音樣本（2 到 10 秒，只有老師在講話）</label>
-        <div class="row">${folder.teacherSample ? `<audio controls src="${URL.createObjectURL(folder.teacherSample)}"></audio><button onclick="UI.clearSample('${folder.id}')">移除</button>` : `<span class="muted">尚未設定。設定後，用 OpenAI 轉寫時每一週都會把老師固定標成「老師」。</span>`}
+        <div class="row">${folder.teacherSample ? `<audio controls src="${URL.createObjectURL(folder.teacherSample)}"></audio><button onclick="UI.clearSample('${folder.id}')">移除</button>` : `<span class="muted">尚未設定。設定後，用 Gemini 或 OpenAI 轉寫時，每一週都會把老師固定標成「老師」。</span>`}
           <button onclick="UI.pickSample('${folder.id}')">從檔案選</button><button onclick="UI.recordSample('${folder.id}')">現在錄 8 秒</button></div>
         <div class="row" style="margin-top:12px"><button onclick="UI.saveFolder('${folder.id}')">儲存設定</button><button class="danger" onclick="UI.deleteFolder('${folder.id}')">刪除分類</button><span id="fMsg" class="muted"></span></div></div>` : ''}
       <div id="list">${sessions.length ? sessions.map(s => `<div class="sess" data-q="${esc((s.title + ' ' + (s.transcript?.segments || []).map(g => g.text).join(' ')).toLowerCase())}" onclick="UI.showSession('${s.id}')">
@@ -607,10 +643,13 @@ const UI = {
     main.innerHTML = `<div class="card"><h2>設定</h2>
       <p class="note">API key 只存在這個瀏覽器裡，直接送到你選的服務，不會經過任何其他伺服器。不要在別人的電腦上填。</p>
       <h3>轉寫引擎</h3>
-      <select id="engine">${opt('openai-diarize', 'OpenAI（分得出老師與學生，約 US$0.36／小時）', S.engine)}${opt('whisper-api', 'Groq 或其他 Whisper 服務（最便宜，約 US$0.04／小時，不分說話者）', S.engine)}${opt('whispercpp', '我 Mac 上的 whisper.cpp（免費、不上網，不分說話者）', S.engine)}</select>
-      <label>OpenAI API key（轉寫與整理重點共用）</label><input id="openaiKey" type="password" value="${esc(S.openaiKey)}" placeholder="sk-...">
+      <select id="engine">${opt('gemini', 'Google Gemini（免費額度，分得出老師與學生）', S.engine)}${opt('whisper-api', 'Groq Whisper（免費額度，每天約 8 小時，不分說話者）', S.engine)}${opt('whispercpp', '我 Mac 上的 whisper.cpp（完全免費、不上網，不分說話者）', S.engine)}${opt('openai-diarize', 'OpenAI（付費約 US$0.36／小時，分得出老師與學生）', S.engine)}</select>
+      <label>Gemini API key（轉寫與整理重點共用，到 <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> 免費申請）</label><input id="geminiKey" type="password" value="${esc(S.geminiKey)}" placeholder="AIza...">
+      <p class="muted">免費方案的錄音會被 Google 拿去改進模型。不想這樣就選 Groq 或 Mac 本機。</p>
+      <label>Gemini 模型</label><input id="geminiModel" value="${esc(S.geminiModel)}">
+      <label>OpenAI API key</label><input id="openaiKey" type="password" value="${esc(S.openaiKey)}" placeholder="sk-...">
       <label>Whisper 服務網址</label><input id="whisperBase" value="${esc(S.whisperBase)}">
-      <label>Whisper 服務 API key（Groq 的 key 是 gsk_ 開頭）</label><input id="whisperKey" type="password" value="${esc(S.whisperKey)}">
+      <label>Groq API key（到 <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> 免費申請，gsk_ 開頭）</label><input id="whisperKey" type="password" value="${esc(S.whisperKey)}">
       <label>Whisper 模型</label><input id="whisperModel" value="${esc(S.whisperModel)}">
       <label>本機 whisper-server 網址</label><input id="localUrl" value="${esc(S.localUrl)}">
       <label>語言</label><select id="language">${opt('', '自動（中英夾雜選這個）', S.language)}${opt('zh', '中文', S.language)}${opt('en', '英文', S.language)}</select>
@@ -618,14 +657,14 @@ const UI = {
       <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="toTraditional" style="width:auto" ${S.toTraditional ? 'checked' : ''}>把簡體字轉成台灣繁體（OpenCC）</label>
       <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="noiseSuppression" style="width:auto" ${S.noiseSuppression ? 'checked' : ''}>錄音時開啟降噪（教室吵時試試；老師離很遠時可能反而聽不清楚）</label>
       <h3>AI 整理重點</h3>
-      <select id="summaryProvider">${opt('openai', 'OpenAI', S.summaryProvider)}${opt('anthropic', 'Anthropic（Claude）', S.summaryProvider)}</select>
-      <label>模型名稱</label><input id="summaryModel" value="${esc(S.summaryModel)}">
+      <select id="summaryProvider">${opt('gemini', 'Google Gemini（免費）', S.summaryProvider)}${opt('openai', 'OpenAI', S.summaryProvider)}${opt('anthropic', 'Anthropic（Claude）', S.summaryProvider)}</select>
+      <label>模型名稱（空白＝用預設）</label><input id="summaryModel" value="${esc(S.summaryModel)}">
       <label>Anthropic API key</label><input id="anthropicKey" type="password" value="${esc(S.anthropicKey)}">
       <div class="row" style="margin-top:14px"><button class="primary" onclick="UI.saveSettings()">儲存</button><span id="setMsg" class="muted"></span></div></div>`;
   },
   saveSettings() {
     const g = id => document.getElementById(id);
-    S = { ...S, engine: g('engine').value, openaiKey: g('openaiKey').value.trim(), whisperBase: g('whisperBase').value.trim(), whisperKey: g('whisperKey').value.trim(), whisperModel: g('whisperModel').value.trim(), localUrl: g('localUrl').value.trim(), language: g('language').value, chunkMin: Math.min(20, Math.max(1, +g('chunkMin').value || 10)), toTraditional: g('toTraditional').checked, noiseSuppression: g('noiseSuppression').checked, summaryProvider: g('summaryProvider').value, summaryModel: g('summaryModel').value.trim(), anthropicKey: g('anthropicKey').value.trim() };
+    S = { ...S, engine: g('engine').value, geminiKey: g('geminiKey').value.trim(), geminiModel: g('geminiModel').value.trim() || Settings.defaults.geminiModel, openaiKey: g('openaiKey').value.trim(), whisperBase: g('whisperBase').value.trim(), whisperKey: g('whisperKey').value.trim(), whisperModel: g('whisperModel').value.trim(), localUrl: g('localUrl').value.trim(), language: g('language').value, chunkMin: Math.min(20, Math.max(1, +g('chunkMin').value || 10)), toTraditional: g('toTraditional').checked, noiseSuppression: g('noiseSuppression').checked, summaryProvider: g('summaryProvider').value, summaryModel: g('summaryModel').value.trim(), anthropicKey: g('anthropicKey').value.trim() };
     Settings.save(S); g('setMsg').textContent = '已儲存';
   },
 };
