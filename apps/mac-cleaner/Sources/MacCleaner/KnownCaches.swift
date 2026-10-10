@@ -51,6 +51,8 @@ enum KnownCaches {
         "Blender": CacheInfo(explanation: "Blender 的預覽和著色器暫存。清掉後第一次打開會慢一點，.blend 專案檔不受影響。"),
         "Adobe": CacheInfo(explanation: "Adobe App 的暫存。你的作品檔不在這裡，不受影響。"),
         "com.openai.chat": CacheInfo(explanation: "ChatGPT App 的暫存。對話存在雲端，不受影響。"),
+        "com.openai.codex": CacheInfo(explanation: "Codex App 自動更新時下載的更新檔，更新裝好之後就用不到了。"),
+        "Codex": CacheInfo(explanation: "Codex App 內建瀏覽器的網頁暫存。對話和專案不在這裡，不受影響。"),
         "com.anthropic.claudefordesktop": CacheInfo(explanation: "Claude App 的暫存。對話存在雲端，不受影響。"),
 
         // 可能有離線內容
