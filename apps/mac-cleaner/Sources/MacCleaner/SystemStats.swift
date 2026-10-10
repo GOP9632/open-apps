@@ -80,6 +80,8 @@ enum SystemStats {
     struct ProcessSample {
         var memory: UInt64
         var cpuNanos: UInt64
+        /// 依用途拆開：用途 → (記憶體, 行程數)
+        var parts: [String: (memory: UInt64, count: Int)] = [:]
     }
 
     private static let timebase: mach_timebase_info_data_t = {
@@ -122,13 +124,63 @@ enum SystemStats {
             var s = result[key] ?? ProcessSample(memory: 0, cpuNanos: 0)
             s.memory += info.ri_phys_footprint
             s.cpuNanos += nanos
+            let part = processRole(pid: pid, executable: (path as NSString).lastPathComponent)
+            let old = s.parts[part] ?? (0, 0)
+            s.parts[part] = (old.memory + info.ri_phys_footprint, old.count + 1)
             result[key] = s
         }
         return result
     }
 
+    /// 瀏覽器和 Electron App（Chrome、Claude、Slack…）會拆成很多行程，從執行檔名稱看出用途。
+    static func processRole(pid: Int32, executable name: String) -> String {
+        if name.contains("(Renderer)") {
+            return arguments(pid: pid).contains("--extension-process") ? "擴充功能" : "網頁分頁與網站"
+        }
+        if name.contains("(GPU)") { return "畫面繪製（GPU）" }
+        if name.contains("(Plugin)") { return "外掛" }
+        if name.contains("Helper") { return "背景服務（網路、儲存等）" }
+        return "主程式"
+    }
+
+    /// 讀行程的啟動參數（只能讀到自己帳號的行程）。
+    static func arguments(pid: Int32) -> [String] {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return [] }
+        var buf = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0 else { return [] }
+        let argc = Int(buf.withUnsafeBytes { $0.load(as: Int32.self) })
+        var i = MemoryLayout<Int32>.size
+        while i < size && buf[i] != 0 { i += 1 }   // 跳過執行檔路徑
+        while i < size && buf[i] == 0 { i += 1 }
+        var args: [String] = []
+        while args.count < argc && i < size {
+            let start = i
+            while i < size && buf[i] != 0 { i += 1 }
+            args.append(String(decoding: buf[start..<i], as: UTF8.self))
+            i += 1
+        }
+        return args
+    }
+
+    /// 常見的指令列程式給個看得懂的名字。
+    static let knownTools: [String: String] = [
+        "claude": "Claude Code（指令列）",
+        "codex": "Codex（指令列）",
+        "node": "Node.js",
+        "python3": "Python",
+        "Python": "Python",
+        "java": "Java",
+        "docker": "Docker",
+        "qemu-system-aarch64": "虛擬機（QEMU）",
+    ]
+
     static func displayName(forGroup key: String) -> String {
         let name = (key as NSString).lastPathComponent
-        return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
+        if name.hasSuffix(".app") { return String(name.dropLast(4)) }
+        // Claude Code 的執行檔可能放在 .../claude/versions/1.2.3 這種路徑
+        if key.contains("/claude/versions/") { return "Claude Code（指令列）" }
+        return knownTools[name] ?? name
     }
 }

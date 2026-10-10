@@ -8,7 +8,16 @@ struct AppUsage: Identifiable {
     let name: String
     var memory: UInt64
     var cpu: Double          // 佔整台電腦 CPU 的百分比
+    var parts: [ProcessPart] = []
     var isApp: Bool { key.hasSuffix(".app") }
+    var isBrowser: Bool { ["Chrome", "Edge", "Brave", "Arc", "Opera", "Vivaldi"].contains { name.contains($0) } }
+}
+
+struct ProcessPart: Identifiable {
+    var id: String { name }
+    let name: String
+    let memory: UInt64
+    let count: Int
 }
 
 struct HistoryPoint: Identifiable {
@@ -25,6 +34,8 @@ final class MonitorModel: ObservableObject {
     @Published var volume: (free: Int64, total: Int64, purgeable: Int64)?
     @Published var apps: [AppUsage] = []
     @Published var sortByCPU = false
+    @Published var battery: BatteryInfo?
+    @Published var hasBattery = true
 
     private var lastTicks: SystemStats.CPUTicks?
     private var lastSamples: [String: SystemStats.ProcessSample] = [:]
@@ -62,6 +73,8 @@ final class MonitorModel: ObservableObject {
             append(&memoryHistory, Double(m.used) / Double(m.total) * 100)
         }
         volume = Self.readVolume()
+        battery = BatteryInfo.read()
+        hasBattery = battery != nil
 
         let samples = await Task.detached(priority: .utility) { SystemStats.sampleProcesses() }.value
         let now = Date()
@@ -74,7 +87,10 @@ final class MonitorModel: ObservableObject {
                 // 除以核心數，跟上面整台的 CPU 一樣不會超過 100%
                 cpu = Double(s.cpuNanos - prev.cpuNanos) / elapsed * 100 / cores
             }
-            list.append(AppUsage(key: key, name: SystemStats.displayName(forGroup: key), memory: s.memory, cpu: cpu))
+            let parts = s.parts.map { ProcessPart(name: $0.key, memory: $0.value.memory, count: $0.value.count) }
+                .sorted { $0.memory > $1.memory }
+            list.append(AppUsage(key: key, name: SystemStats.displayName(forGroup: key),
+                                 memory: s.memory, cpu: cpu, parts: parts))
         }
         lastSamples = samples
         lastSampleTime = now
@@ -120,10 +136,15 @@ struct MonitorView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top, spacing: 16) {
-                    cpuCard
-                    memoryCard
-                    diskCard
+                Grid(horizontalSpacing: 16, verticalSpacing: 16) {
+                    GridRow {
+                        cpuCard
+                        memoryCard
+                    }
+                    GridRow {
+                        diskCard
+                        batteryCard
+                    }
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 appsCard
@@ -207,6 +228,54 @@ struct MonitorView: View {
         }
     }
 
+    private var batteryCard: some View {
+        Card(title: "電池", icon: "battery.75percent") {
+            if let b = model.battery {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(b.health.map { "\(Int($0.rounded()))%" } ?? "—")
+                        .font(.system(size: 34, weight: .semibold)).monospacedDigit()
+                        .lineLimit(1).minimumScaleFactor(0.5)
+                    Text("健康度").foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                }
+                Text(healthHint(b.health)).font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    if let c = b.charge {
+                        rowText("目前電量", "\(c)%" + (b.isCharging ? "（充電中）" : b.isPluggedIn ? "（接著電源）" : ""))
+                    }
+                    if let n = b.cycleCount {
+                        rowText("充電循環", b.designCycleCount.map { "\(n) / \($0) 次" } ?? "\(n) 次")
+                    }
+                    if let m = b.maxCapacity, let d = b.designCapacity {
+                        rowText("現在最多能充", "\(m) / 出廠 \(d) mAh")
+                    }
+                    if let t = b.temperature {
+                        rowText("溫度", String(format: "%.1f°C", t))
+                    }
+                }
+                .font(.caption)
+            } else {
+                Text("這台 Mac 沒有電池").foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func healthHint(_ health: Double?) -> String {
+        guard let h = health else { return "讀不到健康度" }
+        switch h {
+        case 90...: return "很健康"
+        case 80..<90: return "正常老化"
+        default: return "低於 80%，Apple 建議考慮換電池"
+        }
+    }
+
+    private func rowText(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label).foregroundStyle(.secondary)
+            Spacer()
+            Text(value).monospacedDigit()
+        }
+    }
+
     private var appsCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -222,22 +291,7 @@ struct MonitorView: View {
             Text("想讓電腦順一點，最有效的是關掉用不到又很佔資源的 App。系統的程式讀不到，所以不會列出來。")
                 .font(.caption).foregroundStyle(.secondary)
             ForEach(model.topApps) { app in
-                HStack(spacing: 10) {
-                    if app.isApp {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: app.key))
-                            .resizable().frame(width: 22, height: 22)
-                    } else {
-                        Image(systemName: "gearshape").frame(width: 22, height: 22).foregroundStyle(.secondary)
-                    }
-                    Text(app.name).lineLimit(1)
-                    Spacer()
-                    Text(String(format: "CPU %.0f%%", app.cpu)).monospacedDigit()
-                        .foregroundStyle(.secondary).frame(width: 80, alignment: .trailing)
-                    Text(formatMemory(app.memory)).monospacedDigit().frame(width: 90, alignment: .trailing)
-                    Button("結束") { quitting = app }
-                        .disabled(!app.isApp || app.key.contains("MacCleaner") || app.key.contains("Mop.app"))
-                        .controlSize(.small)
-                }
+                AppRow(app: app) { quitting = app }
                 Divider()
             }
         }
@@ -305,5 +359,67 @@ private struct Sparkline: View {
         .chartXAxis(.hidden)
         .chartYAxis(.hidden)
         .frame(height: 50)
+    }
+}
+
+/// 一列 App；有好幾個行程（瀏覽器、Electron App）的可以展開看用途。
+private struct AppRow: View {
+    let app: AppUsage
+    let onQuit: () -> Void
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                if app.parts.count > 1 {
+                    Button { expanded.toggle() } label: {
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right").frame(width: 12)
+                    }
+                    .buttonStyle(.borderless)
+                } else {
+                    Spacer().frame(width: 12)
+                }
+                if app.isApp {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: app.key))
+                        .resizable().frame(width: 22, height: 22)
+                } else {
+                    Image(systemName: "terminal").frame(width: 22, height: 22).foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(app.name).lineLimit(1)
+                    if !app.isApp {
+                        Text("指令列或背景程式").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Text(String(format: "CPU %.0f%%", app.cpu)).monospacedDigit()
+                    .foregroundStyle(.secondary).frame(width: 80, alignment: .trailing)
+                Text(formatMemory(app.memory)).monospacedDigit().frame(width: 90, alignment: .trailing)
+                Button("結束", action: onQuit)
+                    .disabled(!app.isApp || app.key.contains("Mop.app"))
+                    .controlSize(.small)
+            }
+            if expanded {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(app.parts) { part in
+                        HStack {
+                            Text(part.name)
+                            Text("\(part.count) 個行程").foregroundStyle(.secondary)
+                            Spacer()
+                            Text(formatMemory(part.memory)).monospacedDigit().frame(width: 90, alignment: .trailing)
+                            Spacer().frame(width: 52)
+                        }
+                    }
+                    if app.isBrowser {
+                        Text("瀏覽器會把好幾個分頁放進同一個行程，從外面只能分到這裡。想看每個分頁各用多少，在 \(app.name) 的選單列按「視窗 → 工作管理員」，可以直接在那裡關掉吃最多的分頁。")
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 2)
+                    }
+                }
+                .font(.caption)
+                .padding(.leading, 56)
+            }
+        }
     }
 }
