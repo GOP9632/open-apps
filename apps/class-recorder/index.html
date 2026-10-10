@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>課堂錄音</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1f6feb">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--text:#1d2129;--muted:#6b7280;--line:#e5e7eb;--accent:#1f6feb;--accent-soft:#e8f0fe;--danger:#d93025;--teacher:#0b7a3e;--teacher-soft:#e6f4ea;--warn:#a15c00}
+@media (prefers-color-scheme:dark){:root{--bg:#111418;--panel:#1a1e24;--text:#e6e8eb;--muted:#9aa3ad;--line:#2b313a;--accent:#5b9dff;--accent-soft:#1d2a3f;--danger:#ff6b5e;--teacher:#5fd38d;--teacher-soft:#15301f;--warn:#e0a23a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif}
+button,select,input,textarea{font:inherit;color:inherit}
+button{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.danger{color:var(--danger)}
+button:disabled{opacity:.5;cursor:default}
+input,select,textarea{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 10px;width:100%}
+label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+.app{display:grid;grid-template-columns:280px 1fr;min-height:100vh;align-content:start}
+aside{border-right:1px solid var(--line);background:var(--panel);padding:16px;overflow:auto;height:100vh;position:sticky;top:0}
+main{padding:20px;max-width:980px;width:100%}
+h1{font-size:18px;margin:0 0 12px}
+h2{font-size:17px;margin:0 0 10px}
+h3{font-size:15px;margin:18px 0 8px}
+.muted{color:var(--muted);font-size:13px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grow{flex:1}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+.folder{padding:6px 8px;border-radius:8px;cursor:pointer;display:flex;justify-content:space-between;gap:6px}
+.folder:hover{background:var(--accent-soft)}
+.folder.active{background:var(--accent-soft);font-weight:600}
+.tag{font-size:11px;padding:1px 6px;border-radius:99px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.sess{padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px;cursor:pointer;background:var(--panel)}
+.sess:hover{border-color:var(--accent)}
+.big-time{font-size:42px;font-variant-numeric:tabular-nums;font-weight:600;letter-spacing:1px}
+.meter{height:8px;background:var(--line);border-radius:99px;overflow:hidden}
+.meter>div{height:100%;width:0;background:var(--accent);transition:width .08s}
+.seg{display:grid;grid-template-columns:62px 1fr;gap:10px;padding:6px 8px;border-radius:8px}
+.seg:hover{background:var(--accent-soft)}
+.seg .t{color:var(--accent);cursor:pointer;font-variant-numeric:tabular-nums;font-size:13px;padding-top:2px}
+.seg .who{font-size:12px;font-weight:600;color:var(--muted)}
+.seg.teacher .who{color:var(--teacher)}
+.seg.teacher{border-left:3px solid var(--teacher)}
+.seg.other{opacity:.8}
+.seg.playing{background:var(--accent-soft)}
+.bm{display:inline-flex;gap:4px;align-items:center;font-size:13px;padding:3px 8px;border-radius:99px;background:var(--accent-soft);cursor:pointer;margin:2px}
+.photos{display:flex;gap:8px;flex-wrap:wrap}
+.photos img{height:90px;border-radius:8px;border:1px solid var(--line);cursor:pointer}
+.summary{}
+.err{color:var(--danger);font-size:13px;white-space:pre-wrap}
+.note{background:var(--accent-soft);border-radius:8px;padding:8px 10px;font-size:13px}
+.hidden{display:none!important}
+.tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.tabs button.on{background:var(--accent-soft);border-color:var(--accent)}
+.menu-btn{display:none}
+.summary h2,.summary h3{font-size:15px;margin:14px 0 6px}.summary ul{margin:4px 0;padding-left:20px}.summary p{margin:4px 0}
+@media (max-width:760px){
+  .app{grid-template-columns:1fr}
+  aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line);padding:12px 16px}
+  .app{grid-template-rows:auto 1fr}
+  aside.collapsed .aside-body{display:none}
+  .menu-btn{display:inline-block}
+  main{padding:14px 16px}
+  .big-time{font-size:34px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+<aside id="aside">
+  <div class="row"><h1 class="grow" style="margin:0" onclick="UI.showFolder('all')">🎙️ 課堂錄音</h1><button class="menu-btn primary" onclick="UI.showRecorder()">● 錄音</button><button class="menu-btn" onclick="aside.classList.toggle('collapsed')">☰</button></div>
+  <div class="aside-body">
+    <button class="primary" style="width:100%;margin:12px 0" onclick="UI.showRecorder()">＋ 開始新錄音</button>
+    <div class="row" style="margin-bottom:6px"><b class="grow">分類</b><button onclick="UI.newFolder()">＋</button></div>
+    <div id="folderList"></div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
+    <div class="row"><button class="grow" onclick="UI.showSettings()">⚙️ 設定</button><button class="grow" onclick="UI.importFile()">⬆ 匯入音檔</button></div>
+    <p class="muted" id="storageInfo"></p>
+  </div>
+</aside>
+<main id="main"></main>
+</div>
+<input type="file" id="fileInput" accept="audio/*,video/*,.m4a,.mp3,.wav,.webm" class="hidden">
+<input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden">
+<input type="file" id="sampleInput" accept="audio/*,.m4a" class="hidden">
+
+<script>
+// ===================== 資料庫（IndexedDB，全部存在這台裝置上） =====================
+const DB = {
+  db: null,
+  open() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open('class-recorder', 1);
+      r.onupgradeneeded = () => {
+        const d = r.result;
+        d.createObjectStore('folders', { keyPath: 'id' });
+        const s = d.createObjectStore('sessions', { keyPath: 'id' });
+        s.createIndex('folderId', 'folderId');
+        const c = d.createObjectStore('chunks', { autoIncrement: true });
+        c.createIndex('sessionId', 'sessionId');
+        const p = d.createObjectStore('photos', { keyPath: 'id' });
+        p.createIndex('sessionId', 'sessionId');
+      };
+      r.onsuccess = () => { this.db = r.result; res(); };
+      r.onerror = () => rej(r.error);
+    });
+  },
+  tx(store, mode, fn) {
+    return new Promise((res, rej) => {
+      const t = this.db.transaction(store, mode);
+      const out = fn(t.objectStore(store));
+      t.oncomplete = () => res(out && 'result' in out ? out.result : out);
+      t.onerror = () => rej(t.error);
+    });
+  },
+  put(store, v) { return this.tx(store, 'readwrite', s => s.put(v)); },
+  get(store, k) { return this.tx(store, 'readonly', s => s.get(k)); },
+  del(store, k) { return this.tx(store, 'readwrite', s => s.delete(k)); },
+  all(store) { return this.tx(store, 'readonly', s => s.getAll()); },
+  byIndex(store, idx, v) { return this.tx(store, 'readonly', s => s.index(idx).getAll(v)); },
+  async delByIndex(store, idx, v) {
+    return new Promise((res, rej) => {
+      const t = this.db.transaction(store, 'readwrite');
+      const req = t.objectStore(store).index(idx).openKeyCursor(IDBKeyRange.only(v));
+      req.onsuccess = () => { const c = req.result; if (c) { t.objectStore(store).delete(c.primaryKey); c.continue(); } };
+      t.oncomplete = res; t.onerror = () => rej(t.error);
+    });
+  },
+};
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const KIND = { course: '課程', meeting: '會議', project: '專案' };
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = sec => { sec = Math.max(0, Math.floor(sec || 0)); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0'); };
+const fmtDate = ts => new Date(ts).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' });
+
+// ===================== 設定（存在這個瀏覽器的 localStorage） =====================
+const Settings = {
+  defaults: { engine: 'openai-diarize', openaiKey: '', whisperBase: 'https://api.groq.com/openai/v1', whisperKey: '', whisperModel: 'whisper-large-v3-turbo', localUrl: 'http://127.0.0.1:8080', language: '', toTraditional: true, chunkMin: 10, summaryProvider: 'openai', summaryModel: 'gpt-5-mini', anthropicKey: '', noiseSuppression: false },
+  load() { try { return { ...this.defaults, ...JSON.parse(localStorage.getItem('cr-settings') || '{}') }; } catch { return { ...this.defaults }; } },
+  save(v) { try { localStorage.setItem('cr-settings', JSON.stringify(v)); } catch {} },
+};
+let S = Settings.load();
+
+// ===================== 簡轉繁（OpenCC，台灣用詞） =====================
+let _cc = null;
+async function toTW(text) {
+  if (!S.toTraditional || !text) return text;
+  try {
+    if (!_cc) {
+      if (!window.OpenCC) await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js'; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); });
+      _cc = OpenCC.Converter({ from: 'cn', to: 'twp' });
+    }
+    return _cc(text);
+  } catch { return text; }
+}
+
+// ===================== 錄音 =====================
+const Rec = {
+  state: 'idle', // idle | recording | paused
+  async start({ source, folderId, title }) {
+    const ctx = new AudioContext();
+    await ctx.resume();
+    const dest = ctx.createMediaStreamDestination();
+    const analyser = ctx.createAnalyser(); analyser.fftSize = 512;
+    analyser.connect(dest); // 聲音走 來源 → analyser → 錄音，音量條才讀得到
+    const streams = [];
+    if (source === 'mic' || source === 'both') {
+      const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: !!S.noiseSuppression, autoGainControl: true } });
+      streams.push(mic);
+    }
+    if (source === 'system' || source === 'both') {
+      if (!navigator.mediaDevices.getDisplayMedia) throw new Error('這個瀏覽器不能錄電腦聲音。請用電腦版 Chrome 或 Edge。手機無法錄內建聲音。');
+      const disp = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, systemAudio: 'include', selfBrowserSurface: 'exclude' });
+      if (!disp.getAudioTracks().length) { disp.getTracks().forEach(t => t.stop()); throw new Error('沒有收到聲音。分享時請選「分頁」並勾選「同時分享分頁音訊」，或在 Windows 選「整個螢幕」並勾選「分享系統音訊」。'); }
+      disp.getVideoTracks().forEach(t => t.addEventListener('ended', () => { if (this.state !== 'idle') this.stop(); }));
+      streams.push(disp);
+    }
+    for (const st of streams) { if (st.getAudioTracks().length) { ctx.createMediaStreamSource(new MediaStream(st.getAudioTracks())).connect(analyser); } }
+    const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus'].find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
+    const mr = new MediaRecorder(dest.stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : {});
+    const id = uid();
+    const session = { id, folderId: folderId || null, title: title || '未命名錄音', createdAt: Date.now(), duration: 0, mimeType: mr.mimeType || mime || 'audio/webm', source, bookmarks: [], transcript: null, summary: '', status: 'recording' };
+    await DB.put('sessions', session);
+    let idx = 0;
+    mr.ondataavailable = e => { if (e.data && e.data.size) DB.put('chunks', { sessionId: id, idx: idx++, blob: e.data }); };
+    mr.start(5000); // 每 5 秒寫入一次，當機或關掉分頁也只會掉最後幾秒
+    Object.assign(this, { ctx, dest, analyser, streams, mr, session, startedAt: performance.now(), accumulated: 0, state: 'recording' });
+    this.lockScreen();
+    return session;
+  },
+  elapsed() { if (this.state === 'idle') return 0; return this.accumulated + (this.state === 'recording' ? (performance.now() - this.startedAt) / 1000 : 0); },
+  pause() { if (this.state !== 'recording') return; this.mr.pause(); this.accumulated = this.elapsed(); this.state = 'paused'; },
+  resume() { if (this.state !== 'paused') return; this.mr.resume(); this.startedAt = performance.now(); this.state = 'recording'; },
+  level() { if (!this.analyser) return 0; const a = new Uint8Array(this.analyser.fftSize); this.analyser.getByteTimeDomainData(a); let m = 0; for (const v of a) m = Math.max(m, Math.abs(v - 128)); return m / 128; },
+  async bookmark(label) { if (this.state === 'idle') return; this.session.bookmarks.push({ t: this.elapsed(), label: label || '重點' }); await DB.put('sessions', this.session); },
+  async addPhoto(file) { if (this.state === 'idle') return; await DB.put('photos', { id: uid(), sessionId: this.session.id, t: this.elapsed(), blob: file }); },
+  async stop() {
+    if (this.state === 'idle') return null;
+    const dur = this.elapsed();
+    this.state = 'idle';
+    await new Promise(res => { this.mr.onstop = res; this.mr.stop(); });
+    await new Promise(r => setTimeout(r, 300)); // 等最後一塊寫進資料庫
+    this.streams.forEach(s => s.getTracks().forEach(t => t.stop()));
+    this.ctx.close();
+    this.releaseLock();
+    const s = await DB.get('sessions', this.session.id);
+    s.duration = dur; s.status = 'saved'; s.bookmarks = this.session.bookmarks;
+    await DB.put('sessions', s);
+    return s;
+  },
+  async lockScreen() { try { this.wake = await navigator.wakeLock?.request('screen'); } catch {} },
+  releaseLock() { try { this.wake?.release(); } catch {} this.wake = null; },
+};
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Rec.state !== 'idle') Rec.lockScreen(); });
+window.addEventListener('beforeunload', e => { if (Rec.state !== 'idle') { e.preventDefault(); e.returnValue = ''; } });
+
+async function sessionAudio(id) {
+  const chunks = (await DB.byIndex('chunks', 'sessionId', id)).sort((a, b) => a.idx - b.idx);
+  const s = await DB.get('sessions', id);
+  return new Blob(chunks.map(c => c.blob), { type: (s?.mimeType || 'audio/webm').split(';')[0] });
+}
+
+// ===================== 轉寫 =====================
+function encodeWav(samples, rate) {
+  const buf = new ArrayBuffer(44 + samples.length * 2), v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + samples.length * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, 'data'); v.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) { const x = Math.max(-1, Math.min(1, samples[i])); v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true); }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+async function decode16k(blob) {
+  const ctx = new AudioContext({ sampleRate: 16000 });
+  try {
+    const ab = await ctx.decodeAudioData(await blob.arrayBuffer());
+    const n = ab.length, out = new Float32Array(n);
+    for (let c = 0; c < ab.numberOfChannels; c++) { const d = ab.getChannelData(c); for (let i = 0; i < n; i++) out[i] += d[i] / ab.numberOfChannels; }
+    return out;
+  } finally { ctx.close(); }
+}
+const blobToDataURL = b => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(b); });
+async function apiError(r) { let t = ''; try { t = await r.text(); } catch {} return new Error(`${r.status} ${r.statusText}\n${t.slice(0, 500)}`); }
+
+const Engines = {
+  // OpenAI：會分出說話者，並可用老師的聲音樣本把老師固定標成「老師」
+  async 'openai-diarize'(wav, folder) {
+    if (!S.openaiKey) throw new Error('請先在設定填入 OpenAI API key。');
+    const f = new FormData();
+    f.append('file', wav, 'chunk.wav');
+    f.append('model', 'gpt-4o-transcribe-diarize');
+    f.append('response_format', 'diarized_json');
+    f.append('chunking_strategy', 'auto');
+    if (S.language) f.append('language', S.language);
+    if (folder?.teacherSample) {
+      f.append('known_speaker_names[]', '老師');
+      f.append('known_speaker_references[]', await blobToDataURL(folder.teacherSample));
+    }
+    const r = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + S.openaiKey }, body: f });
+    if (!r.ok) throw await apiError(r);
+    const j = await r.json();
+    return (j.segments || []).map(s => ({ start: s.start, end: s.end, text: s.text, label: s.speaker }));
+  },
+  // 任何 OpenAI 相容的 Whisper 服務（預設 Groq，最便宜，但不分說話者）
+  async 'whisper-api'(wav, folder) {
+    if (!S.whisperKey) throw new Error('請先在設定填入 Whisper 服務的 API key。');
+    const f = new FormData();
+    f.append('file', wav, 'chunk.wav');
+    f.append('model', S.whisperModel);
+    f.append('response_format', 'verbose_json');
+    if (S.language) f.append('language', S.language);
+    const p = glossaryPrompt(folder); if (p) f.append('prompt', p);
+    const r = await fetch(S.whisperBase.replace(/\/$/, '') + '/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + S.whisperKey }, body: f });
+    if (!r.ok) throw await apiError(r);
+    const j = await r.json();
+    return j.segments ? j.segments.map(s => ({ start: s.start, end: s.end, text: s.text })) : [{ start: 0, end: 0, text: j.text }];
+  },
+  // 你 Mac 上的 whisper.cpp（whisper-server），免費、不上網
+  async whispercpp(wav, folder) {
+    const f = new FormData();
+    f.append('file', wav, 'chunk.wav');
+    f.append('response_format', 'verbose_json');
+    f.append('language', S.language || 'auto');
+    const p = glossaryPrompt(folder); if (p) f.append('prompt', p);
+    let r;
+    try { r = await fetch(S.localUrl.replace(/\/$/, '') + '/inference', { method: 'POST', body: f }); }
+    catch (e) { throw new Error('連不到本機的 whisper-server（' + S.localUrl + '）。請確認它有在跑。'); }
+    if (!r.ok) throw await apiError(r);
+    const j = await r.json();
+    return j.segments ? j.segments.map(s => ({ start: s.start, end: s.end, text: s.text })) : [{ start: 0, end: 0, text: j.text }];
+  },
+};
+// 課程詞表放在提示詞最後（Whisper 提示上限 224 token，超過會從前面砍掉）
+function glossaryPrompt(folder) {
+  const words = (folder?.glossary || '').split(/[\n,，、]/).map(s => s.trim()).filter(Boolean).slice(0, 40);
+  return words.length ? '以下是一堂台灣大學課程的逐字稿，中英夾雜。' + words.join('、') : '';
+}
+
+// 在每一段裡，講最多話的人推定為老師；有老師聲音樣本時以樣本為準
+function markTeacher(segs, hasSample) {
+  if (hasSample) { segs.forEach(s => s.role = s.label === '老師' ? 'teacher' : (s.label ? 'other' : null)); return; }
+  const dur = {};
+  segs.forEach(s => { if (s.label) dur[s.label] = (dur[s.label] || 0) + (s.end - s.start); });
+  const top = Object.entries(dur).sort((a, b) => b[1] - a[1])[0]?.[0];
+  segs.forEach(s => s.role = !s.label ? null : (s.label === top ? 'teacher' : 'other'));
+}
+
+async function transcribeSession(id, onProgress) {
+  const s = await DB.get('sessions', id);
+  const folder = s.folderId ? await DB.get('folders', s.folderId) : null;
+  onProgress('解碼音檔中…');
+  const pcm = await decode16k(await sessionAudio(id));
+  const per = Math.max(1, S.chunkMin) * 60 * 16000;
+  const total = Math.ceil(pcm.length / per);
+  const out = [];
+  for (let i = 0; i < total; i++) {
+    onProgress(`轉寫中 ${i + 1} / ${total} 段…`);
+    const offset = i * per / 16000;
+    const wav = encodeWav(pcm.subarray(i * per, Math.min(pcm.length, (i + 1) * per)), 16000);
+    const segs = await Engines[S.engine](wav, folder);
+    markTeacher(segs, !!folder?.teacherSample);
+    for (const g of segs) out.push({ start: g.start + offset, end: g.end + offset, text: await toTW((g.text || '').trim()), role: g.role || null, label: g.label ? `${i + 1}-${g.label}` : null });
+  }
+  s.transcript = { engine: S.engine, createdAt: Date.now(), segments: out.filter(x => x.text) };
+  if (!s.duration) s.duration = pcm.length / 16000;
+  await DB.put('sessions', s);
+  return s;
+}
+
+// ===================== AI 整理重點 =====================
+function transcriptText(s, teacherOnly) {
+  return (s.transcript?.segments || []).filter(g => !teacherOnly || g.role !== 'other').map(g => `[${fmt(g.start)}] ${g.role === 'teacher' ? '老師' : g.role === 'other' ? '其他人' : ''}${g.role ? '：' : ''}${g.text}`).join('\n');
+}
+async function summarize(s) {
+  const bms = s.bookmarks.map(b => `[${fmt(b.t)}] ${b.label}`).join('\n') || '（無）';
+  const prompt = `你是幫大學生整理上課筆記的助教。下面是一堂課的逐字稿（可能有辨識錯字，請依上下文修正理解）。請用台灣繁體中文、Markdown 輸出：
+
+## 一句話摘要
+## 重點整理
+（條列，每點後面標註時間，例如 [12:30]）
+## 名詞解釋
+（課堂出現的專有名詞，保留英文原文）
+## 作業、考試、期限
+（老師提到的作業、考試範圍、繳交日期；沒有就寫「無」）
+## 我可能還沒懂的地方
+（老師講得快或學生有發問的段落）
+## 複習問題
+（5 題，附簡短答案）
+
+學生在上課時按下的重點標記：
+${bms}
+
+逐字稿：
+${transcriptText(s)}`;
+  if (S.summaryProvider === 'anthropic') {
+    if (!S.anthropicKey) throw new Error('請先在設定填入 Anthropic API key。');
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': S.anthropicKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model: S.summaryModel, max_tokens: 4000, messages: [{ role: 'user', content: prompt }] }) });
+    if (!r.ok) throw await apiError(r);
+    const j = await r.json();
+    return j.content.map(c => c.text || '').join('');
+  }
+  if (!S.openaiKey) throw new Error('請先在設定填入 OpenAI API key。');
+  const r = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + S.openaiKey }, body: JSON.stringify({ model: S.summaryModel, messages: [{ role: 'user', content: prompt }] }) });
+  if (!r.ok) throw await apiError(r);
+  return (await r.json()).choices[0].message.content;
+}
+
+// 簡易 Markdown 顯示（標題、條列、粗體）
+function mdToHtml(md) {
+  let html = '', inList = false;
+  for (const raw of String(md || '').split('\n')) {
+    let line = esc(raw).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    const li = line.match(/^\s*(?:[-*]|\d+\.)\s+(.*)/);
+    if (li) { if (!inList) { html += '<ul>'; inList = true; } html += `<li>${li[1]}</li>`; continue; }
+    if (inList) { html += '</ul>'; inList = false; }
+    const h = line.match(/^(#{1,4})\s+(.*)/);
+    if (h) html += `<h3>${h[2]}</h3>`; else if (line.trim()) html += `<p>${line}</p>`;
+  }
+  return html + (inList ? '</ul>' : '');
+}
+
+// ===================== 匯出 =====================
+function download(name, blob) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }
+function toMarkdown(s, folder) {
+  let md = `# ${s.title}\n\n- 分類：${folder ? KIND[folder.kind] + '／' + folder.name : '未分類'}\n- 時間：${new Date(s.createdAt).toLocaleString('zh-TW')}\n- 長度：${fmt(s.duration)}\n\n`;
+  if (s.summary) md += s.summary + '\n\n';
+  if (s.bookmarks.length) md += '## 我的標記\n\n' + s.bookmarks.map(b => `- [${fmt(b.t)}] ${b.label}`).join('\n') + '\n\n';
+  if (s.transcript) md += '## 逐字稿\n\n' + transcriptText(s).split('\n').join('\n\n') + '\n';
+  return md;
+}
+function toSrt(s) {
+  const t = x => { const ms = Math.round(x * 1000); const h = Math.floor(ms / 3600000), m = Math.floor(ms % 3600000 / 60000), sec = Math.floor(ms % 60000 / 1000); return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')},${String(ms % 1000).padStart(3, '0')}`; };
+  return (s.transcript?.segments || []).map((g, i) => `${i + 1}\n${t(g.start)} --> ${t(g.end || g.start + 3)}\n${g.text}\n`).join('\n');
+}
+
+// ===================== 介面 =====================
+const main = document.getElementById('main');
+const aside = document.getElementById('aside');
+const UI = {
+  current: { folderId: 'all' },
+  async refreshSidebar() {
+    const folders = (await DB.all('folders')).sort((a, b) => a.createdAt - b.createdAt);
+    const sessions = await DB.all('sessions');
+    const count = id => sessions.filter(s => id === 'all' ? true : id === 'none' ? !s.folderId : s.folderId === id).length;
+    const item = (id, name, tag) => `<div class="folder ${this.current.folderId === id ? 'active' : ''}" onclick="UI.showFolder('${id}')"><span>${esc(name)} ${tag ? `<span class="tag">${tag}</span>` : ''}</span><span class="muted">${count(id)}</span></div>`;
+    document.getElementById('folderList').innerHTML = item('all', '全部錄音') + folders.map(f => item(f.id, f.name, KIND[f.kind])).join('') + item('none', '未分類');
+    if (navigator.storage?.estimate) { const e = await navigator.storage.estimate(); document.getElementById('storageInfo').textContent = `已用 ${(e.usage / 1048576).toFixed(0)} MB／可用約 ${(e.quota / 1073741824).toFixed(1)} GB（存在這台裝置）`; }
+  },
+  async folderOptions(sel) {
+    const folders = await DB.all('folders');
+    return `<option value="">未分類</option>` + folders.map(f => `<option value="${f.id}" ${f.id === sel ? 'selected' : ''}>${KIND[f.kind]}｜${esc(f.name)}</option>`).join('');
+  },
+  async newFolder() {
+    main.innerHTML = `<div class="card"><h2>新增分類</h2>
+      <label>名稱</label><input id="fName" placeholder="例如：統計學、週會、畢業專題">
+      <label>類型</label><select id="fKind"><option value="course">課程</option><option value="meeting">會議</option><option value="project">專案</option></select>
+      <div class="row" style="margin-top:14px"><button class="primary" onclick="UI.saveNewFolder()">建立</button><button onclick="UI.showFolder('all')">取消</button></div></div>`;
+    document.getElementById('fName').focus();
+  },
+  async saveNewFolder() {
+    const name = document.getElementById('fName').value.trim(); if (!name) return;
+    const f = { id: uid(), name, kind: document.getElementById('fKind').value, glossary: '', teacherSample: null, createdAt: Date.now() };
+    await DB.put('folders', f); this.showFolder(f.id);
+  },
+  async showFolder(id) {
+    if (Rec.state !== 'idle') return this.showRecorder();
+    this.current.folderId = id; aside.classList.add('collapsed'); await this.refreshSidebar();
+    const folder = ['all', 'none'].includes(id) ? null : await DB.get('folders', id);
+    let sessions = await DB.all('sessions');
+    sessions = sessions.filter(s => id === 'all' ? true : id === 'none' ? !s.folderId : s.folderId === id).sort((a, b) => b.createdAt - a.createdAt);
+    const folders = Object.fromEntries((await DB.all('folders')).map(f => [f.id, f]));
+    main.innerHTML = `
+      <div class="row" style="margin-bottom:12px"><h2 class="grow" style="margin:0">${folder ? esc(folder.name) + ` <span class="tag">${KIND[folder.kind]}</span>` : id === 'all' ? '全部錄音' : '未分類'}</h2>
+      <input id="q" placeholder="搜尋標題與逐字稿" style="max-width:260px" oninput="UI.filterList()"></div>
+      ${folder ? `<div class="card"><h3 style="margin-top:0">這個${KIND[folder.kind]}的設定</h3>
+        <label>專有名詞詞表（一行一個，轉寫前會先給模型，大幅減少英文術語聽錯）</label>
+        <textarea id="gloss" rows="3" placeholder="例如：regression、p-value、ANOVA、林教授">${esc(folder.glossary)}</textarea>
+        <label>老師的聲音樣本（2 到 10 秒，只有老師在講話）</label>
+        <div class="row">${folder.teacherSample ? `<audio controls src="${URL.createObjectURL(folder.teacherSample)}"></audio><button onclick="UI.clearSample('${folder.id}')">移除</button>` : `<span class="muted">尚未設定。設定後，用 OpenAI 轉寫時每一週都會把老師固定標成「老師」。</span>`}
+          <button onclick="UI.pickSample('${folder.id}')">從檔案選</button><button onclick="UI.recordSample('${folder.id}')">現在錄 8 秒</button></div>
+        <div class="row" style="margin-top:12px"><button onclick="UI.saveFolder('${folder.id}')">儲存設定</button><button class="danger" onclick="UI.deleteFolder('${folder.id}')">刪除分類</button><span id="fMsg" class="muted"></span></div></div>` : ''}
+      <div id="list">${sessions.length ? sessions.map(s => `<div class="sess" data-q="${esc((s.title + ' ' + (s.transcript?.segments || []).map(g => g.text).join(' ')).toLowerCase())}" onclick="UI.showSession('${s.id}')">
+        <div class="row"><b class="grow">${esc(s.title)}</b>${s.transcript ? '<span class="tag">有逐字稿</span>' : ''}${s.summary ? '<span class="tag">有重點</span>' : ''}${s.status === 'recording' ? '<span class="tag" style="color:var(--warn)">未正常結束</span>' : ''}</div>
+        <div class="muted">${fmtDate(s.createdAt)} · ${fmt(s.duration)}${s.folderId && folders[s.folderId] && id === 'all' ? ' · ' + esc(folders[s.folderId].name) : ''}${s.bookmarks.length ? ' · ★' + s.bookmarks.length : ''}</div></div>`).join('') : '<p class="muted">還沒有錄音。按左上角「開始新錄音」。</p>'}</div>`;
+  },
+  filterList() { const q = document.getElementById('q').value.trim().toLowerCase(); document.querySelectorAll('#list .sess').forEach(e => e.classList.toggle('hidden', q && !e.dataset.q.includes(q))); },
+  async saveFolder(id) { const f = await DB.get('folders', id); f.glossary = document.getElementById('gloss').value; await DB.put('folders', f); document.getElementById('fMsg').textContent = '已儲存'; },
+  async deleteFolder(id) { if (!confirm('刪除這個分類？裡面的錄音會移到「未分類」，不會被刪掉。')) return; for (const s of await DB.byIndex('sessions', 'folderId', id)) { s.folderId = null; await DB.put('sessions', s); } await DB.del('folders', id); this.showFolder('all'); },
+  async clearSample(id) { const f = await DB.get('folders', id); f.teacherSample = null; await DB.put('folders', f); this.showFolder(id); },
+  pickSample(id) { const inp = document.getElementById('sampleInput'); inp.onchange = async () => { const file = inp.files[0]; inp.value = ''; if (!file) return; const pcm = await decode16k(file); const f = await DB.get('folders', id); f.teacherSample = encodeWav(pcm.subarray(0, 16000 * 10), 16000); await DB.put('folders', f); this.showFolder(id); }; inp.click(); },
+  async recordSample(id) {
+    const st = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mr = new MediaRecorder(st), parts = [];
+    mr.ondataavailable = e => parts.push(e.data);
+    document.getElementById('fMsg').textContent = '錄音中，請讓老師講話（或播放老師的影片）…';
+    mr.start(); await new Promise(r => setTimeout(r, 8000)); await new Promise(r => { mr.onstop = r; mr.stop(); }); st.getTracks().forEach(t => t.stop());
+    const pcm = await decode16k(new Blob(parts, { type: mr.mimeType }));
+    const f = await DB.get('folders', id); f.teacherSample = encodeWav(pcm, 16000); await DB.put('folders', f); this.showFolder(id);
+  },
+
+  // ---------- 錄音畫面 ----------
+  async showRecorder() {
+    aside.classList.add('collapsed');
+    if (Rec.state !== 'idle') return this.renderRecording();
+    const def = ['all', 'none'].includes(this.current.folderId) ? '' : this.current.folderId;
+    const canSystem = !!navigator.mediaDevices?.getDisplayMedia && !/iPhone|iPad|Android/i.test(navigator.userAgent);
+    main.innerHTML = `<div class="card"><h2>開始新錄音</h2>
+      <label>標題</label><input id="rTitle" value="${esc(new Date().toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }))} 上課">
+      <label>存到哪個分類</label><select id="rFolder">${await this.folderOptions(def)}</select>
+      <label>錄哪裡的聲音</label>
+      <select id="rSource">
+        <option value="mic">麥克風（教室上課）</option>
+        ${canSystem ? `<option value="system">電腦播放的聲音（影片、線上課）</option><option value="both">麥克風＋電腦聲音（線上會議）</option>` : ''}
+      </select>
+      ${canSystem ? `<p class="muted">錄電腦聲音時會跳出分享視窗：選要錄的瀏覽器分頁並勾選「分享分頁音訊」。Windows 可選整個螢幕並勾「分享系統音訊」。Mac 上錄其他 app（例如 Zoom 桌面版）的聲音，要等之後的 Mac 版。</p>` : `<p class="muted">手機只能錄麥克風。錄音時請保持螢幕開著（已自動防止休眠），手機盡量靠近講台。</p>`}
+      <div class="row" style="margin-top:14px"><button class="primary" onclick="UI.startRec()">● 開始錄音</button></div>
+      <p id="rErr" class="err"></p></div>`;
+  },
+  async startRec() {
+    try {
+      await Rec.start({ source: document.getElementById('rSource').value, folderId: document.getElementById('rFolder').value, title: document.getElementById('rTitle').value.trim() });
+      this.renderRecording();
+    } catch (e) { document.getElementById('rErr').textContent = (e.name === 'NotAllowedError' ? '沒有取得錄音權限。' : '') + e.message; }
+  },
+  renderRecording() {
+    main.innerHTML = `<div class="card" style="text-align:center">
+      <div class="muted">${esc(Rec.session.title)}</div>
+      <div class="big-time" id="recTime">0:00</div>
+      <div class="meter" style="max-width:360px;margin:8px auto 16px"><div id="recLvl"></div></div>
+      <div class="row" style="justify-content:center">
+        <button id="pauseBtn" onclick="UI.togglePause()">❚❚ 暫停</button>
+        <button onclick="UI.mark()">★ 標記重點</button>
+        <button onclick="UI.snap()">📷 拍白板</button>
+        <button class="primary" onclick="UI.stopRec()">■ 結束並儲存</button>
+      </div>
+      <input id="markLabel" placeholder="標記說明（選填，例如：會考）" style="max-width:360px;margin-top:12px">
+      <div id="marks" style="margin-top:10px"></div>
+      <p class="muted">錄音每 5 秒自動存一次，不會因為當機整段消失。快捷鍵：空白鍵＝標記重點。</p></div>`;
+    this.drawMarks();
+    clearInterval(this._tick);
+    this._tick = setInterval(() => { const t = document.getElementById('recTime'); if (!t) return; t.textContent = fmt(Rec.elapsed()); document.getElementById('recLvl').style.width = Math.min(100, Rec.level() * 160) + '%'; }, 100);
+  },
+  drawMarks() { const el = document.getElementById('marks'); if (el) el.innerHTML = Rec.session.bookmarks.map(b => `<span class="bm">★ ${fmt(b.t)} ${esc(b.label)}</span>`).join(''); },
+  togglePause() { if (Rec.state === 'recording') { Rec.pause(); document.getElementById('pauseBtn').textContent = '▶ 繼續'; } else { Rec.resume(); document.getElementById('pauseBtn').textContent = '❚❚ 暫停'; } },
+  async mark() { const l = document.getElementById('markLabel'); await Rec.bookmark(l.value.trim()); l.value = ''; this.drawMarks(); },
+  snap() { const inp = document.getElementById('photoInput'); inp.onchange = async () => { if (inp.files[0]) await Rec.addPhoto(inp.files[0]); inp.value = ''; }; inp.click(); },
+  async stopRec() { clearInterval(this._tick); const s = await Rec.stop(); this.showSession(s.id); },
+
+  importFile() {
+    const inp = document.getElementById('fileInput');
+    inp.onchange = async () => {
+      const file = inp.files[0]; inp.value = ''; if (!file) return;
+      const id = uid();
+      await DB.put('chunks', { sessionId: id, idx: 0, blob: file });
+      const def = ['all', 'none'].includes(this.current.folderId) ? null : this.current.folderId;
+      const s = { id, folderId: def, title: file.name.replace(/\.[^.]+$/, ''), createdAt: file.lastModified || Date.now(), duration: 0, mimeType: file.type || 'audio/mp4', source: 'import', bookmarks: [], transcript: null, summary: '', status: 'saved' };
+      await DB.put('sessions', s);
+      const a = new Audio(URL.createObjectURL(file)); a.onloadedmetadata = async () => { if (isFinite(a.duration)) { s.duration = a.duration; await DB.put('sessions', s); this.showSession(id); } };
+      this.showSession(id);
+    };
+    inp.click();
+  },
+
+  // ---------- 單一錄音 ----------
+  teacherOnly: false,
+  async showSession(id) {
+    aside.classList.add('collapsed'); await this.refreshSidebar();
+    const s = await DB.get('sessions', id); if (!s) return this.showFolder('all');
+    const photos = (await DB.byIndex('photos', 'sessionId', id)).sort((a, b) => a.t - b.t);
+    const audioUrl = URL.createObjectURL(await sessionAudio(id));
+    const segs = s.transcript?.segments || [];
+    const hasRoles = segs.some(g => g.role);
+    main.innerHTML = `
+      <div class="row" style="margin-bottom:10px"><button onclick="UI.showFolder(UI.current.folderId)">← 返回</button><span class="grow"></span><button class="danger" onclick="UI.deleteSession('${id}')">刪除</button></div>
+      <div class="card">
+        <input id="sTitle" value="${esc(s.title)}" style="font-size:18px;font-weight:600;border:0;padding:0;margin-bottom:6px" onchange="UI.patch('${id}',{title:this.value})">
+        <div class="row"><span class="muted">${fmtDate(s.createdAt)} · ${fmt(s.duration)}</span><span class="grow"></span><select style="width:auto" onchange="UI.patch('${id}',{folderId:this.value||null})">${await this.folderOptions(s.folderId)}</select></div>
+        <audio id="player" controls src="${audioUrl}" style="width:100%;margin-top:10px"></audio>
+        <div class="row" style="margin-top:6px"><span class="muted">速度</span>${[1, 1.25, 1.5, 2].map(r => `<button onclick="player.playbackRate=${r}">${r}×</button>`).join('')}</div>
+        ${s.bookmarks.length ? `<h3>我的標記</h3>${s.bookmarks.map(b => `<span class="bm" onclick="UI.seek(${b.t})">★ ${fmt(b.t)} ${esc(b.label)}</span>`).join('')}` : ''}
+        ${photos.length ? `<h3>照片</h3><div class="photos">${photos.map(p => `<div><img src="${URL.createObjectURL(p.blob)}" onclick="UI.seek(${p.t})"><div class="muted">${fmt(p.t)}</div></div>`).join('')}</div>` : ''}
+      </div>
+      <div class="card">
+        <div class="row"><h3 class="grow" style="margin:0">逐字稿</h3>
+          ${hasRoles ? `<label style="margin:0;display:flex;gap:6px;align-items:center"><input type="checkbox" style="width:auto" ${this.teacherOnly ? 'checked' : ''} onchange="UI.teacherOnly=this.checked;UI.showSession('${id}')">只看老師</label>` : ''}
+          <button class="${segs.length ? '' : 'primary'}" onclick="UI.doTranscribe('${id}')">${segs.length ? '重新轉寫' : '開始轉寫'}</button></div>
+        <p id="tMsg" class="muted"></p>
+        ${hasRoles ? `<p class="muted">綠色是推定的老師。認錯人的話，點那一段的名字可以切換。</p>` : ''}
+        <div id="segs">${segs.map((g, i) => (this.teacherOnly && g.role === 'other') ? '' : `<div class="seg ${g.role || ''}" data-s="${g.start}" data-e="${g.end}"><span class="t" onclick="UI.seek(${g.start})">${fmt(g.start)}</span><div>${g.role ? `<div class="who" style="cursor:pointer" onclick="UI.flipRole('${id}','${esc(g.label)}')">${g.role === 'teacher' ? '老師' : '其他人'}</div>` : ''}<div contenteditable="true" onblur="UI.editSeg('${id}',${i},this.innerText)">${esc(g.text)}</div></div></div>`).join('')}</div>
+      </div>
+      <div class="card">
+        <div class="row"><h3 class="grow" style="margin:0">AI 整理重點</h3>
+          ${s.summary ? `<button onclick="UI.speak()">🔊 朗讀</button>` : ''}
+          <button ${segs.length ? '' : 'disabled'} onclick="UI.doSummary('${id}')">${s.summary ? '重新整理' : '產生重點'}</button></div>
+        <p id="sMsg" class="muted">${segs.length ? '' : '先轉寫才能整理重點。'}</p>
+        <div id="summary" class="summary">${mdToHtml(s.summary)}</div>
+      </div>
+      <div class="card"><h3 style="margin-top:0">匯出</h3><div class="row">
+        <button onclick="UI.exportMd('${id}')">筆記 Markdown</button>
+        <button ${segs.length ? '' : 'disabled'} onclick="UI.exportSrt('${id}')">字幕 SRT</button>
+        <button onclick="UI.exportAudio('${id}')">原始音檔</button>
+        <button onclick="UI.copyMd('${id}')">複製筆記（貼到 Notion）</button></div></div>`;
+    const player = document.getElementById('player');
+    // MediaRecorder 錄出的 webm 沒有長度資訊，先跳到最後讓瀏覽器算出長度
+    player.addEventListener('loadedmetadata', () => { if (player.duration === Infinity) { player.currentTime = 1e101; player.addEventListener('timeupdate', function f() { player.removeEventListener('timeupdate', f); player.currentTime = 0; }); } });
+    player.addEventListener('timeupdate', () => { const t = player.currentTime; document.querySelectorAll('.seg').forEach(e => e.classList.toggle('playing', t >= +e.dataset.s && t < +e.dataset.e)); });
+  },
+  seek(t) { const p = document.getElementById('player'); p.currentTime = t; p.play(); },
+  async patch(id, v) { const s = await DB.get('sessions', id); Object.assign(s, v); await DB.put('sessions', s); this.refreshSidebar(); },
+  async editSeg(id, i, text) { const s = await DB.get('sessions', id); if (s.transcript.segments[i].text !== text) { s.transcript.segments[i].text = text; await DB.put('sessions', s); } },
+  async flipRole(id, label) {
+    const s = await DB.get('sessions', id);
+    const cur = s.transcript.segments.find(g => g.label === label)?.role;
+    s.transcript.segments.forEach(g => { if (g.label === label) g.role = cur === 'teacher' ? 'other' : 'teacher'; });
+    await DB.put('sessions', s); this.showSession(id);
+  },
+  async doTranscribe(id) {
+    const msg = document.getElementById('tMsg');
+    document.querySelectorAll('button').forEach(b => b.disabled = true);
+    try { await transcribeSession(id, t => msg.textContent = t); document.querySelectorAll('button').forEach(b => b.disabled = false); this.showSession(id); }
+    catch (e) { document.querySelectorAll('button').forEach(b => b.disabled = false); msg.innerHTML = `<span class="err">轉寫失敗：${esc(e.message)}</span>`; }
+  },
+  async doSummary(id) {
+    const msg = document.getElementById('sMsg'); msg.textContent = '整理中…';
+    try { const s = await DB.get('sessions', id); s.summary = await toTW(await summarize(s)); await DB.put('sessions', s); this.showSession(id); }
+    catch (e) { msg.innerHTML = `<span class="err">整理失敗：${esc(e.message)}</span>`; }
+  },
+  speak() {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(document.getElementById('summary').innerText.replace(/[#*]/g, ''));
+    u.lang = 'zh-TW'; u.voice = speechSynthesis.getVoices().find(v => v.lang === 'zh-TW') || null; speechSynthesis.speak(u);
+  },
+  async deleteSession(id) { if (!confirm('確定刪除這段錄音與逐字稿？無法復原。')) return; await DB.delByIndex('chunks', 'sessionId', id); await DB.delByIndex('photos', 'sessionId', id); await DB.del('sessions', id); this.showFolder(this.current.folderId); },
+  async exportMd(id) { const s = await DB.get('sessions', id); const f = s.folderId && await DB.get('folders', s.folderId); download(s.title + '.md', new Blob([toMarkdown(s, f)], { type: 'text/markdown' })); },
+  async copyMd(id) { const s = await DB.get('sessions', id); const f = s.folderId && await DB.get('folders', s.folderId); await navigator.clipboard.writeText(toMarkdown(s, f)); alert('已複製，可以直接貼到 Notion。'); },
+  async exportSrt(id) { const s = await DB.get('sessions', id); download(s.title + '.srt', new Blob([toSrt(s)], { type: 'text/plain' })); },
+  async exportAudio(id) { const s = await DB.get('sessions', id); const b = await sessionAudio(id); download(s.title + (b.type.includes('mp4') ? '.m4a' : b.type.includes('wav') ? '.wav' : '.webm'), b); },
+
+  // ---------- 設定 ----------
+  showSettings() {
+    aside.classList.add('collapsed');
+    const opt = (v, t, cur) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${t}</option>`;
+    main.innerHTML = `<div class="card"><h2>設定</h2>
+      <p class="note">API key 只存在這個瀏覽器裡，直接送到你選的服務，不會經過任何其他伺服器。不要在別人的電腦上填。</p>
+      <h3>轉寫引擎</h3>
+      <select id="engine">${opt('openai-diarize', 'OpenAI（分得出老師與學生，約 US$0.36／小時）', S.engine)}${opt('whisper-api', 'Groq 或其他 Whisper 服務（最便宜，約 US$0.04／小時，不分說話者）', S.engine)}${opt('whispercpp', '我 Mac 上的 whisper.cpp（免費、不上網，不分說話者）', S.engine)}</select>
+      <label>OpenAI API key（轉寫與整理重點共用）</label><input id="openaiKey" type="password" value="${esc(S.openaiKey)}" placeholder="sk-...">
+      <label>Whisper 服務網址</label><input id="whisperBase" value="${esc(S.whisperBase)}">
+      <label>Whisper 服務 API key（Groq 的 key 是 gsk_ 開頭）</label><input id="whisperKey" type="password" value="${esc(S.whisperKey)}">
+      <label>Whisper 模型</label><input id="whisperModel" value="${esc(S.whisperModel)}">
+      <label>本機 whisper-server 網址</label><input id="localUrl" value="${esc(S.localUrl)}">
+      <label>語言</label><select id="language">${opt('', '自動（中英夾雜選這個）', S.language)}${opt('zh', '中文', S.language)}${opt('en', '英文', S.language)}</select>
+      <label>每次送出的長度（分鐘）</label><input id="chunkMin" type="number" min="1" max="20" value="${S.chunkMin}">
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="toTraditional" style="width:auto" ${S.toTraditional ? 'checked' : ''}>把簡體字轉成台灣繁體（OpenCC）</label>
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="noiseSuppression" style="width:auto" ${S.noiseSuppression ? 'checked' : ''}>錄音時開啟降噪（教室吵時試試；老師離很遠時可能反而聽不清楚）</label>
+      <h3>AI 整理重點</h3>
+      <select id="summaryProvider">${opt('openai', 'OpenAI', S.summaryProvider)}${opt('anthropic', 'Anthropic（Claude）', S.summaryProvider)}</select>
+      <label>模型名稱</label><input id="summaryModel" value="${esc(S.summaryModel)}">
+      <label>Anthropic API key</label><input id="anthropicKey" type="password" value="${esc(S.anthropicKey)}">
+      <div class="row" style="margin-top:14px"><button class="primary" onclick="UI.saveSettings()">儲存</button><span id="setMsg" class="muted"></span></div></div>`;
+  },
+  saveSettings() {
+    const g = id => document.getElementById(id);
+    S = { ...S, engine: g('engine').value, openaiKey: g('openaiKey').value.trim(), whisperBase: g('whisperBase').value.trim(), whisperKey: g('whisperKey').value.trim(), whisperModel: g('whisperModel').value.trim(), localUrl: g('localUrl').value.trim(), language: g('language').value, chunkMin: Math.min(20, Math.max(1, +g('chunkMin').value || 10)), toTraditional: g('toTraditional').checked, noiseSuppression: g('noiseSuppression').checked, summaryProvider: g('summaryProvider').value, summaryModel: g('summaryModel').value.trim(), anthropicKey: g('anthropicKey').value.trim() };
+    Settings.save(S); g('setMsg').textContent = '已儲存';
+  },
+};
+document.addEventListener('keydown', e => { if (e.code === 'Space' && Rec.state !== 'idle' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) { e.preventDefault(); UI.mark(); } });
+
+(async () => {
+  await DB.open();
+  try { await navigator.storage?.persist?.(); } catch {}
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  UI.showFolder('all');
+})();
+</script>
+</body>
+</html>
