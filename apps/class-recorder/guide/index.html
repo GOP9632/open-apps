@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>課堂錄音 使用說明</title>
+<style>
+:root{--bg:#f7f8fa;--panel:#fff;--text:#1d2129;--muted:#6b7280;--line:#e5e7eb;--accent:#3b5bdb;--accent-soft:#edf2ff;--red:#f03e3e;--warn-bg:#fff4e6}
+@media (prefers-color-scheme:dark){:root{--bg:#111418;--panel:#1a1e24;--text:#e6e8eb;--muted:#9aa3ad;--line:#2b313a;--accent:#748ffc;--accent-soft:#1f2747;--warn-bg:#3a2a12}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.75 -apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif}
+.wrap{max-width:960px;margin:0 auto;padding:24px 16px 80px}
+header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+header h1{font-size:28px;margin:0;flex:1}
+a{color:var(--accent)}
+.btn{display:inline-block;background:#e03131;color:#fff;text-decoration:none;padding:8px 16px;border-radius:99px;font-weight:600}
+nav.toc{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 20px;margin:20px 0}
+nav.toc ol{margin:6px 0;padding-left:22px;columns:2;column-gap:32px}
+@media (max-width:640px){nav.toc ol{columns:1}}
+section{margin-top:44px}
+h2{font-size:22px;border-bottom:2px solid var(--line);padding-bottom:6px;scroll-margin-top:12px}
+h3{font-size:17px;margin:22px 0 6px}
+figure{margin:14px 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px}
+figure img{width:100%;display:block;border-radius:8px}
+figure.phone{max-width:360px}
+.phones{display:flex;gap:14px;flex-wrap:wrap}
+.phones figure{flex:1;min-width:240px;max-width:320px}
+figcaption{font-size:13px;color:var(--muted);margin-top:6px;text-align:center}
+ol.marks{list-style:none;padding:0;margin:10px 0}
+ol.marks li{display:flex;gap:10px;margin:8px 0;align-items:flex-start}
+.n{flex:none;width:26px;height:26px;border-radius:50%;background:var(--red);color:#fff;font-weight:700;font-size:14px;display:inline-flex;align-items:center;justify-content:center;margin-top:2px}
+.tip{background:var(--accent-soft);border-radius:10px;padding:10px 14px;margin:12px 0}
+.warn{background:var(--warn-bg);border-radius:10px;padding:10px 14px;margin:12px 0}
+kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 6px;background:var(--panel);font-size:14px}
+table{border-collapse:collapse;width:100%;background:var(--panel);border-radius:10px;overflow:hidden}
+td,th{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:var(--accent-soft)}
+dt{font-weight:700;margin-top:14px}
+dd{margin:4px 0 0 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header><h1>🎙️ 課堂錄音 使用說明</h1><a class="btn" href="../">打開 app</a></header>
+<p>上課、開會時錄音，自動變成逐字稿和 AI 筆記，還能直接問「老師說哪些會考？」。錄音和筆記都存在你自己的裝置上，不會上傳到我們的伺服器。</p>
+<p>圖片上的紅色數字，對應圖片下面的說明。</p>
+
+<nav class="toc"><b>目錄</b><ol>
+<li><a href="#setup">第一次使用：填 API key</a></li>
+<li><a href="#home">首頁與分類</a></li>
+<li><a href="#course">課程設定：專有名詞、老師聲音</a></li>
+<li><a href="#record">錄音</a></li>
+<li><a href="#notes">轉寫與 AI 筆記</a></li>
+<li><a href="#transcript">逐字稿：畫重點、改名</a></li>
+<li><a href="#keyword">關鍵字</a></li>
+<li><a href="#chat">AI 問答</a></li>
+<li><a href="#export">匯出到 Notion</a></li>
+<li><a href="#mobile">手機使用</a></li>
+<li><a href="#keys">快捷鍵</a></li>
+<li><a href="#faq">常見問題</a></li>
+</ol></nav>
+
+<section id="setup"><h2>1. 第一次使用：填 API key</h2>
+<p>轉寫和 AI 筆記要靠外面的 AI 服務。點左下角「⚙️ 設定」，填上你申請的 key。key 只存在這個瀏覽器。</p>
+<figure><img src="img/03-settings-1.jpg" alt="設定頁上半部"><figcaption>設定頁（上半部）</figcaption></figure>
+<ol class="marks">
+<li><span class="n">1</span><div><b>轉寫引擎</b>：選誰把聲音變成文字。建議用 Google Gemini，分得出老師和學生。只要文字、不在乎誰講的，可以選 Groq（免費）。</div></li>
+<li><span class="n">2</span><div><b>Gemini API key</b>：到 <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> 申請，開頭是 AIza。</div></li>
+<li><span class="n">3</span><div><b>Groq API key</b>：到 <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> 免費申請，開頭是 gsk_。AI 問答預設用它，所以建議一定要填。</div></li>
+</ol>
+<figure><img src="img/03-settings-2.jpg" alt="設定頁下半部"><figcaption>設定頁（往下捲）</figcaption></figure>
+<ol class="marks">
+<li><span class="n">1</span><div><b>AI 筆記用</b>：轉寫完自動整理筆記的 AI，預設 Gemini。</div></li>
+<li><span class="n">2</span><div><b>AI 問答用</b>：預設 Groq，免費。</div></li>
+<li><span class="n">3</span><div><b>筆記與問答專用的 Gemini key</b>（選填）：如果上面那把 Gemini key 綁了帳單，可以用另一個 Google 帳號申請一把沒綁帳單的 key 填在這裡，筆記和問答就不花錢。</div></li>
+<li><span class="n">4</span><div>改完記得按 <b>儲存</b>。</div></li>
+</ol>
+<div class="warn">⚠️ 不要在別人的電腦上填 key。免費方案的內容可能被服務商拿去改進模型，很私密的會議建議改用 Mac 本機轉寫。</div>
+</section>
+
+<section id="home"><h2>2. 首頁與分類</h2>
+<figure><img src="img/01-home.jpg" alt="首頁"><figcaption>首頁：依日期排好的錄音卡片</figcaption></figure>
+<ol class="marks">
+<li><span class="n">1</span><div><b>開始錄音</b>：任何畫面都可以按，右上角紅色的「● 錄音」也一樣。</div></li>
+<li><span class="n">2</span><div><b>分類</b>：按「＋」新增課程、會議或專案，例如「統計學」。點分類名稱只看那一類的錄音。</div></li>
+<li><span class="n">3</span><div><b>搜尋</b>：會找標題、逐字稿和 AI 筆記裡的字，例如輸入「期中考」。</div></li>
+<li><span class="n">4</span><div><b>匯入</b>：把手機「語音備忘錄」或其他錄好的音檔（m4a、mp3、wav）放進來轉寫。</div></li>
+<li><span class="n">5</span><div><b>錄音卡片</b>：顯示時間、長度、分類和 AI 概述。底下的小標籤是還沒做完的待辦（☐）、標記（★）、畫的重點（🖍）數量。點一下打開。</div></li>
+<li><span class="n">6</span><div><b>使用說明</b>：就是這一頁。</div></li>
+</ol>
+</section>
+
+<section id="course"><h2>3. 課程設定：專有名詞、老師聲音</h2>
+<p>點左邊的課程名稱，再點「這個課程的設定」展開。每門課設一次就好，之後每週都會用到。</p>
+<figure><img src="img/02-folder.jpg" alt="課程設定"><figcaption>課程設定</figcaption></figure>
+<ol class="marks">
+<li><span class="n">1</span><div><b>專有名詞詞表</b>：一行一個，例如 regression、ANOVA、老師的名字。AI 轉寫前會先看這張表，英文術語就比較不會聽錯。</div></li>
+<li><span class="n">2</span><div><b>老師的聲音樣本</b>：錄 8 秒只有老師講話的聲音（或從檔案選）。設好之後，用 Gemini 轉寫時每週都會把老師固定標成「老師」。</div></li>
+<li><span class="n">3</span><div><b>儲存設定</b>：改詞表後要按。</div></li>
+</ol>
+</section>
+
+<section id="record"><h2>4. 錄音</h2>
+<figure><img src="img/04-rec-setup.jpg" alt="開始新錄音"><figcaption>開始新錄音</figcaption></figure>
+<ol class="marks">
+<li><span class="n">1</span><div><b>標題</b>：預設是今天日期，之後也可以改。</div></li>
+<li><span class="n">2</span><div><b>分類</b>：存到哪門課。</div></li>
+<li><span class="n">3</span><div><b>錄哪裡的聲音</b>：教室上課選「麥克風」。看線上課、YouTube 選「電腦播放的聲音」，跳出分享視窗時要選分頁並勾「分享分頁音訊」。線上會議選「麥克風＋電腦聲音」。（電腦聲音只有電腦版 Chrome、Edge 可以錄。）</div></li>
+<li><span class="n">4</span><div><b>開始錄音</b>。第一次會問麥克風權限，按允許。</div></li>
+</ol>
+<figure><img src="img/13-recording.jpg" alt="錄音中"><figcaption>錄音中</figcaption></figure>
+<ol class="marks">
+<li><span class="n">1</span><div><b>已錄時間</b>，旁邊紅點閃爍代表正在錄。</div></li>
+<li><span class="n">2</span><div><b>音量條</b>：有在動就代表有收到聲音。完全不動請檢查麥克風。</div></li>
+<li><span class="n">3</span><div><b>暫停／繼續</b>：下課休息可以先暫停。</div></li>
+<li><span class="n">4</span><div><b>★ 標記重點</b>：老師說「這個會考」時按一下，時間點會留下來，AI 整理筆記時也會特別注意。電腦上按 <kbd>空白鍵</kbd> 也可以。</div></li>
+<li><span class="n">5</span><div><b>📷 拍白板</b>：拍下的照片會對到錄音時間，之後點照片就跳到那一段。</div></li>
+<li><span class="n">6</span><div><b>結束並儲存</b>：錄完按這個。</div></li>
+<li><span class="n">7</span><div><b>標記說明</b>（選填）：先打幾個字（例如「會考」），再按標記重點。</div></li>
+</ol>
+<div class="tip">💡 錄音每 5 秒自動存一次。就算瀏覽器當掉，也只會少最後幾秒。</div>
+</section>
+
+<section id="notes"><h2>5. 轉寫與 AI 筆記</h2>
+<p>錄完會打開這段錄音。第一次按「開始轉寫」，轉完會自動產生 AI 筆記。一小時的課大約要幾分鐘。</p>
+<figure><img src="img/05-summary.jpg" alt="摘要頁"><figcaption>錄音頁的「摘要」分頁</figcaption></figure>
+<ol class="marks">
+<li><span class="n">1</span><div><b>說話者</b>：每個人講話的比例。綠色是老師。點名字可以改名，例如把「說話者 B」改成「小明」。</div></li>
+<li><span class="n">2</span><div><b>關鍵字</b>：AI 挑出來的重要詞，點一下會在逐字稿標出來（見第 7 節）。</div></li>
+<li><span class="n">3</span><div><b>分頁</b>：「摘要」看 AI 筆記，「逐字稿」看完整文字。</div></li>
+<li><span class="n">4</span><div><b>朗讀</b>：讓電腦把重點唸給你聽。旁邊的「重新整理」會重新產生 AI 筆記。</div></li>
+<li><span class="n">5</span><div><b>待辦事項</b>：AI 抓出來的作業、考試、期限。做完打勾，也可以在下面的框框自己新增。</div></li>
+<li><span class="n">6</span><div><b>藍色時間</b>：點一下就從那個時間開始播放。往下捲還有大綱、名詞解釋、可能沒聽懂的地方、複習問題（點題目看答案）。</div></li>
+<li><span class="n">7</span><div><b>AI 問答</b>：見第 8 節。</div></li>
+<li><span class="n">8</span><div><b>播放列</b>：↺5 倒退 5 秒、▶ 播放、5↻ 快轉 5 秒，拖拉進度條跳到任何地方，最右邊點一下切換速度（1×、1.25×、1.5×、2×、0.75×）。</div></li>
+<li><span class="n">9</span><div><b>匯出</b>：見第 9 節。</div></li>
+</ol>
+</section>
+
+<section id="transcript"><h2>6. 逐字稿：畫重點、改名</h2>
+<figure><img src="img/06-transcript.jpg" alt="逐字稿"><figcaption>「逐字稿」分頁</figcaption></figure>
+<ol class="marks">
+<li><span class="n">1</span><div><b>篩選工具</b>：「只看老師」把學生發問和聊天收起來；「只看重點」只留你畫過重點的段落；「編輯文字」可以直接改錯字；「重新轉寫」換了引擎或詞表後可以再轉一次。</div></li>
+<li><span class="n">2</span><div><b>說話者名字</b>：點一下改名，同一個人的每一段都會一起改。</div></li>
+<li><span class="n">3</span><div><b>黃色＝你畫的重點</b>。點黃色的地方可以取消。</div></li>
+<li><span class="n">4</span><div><b>畫重點</b>：用滑鼠拖曳（手機用手指長按）選取一段文字，上面會跳出「🖍 畫重點」，按下去就變黃色。</div></li>
+<li><span class="n">5</span><div><b>★ 標記</b>：錄音時按的標記，會出現在對應的那一段。</div></li>
+<li><span class="n">6</span><div><b>設成老師／不是老師</b>：AI 認錯人時，滑鼠移到那一段就會出現這顆按鈕，點一下切換。</div></li>
+</ol>
+<p>播放時，正在講的那一段會變成淡藍色；點每段旁邊的藍色時間就從那裡開始聽。</p>
+</section>
+
+<section id="keyword"><h2>7. 關鍵字</h2>
+<figure><img src="img/07-keyword.jpg" alt="關鍵字"><figcaption>點關鍵字後</figcaption></figure>
+<ol class="marks">
+<li><span class="n">1</span><div>點一個關鍵字（這裡是「殘差」），會自動切到逐字稿。</div></li>
+<li><span class="n">2</span><div>這裡顯示有幾段提到它。按 ✕ 或再點一次關鍵字就取消。</div></li>
+<li><span class="n">3</span><div>逐字稿裡出現的地方都會標成橘色，畫面會自動捲到第一個。</div></li>
+</ol>
+</section>
+
+<section id="chat"><h2>8. AI 問答</h2>
+<p>電腦上在右邊，手機上在「💬 AI 問答」分頁。AI 只根據這段錄音回答，不會自己亂編。</p>
+<figure><img src="img/08-chat.jpg" alt="AI 問答"><figcaption>AI 問答</figcaption></figure>
+<ol class="marks">
+<li><span class="n">1</span><div><b>你的問題</b>。還沒問過時，會有幾個建議問題可以直接點，例如「老師說哪些會考？」「幫我列出作業和期限」。</div></li>
+<li><span class="n">2</span><div><b>藍色時間</b>：答案的出處，點一下就跳去聽原話。</div></li>
+<li><span class="n">3</span><div><b>輸入框</b>：打字後按 <kbd>Enter</kbd> 送出，<kbd>Shift</kbd>＋<kbd>Enter</kbd> 換行。問答紀錄會存起來，下次打開還在。</div></li>
+</ol>
+<div class="tip">💡 用 Groq 免費問答時，因為免費額度每分鐘能處理的字數有限，AI 只會看跟問題最相關的幾段和 AI 筆記。問題問得越具體越準，例如「R 平方是什麼意思？」比「今天講了什麼？」好。連續問太快時會自動等一下再回答。</div>
+</section>
+
+<section id="export"><h2>9. 匯出到 Notion</h2>
+<figure><img src="img/09-export.jpg" alt="匯出選單"><figcaption>右上角「⤓ 匯出」</figcaption></figure>
+<ol class="marks">
+<li><span class="n">1</span><div><b>複製筆記</b>後直接在 Notion 貼上，會保留標題、待辦勾選框、重點。也可以下載成 Markdown 檔、SRT 字幕檔（配影片用），或下載原始錄音檔。</div></li>
+</ol>
+</section>
+
+<section id="mobile"><h2>10. 手機使用</h2>
+<p>用手機打開 app 網址，Safari 按「分享 → 加入主畫面」，之後就像一般 app 一樣從主畫面打開。</p>
+<div class="phones">
+<figure><img src="img/10-mobile-home.jpg" alt="手機首頁"><figcaption>手機首頁</figcaption></figure>
+<figure><img src="img/11-mobile-drawer.jpg" alt="手機選單"><figcaption>點 ☰ 打開選單</figcaption></figure>
+<figure><img src="img/12-mobile-session.jpg" alt="手機錄音頁"><figcaption>手機的錄音頁</figcaption></figure>
+</div>
+<ol class="marks">
+<li><span class="n">1</span><div><b>☰ 選單</b>：分類、設定、使用說明都在這裡。</div></li>
+<li><span class="n">2</span><div><b>紅色圓點</b>：開始錄音。</div></li>
+</ol>
+<p>手機的錄音頁把「AI 問答」和「標記與照片」也放進分頁，播放列一樣在最下面。</p>
+<div class="warn">⚠️ 手機只能錄麥克風，錄不到手機本身播放的聲音。iPhone 錄音時請保持螢幕開著（app 會自動防止螢幕休眠）。最保險的做法是用內建「語音備忘錄」錄，下課後再按「匯入」。</div>
+</section>
+
+<section id="keys"><h2>11. 快捷鍵（電腦）</h2>
+<table>
+<tr><th>按鍵</th><th>錄音時</th><th>聽錄音時</th></tr>
+<tr><td><kbd>空白鍵</kbd></td><td>標記重點</td><td>播放／暫停</td></tr>
+<tr><td><kbd>←</kbd></td><td></td><td>倒退 5 秒</td></tr>
+<tr><td><kbd>→</kbd></td><td></td><td>快轉 5 秒</td></tr>
+</table>
+<p>正在輸入框打字時，快捷鍵不會作用。</p>
+</section>
+
+<section id="faq"><h2>12. 常見問題</h2>
+<dl>
+<dt>轉寫失敗，出現 402</dt>
+<dd>這把 Gemini key 所在的專案綁了預付帳單，但餘額是 0。到 Google AI Studio 儲值，或改用沒綁帳單的 key，也可以先把轉寫引擎換成 Groq。</dd>
+<dt>出現 429 或「免費額度用完了」</dt>
+<dd>免費方案每分鐘、每天有次數上限。app 會自動等一下再試；還是不行就過幾分鐘再按，或換另一個引擎。</dd>
+<dt>AI 問答說「要先到設定填入 API key」</dt>
+<dd>AI 問答預設用 Groq，到設定填 Groq API key。不想申請 Groq 的話，把「AI 問答用」改成 Gemini。</dd>
+<dt>老師和學生分錯了</dt>
+<dd>在逐字稿把滑鼠移到那一段，按「設成老師」或「不是老師」。想要每週都準，到課程設定錄一段老師的聲音樣本。</dd>
+<dt>英文專有名詞一直聽錯</dt>
+<dd>把正確拼法加進課程的專有名詞詞表，再按「重新轉寫」。</dd>
+<dt>出現簡體字</dt>
+<dd>設定裡勾「把簡體字轉成台灣繁體」（預設已勾）。</dd>
+<dt>錄音存在哪裡？換手機會不見嗎？</dt>
+<dd>存在這個瀏覽器裡。換裝置或清除瀏覽器資料就會不見，重要的錄音記得用「下載原始音檔」和「複製筆記」備份。左下角會顯示已用多少空間。</dd>
+<dt>錄電腦聲音沒有聲音</dt>
+<dd>分享視窗要選「分頁」並勾選「分享分頁音訊」。Mac 上錄 Zoom 這類 app 的聲音，網頁版做不到，要等之後的 Mac 版。</dd>
+</dl>
+<div class="tip">💡 錄課堂自己複習一般沒問題，但最好先跟老師說一聲，錄音和逐字稿也不要公開散布。</div>
+</section>
+</div>
+</body>
+</html>

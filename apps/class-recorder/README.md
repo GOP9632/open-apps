@@ -1,5 +1,7 @@
 # 課堂錄音（第一版原型）
 
+使用說明（有截圖）：https://gop9632.github.io/open-apps/apps/class-recorder/guide/
+
 規劃與功能說明：[docs/plans/class-recorder.md](../../docs/plans/class-recorder.md)
 
 ## 現在就想試

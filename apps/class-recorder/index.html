@@ -190,6 +190,7 @@ details.menu summary:hover{background:var(--accent-soft)}
   <button class="rec" style="margin:0 4px 10px;padding:9px" onclick="UI.showRecorder()">● 開始錄音</button>
   <div id="folderList"></div>
   <div class="side-foot">
+    <a class="nav" href="guide/" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">📖 使用說明</a>
     <div class="nav" onclick="UI.showSettings()">⚙️ 設定</div>
     <p class="muted" id="storageInfo" style="padding:0 10px"></p>
   </div>
@@ -1021,7 +1022,7 @@ const UI = {
       ${hasRoles ? `<label class="toggle"><input type="checkbox" ${this.teacherOnly ? 'checked' : ''} onchange="UI.teacherOnly=this.checked;UI.paintTab()">只看老師</label>` : ''}
       ${hasHL ? `<label class="toggle"><input type="checkbox" ${this.hlOnly ? 'checked' : ''} onchange="UI.hlOnly=this.checked;UI.paintTab()">只看重點</label>` : ''}
       <label class="toggle"><input type="checkbox" ${this.editing ? 'checked' : ''} onchange="UI.editing=this.checked;UI.paintTab()">編輯文字</label>
-      ${this.kw ? `<button class="chip on" onclick="UI.kw='';UI.paintHead();UI.paintTab()">「${esc(this.kw)}」${segs.filter(g => g.text.toLowerCase().includes(this.kw.toLowerCase())).length} 處 ✕</button>` : ''}
+      ${this.kw ? `<button class="chip on" onclick="UI.kw='';UI.paintHead();UI.paintTab()">「${esc(this.kw)}」${segs.filter(g => g.text.toLowerCase().includes(this.kw.toLowerCase())).length} 段 ✕</button>` : ''}
       <span class="grow"></span><button onclick="UI.doTranscribe()">重新轉寫</button></div>
       <p class="muted" style="margin-top:0">${this.editing ? '直接點文字修改，離開那一段就會存檔。改過的段落，重點會被清掉。' : '用滑鼠或手指選取文字可以畫重點，點黃色的地方取消。點名字可以改名。'}</p>
       <div id="segs">${rows || '<p class="muted">沒有符合的段落。</p>'}</div>`;
