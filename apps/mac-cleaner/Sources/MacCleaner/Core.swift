@@ -8,6 +8,8 @@ struct CleanItem: Identifiable, Hashable {
     var size: Int64
     var isSelected: Bool
     var note: String? = nil
+    /// 白話說明：這是什麼、清掉的代價
+    var explanation: String? = nil
     var lastOpened: Date? = nil
 
     /// 顯示用的路徑，家目錄換成 ~

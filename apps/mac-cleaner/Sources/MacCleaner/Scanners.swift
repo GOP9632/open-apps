@@ -38,10 +38,13 @@ enum JunkScanner {
             let size = DiskUsage.size(of: url)
             guard size >= minimumSize else { continue }
             let isRunning = running.contains(name)
+            let info = KnownCaches.info(for: name)
+            let note: String? = isRunning ? "這個 App 正在執行，建議先關掉再清"
+                : info.hasOfflineContent ? "可能有離線下載的內容，預設不勾" : nil
             caches.append(CleanItem(
                 url: url, name: appName(forBundleID: name) ?? name, size: size,
-                isSelected: !isRunning,
-                note: isRunning ? "這個 App 正在執行，建議先關掉再清" : nil
+                isSelected: !isRunning && !info.hasOfflineContent,
+                note: note, explanation: info.explanation
             ))
         }
         result.append(JunkCategory(

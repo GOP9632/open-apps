@@ -90,6 +90,10 @@ struct ItemRow: View {
                     Text(item.displayPath).font(.caption).foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.middle)
                 }
+                if let explanation = item.explanation {
+                    Text(explanation).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let note = item.note {
                     Text(note).font(.caption).foregroundStyle(.orange)
                 }
