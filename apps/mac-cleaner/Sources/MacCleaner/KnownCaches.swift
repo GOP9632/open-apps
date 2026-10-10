@@ -22,6 +22,8 @@ enum KnownCaches {
         "org.swift.swiftpm": CacheInfo(explanation: "Swift 套件下載暫存。專案不受影響，之後編譯會重新下載。"),
         "JetBrains": CacheInfo(explanation: "JetBrains IDE（例如 IntelliJ、PyCharm）的索引暫存。重開專案時會重新建立索引，會慢一陣子。"),
         "com.microsoft.VSCode": CacheInfo(explanation: "VS Code 的暫存資料。設定和擴充功能不在這裡，不受影響。"),
+        "claude-cli-nodejs": CacheInfo(explanation: "Claude Code 指令列工具的暫存和除錯紀錄。設定和對話紀錄不在這裡，不受影響。"),
+        "Cypress": CacheInfo(explanation: "Cypress 測試工具的程式本體。清掉後要重新安裝 Cypress 才能再跑測試。"),
         "com.docker.docker": CacheInfo(explanation: "Docker Desktop 的暫存。你的映像檔和容器不在這裡，不受影響。"),
 
         // 瀏覽器
@@ -46,6 +48,8 @@ enum KnownCaches {
         "com.microsoft.Word": CacheInfo(explanation: "Word 的暫存。你的文件不在這裡，不受影響。"),
         "com.microsoft.Excel": CacheInfo(explanation: "Excel 的暫存。你的檔案不在這裡，不受影響。"),
         "com.microsoft.Powerpoint": CacheInfo(explanation: "PowerPoint 的暫存。你的檔案不在這裡，不受影響。"),
+        "Blender": CacheInfo(explanation: "Blender 的預覽和著色器暫存。清掉後第一次打開會慢一點，.blend 專案檔不受影響。"),
+        "Adobe": CacheInfo(explanation: "Adobe App 的暫存。你的作品檔不在這裡，不受影響。"),
         "com.openai.chat": CacheInfo(explanation: "ChatGPT App 的暫存。對話存在雲端，不受影響。"),
         "com.anthropic.claudefordesktop": CacheInfo(explanation: "Claude App 的暫存。對話存在雲端，不受影響。"),
 
@@ -55,6 +59,9 @@ enum KnownCaches {
             hasOfflineContent: true),
         "jp.naver.line.mac": CacheInfo(
             explanation: "LINE 的圖片和檔案暫存。很舊的聊天圖片如果伺服器已過期，清掉後可能就看不到了。",
+            hasOfflineContent: true),
+        "ru.keepcoder.Telegram": CacheInfo(
+            explanation: "Telegram 看過的圖片和影片暫存。清掉後舊訊息的圖片和影片要重新從網路載入。",
             hasOfflineContent: true),
         "com.netease.163music": CacheInfo(
             explanation: "網易雲音樂的暫存，可能包含離線歌曲。清掉要重新下載。",

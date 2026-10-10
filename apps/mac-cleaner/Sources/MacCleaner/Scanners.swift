@@ -70,14 +70,19 @@ enum JunkScanner {
 
         // 開發者暫存
         var dev: [CleanItem] = []
-        let devFolders: [(String, String, Bool)] = [
-            ("Library/Developer/Xcode/DerivedData", "Xcode 編譯暫存", true),
-            ("Library/Developer/Xcode/iOS DeviceSupport", "iPhone 除錯支援檔", true),
-            ("Library/Developer/CoreSimulator/Caches", "模擬器快取", true),
-            (".npm/_cacache", "npm 下載快取", false),
-            (".gradle/caches", "Gradle 快取", false),
+        let devFolders: [(String, String, Bool, String)] = [
+            ("Library/Developer/Xcode/DerivedData", "Xcode 編譯暫存", true,
+             "Xcode 編譯時產生的中間檔。清掉後下次編譯會比較久，不影響專案原始碼。"),
+            ("Library/Developer/Xcode/iOS DeviceSupport", "iPhone 除錯支援檔", true,
+             "接 iPhone 除錯時準備的系統檔。下次接上手機時 Xcode 會自動重新準備，要等幾分鐘。"),
+            ("Library/Developer/CoreSimulator/Caches", "模擬器快取", true,
+             "模擬器的暫存。模擬器裡裝的 App 和資料不在這裡，不受影響。"),
+            (".npm/_cacache", "npm 下載快取", false,
+             "npm 下載過的套件。專案裡已經裝好的不受影響，下次安裝時重新下載。"),
+            (".gradle/caches", "Gradle 快取", false,
+             "Gradle 下載的套件和編譯暫存。下次編譯時會重新下載，要等久一點。"),
         ]
-        for (rel, label, eachChild) in devFolders {
+        for (rel, label, eachChild, explanation) in devFolders {
             let base = Safety.home.appendingPathComponent(rel)
             guard FileManager.default.fileExists(atPath: base.path) else { continue }
             let targets = eachChild ? DiskUsage.children(of: base) : [base]
@@ -86,7 +91,7 @@ enum JunkScanner {
                 let size = DiskUsage.size(of: url)
                 guard size >= minimumSize else { continue }
                 let name = url == base ? label : "\(label)：\(url.lastPathComponent)"
-                dev.append(CleanItem(url: url, name: name, size: size, isSelected: true))
+                dev.append(CleanItem(url: url, name: name, size: size, isSelected: true, explanation: explanation))
             }
         }
         result.append(JunkCategory(
