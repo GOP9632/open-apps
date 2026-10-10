@@ -9,7 +9,7 @@
     "guide": "https://gop9632.github.io/open-apps/apps/class-recorder/guide/"
   },
   {
-    "name": "Mac 清理",
+    "name": "Mop（Mac 清理）",
     "icon": "🧹",
     "like": "CleanMyMac",
     "desc": "清系統垃圾、找大型檔案、把 App 和殘留一起移除。東西只會移到垃圾桶。",
@@ -18,7 +18,7 @@
     "steps": [
       "第一次先裝 Xcode 指令列工具：打開「終端機」，輸入 xcode-select --install",
       "下載這個專案，進到 apps/mac-cleaner 資料夾，執行 ./build.sh",
-      "打開 build 資料夾裡的 MacCleaner.app，想常用就拖進「應用程式」"
+      "打開 build 資料夾裡的 Mop.app，想常用就拖進「應用程式」"
     ],
     "guide": "https://github.com/GOP9632/open-apps/tree/main/apps/mac-cleaner"
   }
