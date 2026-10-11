@@ -41,9 +41,13 @@ footer a{color:var(--muted)}
   <footer>原始碼在 <a href="https://github.com/GOP9632/open-apps">GitHub</a>。</footer>
 </main>
 <script>
-// App 清單放在 apps.json，新增 App 只要改那個檔案
+// App 清單放在 apps.json，新增 App 只要改那個檔案。
+// Netlify 上的這頁直接讀 GitHub Pages 上最新的 apps.json，所以 PR 合併後新 App 就會出現，不用重新部署 Netlify。
+const LIST = 'https://gop9632.github.io/open-apps/apps.json';
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-fetch('apps.json').then(r => r.json()).then(apps => {
+fetch(LIST, { cache: 'no-cache' }).then(r => r.ok ? r.json() : Promise.reject())
+  .catch(() => fetch('apps.json').then(r => r.json()))
+  .then(apps => {
   document.getElementById('list').innerHTML = apps.map(a => {
     const web = a.type === 'web';
     const tags = [
