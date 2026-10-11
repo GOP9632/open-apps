@@ -12,6 +12,7 @@ import { SKIN, WRINKLE, SKIN_P0, skinOn, skinKey, prepSkin, SkinFx, skinNote } f
 import { BODY, BODY_P0, bodyOn, detectBody, measureBody, bodyWarps, bodyNote } from './body.js';
 import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } from './faceshape.js';
 import { WarpField } from './warpfield.js';
+import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightAnchor } from './relight.js';
 
 const $ = s => document.querySelector(s);
 const MAX_SIDE = 4096, MAX_AREA = 16e6;
@@ -24,7 +25,7 @@ const P0 = {
   chin: 0, dark: 0, fold: 0, eyeb: 0, teeth: 0, slimL: 0, slimR: 0, eyesL: 0, eyesR: 0,
   bg: 'keep', bgColor: '#ffffff',
   oneTap: -1, oneAmt: 100,
-  light: -1, lightAmt: 60, lightRot: 0, flash: -1, flashAmt: 60,
+  light: '', lightAmt: 70, lightBri: 0, lightCol: 0, lightDist: 50, lightX: null, lightY: null, flash: '', flashAmt: 60,
   blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'forest', bgImg: 'beach', bgBlur: 30, frame: '',
   ...HAIR_P0,
   bgProtect: 1, // 背景保護：變形時背景不跟著彎
@@ -91,20 +92,6 @@ const BEAUTY = [
 const BEAUTY_DEF = { white: 60 };
 // 可以左右分開調的項目
 const SIDED = ['slim', 'eyes'];
-// 打光：燈的方向用畫面座標（x 向右、y 向下、z 朝鏡頭）
-const n3 = (x, y, z) => { const l = Math.hypot(x, y, z); return [x / l, y / l, z / l]; };
-const LIGHTS = [
-  { name: '側光', lights: [{ dir: n3(-0.85, -0.25, 0.5), col: [1, 0.97, 0.92] }], amb: 0.55, bg: 0.35 },
-  { name: '頂光', lights: [{ dir: n3(0, -0.85, 0.5), col: [1, 1, 1] }], amb: 0.55, bg: 0.3 },
-  { name: '柔光', lights: [{ dir: n3(0, -0.3, 1), col: [1, 0.98, 0.95] }], amb: 0.85, bg: 0.1 },
-  { name: '輪廓光', lights: [{ dir: n3(-0.9, -0.2, -0.35), col: [1, 0.95, 0.85] }, { dir: n3(0.9, -0.2, -0.35), col: [1, 0.95, 0.85] }], amb: 1, bg: 0.35, mode: 1 },
-  { name: '霓虹', lights: [{ dir: n3(-0.85, -0.1, 0.45), col: [1, 0.35, 0.7] }, { dir: n3(0.85, -0.1, 0.45), col: [0.3, 0.55, 1] }], amb: 0.45, bg: 0.5 },
-];
-const FLASHES = [
-  { name: '直閃', lift: 1, spec: 1, bg: 0.55, shadow: 1, retro: 0 },
-  { name: '柔閃', lift: 0.7, spec: 0.5, bg: 0.25, shadow: 0, retro: 0 },
-  { name: '復古閃', lift: 1, spec: 0.8, bg: 0.6, shadow: 1, retro: 1 },
-];
 // 兩種一鍵美顏
 //   美圖俊俊：照美圖「智能美化」，膚質加一點臉型
 //   醒俊：照醒圖「一鍵美顏」，只修膚質不動臉型，整體上限 60%
@@ -189,7 +176,7 @@ function applyBase() {
 }
 
 const fxById = id => FX.find(f => f.id === id);
-const needSeg = () => P.bg !== 'keep' || P.light >= 0 || P.flash >= 0 || P.blur > 0 || !!fxById(P.fx)?.seg;
+const needSeg = () => P.bg !== 'keep' || !!P.light || !!P.flash || P.blur > 0 || !!fxById(P.fx)?.seg;
 // 換背景、去背、景深、分身要精細到頭髮絲，用摳圖模型
 const needMatte = () => P.bg !== 'keep' || P.blur > 0 || !!fxById(P.fx)?.seg;
 function getMatte(b) {
@@ -401,11 +388,7 @@ function syncTex() {
 // 打光、閃光燈的參數
 function effects() {
   const fx = { faces: base.geoms };
-  if (P.light >= 0) {
-    const L = LIGHTS[P.light], a = P.lightRot * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
-    fx.light = { ...L, amt: P.lightAmt / 100, lights: L.lights.map(l => ({ col: l.col, dir: [l.dir[0] * c - l.dir[1] * s, l.dir[0] * s + l.dir[1] * c, l.dir[2]] })) };
-  }
-  if (P.flash >= 0) fx.flash = { ...FLASHES[P.flash], amt: P.flashAmt / 100 };
+  if (P.light || P.flash) Object.assign(fx, litParams(P, base, ensureGeo()));
   const e = fxById(P.fx);
   if (e) { fx.fxMode = e.mode; fx.fxAmt = P.fxAmt / 100; }
   if (P.ov) fx.over = P.ovAmt / 100;
@@ -492,7 +475,8 @@ function showTab(t) {
   if (!base) return;
   ({ grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, hair: tabHair, skin: tabSkin, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
-  $('#wrap').classList.toggle('lightdrag', t === 'light' && P.light >= 0);
+  $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
+  lightDot();
 }
 
 const isSet = k => P[k] !== 0 || (SIDED.includes(k) && (P[k + 'L'] !== 0 || P[k + 'R'] !== 0));
@@ -678,49 +662,94 @@ function tabShape(box) {
   });
 }
 
-// ---------- 光影：打光、閃光燈 ----------
+// ---------- 光影：打光、閃光燈（relight.js） ----------
+// 照醒圖（Hypic）的打光面板：上面一排分類（自然、單色、多彩），燈可以在照片上拖，
+// 滑桿有強度、亮度、顏色、距離四個；閃光燈另外一類
+let lightSec = 'nat', lightParam = 'lightAmt';
+const LIGHT_SLIDERS = [['lightAmt', '強度', 0, 100], ['lightBri', '亮度', -50, 50], ['lightCol', '顏色', -50, 50], ['lightDist', '距離', 0, 100]];
+// 立體深度圖：人像遮罩或臉換了才重算
+function ensureGeo() {
+  const b = base, mask = b.matte || b.seg?.person;
+  if (!b.segB || !mask) return null;
+  if (!b.geo || b.geo.segB !== b.segB || b.geo.faces !== b.faces) {
+    b.geo = { segB: b.segB, faces: b.faces, d: buildDepth(b.segB, mask, b.faces || [], b.canvas.width, b.canvas.height) };
+  }
+  if (R.geo !== b.geo.d) R.setGeo(b.geo.d);
+  return b.geo.d;
+}
 function tabLight(box) {
   if (!base.faces) findFaces();
   const need = () => { if (!base.seg) findPerson(true); };
-  if (cur !== 'light' && cur !== 'flash') cur = P.flash >= 0 && P.light < 0 ? 'flash' : 'light';
-  box.append(item({ label: '不打光', icon: I.off, on: P.light < 0, onclick: () => { P.light = -1; cur = 'light'; render(); commit(); showTab('light'); } }));
-  LIGHTS.forEach((L, i) => box.append(item({
-    label: L.name, icon: I.bulb, on: P.light === i, set: P.light === i,
-    style: `color:rgb(${L.lights[0].col.map(c => Math.round(c * 255)).join(',')})`,
-    onclick: () => { if (P.light !== i) P.lightRot = 0; P.light = i; cur = 'light'; need(); render(); commit(); showTab('light'); },
+  const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
+  [...LIGHT_CATS.map(c => [c.id, c.name, c.items.some(x => x.id === P.light)]), ['flash', '閃光燈', !!P.flash]].forEach(([id, name, set]) => cats.append(item({
+    label: name, icon: name, cls: 'wide', on: lightSec === id, set,
+    onclick: () => { lightSec = id; showTab('light'); },
   })));
-  box.append(item({ label: '不閃光', icon: I.off, on: P.flash < 0, onclick: () => { P.flash = -1; cur = 'flash'; render(); commit(); showTab('light'); } }));
-  FLASHES.forEach((F, i) => box.append(item({
-    label: F.name, icon: I.flash, on: P.flash === i, set: P.flash === i,
-    onclick: () => { P.flash = i; cur = 'flash'; need(); render(); commit(); showTab('light'); },
+  if (lightSec === 'flash') {
+    box.append(item({ label: '不閃光', icon: I.off, on: !P.flash, onclick: () => { P.flash = ''; render(); commit(); showTab('light'); } }));
+    FLASHES.forEach(F => box.append(item({
+      label: F.name, icon: I.flash, on: P.flash === F.id, set: P.flash === F.id,
+      onclick: () => { P.flash = F.id; need(); render(); commit(); showTab('light'); },
+    })));
+    if (P.flash) setSlider('閃光', 0, 100, P.flashAmt, v => { P.flashAmt = v; render(); });
+    else hideSlider();
+    $('#note').textContent = '模擬開閃光燈拍的照片：臉亮、背景暗、後面有影子。醒圖的閃光燈是上傳到雲端用 AI 算，這裡全部在手機上算。';
+    return;
+  }
+  const cat = LIGHT_CATS.find(c => c.id === lightSec);
+  box.append(item({ label: '不打光', icon: I.off, on: !P.light, onclick: () => { P.light = ''; render(); commit(); showTab('light'); } }));
+  cat.items.forEach(L => box.append(item({
+    label: L.name, icon: I.bulb, on: P.light === L.id, set: P.light === L.id,
+    style: `color:rgb(${L.l[0].col.map(c => Math.round(c * 255)).join(',')})`,
+    onclick: () => {
+      if (P.light !== L.id) { P.lightX = P.lightY = null; P.lightCol = 0; }
+      P.light = L.id; need(); render(); commit(); showTab('light');
+    },
   })));
-  if (cur === 'light' && P.light >= 0) {
-    setSlider('打光', 0, 100, P.lightAmt, v => { P.lightAmt = v; render(); });
-    $('#note').textContent = '在照片上拖曳可以移動光源方向。';
-  } else if (cur === 'flash' && P.flash >= 0) {
-    setSlider('閃光', 0, 100, P.flashAmt, v => { P.flashAmt = v; render(); });
-    $('#note').textContent = '模擬手機開閃光燈拍照的感覺。';
-  } else { hideSlider(); $('#note').textContent = '打光和閃光燈可以一起用。'; }
+  if (!cat.items.some(x => x.id === P.light)) {
+    hideSlider();
+    $('#note').textContent = '打光和閃光燈可以一起用。';
+    return;
+  }
+  box.append(...LIGHT_SLIDERS.map(([k, name]) => item({
+    label: name, icon: name, cls: 'wide', on: lightParam === k, onclick: () => { lightParam = k; showTab('light'); },
+  })));
+  const [k, name, min, max] = LIGHT_SLIDERS.find(x => x[0] === lightParam);
+  setSlider(name, min, max, P[k], v => { P[k] = v; render(); lightDot(); });
+  $('#note').textContent = (base.faces && !base.faces.length ? '沒找到臉，燈以照片中間為準。' : '') + '在照片上拖曳移動燈的位置。';
 }
-// 拖曳照片轉動光源
+// 燈的位置：照片上的一個小圓圈
+function lightPos() {
+  const L = LIGHTS.find(x => x.id === P.light);
+  if (!L) return null;
+  const A = lightAnchor(base, null), s = 0.4 + P.lightDist / 50 * 0.6;
+  const W = base.canvas.width, H = base.canvas.height;
+  return { x: (A.x * W + (P.lightX ?? L.l[0].dx) * s * A.Fpx) / W, y: (A.y * H + (P.lightY ?? L.l[0].dy) * s * A.Fpx) / H };
+}
+function lightDot() {
+  let d = $('#lightdot');
+  if (!d) { d = document.createElement('div'); d.id = 'lightdot'; $('#wrap').append(d); }
+  const p = base && tab === 'light' && lightSec !== 'flash' ? lightPos() : null;
+  d.hidden = !p;
+  if (p) { d.style.left = Math.max(0, Math.min(100, p.x * 100)) + '%'; d.style.top = Math.max(0, Math.min(100, p.y * 100)) + '%'; }
+}
+// 拖曳照片移動燈
 (() => {
-  let drag = null;
-  const ang = e => {
-    const r = $('#wrap').getBoundingClientRect(), g = base.geoms[0];
-    const cx = g ? r.left + g.cx / base.canvas.width * r.width : r.left + r.width / 2;
-    const cy = g ? r.top + g.cy / base.canvas.height * r.height : r.top + r.height / 2;
-    return Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI;
+  let drag = false;
+  const move = e => {
+    const r = $('#wrap').getBoundingClientRect(), W = base.canvas.width, H = base.canvas.height;
+    const A = lightAnchor(base, null), s = 0.4 + P.lightDist / 50 * 0.6;
+    P.lightX = ((e.clientX - r.left) / r.width * W - A.x * W) / A.Fpx / s;
+    P.lightY = ((e.clientY - r.top) / r.height * H - A.y * H) / A.Fpx / s;
+    render(); lightDot();
   };
   $('#wrap').addEventListener('pointerdown', e => {
-    if (tab !== 'light' || P.light < 0 || e.target.closest('.st,.tx')) return;
+    if (tab !== 'light' || !P.light || lightSec === 'flash' || e.target.closest('.st,.tx')) return;
     e.preventDefault(); $('#wrap').setPointerCapture(e.pointerId);
-    drag = { a: ang(e), r: P.lightRot };
+    drag = true; move(e);
   });
-  $('#wrap').addEventListener('pointermove', e => {
-    if (!drag) return;
-    P.lightRot = drag.r + ang(e) - drag.a; render();
-  });
-  const up = () => { if (drag) { drag = null; commit(); } };
+  $('#wrap').addEventListener('pointermove', e => { if (drag) move(e); });
+  const up = () => { if (drag) { drag = false; commit(); } };
   $('#wrap').addEventListener('pointerup', up); $('#wrap').addEventListener('pointercancel', up);
 })();
 
