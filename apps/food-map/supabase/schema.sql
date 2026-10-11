@@ -53,9 +53,11 @@ create table if not exists food.places (
   tags text[] not null default '{}',
   source_url text not null default '',
   source_text text not null default '',
+  photo text not null default '',               -- 封面照片網址（存在 food-photos bucket）
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+alter table food.places add column if not exists photo text not null default '';
 create index if not exists places_owner_idx on food.places (owner);
 
 -- 美食群組
@@ -220,3 +222,14 @@ do $$ begin
   begin alter publication supabase_realtime add table food.group_places; exception when others then null; end;
   begin alter publication supabase_realtime add table food.swipe_rounds; exception when others then null; end;
 end $$;
+
+-- 店家照片：公開讀取的 bucket，每個人只能上傳／刪除自己資料夾（使用者 id）裡的檔案
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('food-photos', 'food-photos', true, 2097152, array['image/jpeg', 'image/png', 'image/webp'])
+on conflict (id) do nothing;
+drop policy if exists "food 上傳自己的照片" on storage.objects;
+create policy "food 上傳自己的照片" on storage.objects for insert to authenticated
+  with check (bucket_id = 'food-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+drop policy if exists "food 刪自己的照片" on storage.objects;
+create policy "food 刪自己的照片" on storage.objects for delete to authenticated
+  using (bucket_id = 'food-photos' and (storage.foldername(name))[1] = auth.uid()::text);
