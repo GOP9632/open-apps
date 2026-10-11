@@ -57,8 +57,10 @@ export async function segment(src) {
     skin[i] = sk < 0.3 ? 0 : Math.min(1, (sk - 0.3) / 0.5);
   }
   ctx.putImageData(out, 0, 0);
+  // 頭髮分頁用：頭髮機率、背景機率
+  const hair = Float32Array.from(ms[1].getAsFloat32Array()), bgA = Float32Array.from(bg);
   res.close?.();
-  return { person: c, skin, w, h };
+  return { person: c, skin, hair, bg: bgA, w, h };
 }
 
 // MediaPipe 特徵點編號

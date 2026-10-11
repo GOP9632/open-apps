@@ -4,6 +4,7 @@ import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurC
 import { STICKERS, EMOJIS, EMOJI_FONT, stickerById, stickerImage } from './stickers.js';
 import { FX, OVERLAYS, BG_PHOTOS, EXPOSURES, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
 import { matte } from './matte.js';
+import { HAIR, HAIR_P0, DYES, HairFx, prepHair, hairWarps, hairNeedsSeg, hairColorOn } from './hair.js';
 
 const $ = s => document.querySelector(s);
 const MAX_SIDE = 4096, MAX_AREA = 16e6;
@@ -18,6 +19,7 @@ const P0 = {
   oneTap: -1, oneAmt: 100,
   light: -1, lightAmt: 60, lightRot: 0, flash: -1, flashAmt: 60,
   blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'forest', bgImg: 'beach', bgBlur: 30, frame: '',
+  ...HAIR_P0,
 };
 
 const I = {
@@ -263,7 +265,29 @@ function render() {
     if (curFrame()?.live) paintFrame();
   });
 }
-function draw() { syncTex(); R.render(P, base.faces ? faceWarps(base.faces, P) : [], effects()); }
+function draw() { syncTex(); syncHair(); R.render(P, base.faces ? [...faceWarps(base.faces, P), ...hairWarps(base.faces, P, base.hair)] : [], effects()); }
+// 頭髮：先把頭髮改好的照片交給主管線，參數沒變就不重算
+let hairFx = null, hairKey = '', hairFor = null;
+function syncHair() {
+  const want = hairColorOn(P) && base.hair;
+  const key = want ? HAIR_P0_KEYS.map(k => P[k]).join('|') : '';
+  if (hairFor === base && key === hairKey) return;
+  const first = hairFor !== base;
+  hairFor = base; hairKey = key;
+  if (want) { hairFx ||= new HairFx(); R.setImage(hairFx.apply(base.canvas, base.hair, P)); }
+  else if (!first) R.setImage(base.canvas);
+  if (hairNeedsSeg(P) && !base.hair) getHair(base);
+}
+const HAIR_P0_KEYS = Object.keys(HAIR_P0);
+function getHair(b) {
+  b.hairP ||= Promise.all([getSeg(b), findFaces()]).then(([s, f]) => {
+    if (!s) { b.hairP = null; return null; }
+    b.hair = prepHair(b.canvas, s, f || []);
+    if (b === base) { hairFor = null; render(); if (tab === 'hair') showTab('hair'); }
+    return b.hair;
+  }).catch(e => { console.warn(e); b.hairP = null; return null; });
+  return b.hairP;
+}
 // 光效、背景、雙重曝光的圖：要用的時候才畫，照片比例變了就重畫
 const texKey = {};
 let bgStat = null, bgOwn = null, bgN = 0;
@@ -404,7 +428,7 @@ function showTab(t) {
   const box = $('#items'); box.innerHTML = '';
   $('#note').textContent = ''; $('#textedit').hidden = true;
   if (!base) return;
-  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText })[t](box);
+  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, hair: tabHair, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && P.light >= 0);
 }
@@ -416,7 +440,8 @@ function paramItems(box, list, def, itemsOnly) {
   for (const [k, label, icon] of list) {
     box.append(els[k] = item({ label, icon, on: k === cur && !itemsOnly, set: isSet(k), onclick: () => {
       cur = k;
-      if (list === BEAUTY && BEAUTY_DEF[k] && P[k] === 0) { P[k] = BEAUTY_DEF[k]; P.oneTap = -1; render(); commit(); }
+      const d = list === BEAUTY ? BEAUTY_DEF[k] : list.find(x => x[0] === k)[4];
+      if (d && P[k] === 0) { P[k] = d; if (list === BEAUTY) P.oneTap = -1; render(); commit(); }
       showTab(tab);
     } }));
   }
@@ -475,6 +500,29 @@ function tabBeauty(box) {
       render();
     });
   } else paramItems(box, BEAUTY, 'smooth');
+}
+
+// ---------- 頭髮 ----------
+function tabHair(box) {
+  if (!base.faces) findFaces();
+  if (!base.hair) getHair(base);
+  const faces = base.faces;
+  $('#note').textContent = !faces || !base.hair ? '正在找頭髮…'
+    : !faces.length ? '這張照片沒找到臉，蓬鬆感和髮際線需要看得到臉。'
+      : base.hair.area < 0.002 ? '這張照片裡頭髮很少，效果會不明顯。' : '';
+  if (cur === 'hairDye') {
+    box.append(item({ label: '原色', icon: I.off, on: !P.hairDye, onclick: () => { P.hairDye = ''; render(); commit(); showTab('hair'); } }));
+    DYES.forEach(d => box.append(item({
+      label: d.name, on: P.hairDye === d.id, style: `background:rgb(${d.c.map(v => Math.round(v * 255)).join(',')})`,
+      onclick: () => { P.hairDye = d.id; render(); commit(); showTab('hair'); },
+    })));
+    box.prepend(item({ label: '返回', icon: '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>', onclick: () => { cur = 'hairUni'; showTab('hair'); } }));
+    if (P.hairDye) setSlider('染髮', 0, 100, P.hairDyeAmt, v => { P.hairDyeAmt = v; render(); });
+    else hideSlider();
+    return;
+  }
+  box.append(item({ label: '染髮', icon: '<svg viewBox="0 0 24 24"><path d="M5 20c0-9 3-15 7-15s7 6 7 15"/><path d="M15 3l4 4-6 6-2-2z" fill="currentColor" opacity=".4"/></svg>', set: !!P.hairDye, onclick: () => { cur = 'hairDye'; showTab('hair'); } }));
+  paramItems(box, HAIR, 'hairUni');
 }
 
 // ---------- 光影：打光、閃光燈 ----------
