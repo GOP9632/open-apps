@@ -136,7 +136,7 @@ export const CAMERAS = [
     fx: { grain: 0.04, gsize: 1 } },
   // 膚色底調
   { id: 'amber', group: '膚色', name: '琥珀', fn: look({ temp: 0.17, hsl: { orange: [0, 1, 0], red: [0, 1] } }), fx: { skinOnly: { temp: 0.5 } } },
-  { id: 'rose', group: '膚色', name: '冷玫瑰', fn: look({ temp: -0.1, tint: 2, hsl: { red: [0, 1.08], blue: [0, 1.08] } }), fx: { skinOnly: { temp: -0.3, tint: 5 } } },
+  { id: 'rose', group: '膚色', name: '冷玫瑰', fn: look({ temp: -0.1, tint: 2, hsl: { red: [0, 1.08], blue: [0, 1.08] } }), fx: { skinOnly: { temp: -0.15, tint: 1.5 } } },
 ];
 export const CAMERA_GROUPS = [...new Set(CAMERAS.map(c => c.group))];
 export const cameraById = id => CAMERAS.find(c => c.id === id);
