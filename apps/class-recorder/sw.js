@@ -1,6 +1,6 @@
 // 讓 app 離線也打得開（只快取 app 本身，錄音存在 IndexedDB）
-const CACHE = 'class-recorder-v1';
-const FILES = ['./', './index.html', './manifest.json', './icon.svg'];
+const CACHE = 'class-recorder-v2';
+const FILES = ['./', './index.html', './manifest.json', './icon.svg', './config.js'];
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 self.addEventListener('fetch', e => {

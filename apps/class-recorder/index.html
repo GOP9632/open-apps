@@ -191,6 +191,7 @@ details.menu summary:hover{background:var(--accent-soft)}
   <button class="rec" style="margin:0 4px 10px;padding:9px" onclick="UI.showRecorder()">● 開始錄音</button>
   <div id="folderList"></div>
   <div class="side-foot">
+    <div class="nav hidden" id="acctNav" onclick="UI.showAccount()"></div>
     <a class="nav" href="guide/" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">📖 使用說明</a>
     <div class="nav" onclick="UI.showSettings()">⚙️ 設定</div>
     <p class="muted" id="storageInfo" style="padding:0 10px"></p>
@@ -212,6 +213,8 @@ details.menu summary:hover{background:var(--accent-soft)}
 <input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden">
 <input type="file" id="sampleInput" accept="audio/*,.m4a" class="hidden">
 
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.109.0/dist/umd/supabase.js"></script>
 <script>
 // ===================== 資料庫（IndexedDB，全部存在這台裝置上） =====================
 const DB = {
@@ -241,9 +244,12 @@ const DB = {
       t.onerror = () => rej(t.error);
     });
   },
-  put(store, v) { return this.tx(store, 'readwrite', s => s.put(v)); },
+  // 分類和錄音改了就記下時間，登入時同步到雲端
+  put(store, v) { if (SYNCED[store]) { v.updatedAt = Date.now(); Cloud.mark(store, v.id); } return this.tx(store, 'readwrite', s => s.put(v)); },
+  putRaw(store, v) { return this.tx(store, 'readwrite', s => s.put(v)); },
   get(store, k) { return this.tx(store, 'readonly', s => s.get(k)); },
-  del(store, k) { return this.tx(store, 'readwrite', s => s.delete(k)); },
+  del(store, k) { if (SYNCED[store]) Cloud.markDeleted(store, k); return this.tx(store, 'readwrite', s => s.delete(k)); },
+  delRaw(store, k) { return this.tx(store, 'readwrite', s => s.delete(k)); },
   all(store) { return this.tx(store, 'readonly', s => s.getAll()); },
   byIndex(store, idx, v) { return this.tx(store, 'readonly', s => s.index(idx).getAll(v)); },
   async delByIndex(store, idx, v) {
@@ -255,6 +261,7 @@ const DB = {
     });
   },
 };
+const SYNCED = { folders: 'folder', sessions: 'session' };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const KIND = { course: '課程', meeting: '會議', project: '專案' };
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -263,8 +270,15 @@ const fmtDate = ts => new Date(ts).toLocaleString('zh-TW', { month: 'numeric', d
 
 // ===================== 設定（存在這個瀏覽器的 localStorage） =====================
 const Settings = {
-  defaults: { engine: 'gemini', geminiKey: '', geminiModel: 'gemini-3.8-flash', openaiKey: '', whisperBase: 'https://api.groq.com/openai/v1', whisperKey: '', whisperModel: 'whisper-large-v3-turbo', localUrl: 'http://127.0.0.1:8080', language: '', toTraditional: true, chunkMin: 10, summaryProvider: 'gemini', summaryModel: '', anthropicKey: '', noiseSuppression: false, chatProvider: 'groq', chatModel: '', geminiTextKey: '' },
-  load() { try { return { ...this.defaults, ...JSON.parse(localStorage.getItem('cr-settings') || '{}') }; } catch { return { ...this.defaults }; } },
+  defaults: { engine: 'gemini', geminiKey: '', geminiModel: 'gemini-3.8-flash', openaiKey: '', whisperBase: 'https://api.groq.com/openai/v1', whisperKey: '', whisperModel: 'whisper-large-v3-turbo', localUrl: 'http://127.0.0.1:8080', language: '', toTraditional: true, chunkMin: 10, summaryProvider: 'gemini', summaryModel: '', anthropicKey: '', noiseSuppression: false, chatProvider: 'groq', chatModel: '', geminiTextKey: '', aiMode: 'cloud', syncAudio: false },
+  load() {
+    try {
+      const raw = JSON.parse(localStorage.getItem('cr-settings') || 'null'), v = { ...this.defaults, ...(raw || {}) };
+      // 之前已經自己填過 key 的人，維持用自己的 key
+      if (raw && !raw.aiMode) v.aiMode = raw.geminiKey || raw.whisperKey || raw.openaiKey || raw.anthropicKey ? 'own' : 'cloud';
+      return v;
+    } catch { return { ...this.defaults }; }
+  },
   save(v) { try { localStorage.setItem('cr-settings', JSON.stringify(v)); } catch {} },
 };
 let S = Settings.load();
@@ -386,6 +400,12 @@ async function apiError(r) {
 }
 
 const Engines = {
+  // 雲端：登入就能用，key 放在伺服器，每天有免費額度
+  async cloud(wav, folder) {
+    const glossary = (folder?.glossary || '').split(/[\n,，、]/).map(x => x.trim()).filter(Boolean);
+    const j = await Cloud.call({ task: 'transcribe', audio: await b64(wav), glossary, teacherSample: folder?.teacherSample ? await b64(folder.teacherSample) : undefined, language: S.language || undefined });
+    return j.segments.map(x => ({ start: +x.start || 0, end: +x.end || +x.start || 0, text: x.text, label: x.label || null }));
+  },
   // Google Gemini：有免費額度，會分說話者，可用老師的聲音樣本認出老師
   async gemini(wav, folder) {
     if (!S.geminiKey) throw new Error('請先在設定填入 Gemini API key（aistudio.google.com 免費申請）。');
@@ -483,20 +503,23 @@ async function transcribeSession(id, onProgress) {
   const s = await DB.get('sessions', id);
   const folder = s.folderId ? await DB.get('folders', s.folderId) : null;
   onProgress('解碼音檔中…');
-  const pcm = await decode16k(await sessionAudio(id));
-  // Gemini 一次最多送 20 MB，所以每段最多 5 分鐘
-  const per = Math.max(1, S.engine === 'gemini' ? Math.min(5, S.chunkMin) : S.chunkMin) * 60 * 16000;
+  const audio = await sessionAudio(id);
+  if (!audio.size) throw new Error(s.audioCloud ? '音檔還沒從雲端下載下來，請重新打開這段錄音再試。' : '這台裝置上沒有這段錄音的音檔（可能是在別的裝置錄的）。');
+  const pcm = await decode16k(audio);
+  const engine = effEngine();
+  // Gemini 一次最多送 20 MB，所以每段最多 5 分鐘；雲端每段 3 分鐘，上傳比較快
+  const per = Math.max(1, engine === 'cloud' ? 2 : engine === 'gemini' ? Math.min(5, S.chunkMin) : S.chunkMin) * 60 * 16000;
   const total = Math.ceil(pcm.length / per);
   const out = [];
   for (let i = 0; i < total; i++) {
     onProgress(`轉寫中 ${i + 1} / ${total} 段…`);
     const offset = i * per / 16000;
     const wav = encodeWav(pcm.subarray(i * per, Math.min(pcm.length, (i + 1) * per)), 16000);
-    const segs = await Engines[S.engine](wav, folder);
+    const segs = await Engines[engine](wav, folder);
     markTeacher(segs, !!folder?.teacherSample);
     for (const g of segs) out.push({ start: g.start + offset, end: g.end + offset, text: await toTW((g.text || '').trim()), role: g.role || null, label: g.label ? `${i + 1}-${g.label}` : null });
   }
-  s.transcript = { engine: S.engine, createdAt: Date.now(), segments: mergeSegments(out.filter(x => x.text)), merged: true };
+  s.transcript = { engine, createdAt: Date.now(), segments: mergeSegments(out.filter(x => x.text)), merged: true };
   if (!s.duration) s.duration = pcm.length / 16000;
   await DB.put('sessions', s);
   return s;
@@ -525,11 +548,24 @@ function transcriptText(s, opt = {}) {
 }
 // 筆記與問答可以用另一把沒綁帳單的免費 Gemini key（例如另一個 Google 帳號申請的）
 const textGeminiKey = () => S.geminiTextKey || S.geminiKey;
-const keyFor = p => ({ gemini: textGeminiKey(), openai: S.openaiKey, anthropic: S.anthropicKey, groq: S.whisperKey })[p];
-const llmKey = () => keyFor(S.summaryProvider);
+const keyFor = p => p === 'cloud' ? !!Cloud.user : ({ gemini: textGeminiKey(), openai: S.openaiKey, anthropic: S.anthropicKey, groq: S.whisperKey })[p];
+// 「免費雲端」模式：轉寫、筆記、問答都走雲端；沒設定雲端時退回自己的 key
+const useCloud = () => S.aiMode === 'cloud' && !!Cloud.sb;
+const effEngine = () => useCloud() ? 'cloud' : S.engine;
+const effSummary = () => useCloud() ? 'cloud' : S.summaryProvider;
+const effChat = () => useCloud() ? 'cloud' : S.chatProvider || S.summaryProvider;
+const llmKey = () => keyFor(effSummary());
+const needWhat = () => useCloud() ? '先登入（左下角「🔑 登入」），就能免費使用 AI。' : '先到設定填入 AI 的 API key。';
 // schema 只有 Gemini 用得到；其他服務改用文字說明格式
-async function callLLM(prompt, { schema, shape, provider = S.summaryProvider, model } = {}) {
+// small：雲端 Gemini 當天額度用完、改用 Groq 時用的短版 prompt
+async function callLLM(prompt, { schema, shape, provider = effSummary(), model, kind = 'notes', small } = {}) {
   const p = provider;
+  if (p === 'cloud') {
+    const backend = (await Cloud.getStatus())[kind];
+    const fmtNote = schema ? '\n\n只輸出 JSON，不要任何其他文字，格式如下：\n' + shape : '';
+    if (backend !== 'gemini') prompt += fmtNote;
+    return (await Cloud.call({ task: 'llm', kind, prompt, schema: backend === 'gemini' ? schema : undefined, groqPrompt: backend === 'gemini' && small ? small + fmtNote : undefined })).text || '';
+  }
   model ||= { openai: 'gpt-5-mini', anthropic: 'claude-haiku-5-5', gemini: S.geminiModel, groq: 'openai/gpt-oss-120b' }[p];
   if (schema && p !== 'gemini') prompt += '\n\n只輸出 JSON，不要任何其他文字，格式如下：\n' + shape;
   if (p === 'gemini') {
@@ -579,9 +615,17 @@ const NOTES_SCHEMA = obj({
 });
 const NOTES_SHAPE = '{"overview":"...","keywords":["..."],"actionItems":[{"text":"...","start":123}],"outline":[{"start":0,"title":"...","bullets":["..."]}],"glossary":[{"term":"...","meaning":"..."}],"unclear":[{"text":"...","start":456}],"questions":[{"q":"...","a":"..."}]}';
 
+// Groq 免費方案每分鐘只收約 8000 token：太長的逐字稿平均抽樣到放得下
+async function notesTranscript(s, forceSmall) {
+  const full = transcriptText(s, { sec: true });
+  const groq = forceSmall || effSummary() === 'groq' || (effSummary() === 'cloud' && (await Cloud.getStatus()).notes === 'groq');
+  if (!groq || full.length <= 5000) return full;
+  const lines = full.split('\n'), k = Math.ceil(full.length / 5000);
+  return '（逐字稿太長，以下是平均抽出的片段）\n' + lines.filter((_, i) => i % k === 0).join('\n');
+}
 async function makeNotes(s) {
   const bms = s.bookmarks.map(b => `[${fmt(b.t)}] ${b.label}`).join('\n') || '（無）';
-  const prompt = `你是幫大學生整理上課筆記的助教。下面是一段錄音的逐字稿，每行開頭是 [時間|秒數] 說話者：內容（可能有辨識錯字，請依上下文理解）。
+  const build = tr => `你是幫大學生整理上課筆記的助教。下面是一段錄音的逐字稿，每行開頭是 [時間|秒數] 說話者：內容（可能有辨識錯字，請依上下文理解）。
 請用台灣繁體中文整理成 JSON。規則：不要開場白或問候；不要用 LaTeX 或 $ 符號，數學式寫成一般文字（例如 p < 0.05、α）；用台灣慣用詞（例如迴歸、變異數）；英文術語保留原文。所有 start 欄位填那句話開頭「|」後面的秒數，對不到就填 -1。
 - overview：3 到 5 句的概述，說這段在講什麼、結論是什麼
 - keywords：5 到 10 個關鍵字，必須是逐字稿裡原樣出現過的詞
@@ -595,8 +639,9 @@ async function makeNotes(s) {
 ${bms}
 
 逐字稿：
-${transcriptText(s, { sec: true })}`;
-  const n = parseJSON(await toTW(await callLLM(prompt, { schema: NOTES_SCHEMA, shape: NOTES_SHAPE, model: S.summaryModel })));
+${tr}`;
+  const small = effSummary() === 'cloud' ? build(await notesTranscript(s, true)) : undefined;
+  const n = parseJSON(await toTW(await callLLM(build(await notesTranscript(s)), { schema: NOTES_SCHEMA, shape: NOTES_SHAPE, model: S.summaryModel, small })));
   const list = x => Array.isArray(x) ? x : [];
   const t = x => Number.isFinite(+x) ? +x : -1;
   return {
@@ -628,8 +673,8 @@ function relevantText(s, q, budget) {
   return [...pick].sort((a, b) => a - b).map(j => line(segs[j])).join('\n');
 }
 async function askAI(s, q) {
-  const p = S.chatProvider || S.summaryProvider;
-  const small = p === 'groq';
+  const p = effChat();
+  const small = p === 'groq' || (p === 'cloud' && (await Cloud.getStatus()).chat === 'groq');
   const hist = (s.chat || []).slice(small ? -2 : -6).map(m => (m.role === 'user' ? '問：' : '答：') + (small ? m.text.slice(0, 300) : m.text)).join('\n');
   const n = s.notes;
   const notes = small && n ? `AI 筆記：\n${n.overview}\n${n.outline.map(o => `[${o.start >= 0 ? fmt(o.start) : '?'}] ${o.title}：${o.bullets.join('；')}`).join('\n')}\n${n.actionItems.length ? '待辦：' + n.actionItems.map(a => a.text).join('；') : ''}\n` : '';
@@ -638,7 +683,7 @@ ${small ? '\n' + notes + '\n逐字稿（只節錄和問題相關的段落）：'
 ${small ? relevantText(s, q + ' ' + (s.chat || []).slice(-2).map(m => m.text).join(' '), 3000) : transcriptText(s)}
 ${hist ? '\n之前的對話：\n' + hist + '\n' : ''}
 問題：${q}`;
-  return (await toTW(await callLLM(prompt, { provider: p, model: S.chatModel }))).trim();
+  return (await toTW(await callLLM(prompt, { provider: p, model: S.chatModel, kind: 'chat' }))).trim();
 }
 // 簡易 Markdown 顯示（標題、條列、粗體）
 function mdToHtml(md) {
@@ -692,6 +737,122 @@ function toSrt(s) {
   return (s.transcript?.segments || []).map((g, i) => `${i + 1}\n${t(g.start)} --> ${t(g.end || g.start + 3)}\n${g.text}\n`).join('\n');
 }
 
+// ===================== 雲端：登入、免 key 的 AI、跨裝置同步（Supabase） =====================
+// 分類和錄音的文字（逐字稿、筆記、問答、重點）會同步；音檔要按「上傳音檔」或在設定打開自動上傳；照片不同步
+const Cloud = {
+  sb: null, user: null, status: null, queue: new Map(), _t: null, syncing: null, lastSync: 0,
+  cfg() { let o = {}; try { o = JSON.parse(localStorage.getItem('cr-cloud') || '{}'); } catch {} return { ...(window.RECORDER_CONFIG || {}), ...o }; },
+  async init() {
+    const c = this.cfg();
+    if (!c.supabaseUrl || !c.supabaseKey || !window.supabase) return;
+    this.sb = window.supabase.createClient(c.supabaseUrl, c.supabaseKey, { db: { schema: 'recorder' } });
+    const { data } = await this.sb.auth.getSession();
+    this.user = data.session?.user || null;
+    this.sb.auth.onAuthStateChange((ev, session) => {
+      const was = this.user?.id; this.user = session?.user || null;
+      if (this.user?.id !== was) { this.status = null; if (this.user) this.sync(); UI.refreshSidebar(); }
+    });
+    if (this.user) this.sync();
+  },
+  async token() { return (await this.sb.auth.getSession()).data.session?.access_token || ''; },
+  async call(body) {
+    if (!this.sb) throw new Error('雲端還沒設定好，請到設定改用自己的 API key。');
+    if (!this.user) throw new Error('請先登入（左下角「🔑 登入」），或到設定改用自己的 API key。');
+    const c = this.cfg();
+    const r = await post(`${c.supabaseUrl}/functions/v1/recorder-ai`, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + await this.token(), apikey: c.supabaseKey }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `雲端錯誤 ${r.status}`);
+    return j;
+  },
+  async getStatus(force) { if (!this.status || force) this.status = await this.call({ task: 'status' }); return this.status; },
+
+  // ---- 同步 ----
+  mark(store, id) { if (!this.user) return; this.queue.set(store + ':' + id, { store, id }); clearTimeout(this._t); this._t = setTimeout(() => this.push(), 1500); },
+  markDeleted(store, id) { if (!this.user) return; this.queue.set(store + ':' + id, { store, id, deleted: true }); clearTimeout(this._t); this._t = setTimeout(() => this.push(), 500); },
+  async toRow(store, v) {
+    const data = { ...v };
+    delete data.owner;
+    if (store === 'folders' && v.teacherSample instanceof Blob) { data.teacherSample = null; data.teacherSampleB64 = await blobToDataURL(v.teacherSample); }
+    return { owner: this.user.id, kind: SYNCED[store], id: v.id, data, updated_at: v.updatedAt || Date.now(), deleted: false };
+  },
+  async fromRow(store, row) {
+    const v = { ...row.data, updatedAt: row.updated_at, owner: row.owner };
+    if (store === 'folders' && v.teacherSampleB64) { v.teacherSample = await (await fetch(v.teacherSampleB64)).blob(); delete v.teacherSampleB64; }
+    if (store === 'sessions') v.bookmarks ||= [];
+    return v;
+  },
+  async push() {
+    if (!this.user || !this.queue.size) return;
+    const items = [...this.queue.values()]; this.queue.clear();
+    const rows = [];
+    for (const it of items) {
+      if (it.deleted) { rows.push({ owner: this.user.id, kind: SYNCED[it.store], id: it.id, data: {}, updated_at: Date.now(), deleted: true }); continue; }
+      const v = await DB.get(it.store, it.id);
+      if (!v || (v.owner && v.owner !== this.user.id)) continue; // 這台裝置上別人的資料不要傳
+      if (!v.owner) { v.owner = this.user.id; await DB.putRaw(it.store, v); }
+      rows.push(await this.toRow(it.store, v));
+    }
+    if (!rows.length) return;
+    const { error } = await this.sb.from('items').upsert(rows, { onConflict: 'owner,kind,id' });
+    if (error) { items.forEach(it => this.queue.set(it.store + ':' + it.id, it)); console.warn('同步失敗', error.message); return; }
+    this.lastSync = Date.now();
+  },
+  async pull() {
+    const key = 'cr-pull-' + this.user.id, since = +(localStorage.getItem(key) || 0);
+    let max = since, changed = false;
+    for (let from = 0; ; from += 500) {
+      const { data, error } = await this.sb.from('items').select('*').gt('updated_at', since).order('updated_at').range(from, from + 499);
+      if (error) throw error;
+      for (const row of data) {
+        const store = row.kind === 'folder' ? 'folders' : 'sessions', local = await DB.get(store, row.id);
+        max = Math.max(max, row.updated_at);
+        if (row.deleted) {
+          if (local) { changed = true; await DB.delRaw(store, row.id); if (store === 'sessions') { await DB.delByIndex('chunks', 'sessionId', row.id); await DB.delByIndex('photos', 'sessionId', row.id); } }
+        } else if (!local || (local.updatedAt || 0) < row.updated_at) { changed = true; await DB.putRaw(store, await this.fromRow(store, row)); }
+      }
+      if (data.length < 500) break;
+    }
+    localStorage.setItem(key, String(max));
+    return changed;
+  },
+  // 登入後：先拉雲端的，再把這台裝置上還沒傳過（或登出時改過）的推上去
+  sync() {
+    if (!this.user) return Promise.resolve();
+    return this.syncing ||= (async () => {
+      try {
+        const changed = await this.pull();
+        const pk = 'cr-push-' + this.user.id, since = +(localStorage.getItem(pk) || 0);
+        for (const store of Object.keys(SYNCED)) for (const v of await DB.all(store)) if ((!v.owner || (v.owner === this.user.id && (v.updatedAt || 0) > since))) this.queue.set(store + ':' + v.id, { store, id: v.id });
+        await this.push();
+        localStorage.setItem(pk, String(Date.now()));
+        this.lastSync = Date.now();
+        if (changed && ['list', 'session'].includes(UI.view) && !UI.isBusy?.()) UI.view === 'list' ? UI.showFolder(UI.current.folderId) : UI.refreshSidebar();
+      } catch (e) { console.warn('同步失敗', e); }
+      finally { this.syncing = null; }
+    })();
+  },
+
+  // ---- 音檔 ----
+  audioPath(id) { return `${this.user.id}/${id}`; },
+  async uploadAudio(s) {
+    if (!this.user) throw new Error('請先登入');
+    const blob = await sessionAudio(s.id);
+    if (!blob.size) throw new Error('這台裝置上沒有這段錄音的音檔');
+    const { error } = await this.sb.storage.from('recorder-audio').upload(this.audioPath(s.id), blob, { upsert: true, contentType: blob.type || 'audio/webm' });
+    if (error) throw new Error(/exceed|size|quota/i.test(error.message) ? '雲端空間不夠或檔案太大（單檔上限 50 MB）。' : error.message);
+    const cur = await DB.get('sessions', s.id); cur.audioCloud = true; await DB.put('sessions', cur);
+    return cur;
+  },
+  async downloadAudio(s) {
+    const { data, error } = await this.sb.storage.from('recorder-audio').download(this.audioPath(s.id));
+    if (error || !data) return false;
+    await DB.putRaw('chunks', { sessionId: s.id, idx: 0, blob: data.type ? data : new Blob([data], { type: (s.mimeType || 'audio/webm').split(';')[0] }) });
+    return true;
+  },
+  async removeAudio(id) { try { await this.sb.storage.from('recorder-audio').remove([this.audioPath(id)]); } catch {} },
+};
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Cloud.user && Date.now() - Cloud.lastSync > 30000) Cloud.sync(); });
+
 // ===================== 介面 =====================
 const main = document.getElementById('main');
 const aside = document.getElementById('aside');
@@ -738,6 +899,10 @@ const UI = {
     $('folderList').innerHTML = item('all', '🏠', '全部錄音')
       + `<div class="side-h"><span>課程・會議・專案</span><button class="ghost" title="新增分類" onclick="UI.newFolder()">＋</button></div>`
       + folders.map(f => item(f.id, KIND_ICON[f.kind] || '📁', f.name)).join('') + item('none', '🗂️', '未分類');
+    const acct = $('acctNav');
+    acct.classList.toggle('hidden', !Cloud.sb);
+    acct.classList.toggle('active', this.view === 'account');
+    acct.innerHTML = Cloud.user ? `<span>👤 ${esc(Cloud.user.user_metadata?.name || Cloud.user.email.split('@')[0])}</span><span class="n">☁️ 同步中</span>` : '<span>🔑 登入</span><span class="n">免 key、跨裝置</span>';
     if (navigator.storage?.estimate) { const e = await navigator.storage.estimate(); $('storageInfo').textContent = `已用 ${(e.usage / 1048576).toFixed(0)} MB／可用約 ${(e.quota / 1073741824).toFixed(1)} GB（存在這台裝置）`; }
   },
   async folderOptions(sel) {
@@ -866,7 +1031,8 @@ const UI = {
   togglePause() { if (Rec.state === 'recording') { Rec.pause(); $('pauseBtn').textContent = '▶ 繼續'; } else { Rec.resume(); $('pauseBtn').textContent = '❚❚ 暫停'; } $('recDot').classList.toggle('paused', Rec.state === 'paused'); },
   async mark() { const l = $('markLabel'); if (!l) return; await Rec.bookmark(l.value.trim()); l.value = ''; this.drawMarks(); },
   snap() { const inp = $('photoInput'); inp.onchange = async () => { if (inp.files[0]) await Rec.addPhoto(inp.files[0]); inp.value = ''; }; inp.click(); },
-  async stopRec() { clearInterval(this._tick); const s = await Rec.stop(); this.showSession(s.id); },
+  async stopRec() { clearInterval(this._tick); const s = await Rec.stop(); this.autoUpload(s); this.showSession(s.id); },
+  autoUpload(s) { if (S.syncAudio && Cloud.user) Cloud.uploadAudio(s).then(cur => { if (this.s?.id === cur.id) this.s.audioCloud = true; }).catch(e => console.warn('自動上傳音檔失敗', e)); },
 
   importFile() {
     const inp = $('fileInput');
@@ -877,6 +1043,7 @@ const UI = {
       const def = ['all', 'none'].includes(this.current.folderId) ? null : this.current.folderId;
       const s = { id, folderId: def, title: file.name.replace(/\.[^.]+$/, ''), createdAt: file.lastModified || Date.now(), duration: 0, mimeType: file.type || 'audio/mp4', source: 'import', bookmarks: [], transcript: null, summary: '', status: 'saved' };
       await DB.put('sessions', s);
+      this.autoUpload(s);
       const a = new Audio(URL.createObjectURL(file)); a.onloadedmetadata = async () => { if (isFinite(a.duration)) { s.duration = a.duration; await DB.put('sessions', s); if (this.s?.id === id) { this.s.duration = a.duration; $('sDur').textContent = fmt(a.duration); } } };
       this.showSession(id);
     };
@@ -892,7 +1059,10 @@ const UI = {
     if (this.sid !== id) { this.tab = s.transcript && !s.notes && !s.summary ? 'transcript' : 'summary'; this.rtab = 'chat'; this.kw = ''; this.editing = false; this.hlOnly = false; this.err = ''; }
     this.sid = id; this.s = s;
     this.photos = (await DB.byIndex('photos', 'sessionId', id)).sort((a, b) => a.t - b.t);
-    const audioUrl = URL.createObjectURL(await sessionAudio(id));
+    let audio = await sessionAudio(id);
+    if (!audio.size && s.audioCloud && Cloud.user) { main.innerHTML = '<div class="empty"><div class="spinner"></div><p>從雲端下載音檔…</p></div>'; if (await Cloud.downloadAudio(s)) audio = await sessionAudio(id); }
+    this.noAudio = !audio.size;
+    const audioUrl = URL.createObjectURL(audio);
     main.innerHTML = `<div class="sess-layout">
       <div>
         <div class="row"><button class="ghost" onclick="UI.showFolder(UI.current.folderId)">← 返回</button><span class="grow"></span>
@@ -900,10 +1070,12 @@ const UI = {
             <button onclick="UI.copyMd()">複製筆記（貼到 Notion）</button>
             <button onclick="UI.exportMd()">下載筆記 Markdown</button>
             <button onclick="UI.exportSrt()">下載字幕 SRT</button>
-            <button onclick="UI.exportAudio()">下載原始音檔</button></div></details>
+            <button onclick="UI.exportAudio()">下載原始音檔</button>
+            ${Cloud.user && !this.noAudio ? `<button onclick="UI.uploadAudio()">${s.audioCloud ? '☁️ 音檔已在雲端（重新上傳）' : '☁️ 上傳音檔（換裝置也能聽）'}</button>` : ''}</div></details>
           <button class="ghost danger" onclick="UI.deleteSession()">刪除</button></div>
         <input id="sTitle" class="title-input" value="${esc(s.title)}" onchange="UI.patch({title:this.value})">
         <div class="row"><span class="muted">${fmtDate(s.createdAt)} · <span id="sDur">${fmt(s.duration)}</span></span><select class="folder-sel" onchange="UI.patch({folderId:this.value||null})">${await this.folderOptions(s.folderId)}</select></div>
+        ${this.noAudio ? `<p class="note" style="margin-top:10px">這台裝置上沒有這段錄音的音檔${s.audioCloud ? '，雲端下載失敗，等一下重新打開試試' : '（在別的裝置錄的）。要在這裡聽，請到原本的裝置按「匯出 → 上傳音檔」'}。逐字稿和筆記照樣可以看。</p>` : ''}
         <div id="sHead"></div>
         <div class="tabs" id="tabs"></div>
         <div id="tabBody"></div>
@@ -980,6 +1152,7 @@ const UI = {
   },
   repaintChat() { if (WIDE.matches) this.paintRight(); else if (this.tab === 'chat') this.paintTab(); },
   isBusy() { return this.busy && this.busyId === this.s?.id; },
+  needBox() { return useCloud() ? `<p class="muted">${needWhat()}</p><button class="primary" onclick="UI.showAccount()">🔑 登入</button>` : `<p class="muted">${needWhat()}</p><button onclick="UI.showSettings()">⚙️ 去設定</button>`; },
   busyBox() { return `<div class="empty"><div class="spinner"></div><p id="busyMsg">${esc(this.busyMsg || '處理中…')}</p></div>`; },
   errBox() { return this.err ? `<p class="err">${esc(this.err)}</p>` : ''; },
 
@@ -987,9 +1160,9 @@ const UI = {
   renderSummary() {
     const s = this.s, n = s.notes;
     if (this.isBusy()) return this.busyBox();
-    if (!s.transcript) return `${this.errBox()}<div class="empty"><div class="big">📝</div><p>這段錄音還沒有逐字稿。</p><button class="primary" onclick="UI.doTranscribe()">開始轉寫</button><p class="muted">轉寫完會自動產生 AI 筆記。引擎可在設定裡換。</p></div>`;
+    if (!s.transcript) return `${this.errBox()}<div class="empty"><div class="big">📝</div><p>這段錄音還沒有逐字稿。</p>${useCloud() && !Cloud.user ? this.needBox() : `<button class="primary" onclick="UI.doTranscribe()">開始轉寫</button><p class="muted">轉寫完會自動產生 AI 筆記。${useCloud() ? '用免費雲端轉寫，每天有額度上限。' : '引擎可在設定裡換。'}</p>`}</div>`;
     if (!n) return `${this.errBox()}${s.summary ? `<div class="ncard"><div class="row"><h3 class="grow" style="margin:0">AI 整理重點（舊版）</h3><button onclick="UI.speak()">🔊 朗讀</button><button class="primary" onclick="UI.doNotes()">產生新版筆記</button></div><div class="summary">${mdToHtml(s.summary)}</div></div>`
-      : `<div class="empty"><div class="big">✨</div><p>還沒有 AI 筆記。</p><button class="primary" ${llmKey() ? '' : 'disabled'} onclick="UI.doNotes()">產生 AI 筆記</button>${llmKey() ? '' : '<p class="muted">先到設定填入 AI 的 API key。</p>'}</div>`}`;
+      : `<div class="empty"><div class="big">✨</div><p>還沒有 AI 筆記。</p><button class="primary" ${llmKey() ? '' : 'disabled'} onclick="UI.doNotes()">產生 AI 筆記</button>${llmKey() ? '' : this.needBox()}</div>`}`;
     const todo = n.actionItems.map((a, i) => `<label class="todo ${a.done ? 'done' : ''}"><input type="checkbox" ${a.done ? 'checked' : ''} onchange="UI.todo(${i},this.checked)"><span>${esc(a.text)} ${tsLink(a.start)}</span><button class="ghost x" title="刪除" onclick="event.preventDefault();UI.delTodo(${i})">✕</button></label>`).join('');
     return `${this.errBox()}
       <div class="ncard"><h3>概述<span class="grow"></span><button class="ghost" onclick="UI.speak()">🔊 朗讀</button><button class="ghost" onclick="UI.doNotes()">↻ 重新整理</button></h3><p>${esc(n.overview)}</p></div>
@@ -1087,8 +1260,8 @@ const UI = {
     const s = this.s;
     if (!s.transcript) return `<div class="empty"><p>轉寫完就可以問這段錄音任何問題。</p></div>`;
     const chat = s.chat || [];
-    const cp = S.chatProvider || S.summaryProvider;
-    if (!keyFor(cp)) return `<div class="empty"><p>AI 問答要先到設定填入${cp === 'groq' ? ' Groq（免費）' : ''} API key。</p><button onclick="UI.showSettings()">⚙️ 去設定</button></div>`;
+    const cp = effChat();
+    if (!keyFor(cp)) return `<div class="empty">${cp === 'cloud' ? this.needBox() : `<p>AI 問答要先到設定填入${cp === 'groq' ? ' Groq（免費）' : ''} API key。</p><button onclick="UI.showSettings()">⚙️ 去設定</button>`}</div>`;
     const msgs = chat.map(m => m.role === 'user' ? `<div class="msg user">${esc(m.text)}</div>` : `<div class="msg ai">${this.linkTimes(mdToHtml(m.text))}</div>`).join('');
     const sugg = ['老師說哪些會考？', '幫我列出作業和期限', '用三句話解釋今天的重點', '有哪些地方我可能沒聽懂？'];
     return `<div class="chat"><div class="chat-log" id="chatLog">
@@ -1150,19 +1323,82 @@ const UI = {
     const u = new SpeechSynthesisUtterance(text.replace(/[#*]/g, ''));
     u.lang = 'zh-TW'; u.voice = speechSynthesis.getVoices().find(v => v.lang === 'zh-TW') || null; speechSynthesis.speak(u);
   },
-  async deleteSession() { const id = this.s.id; if (!confirm('確定刪除這段錄音與逐字稿？無法復原。')) return; await DB.delByIndex('chunks', 'sessionId', id); await DB.delByIndex('photos', 'sessionId', id); await DB.del('sessions', id); this.showFolder(this.current.folderId); },
+  async uploadAudio() {
+    const btn = event?.target; if (btn) { btn.disabled = true; btn.textContent = '上傳中…'; }
+    try { this.s = await Cloud.uploadAudio(this.s); alert('已上傳。用同一個帳號在別的裝置打開這段錄音，就能聽。'); }
+    catch (e) { alert('上傳失敗：' + e.message); }
+    if (btn) btn.disabled = false;
+    this.showSession(this.s.id);
+  },
+  async deleteSession() { const id = this.s.id; if (!confirm('確定刪除這段錄音與逐字稿？無法復原。' + (Cloud.user ? '其他裝置上的也會一起刪掉。' : ''))) return; if (this.s.audioCloud && Cloud.user) Cloud.removeAudio(id); await DB.delByIndex('chunks', 'sessionId', id); await DB.delByIndex('photos', 'sessionId', id); await DB.del('sessions', id); this.showFolder(this.current.folderId); },
   async mdNow() { const s = this.s; return toMarkdown(s, s.folderId && await DB.get('folders', s.folderId)); },
   async exportMd() { download(this.s.title + '.md', new Blob([await this.mdNow()], { type: 'text/markdown' })); },
   async copyMd() { await navigator.clipboard.writeText(await this.mdNow()); alert('已複製，可以直接貼到 Notion。'); },
   async exportSrt() { if (!this.s.transcript) return alert('還沒有逐字稿。'); download(this.s.title + '.srt', new Blob([toSrt(this.s)], { type: 'text/plain' })); },
   async exportAudio() { const b = await sessionAudio(this.s.id); download(this.s.title + (b.type.includes('mp4') ? '.m4a' : b.type.includes('wav') ? '.wav' : '.webm'), b); },
 
+  // ---------- 帳號 ----------
+  async showAccount(mode) {
+    this.leave('account'); await this.refreshSidebar();
+    if (!Cloud.sb) return this.showSettings();
+    if (!Cloud.user) {
+      const signup = mode === 'signup';
+      main.innerHTML = `<div class="narrow" style="max-width:460px"><div class="card"><h2>${signup ? '建立帳號' : '登入'}</h2>
+        <p class="muted">登入後不用申請任何 API key，轉寫、AI 筆記和問答都能直接用（每天有免費額度）。逐字稿和筆記會同步，換手機或電腦登入同一個帳號就看得到。</p>
+        ${signup ? '<label>名字</label><input id="aName" autocomplete="name" placeholder="例如：小明">' : ''}
+        <label>Email</label><input id="aEmail" type="email" autocomplete="email" placeholder="you@example.com">
+        <label>密碼（至少 6 個字）</label><input id="aPw" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" onkeydown="if(event.key==='Enter')UI.auth('${signup ? 'signup' : 'login'}')">
+        <div class="row" style="margin-top:14px"><button class="primary" onclick="UI.auth('${signup ? 'signup' : 'login'}')">${signup ? '建立帳號' : '登入'}</button>
+          <button class="ghost" onclick="UI.showAccount('${signup ? 'login' : 'signup'}')">${signup ? '已經有帳號？登入' : '還沒有帳號？建立一個'}</button></div>
+        <p id="aMsg" class="err"></p>
+        <p class="muted" style="margin-top:14px">和「美食收藏」用同一組帳號。</p></div></div>`;
+      $('aEmail').focus();
+      return;
+    }
+    const u = Cloud.user;
+    main.innerHTML = `<div class="narrow" style="max-width:560px"><div class="card"><h2>👤 ${esc(u.user_metadata?.name || u.email.split('@')[0])}</h2>
+      <p class="muted">${esc(u.email)}</p>
+      <h3 style="margin-top:16px">今天的免費額度</h3><div id="quota" class="muted">讀取中…</div>
+      <h3 style="margin-top:16px">同步</h3>
+      <p class="muted">分類、逐字稿、AI 筆記、問答、畫的重點會自動同步到這個帳號。音檔要在錄音頁按「匯出 → 上傳音檔」，或在設定打開「錄完自動上傳音檔」。照片不同步。</p>
+      <div class="row"><button onclick="UI.syncNow()">↻ 立即同步</button><span id="syncMsg" class="muted">${Cloud.lastSync ? '上次同步：' + new Date(Cloud.lastSync).toLocaleTimeString('zh-TW') : ''}</span></div>
+      <div class="row" style="margin-top:20px"><button class="danger" onclick="UI.signOut()">登出</button></div></div></div>`;
+    try {
+      const st = await Cloud.getStatus(true);
+      $('quota').innerHTML = `轉寫：已用 ${st.used.audioMin} ／ ${st.limits.audioMin} 分鐘<br>AI 筆記與問答：已用 ${st.used.calls} ／ ${st.limits.calls} 次<br>${st.speakers ? '轉寫分得出老師和學生。' : '目前雲端轉寫不分講者（管理員還沒設定 Gemini）。'}`;
+    } catch (e) { $('quota').textContent = '讀不到：' + e.message; }
+  },
+  async auth(mode) {
+    const email = $('aEmail').value.trim(), pw = $('aPw').value, msg = $('aMsg');
+    if (!email || pw.length < 6) { msg.textContent = '請填 Email 和至少 6 個字的密碼。'; return; }
+    msg.textContent = '';
+    const r = mode === 'signup'
+      ? await Cloud.sb.auth.signUp({ email, password: pw, options: { data: { name: $('aName').value.trim() } } })
+      : await Cloud.sb.auth.signInWithPassword({ email, password: pw });
+    if (r.error) { msg.textContent = /Invalid login/i.test(r.error.message) ? 'Email 或密碼不對。' : /registered/i.test(r.error.message) ? '這個 Email 已經註冊過，請直接登入。' : r.error.message; return; }
+    if (mode === 'signup' && !r.data.session) { msg.textContent = '已寄出確認信，到信箱點連結後再回來登入。'; return; }
+    Cloud.user = r.data.user; Cloud.status = null;
+    await Cloud.sync();
+    this.showFolder('all');
+  },
+  async syncNow() { $('syncMsg').textContent = '同步中…'; await Cloud.sync(); $('syncMsg').textContent = '上次同步：' + new Date(Cloud.lastSync).toLocaleTimeString('zh-TW'); this.refreshSidebar(); },
+  async signOut() {
+    if (!confirm('登出？這台裝置上的錄音會留著，下次登入會繼續同步。')) return;
+    await Cloud.push(); await Cloud.sb.auth.signOut(); Cloud.user = null; Cloud.status = null; this.showFolder('all');
+  },
+
   // ---------- 設定 ----------
   async showSettings() {
     this.leave('settings'); await this.refreshSidebar();
     const opt = (v, t, cur) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${t}</option>`;
     main.innerHTML = `<div class="narrow"><div class="card"><h2>設定</h2>
-      <p class="note">API key 只存在這個瀏覽器裡，直接送到你選的服務，不會經過任何其他伺服器。不要在別人的電腦上填。</p>
+      ${Cloud.sb ? `<h3 style="margin-top:4px">AI 怎麼用</h3>
+      <label class="toggle" style="margin-top:8px"><input type="radio" name="aiMode" value="cloud" ${S.aiMode === 'cloud' ? 'checked' : ''} onchange="UI.setMode(this.value)"><span><b>免費雲端</b>（建議）：登入就能用，不用申請 key，每天有額度上限</span></label>
+      <label class="toggle" style="margin-top:8px"><input type="radio" name="aiMode" value="own" ${S.aiMode === 'own' ? 'checked' : ''} onchange="UI.setMode(this.value)"><span><b>用我自己的 API key</b>（進階）：沒有額度限制，可以選引擎和模型</span></label>
+      ${S.aiMode === 'cloud' && !Cloud.user ? '<p class="muted">還沒登入。<a href="#" onclick="UI.showAccount();return false">登入或建立帳號</a></p>' : ''}
+      ${Cloud.user ? `<label class="toggle" style="margin-top:12px"><input type="checkbox" id="syncAudio" ${S.syncAudio ? 'checked' : ''}>錄完自動上傳音檔到雲端（換裝置也能聽；免費空間大家共用約 1 GB，一小時約 15 MB）</label>` : ''}
+      <details id="ownKeys" ${S.aiMode === 'own' ? 'open' : ''} style="margin-top:16px"><summary style="cursor:pointer;font-weight:600">自己的 API key 與進階設定</summary>` : '<details open>'}
+      <p class="note" style="margin-top:10px">API key 只存在這個瀏覽器裡，直接送到你選的服務，不會經過任何其他伺服器。不要在別人的電腦上填。</p>
       <h3 style="margin-top:16px">轉寫引擎</h3>
       <select id="engine">${opt('gemini', 'Google Gemini（免費額度，分得出老師與學生）', S.engine)}${opt('whisper-api', 'Groq Whisper（免費額度，每天約 8 小時，不分說話者）', S.engine)}${opt('whispercpp', '我 Mac 上的 whisper.cpp（完全免費、不上網，不分說話者）', S.engine)}${opt('openai-diarize', 'OpenAI（付費約 US$0.36／小時，分得出老師與學生）', S.engine)}</select>
       <label>Gemini API key（轉寫、AI 筆記、問答共用，到 <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> 免費申請）</label><input id="geminiKey" type="password" value="${esc(S.geminiKey)}" placeholder="AIza...">
@@ -1187,13 +1423,15 @@ const UI = {
       <label>筆記與問答專用的 Gemini key（選填）</label><input id="geminiTextKey" type="password" value="${esc(S.geminiTextKey)}" placeholder="留空就用上面那把">
       <p class="muted">上面那把 key 如果綁了帳單會花錢。用另一個 Google 帳號、沒綁帳單的專案申請一把填在這裡，筆記和問答就走免費額度（免費額度的內容會被 Google 拿去改進模型）。</p>
       <label>Anthropic API key</label><input id="anthropicKey" type="password" value="${esc(S.anthropicKey)}">
+      </details>
       <div class="row" style="margin-top:16px"><button class="primary" onclick="UI.saveSettings()">儲存</button><span id="setMsg" class="muted"></span></div>
       <h3 style="margin-top:20px">快捷鍵</h3>
       <p class="muted">錄音時：空白鍵＝標記重點。聽錄音時：空白鍵＝播放／暫停，← →＝倒退／快轉 5 秒。</p></div></div>`;
   },
+  setMode(v) { S.aiMode = v; Settings.save(S); this.showSettings(); },
   saveSettings() {
     const g = id => $(id);
-    S = { ...S, engine: g('engine').value, geminiKey: g('geminiKey').value.trim(), geminiModel: g('geminiModel').value.trim() || Settings.defaults.geminiModel, openaiKey: g('openaiKey').value.trim(), whisperBase: g('whisperBase').value.trim(), whisperKey: g('whisperKey').value.trim(), whisperModel: g('whisperModel').value.trim(), localUrl: g('localUrl').value.trim(), language: g('language').value, chunkMin: Math.min(20, Math.max(1, +g('chunkMin').value || 10)), toTraditional: g('toTraditional').checked, noiseSuppression: g('noiseSuppression').checked, summaryProvider: g('summaryProvider').value, summaryModel: g('summaryModel').value.trim(), chatProvider: g('chatProvider').value, chatModel: g('chatModel').value.trim(), geminiTextKey: g('geminiTextKey').value.trim(), anthropicKey: g('anthropicKey').value.trim() };
+    S = { ...S, engine: g('engine').value, geminiKey: g('geminiKey').value.trim(), geminiModel: g('geminiModel').value.trim() || Settings.defaults.geminiModel, openaiKey: g('openaiKey').value.trim(), whisperBase: g('whisperBase').value.trim(), whisperKey: g('whisperKey').value.trim(), whisperModel: g('whisperModel').value.trim(), localUrl: g('localUrl').value.trim(), language: g('language').value, chunkMin: Math.min(20, Math.max(1, +g('chunkMin').value || 10)), toTraditional: g('toTraditional').checked, noiseSuppression: g('noiseSuppression').checked, summaryProvider: g('summaryProvider').value, summaryModel: g('summaryModel').value.trim(), chatProvider: g('chatProvider').value, chatModel: g('chatModel').value.trim(), geminiTextKey: g('geminiTextKey').value.trim(), anthropicKey: g('anthropicKey').value.trim(), syncAudio: g('syncAudio') ? g('syncAudio').checked : S.syncAudio };
     Settings.save(S); g('setMsg').textContent = '已儲存';
   },
 };
@@ -1220,6 +1458,7 @@ document.addEventListener('keydown', e => {
 (async () => {
   await DB.open();
   try { await navigator.storage?.persist?.(); } catch {}
+  try { await Cloud.init(); } catch (e) { console.warn('雲端初始化失敗', e); }
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
   UI.showFolder('all');
 })();
