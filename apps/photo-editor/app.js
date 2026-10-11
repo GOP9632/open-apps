@@ -1,6 +1,6 @@
 import { Renderer } from './gl.js';
 import { FILTERS, bakeLUT, thumb } from './filters.js';
-import { detectFaces, segmentPerson, skinMask, faceWarps } from './ai.js';
+import { detectFaces, segment, skinMask, faceWarps } from './ai.js';
 
 const $ = s => document.querySelector(s);
 const MAX_SIDE = 4096, MAX_AREA = 16e6;
@@ -11,6 +11,7 @@ const P0 = {
   filter: 'none', filterAmt: 80,
   smooth: 0, white: 0, slim: 0, vface: 0, eyes: 0, nose: 0, mouth: 0,
   bg: 'keep', bgColor: '#ffffff',
+  oneTap: -1, oneAmt: 100,
 };
 
 const I = {
@@ -52,10 +53,16 @@ const ADJUST = [
   ['sharpen', '銳化', I.sharp, 0], ['vignette', '暗角', I.vig], ['grain', '顆粒', I.grain, 0], ['fade', '褪色', I.fade, 0],
 ];
 const BEAUTY = [
-  ['smooth', '磨皮', I.skin, 0], ['white', '美白', I.white, 0], ['slim', '瘦臉', I.slim, 0], ['vface', '小 V 臉', I.vface, 0],
-  ['eyes', '大眼', I.eye, 0], ['nose', '瘦鼻', I.nose, 0], ['mouth', '嘴巴', I.mouth],
+  ['smooth', '磨皮', I.skin, 0], ['white', '美白', I.white, 0], ['slim', '瘦臉', I.slim], ['vface', '小 V 臉', I.vface],
+  ['eyes', '大眼', I.eye], ['nose', '瘦鼻', I.nose], ['mouth', '嘴巴', I.mouth],
 ];
-const ONE_TAP = { smooth: 55, white: 30, slim: 30, vface: 20, eyes: 25, nose: 15 };
+// 兩種一鍵美顏
+//   美圖俊俊：照美圖「智能美化」，膚質加一點臉型
+//   醒俊：照醒圖「一鍵美顏」，只修膚質不動臉型，整體上限 60%
+const ONE_TAPS = [
+  { name: '美圖俊俊', set: { smooth: 70, white: 40, slim: 15, vface: 0, eyes: 10, nose: 0, mouth: 0 } },
+  { name: '醒俊', set: { smooth: 30, white: 18, slim: 0, vface: 0, eyes: 0, nose: 0, mouth: 0 } },
+];
 const RATIOS = [['free', '自由'], ['orig', '原比例'], [1, '1:1'], [3 / 4, '3:4'], [4 / 3, '4:3'], [9 / 16, '9:16'], [16 / 9, '16:9']];
 const TEXT_COLORS = ['#ffffff', '#111111', '#ff5c8a', '#ffb36b', '#ffe066', '#69db7c', '#4dabf7', '#b197fc'];
 const BG_COLORS = ['#ffffff', '#f1f3f5', '#ffe3ec', '#fff3bf', '#d3f9d8', '#d0ebff', '#e5dbff', '#212529'];
@@ -116,7 +123,7 @@ function setBase(canvas, keep) {
 function applyBase() {
   R.setImage(base.canvas);
   R.setMask(base.mask);
-  R.setSeg(base.seg);
+  R.setSeg(base.seg?.person);
   const o = $('#orig'); o.width = base.canvas.width; o.height = base.canvas.height;
   o.getContext('2d').drawImage(base.canvas, 0, 0);
   layout(); render();
@@ -124,13 +131,19 @@ function applyBase() {
   if (P.bg !== 'keep' && !base.seg) findPerson();
 }
 
-// 背景先找臉，美顏打開時就準備好了
+// 背景先找臉和皮膚，美顏打開時就準備好了
+function getSeg(b) {
+  b.segP ||= segment(b.canvas).then(s => { b.seg = s; if (b === base) { R.setSeg(s.person); render(); } return s; })
+    .catch(e => { console.warn(e); b.segP = null; return null; });
+  return b.segP;
+}
 function findFaces() {
   const b = base;
   if (b.facesP) return b.facesP;
-  b.facesP = detectFaces(b.canvas).then(f => {
+  b.facesP = detectFaces(b.canvas).then(async f => {
     b.faces = f;
-    b.mask = f.length ? skinMask(f, b.canvas.width, b.canvas.height) : null;
+    const seg = f.length ? await getSeg(b) : null;
+    b.mask = f.length ? skinMask(f, b.canvas.width, b.canvas.height, seg) : null;
     if (b === base) { R.setMask(b.mask); render(); if (tab === 'beauty') showTab('beauty'); }
     return f;
   }).catch(e => { console.warn(e); b.faces = []; b.faceErr = true; if (b === base && tab === 'beauty') showTab('beauty'); return []; });
@@ -138,14 +151,12 @@ function findFaces() {
 }
 async function findPerson() {
   const b = base;
-  if (b.seg || b.segP) return b.segP;
+  if (b.seg) return b.seg;
   busy('找出人像…');
-  b.segP = segmentPerson(b.canvas).then(s => {
-    b.seg = s;
-    if (b === base) { R.setSeg(s); render(); }
-  }).catch(e => { console.warn(e); toast('去背模型載入失敗，檢查一下網路'); b.segP = null; })
-    .finally(() => busy());
-  return b.segP;
+  const s = await getSeg(b);
+  busy();
+  if (!s) toast('去背模型載入失敗，檢查一下網路');
+  return s;
 }
 
 // ---------- 畫面 ----------
@@ -242,15 +253,17 @@ function showTab(t) {
   drawTexts();
 }
 
-function paramItems(box, list, def) {
-  if (!list.some(x => x[0] === cur)) cur = def;
-  for (const [k, label, icon, min = -100] of list) {
-    box.append(item({ label, icon, on: k === cur, set: P[k] !== 0, onclick: () => { cur = k; showTab(tab); } }));
+function paramItems(box, list, def, itemsOnly) {
+  if (!itemsOnly && !list.some(x => x[0] === cur)) cur = def;
+  const els = {};
+  for (const [k, label, icon] of list) {
+    box.append(els[k] = item({ label, icon, on: k === cur, set: P[k] !== 0, onclick: () => { cur = k; showTab(tab); } }));
   }
+  if (itemsOnly) return;
   const it = list.find(x => x[0] === cur);
   setSlider(it[1], it[3] ?? -100, 100, P[cur], v => {
-    P[cur] = v; render();
-    box.querySelectorAll('.it')[list.indexOf(it)].classList.toggle('set', v !== 0);
+    P[cur] = v; if (list === BEAUTY) P.oneTap = -1; render();
+    els[cur].classList.toggle('set', v !== 0);
   });
 }
 
@@ -274,14 +287,24 @@ function tabBeauty(box) {
   if (!faces) { $('#note').textContent = '正在找臉…'; findFaces(); }
   else if (!faces.length) $('#note').textContent = base.faceErr ? '臉部偵測模型載入失敗，檢查一下網路再換一次照片。' : '這張照片沒找到臉，美顏只對人臉有效。';
   else $('#note').textContent = `找到 ${faces.length} 張臉`;
-  box.append(item({
-    label: '一鍵美顏', icon: I.magic, cls: '', onclick: () => {
-      const on = Object.keys(ONE_TAP).every(k => P[k] === ONE_TAP[k]);
-      Object.keys(ONE_TAP).forEach(k => P[k] = on ? 0 : ONE_TAP[k]);
+  ONE_TAPS.forEach((t, i) => box.append(item({
+    label: t.name, icon: I.magic, on: P.oneTap === i, onclick: () => {
+      const off = P.oneTap === i;
+      P.oneTap = off ? -1 : i; P.oneAmt = 100;
+      Object.keys(t.set).forEach(k => P[k] = off ? 0 : t.set[k]);
+      cur = off ? 'smooth' : 'oneTap';
       render(); commit(); showTab('beauty');
     },
-  }));
-  paramItems(box, BEAUTY, 'smooth');
+  })));
+  if (cur === 'oneTap' && P.oneTap >= 0) {
+    paramItems(box, BEAUTY, 'smooth', true);
+    const t = ONE_TAPS[P.oneTap];
+    setSlider('強度', 0, 100, P.oneAmt, v => {
+      P.oneAmt = v;
+      Object.keys(t.set).forEach(k => P[k] = Math.round(t.set[k] * v / 100));
+      render();
+    });
+  } else paramItems(box, BEAUTY, 'smooth');
 }
 
 // ---------- 裁切、旋轉 ----------

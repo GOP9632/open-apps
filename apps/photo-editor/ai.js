@@ -33,26 +33,32 @@ export async function detectFaces(src) {
   return (res.faceLandmarks || []).map(pts => pts.map(p => ({ x: p.x * src.width, y: p.y * src.height })));
 }
 
-// 回傳人像遮罩 canvas（R 通道 = 前景程度）
-export async function segmentPerson(src) {
+// 人像分割（多類別模型）：回傳
+//   person：去背用的人像遮罩 canvas（R 通道 = 前景程度）
+//   skin：每個像素是皮膚（臉 + 身體）的機率，美白、磨皮用
+export async function segment(src) {
   segP ||= create('ImageSegmenter', { baseOptions: { modelAssetPath: SEG_MODEL }, runningMode: 'IMAGE', outputConfidenceMasks: true, outputCategoryMask: false });
   const seg = await segP;
   const img = shrink(src, 1024);
   const res = seg.segment(img);
-  const bg = res.confidenceMasks[0];
-  const w = bg.width, h = bg.height, a = bg.getAsFloat32Array();
+  const ms = res.confidenceMasks; // 0 背景、1 頭髮、2 身體皮膚、3 臉部皮膚、4 衣服、5 其他
+  const w = ms[0].width, h = ms[0].height, bg = ms[0].getAsFloat32Array();
+  const body = ms[2].getAsFloat32Array(), face = ms[3].getAsFloat32Array();
+  const skin = new Float32Array(w * h);
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   const ctx = c.getContext('2d'), out = ctx.createImageData(w, h);
-  for (let i = 0; i < a.length; i++) {
+  for (let i = 0; i < bg.length; i++) {
     // 稍微拉高對比，邊緣比較俐落
-    const f = Math.min(1, Math.max(0, (1 - a[i] - 0.15) / 0.7));
-    const v = f * 255;
-    out.data[i * 4] = out.data[i * 4 + 1] = out.data[i * 4 + 2] = v; out.data[i * 4 + 3] = 255;
+    const f = Math.min(1, Math.max(0, (1 - bg[i] - 0.15) / 0.7));
+    out.data[i * 4] = out.data[i * 4 + 1] = out.data[i * 4 + 2] = f * 255; out.data[i * 4 + 3] = 255;
+    // 去掉衣服邊緣零星的誤判
+    const sk = body[i] + face[i];
+    skin[i] = sk < 0.3 ? 0 : Math.min(1, (sk - 0.3) / 0.5);
   }
   ctx.putImageData(out, 0, 0);
   res.close?.();
-  return c;
+  return { person: c, skin, w, h };
 }
 
 // MediaPipe 特徵點編號
@@ -67,30 +73,53 @@ const NOSTRIL = [[48, 64, 98, 240], [278, 294, 327, 460]];
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const avg = (pts, ids) => ids.reduce((s, i) => ({ x: s.x + pts[i].x / ids.length, y: s.y + pts[i].y / ids.length }), { x: 0, y: 0 });
 
-// 皮膚遮罩：臉的輪廓塗白，眼睛、眉毛、嘴巴、鼻孔挖掉，再模糊成柔邊
-export function skinMask(faces, w, h) {
-  const k = Math.min(1, 512 / Math.max(w, h));
-  const c = document.createElement('canvas');
-  c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height);
-  const poly = (pts, ids, color, grow = 1) => {
-    const ctr = avg(pts, ids);
-    ctx.beginPath();
-    ids.forEach((i, n) => {
-      const x = (ctr.x + (pts[i].x - ctr.x) * grow) * k, y = (ctr.y + (pts[i].y - ctr.y) * grow) * k;
-      n ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-    });
-    ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+// 美顏遮罩：R 通道 = 磨皮權重、G 通道 = 美白權重
+//   - 有人像分割時，作用在所有露出的皮膚（臉、脖子、手），跟醒圖一樣
+//   - 磨皮：臉 1 倍、臉以外的皮膚 0.5 倍（醒圖），眼睛、眉毛、嘴巴、鼻孔不磨
+//   - 美白：眉毛 0.6、眼睛 0.2、嘴巴 0.4 倍（美圖），避免眼白、嘴唇被洗白
+export function skinMask(faces, w, h, seg) {
+  const mw = seg ? seg.w : Math.max(1, Math.round(w * Math.min(1, 512 / Math.max(w, h))));
+  const mh = seg ? seg.h : Math.max(1, Math.round(h * Math.min(1, 512 / Math.max(w, h))));
+  const kx = mw / w, ky = mh / h, r = Math.max(2, Math.round(mw / 110));
+  const layer = (bgColor, draw) => {
+    const c = document.createElement('canvas'); c.width = mw; c.height = mh;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = bgColor; ctx.fillRect(0, 0, mw, mh);
+    const poly = (pts, ids, v, grow = 1) => {
+      const ctr = avg(pts, ids);
+      ctx.beginPath();
+      ids.forEach((i, n) => {
+        const x = (ctr.x + (pts[i].x - ctr.x) * grow) * kx, y = (ctr.y + (pts[i].y - ctr.y) * grow) * ky;
+        n ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      });
+      ctx.closePath(); const g = Math.round(v * 255); ctx.fillStyle = `rgb(${g},${g},${g})`; ctx.fill();
+    };
+    faces.forEach(pts => draw(poly, pts));
+    boxBlur(ctx, mw, mh, r);
+    const d = ctx.getImageData(0, 0, mw, mh).data, a = new Float32Array(mw * mh);
+    for (let i = 0; i < a.length; i++) a[i] = d[i * 4] / 255;
+    return a;
   };
-  for (const pts of faces) {
-    poly(pts, OVAL, '#fff', 0.97);
-    poly(pts, L_EYE, '#000', 1.5); poly(pts, R_EYE, '#000', 1.5);
-    poly(pts, L_BROW, '#000', 1.25); poly(pts, R_BROW, '#000', 1.25);
-    poly(pts, LIPS, '#000', 1.12);
-    NOSTRIL.forEach(n => poly(pts, n, '#000', 1.4));
+  const oval = layer('#000', (poly, pts) => poly(pts, OVAL, 1, 0.97));
+  const holeS = layer('#fff', (poly, pts) => {
+    poly(pts, L_EYE, 0, 1.5); poly(pts, R_EYE, 0, 1.5);
+    poly(pts, L_BROW, 0, 1.25); poly(pts, R_BROW, 0, 1.25);
+    poly(pts, LIPS, 0, 1.12); NOSTRIL.forEach(n => poly(pts, n, 0, 1.4));
+  });
+  const holeW = layer('#fff', (poly, pts) => {
+    poly(pts, L_EYE, 0.2, 1.3); poly(pts, R_EYE, 0.2, 1.3);
+    poly(pts, L_BROW, 0.6, 1.2); poly(pts, R_BROW, 0.6, 1.2);
+    poly(pts, LIPS, 0.4, 1.05);
+  });
+  const c = document.createElement('canvas'); c.width = mw; c.height = mh;
+  const ctx = c.getContext('2d'), out = ctx.createImageData(mw, mh), d = out.data;
+  for (let i = 0; i < mw * mh; i++) {
+    const skin = seg ? seg.skin[i] : oval[i];
+    d[i * 4] = skin * (0.5 + 0.5 * oval[i]) * holeS[i] * 255;
+    d[i * 4 + 1] = skin * holeW[i] * 255;
+    d[i * 4 + 3] = 255;
   }
-  boxBlur(ctx, c.width, c.height, Math.max(2, Math.round(c.width / 90)));
+  ctx.putImageData(out, 0, 0);
   return c;
 }
 
@@ -134,8 +163,8 @@ export function faceWarps(faces, p) {
       // 兩頰到下顎往臉中線推
       [[132, 361, 0.9], [58, 288, 1], [172, 397, 0.9], [136, 365, 0.7]].forEach(([l, r, w]) => {
         const m = { x: (pts[l].x + pts[r].x) / 2, y: (pts[l].y + pts[r].y) / 2 };
-        toward(pts[l], m, W * 0.085 * v('slim') * w, W * 0.28);
-        toward(pts[r], m, W * 0.085 * v('slim') * w, W * 0.28);
+        toward(pts[l], m, W * 0.06 * v('slim') * w, W * 0.26);
+        toward(pts[r], m, W * 0.06 * v('slim') * w, W * 0.26);
       });
     }
     if (v('vface')) {
@@ -146,7 +175,7 @@ export function faceWarps(faces, p) {
     if (v('eyes')) {
       [[L_EYE, 33, 133], [R_EYE, 263, 362]].forEach(([ids, a, b]) => {
         const c = avg(pts, ids), ew = dist(pts[a], pts[b]);
-        out.push({ cx: c.x, cy: c.y, r: ew * 1.25, type: 'scale', s: 0.34 * v('eyes'), ey: 1.25 });
+        out.push({ cx: c.x, cy: c.y, r: ew * 1.25, type: 'scale', s: 0.28 * v('eyes'), ey: 1.25 });
       });
     }
     if (v('nose')) {

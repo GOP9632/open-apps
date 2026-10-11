@@ -84,13 +84,15 @@ void main(){
     col += (col - n) * uSharp * 2.0;
   }
 
-  float m = texture(uMask, uv).r;
-  if (uSmoothAmt > 0.0 && m > 0.0) {
+  vec2 mk = texture(uMask, uv).rg;
+  if (uSmoothAmt > 0.0 && mk.r > 0.0) {
     vec3 s = texture(uSmooth, uv).rgb;
-    col = mix(col, s, m * uSmoothAmt * 0.9);
+    // 跟醒圖一樣，暗部不磨，避免陰影和輪廓被抹平
+    float dark = smoothstep(0.2, 0.45, col.r);
+    col = mix(col, s, mk.r * dark * uSmoothAmt * 0.9);
   }
-  if (uWhite > 0.0 && m > 0.0) {
-    float k = m * uWhite;
+  if (uWhite > 0.0 && mk.g > 0.0) {
+    float k = mk.g * uWhite;
     col = mix(col, 1.0 - (1.0 - col) * (1.0 - col * 0.55), k * 0.6);
     col = mix(col, vec3(luma(col)), k * 0.12);
   }
