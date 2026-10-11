@@ -70,7 +70,7 @@ function design() {
   if (g.stitch) {
     const st = stitch(S.photos.slice(0, n).map(p => p.full.width / p.full.height), g.stitch === 'v');
     cells = st.cells; ratio = st.ratio;
-  } else cells = (LAYOUTS[n] || LAYOUTS[1])[g.idx] || LAYOUTS[n][0];
+  } else cells = g.custom || (LAYOUTS[n] || LAYOUTS[1])[g.idx] || LAYOUTS[n][0];
   return { ratio, bg: BGS.find(b => b.id === g.bg).bg, deco: [], slots: cells.map(poly => ({ kind: 'poly', poly })), grid: true };
 }
 
@@ -262,6 +262,27 @@ function clampCell(i) {
   c.ox = Math.max(-mx, Math.min(mx, c.ox)); c.oy = Math.max(-my, Math.min(my, c.oy));
 }
 
+// 拖曳格線改格子大小（醒圖的「調整大小」）。只處理水平、垂直的格線，斜切格不能拖
+function hitEdge(x, y) {
+  if (S.mode !== 'grid' || S.grid.stitch) return null;
+  const d = design(), nx = x / cv.width, ny = y / cv.height, dpr = cv.width / cv.clientWidth;
+  const gap = S.grid.inner / 1000 * Math.min(cv.width, cv.height) / 2 + 12 * dpr, tx = gap / cv.width, ty = gap / cv.height;
+  for (const { poly } of d.slots) for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    if (Math.abs(a[0] - b[0]) < 1e-6 && a[0] > 0.001 && a[0] < 0.999 && Math.abs(nx - a[0]) < tx && ny > Math.min(a[1], b[1]) && ny < Math.max(a[1], b[1])) return { ax: 0, v: a[0] };
+    if (Math.abs(a[1] - b[1]) < 1e-6 && a[1] > 0.001 && a[1] < 0.999 && Math.abs(ny - a[1]) < ty && nx > Math.min(a[0], b[0]) && nx < Math.max(a[0], b[0])) return { ax: 1, v: a[1] };
+  }
+  return null;
+}
+function moveEdge(e, to) {
+  const g = S.grid, cells = (g.custom || design().slots.map(s => s.poly)).map(p => p.map(q => q.slice()));
+  to = Math.max(0.05, Math.min(0.95, to));
+  for (const p of cells) for (const q of p) if (Math.abs(q[e.ax] - e.v) < 1e-6) q[e.ax] = to;
+  // 每格至少留 8%，不然不動
+  if (cells.some(p => { const bb = bbox(p); return bb.w < 0.08 || bb.h < 0.08; })) return false;
+  g.custom = cells; e.v = to; return true;
+}
+
 const pointers = new Map();
 function onDown(e) {
   cv.setPointerCapture(e.pointerId);
@@ -272,6 +293,8 @@ function onDown(e) {
   if (pointers.size > 1) return;
   const [x, y] = pt(e), ti = hitText(x, y);
   if (ti >= 0) { drag = { k: 'text', i: ti, x, y, moved: false, wasSel: S.sel?.k === 'text' && S.sel.i === ti }; S.sel = { k: 'text', i: ti }; draw(); panel(); return; }
+  const ed = hitEdge(x, y);
+  if (ed) { drag = { k: 'edge', e: ed, x, y, moved: false }; return; }
   const si = hitSlot(x, y);
   if (si < 0) { drag = null; if (S.sel) { S.sel = null; draw(); panel(); } return; }
   drag = { k: 'cell', i: si, x, y, moved: false };
@@ -289,6 +312,7 @@ function onMove(e) {
     else { t.x += dx / cv.width; t.y += dy / cv.height; }
     drag.x = x; drag.y = y; draw(); return;
   }
+  if (drag.k === 'edge') { if (moveEdge(drag.e, (drag.e.ax ? y / cv.height : x / cv.width))) { last = null; draw(); requestAnimationFrame(() => requestAnimationFrame(() => S.cells.forEach((_, i) => clampCell(i)))); } return; }
   if (drag.k === 'swap') { const ti = hitSlot(x, y); draw({ target: ti >= 0 && ti !== drag.i ? ti : null }); drag.tx = x; drag.ty = y; return; }
   const c = S.cells[drag.i], g = last.geo[drag.i]; if (!c || c.p == null) return;
   if (drag.pinch && pointers.size === 2) {
@@ -339,7 +363,7 @@ async function onFiles(files) {
       if (room <= 0) { H.toast(`最多 ${MAX_PHOTOS} 張`); return; }
       for (const f of files.slice(0, room)) { const p = await toPhoto(f); if (p) S.photos.push(p); }
       if (files.length > room) H.toast(`最多 ${MAX_PHOTOS} 張，多的沒有加進來`);
-      if (S.mode === 'grid') S.grid.idx = 0;
+      if (S.mode === 'grid') { S.grid.idx = 0; S.grid.custom = null; }
       const was = S.cells; resetCells();
       if (S.mode !== 'grid') S.cells.forEach((c, i) => { if (was[i]?.p != null) Object.assign(c, { p: was[i].p }); });
     } else {
@@ -453,12 +477,12 @@ function panel() {
     if (S.sub === 'layout' || S.sub === 'filter') {
       items.append(it({ label: '加照片', html: '+', onclick: () => { filePurpose = { add: true }; $('#cgFile').multiple = true; $('#cgFile').click(); } }));
       (LAYOUTS[n] || []).forEach((cells, i) => items.append(it({ label: '', html: layoutSvg(cells, g.stitch ? 1 : RATIOS.find(x => x.id === g.ratio).v), cls: 'lo', on: !g.stitch && g.idx === i,
-        onclick: () => { g.stitch = ''; g.idx = i; resetCells(); refresh(); } })));
+        onclick: () => { g.stitch = ''; g.idx = i; g.custom = null; resetCells(); refresh(); } })));
       if (n > 1) {
-        items.append(it({ label: '直拼長圖', html: '<svg viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="1.5"/><path d="M7 9h10M7 15h10"/></svg>', cls: 'lo', on: g.stitch === 'v', onclick: () => { g.stitch = 'v'; resetCells(); refresh(); } }));
-        items.append(it({ label: '橫拼長圖', html: '<svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="10" rx="1.5"/><path d="M9 7v10M15 7v10"/></svg>', cls: 'lo', on: g.stitch === 'h', onclick: () => { g.stitch = 'h'; resetCells(); refresh(); } }));
+        items.append(it({ label: '直拼長圖', html: '<svg viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="1.5"/><path d="M7 9h10M7 15h10"/></svg>', cls: 'lo', on: g.stitch === 'v', onclick: () => { g.stitch = 'v'; g.custom = null; resetCells(); refresh(); } }));
+        items.append(it({ label: '橫拼長圖', html: '<svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="10" rx="1.5"/><path d="M9 7v10M15 7v10"/></svg>', cls: 'lo', on: g.stitch === 'h', onclick: () => { g.stitch = 'h'; g.custom = null; resetCells(); refresh(); } }));
       }
-      note.textContent = `${n} 張照片。點一格可以換照片、套濾鏡；長按拖曳交換位置。`;
+      note.textContent = `${n} 張照片。點一格可以換照片、套濾鏡；拖格線改大小，長按拖曳交換位置。`;
     } else if (S.sub === 'ratio') {
       if (g.stitch) note.textContent = '長圖的比例跟著照片走。';
       RATIOS.forEach(x => items.append(chip(x.id, !g.stitch && g.ratio === x.id, () => { g.stitch = ''; g.ratio = x.id; S.cells.forEach(c => { c.zoom = 1; c.ox = c.oy = 0; }); refresh(); })));
