@@ -36,7 +36,10 @@ button{background:none;border:0;padding:0;cursor:pointer}
 
 /* 畫面 */
 #stage{flex:1;position:relative;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}
-#wrap{position:relative;display:none}
+#fbox{position:relative;flex:none}
+#frame{position:absolute;inset:0;width:100%;height:100%;display:block}
+#frame[hidden]{display:none}
+#wrap{position:absolute;left:0;top:0;display:none}
 #wrap.on{display:block}
 #gl{display:block;width:100%;height:100%;background:repeating-conic-gradient(#2a2a2e 0 25%,#1f1f23 0 50%) 0 0/20px 20px}
 #orig{position:absolute;inset:0;width:100%;height:100%;display:none}
@@ -65,6 +68,7 @@ button{background:none;border:0;padding:0;cursor:pointer}
 .it.stk .ic svg{width:38px;height:30px;stroke:none;fill:initial;stroke-width:initial}
 .it.stk .ic svg *{stroke-linecap:initial}
 .it.emo{width:52px}
+.it.emo2 .ic{font-size:24px;font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif}
 .it.emo .ic{font-size:26px;font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif}
 
 /* 裁切框 */
@@ -150,6 +154,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   </header>
 
   <main id="stage">
+    <div id="fbox"><canvas id="frame" hidden></canvas>
     <div id="wrap">
       <canvas id="gl"></canvas>
       <canvas id="orig"></canvas>
@@ -158,6 +163,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
       <div id="texts"></div>
       <div id="crop"><div class="shade s1"></div><div class="shade s2"></div><div class="shade s3"></div><div class="shade s4"></div>
         <div class="box"><span class="h tl" data-h="tl"></span><span class="h tr" data-h="tr"></span><span class="h bl" data-h="bl"></span><span class="h br" data-h="br"></span></div></div>
+    </div>
     </div>
     <div id="empty">
       <h1>隨手修</h1>
@@ -179,6 +185,8 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
       <button class="tab" data-tab="beauty">美顏</button>
       <button class="tab" data-tab="light">光影</button>
       <button class="tab" data-tab="sticker">貼紙</button>
+      <button class="tab" data-tab="fun">創意</button>
+      <button class="tab" data-tab="frame">邊框</button>
       <button class="tab" data-tab="text">文字</button>
       <button class="tab" data-tab="cutout">去背</button>
       <button class="tab" data-tab="crop">裁切</button>
@@ -188,6 +196,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 <input type="file" id="file" accept="image/*" hidden>
 <input type="file" id="cam" accept="image/*" capture="environment" hidden>
 <input type="color" id="colorPick" hidden>
+<input type="file" id="file2" accept="image/*" hidden>
 <div id="toast"></div>
 <div id="busy"><div id="busyText">處理中…</div></div>
 <script type="module" src="app.js"></script>

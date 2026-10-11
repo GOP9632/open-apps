@@ -1,7 +1,8 @@
 // WebGL2 修圖管線：
 //   1. 縮小到短邊 360 做保邊磨皮（不管照片多大，磨皮質感都一樣）
 //   2. 主 shader：變形（瘦臉、大眼）→ 銳化 → 磨皮、美白、祛黑眼圈、法令紋、亮眼、白牙
-//      → 打光、閃光燈 → 調色 → 濾鏡 LUT → 暗角、顆粒 → 去背
+//      → 打光、閃光燈 → 調色 → 濾鏡 LUT → 創意特效、光效 → 暗角、顆粒 → 去背、換背景
+//   3. 背景虛化、素描用的模糊圖，換照片或人像遮罩好了時算一次
 export const MAX_WARPS = 64;
 export const MAX_FACES = 5;
 const SMOOTH_SHORT = 360;
@@ -37,10 +38,29 @@ void main(){
   o = vec4(sum / wsum, 1.0);
 }`;
 
+// 九點高斯模糊（分水平、垂直兩次）
+const FS_GAUSS = `#version 300 es
+precision highp float;
+in vec2 vUV; uniform sampler2D uTex; uniform vec2 uDir; out vec4 o;
+void main(){
+  vec4 s = texture(uTex, vUV) * 0.227027;
+  s += (texture(uTex, vUV + uDir * 1.3846) + texture(uTex, vUV - uDir * 1.3846)) * 0.3162162;
+  s += (texture(uTex, vUV + uDir * 3.2308) + texture(uTex, vUV - uDir * 3.2308)) * 0.0702703;
+  o = s;
+}`;
+// 背景虛化用：人像的部分權重變很小，模糊時人的顏色不會暈到背景上
+const FS_WCOPY = `#version 300 es
+precision highp float;
+in vec2 vUV; uniform sampler2D uTex, uSeg; out vec4 o;
+void main(){
+  float w = pow(1.0 - texture(uSeg, vUV).r, 2.0) + 0.002;
+  o = vec4(texture(uTex, vUV).rgb * w, w);
+}`;
+
 const FS_MAIN = `#version 300 es
 precision highp float;
 in vec2 vUV;
-uniform sampler2D uImg, uSmooth, uMask, uSeg, uLut, uMask2, uSegB;
+uniform sampler2D uImg, uSmooth, uMask, uSeg, uLut, uMask2, uSegB, uBlurS, uBgA, uBgB, uOver, uEx, uBgImg;
 uniform vec2 uSize;
 uniform int uWn;
 uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）
@@ -61,6 +81,9 @@ uniform float uLAmt, uLAmb, uLBg, uLMode;
 uniform float uFAmt, uFLift, uFSpec, uFBg, uFShadow, uFRetro;
 uniform vec2 uFShOff;
 uniform float uBgMode; uniform vec3 uBgColor;
+// 創意特效：1 漫畫 2 波普 3 素描 4 彩鉛 5 馬賽克 6 故障 7 鏡像 8 分身 9 雙重曝光
+uniform int uFx; uniform float uFxAmt; uniform vec2 uExFit;
+uniform float uOAmt, uBlur;
 out vec4 o;
 
 float luma(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
@@ -91,7 +114,37 @@ void main(){
     }
   }
   vec2 uv = p / uSize;
+  if (uFx == 7) uv.x = uv.x > 0.5 ? 1.0 - uv.x : uv.x;
+  if (uFx == 5) {
+    float n = mix(140.0, 14.0, uFxAmt) / max(uSize.x, uSize.y);
+    vec2 cell = uSize * n;
+    uv = (floor(uv * cell) + 0.5) / cell;
+  }
   vec3 col = texture(uImg, uv).rgb;
+  if (uFx == 6) {
+    // 故障：一條條橫向錯位，紅藍分開
+    float row = floor(uv.y * 32.0), h = hash(vec2(row, 3.0));
+    vec2 q = uv + vec2(h > 0.65 ? (hash(vec2(row, 9.0)) - 0.5) * 0.18 * uFxAmt : 0.0, 0.0);
+    float sh = 0.014 * uFxAmt;
+    col = vec3(texture(uImg, q + vec2(sh, 0.0)).r, texture(uImg, q).g, texture(uImg, q - vec2(sh, 0.0)).b);
+  }
+  float pw0 = texture(uSeg, uv).r;
+  if (uBlur > 0.0) {
+    // 背景虛化：只模糊人以外的地方，越模糊亮點越像光斑
+    vec4 a = texture(uBgA, uv), b = texture(uBgB, uv);
+    vec3 ba = a.rgb / max(a.a, 1e-4), bb = b.rgb / max(b.a, 1e-4);
+    vec3 bg = uBlur < 0.4 ? mix(col, ba, uBlur / 0.4) : mix(ba, bb, (uBlur - 0.4) / 0.6);
+    bg += pow(luma(bg), 3.0) * 0.25 * uBlur;
+    col = mix(bg, col, smoothstep(0.3, 0.7, pw0));
+  }
+  if (uFx == 8) {
+    // 分身：人往旁邊複製幾份，越遠越淡，疊在背景上
+    for (int k = 3; k >= 1; k--) {
+      vec2 q = uv - vec2(0.075 * float(k) * uSize.y / uSize.x * 0.75, 0.0);
+      float pk = smoothstep(0.3, 0.7, texture(uSeg, q).r) * (1.0 - smoothstep(0.3, 0.7, pw0));
+      col = mix(col, texture(uImg, q).rgb, pk * uFxAmt * (0.95 - 0.2 * float(k)));
+    }
+  }
 
   if (uSharp > 0.0) {
     vec2 px = 1.0 / uSize;
@@ -227,6 +280,60 @@ void main(){
 
   if (uHasLut > 0.5) col = mix(col, lut(col), uLutAmt);
 
+  if (uFx >= 1 && uFx <= 4) {
+    // 邊緣：用保邊模糊過的圖算，比較乾淨
+    vec2 t = 1.0 / vec2(textureSize(uSmooth, 0));
+    float tl = luma(texture(uSmooth, uv + t * vec2(-1, -1)).rgb), tc = luma(texture(uSmooth, uv + t * vec2(0, -1)).rgb), tr = luma(texture(uSmooth, uv + t * vec2(1, -1)).rgb);
+    float ml = luma(texture(uSmooth, uv + t * vec2(-1, 0)).rgb), mr = luma(texture(uSmooth, uv + t * vec2(1, 0)).rgb);
+    float bl = luma(texture(uSmooth, uv + t * vec2(-1, 1)).rgb), bc = luma(texture(uSmooth, uv + t * vec2(0, 1)).rgb), br = luma(texture(uSmooth, uv + t * vec2(1, 1)).rgb);
+    float gx = tr + 2.0 * mr + br - tl - 2.0 * ml - bl, gy = bl + 2.0 * bc + br - tl - 2.0 * tc - tr;
+    float edge = smoothstep(0.12, 0.35, length(vec2(gx, gy)));
+    vec3 c1 = col;
+    if (uFx == 1) {
+      // 漫畫：顏色分成幾階、加飽和，描黑邊
+      // 只把亮度分階，顏色保留，臉不會變成色塊
+      vec3 sm = mix(col, texture(uSmooth, uv).rgb, 0.6);
+      float L = luma(sm), f4 = L * 4.0;
+      float Lq = (floor(f4) + smoothstep(0.35, 0.65, fract(f4))) / 4.0;
+      vec3 q = sm * (max(Lq, 0.05) / max(L, 0.05));
+      q = clamp(mix(vec3(luma(q)), q, 1.3), 0.0, 1.0);
+      c1 = mix(q, vec3(0.07), edge);
+    } else if (uFx == 2) {
+      // 波普：網點，暗的地方點大
+      float cs = max(uSize.x, uSize.y) / 110.0;
+      vec2 r = mat2(0.7071, -0.7071, 0.7071, 0.7071) * (vUV * uSize) / cs;
+      float rad = sqrt(1.0 - luma(col)) * 0.62;
+      float d = 1.0 - smoothstep(rad - 0.08, rad + 0.08, length(fract(r) - 0.5));
+      vec3 ink = clamp(mix(vec3(luma(col)), floor(col * 3.0 + 0.5) / 3.0, 1.6), 0.0, 1.0) * 0.85;
+      c1 = mix(mix(vec3(1.0, 0.97, 0.88), ink, 0.35), ink, d);
+      c1 = mix(c1, vec3(0.05), edge);
+    } else {
+      // 素描：原圖除以模糊圖，平的地方變白，邊緣和紋理留下筆觸
+      float L = luma(texture(uImg, uv).rgb), Lb = luma(texture(uBlurS, uv).rgb);
+      float s = pow(clamp(L / max(Lb, 0.03), 0.0, 1.0), 4.0);
+      s *= mix(1.0, smoothstep(-0.1, 0.8, L), 0.35);
+      s *= 0.96 + 0.04 * hash(floor(vUV * uSize / 2.0));
+      if (uFx == 3) c1 = vec3(s) * vec3(1.0, 0.99, 0.96);
+      else {
+        // 彩鉛：淡淡的顏色加斜線筆觸
+        vec2 fp = vUV * uSize / max(uSize.x, uSize.y) * 700.0;
+        float hatch = 0.9 + 0.1 * sin((fp.x + fp.y) * 2.2) * (1.0 - luma(col));
+        c1 = mix(vec3(1.0, 0.99, 0.96), clamp(mix(vec3(luma(col)), col, 1.5), 0.0, 1.0), 0.4) * pow(s, 1.4) * hatch;
+      }
+    }
+    col = mix(col, c1, uFxAmt);
+  }
+  if (uFx == 9) {
+    // 雙重曝光：人的輪廓裡透出第二張圖，亮的地方是臉，暗的地方是風景；背景淡成第二張圖的亮色
+    vec3 e = texture(uEx, (uv - 0.5) * uExFit + 0.5).rgb;
+    float pm = smoothstep(0.25, 0.75, texture(uSeg, uv).r);
+    float L = luma(col);
+    vec3 inside = 1.0 - (1.0 - e) * (1.0 - smoothstep(0.15, 0.85, L) * vec3(1.0));
+    vec3 outside = mix(vec3(0.97, 0.96, 0.94), e, 0.18);
+    col = mix(col, mix(outside, inside, pm), uFxAmt);
+  }
+  if (uOAmt > 0.0) col = 1.0 - (1.0 - col) * (1.0 - texture(uOver, vUV).rgb * uOAmt);
+
   if (uVig != 0.0) {
     vec2 d = (vUV - 0.5) * vec2(uSize.x / max(uSize.x, uSize.y), uSize.y / max(uSize.x, uSize.y)) * 2.0;
     float v = smoothstep(0.35, 1.25, length(d));
@@ -239,7 +346,7 @@ void main(){
   if (uBgMode > 0.5) {
     a = texture(uSeg, uv).r;
     if (uBgMode < 1.5) { o = vec4(col * a, a); return; }
-    col = mix(uBgColor, col, a); a = 1.0;
+    col = mix(uBgMode < 2.5 ? uBgColor : texture(uBgImg, vUV).rgb, col, a); a = 1.0;
   }
   o = vec4(col, a);
 }`;
@@ -275,11 +382,15 @@ export class Renderer {
     this.pCopy = program(gl, FS_COPY);
     this.pBil = program(gl, FS_BILATERAL);
     this.pMain = program(gl, FS_MAIN);
+    this.pGauss = program(gl, FS_GAUSS); this.pW = program(gl, FS_WCOPY);
     this.tImg = this.tex(); this.tMask = this.tex(); this.tSeg = this.tex(); this.tLut = this.tex();
     this.tMask2 = this.tex(); this.tSegB = this.tex();
     this.blank(this.tMask, 0); this.blank(this.tSeg, 255); this.blank(this.tLut, 0);
     this.blank(this.tMask2, 0); this.blank(this.tSegB, 255);
+    this.tOver = this.tex(); this.tEx = this.tex(); this.tBgImg = this.tex();
+    this.blank(this.tOver, 0); this.blank(this.tEx, 255); this.blank(this.tBgImg, 255);
     this.fbA = this.fbo(); this.fbB = this.fbo();
+    this.fbS = [this.fbo(), this.fbo()]; this.fbM = [this.fbo(), this.fbo()]; this.fbL = [this.fbo(), this.fbo()];
     this.hasLut = false;
   }
   tex() {
@@ -340,9 +451,41 @@ export class Renderer {
       [src2, dst] = [dst, src2];
     }
     this.tSmooth = src2.t;
+    this.blurs();
+  }
+  // 模糊 pair[0] 裡的圖 n 次，結果還在 pair[0]
+  gauss(pair, n) {
+    const gl = this.gl, [a, b] = pair;
+    for (let i = 0; i < n; i++) {
+      this.pass(this.pGauss, b, b.w, b.h, a.t); gl.uniform2f(this.pGauss.u.uDir, 1 / a.w, 0); gl.drawArrays(gl.TRIANGLES, 0, 3);
+      this.pass(this.pGauss, a, a.w, a.h, b.t); gl.uniform2f(this.pGauss.u.uDir, 0, 1 / a.h); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+  }
+  size(pair, short) {
+    const k = Math.min(1, short / Math.min(this.w, this.h));
+    const w = Math.max(1, Math.round(this.w * k)), h = Math.max(1, Math.round(this.h * k));
+    pair.forEach(f => this.sizeFbo(f, w, h));
+  }
+  // 素描用的小模糊；背景虛化用的中、大模糊（扣掉人像）
+  blurs() {
+    if (!this.w) return;
+    const gl = this.gl;
+    this.size(this.fbS, 480);
+    this.pass(this.pCopy, this.fbS[0], this.fbS[0].w, this.fbS[0].h, this.tImg); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    this.gauss(this.fbS, 2);
+    this.size(this.fbM, 200); this.size(this.fbL, 48);
+    this.pass(this.pW, this.fbM[0], this.fbM[0].w, this.fbM[0].h, this.fbS[0].t);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.tSeg); gl.uniform1i(this.pW.u.uSeg, 1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    this.gauss(this.fbM, 3);
+    this.pass(this.pCopy, this.fbL[0], this.fbL[0].w, this.fbL[0].h, this.fbM[0].t); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    this.gauss(this.fbL, 3);
   }
   setMask(src) { src ? this.upload(this.tMask, src) : this.blank(this.tMask, 0); }
-  setSeg(src) { src ? this.upload(this.tSeg, src) : this.blank(this.tSeg, 255); }
+  setSeg(src) { src ? this.upload(this.tSeg, src) : this.blank(this.tSeg, 255); this.blurs(); }
+  setOver(src) { src ? this.upload(this.tOver, src) : this.blank(this.tOver, 0); }
+  setEx(src) { src ? this.upload(this.tEx, src) : this.blank(this.tEx, 255); this.exAr = src ? src.width / src.height : 1; }
+  setBgImg(src) { src ? this.upload(this.tBgImg, src) : this.blank(this.tBgImg, 255); }
   setMask2(src) { src ? this.upload(this.tMask2, src) : this.blank(this.tMask2, 0); }
   setSegB(src) { src ? this.upload(this.tSegB, src) : this.blank(this.tSegB, 255); }
   setLut(src) { this.hasLut = !!src; if (src) this.upload(this.tLut, src); }
@@ -352,7 +495,8 @@ export class Renderer {
     const gl = this.gl, u = this.pMain.u;
     this.pass(this.pMain, null, this.w, this.h);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-    const texs = [[this.tImg, 'uImg'], [this.tSmooth, 'uSmooth'], [this.tMask, 'uMask'], [this.tSeg, 'uSeg'], [this.tLut, 'uLut'], [this.tMask2, 'uMask2'], [this.tSegB, 'uSegB']];
+    const texs = [[this.tImg, 'uImg'], [this.tSmooth, 'uSmooth'], [this.tMask, 'uMask'], [this.tSeg, 'uSeg'], [this.tLut, 'uLut'], [this.tMask2, 'uMask2'], [this.tSegB, 'uSegB'],
+      [this.fbS[0].t, 'uBlurS'], [this.fbM[0].t, 'uBgA'], [this.fbL[0].t, 'uBgB'], [this.tOver, 'uOver'], [this.tEx, 'uEx'], [this.tBgImg, 'uBgImg']];
     texs.forEach(([t, name], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(u[name], i); });
     gl.uniform2f(u.uSize, this.w, this.h);
     const n = Math.min(warps.length, MAX_WARPS), w1 = new Float32Array(MAX_WARPS * 4), w2 = new Float32Array(MAX_WARPS * 4), w3 = new Float32Array(MAX_WARPS * 2);
@@ -395,7 +539,11 @@ export class Renderer {
     gl.uniform1f(u.uEyeB, f(p.eyeb)); gl.uniform1f(u.uTeeth, f(p.teeth));
     gl.uniform1f(u.uHasLut, this.hasLut ? 1 : 0);
     gl.uniform1f(u.uLutAmt, f(p.filterAmt));
-    const mode = { keep: 0, clear: 1, color: 2 }[p.bg] || 0;
+    gl.uniform1i(u.uFx, fx.fxMode || 0); gl.uniform1f(u.uFxAmt, fx.fxAmt || 0);
+    const ra = this.w / this.h, re = this.exAr || 1;
+    gl.uniform2f(u.uExFit, re > ra ? ra / re : 1, re > ra ? 1 : re / ra);
+    gl.uniform1f(u.uOAmt, fx.over || 0); gl.uniform1f(u.uBlur, fx.blur || 0);
+    const mode = { keep: 0, clear: 1, color: 2, img: 3 }[p.bg] || 0;
     gl.uniform1f(u.uBgMode, mode);
     const hex = p.bgColor || '#ffffff';
     gl.uniform3f(u.uBgColor, parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255);

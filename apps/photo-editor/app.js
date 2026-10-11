@@ -2,6 +2,7 @@ import { Renderer } from './gl.js';
 import { FILTERS, bakeLUT, thumb } from './filters.js';
 import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor } from './ai.js';
 import { STICKERS, EMOJIS, EMOJI_FONT, stickerById, stickerImage } from './stickers.js';
+import { FX, OVERLAYS, BACKDROPS, EXPOSURES, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
 
 const $ = s => document.querySelector(s);
 const MAX_SIDE = 4096, MAX_AREA = 16e6;
@@ -15,6 +16,7 @@ const P0 = {
   bg: 'keep', bgColor: '#ffffff',
   oneTap: -1, oneAmt: 100,
   light: -1, lightAmt: 60, lightRot: 0, flash: -1, flashAmt: 60,
+  blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'forest', bgImg: 'sky', frame: '',
 };
 
 const I = {
@@ -111,6 +113,9 @@ let selSt = -1;
 let hist = [], hi = -1;
 let tab = 'adjust', cur = 'brightness', selText = -1;
 let cropState = null;
+let cSec = 'fx';          // 創意分頁目前在哪一區：景深、特效、光效
+let exOwn = null, exN = 0; // 雙重曝光自己選的第二張照片
+let frameK = 1;
 const lutCache = new Map();
 
 try { R = new Renderer($('#gl')); }
@@ -163,8 +168,11 @@ function applyBase() {
   o.getContext('2d').drawImage(base.canvas, 0, 0);
   layout(); render();
   if (!base.faces) findFaces();
-  if ((P.bg !== 'keep' || P.light >= 0 || P.flash >= 0) && !base.seg) findPerson(P.bg === 'keep');
+  if (needSeg() && !base.seg) findPerson(P.bg === 'keep');
 }
+
+const fxById = id => FX.find(f => f.id === id);
+const needSeg = () => P.bg !== 'keep' || P.light >= 0 || P.flash >= 0 || P.blur > 0 || !!fxById(P.fx)?.seg;
 
 // 背景先找臉和皮膚，美顏打開時就準備好了
 function getSeg(b) {
@@ -205,10 +213,24 @@ function layout() {
   if (!base) return;
   const st = $('#stage').getBoundingClientRect();
   const pad = 12, w = base.canvas.width, h = base.canvas.height;
-  const k = Math.min((st.width - pad * 2) / w, (st.height - pad * 2) / h);
-  const wr = $('#wrap');
-  wr.style.width = Math.round(w * k) + 'px'; wr.style.height = Math.round(h * k) + 'px';
+  const f = curFrame(), g = f ? f.geom(w, h) : { W: w, H: h, x: 0, y: 0 };
+  const k = Math.min((st.width - pad * 2) / g.W, (st.height - pad * 2) / g.H);
+  const fb = $('#fbox');
+  fb.style.width = Math.round(g.W * k) + 'px'; fb.style.height = Math.round(g.H * k) + 'px';
+  Object.assign($('#wrap').style, { left: Math.round(g.x * k) + 'px', top: Math.round(g.y * k) + 'px', width: Math.round(w * k) + 'px', height: Math.round(h * k) + 'px' });
+  frameK = k; paintFrame();
   drawTexts(); drawStickers(); if (cropState) drawCrop();
+}
+// 裁切的時候先不顯示邊框
+const curFrame = () => !cropState && P.frame ? frameById(P.frame) : null;
+function paintFrame() {
+  const fc = $('#frame'), f = curFrame();
+  fc.hidden = !f;
+  if (!f) return;
+  const w = base.canvas.width, h = base.canvas.height, g = f.geom(w, h), k = frameK * Math.min(2, devicePixelRatio || 1);
+  fc.width = Math.max(1, Math.round(g.W * k)); fc.height = Math.max(1, Math.round(g.H * k));
+  const ctx = fc.getContext('2d'); ctx.setTransform(k, 0, 0, k, 0, 0);
+  drawFrame(ctx, f, w, h, $('#gl'));
 }
 new ResizeObserver(layout).observe($('#stage'));
 
@@ -220,9 +242,20 @@ function render() {
     const lut = P.filter === 'none' ? null : getLut(P.filter);
     R.setLut(lut);
     draw();
+    if (curFrame()?.live) paintFrame();
   });
 }
-function draw() { R.render(P, base.faces ? faceWarps(base.faces, P) : [], effects()); }
+function draw() { syncTex(); R.render(P, base.faces ? faceWarps(base.faces, P) : [], effects()); }
+// 光效、背景、雙重曝光的圖：要用的時候才畫，照片比例變了就重畫
+const texKey = {};
+function syncTex() {
+  const W = base.canvas.width, H = base.canvas.height, [w, h] = fitSize(W, H);
+  const want = (slot, key, make, set) => { if (texKey[slot] !== key) { texKey[slot] = key; set(key ? make() : null); } };
+  want('ov', P.ov ? `${P.ov}|${w}x${h}` : '', () => paint(OVERLAYS, P.ov, w, h), c => R.setOver(c));
+  want('bg', P.bg === 'img' ? `${P.bgImg}|${w}x${h}` : '', () => paint(BACKDROPS, P.bgImg, w, h), c => R.setBgImg(c));
+  const own = P.ex === 'own' && exOwn;
+  want('ex', P.fx === 'double' ? (own ? 'own' + exN : `${P.ex}|${w}x${h}`) : '', () => own ? exOwn : paint(EXPOSURES, P.ex === 'own' ? 'forest' : P.ex, ...fitSize(W, H, 1024)), c => R.setEx(c));
+}
 // 打光、閃光燈的參數
 function effects() {
   const fx = { faces: base.geoms };
@@ -231,6 +264,10 @@ function effects() {
     fx.light = { ...L, amt: P.lightAmt / 100, lights: L.lights.map(l => ({ col: l.col, dir: [l.dir[0] * c - l.dir[1] * s, l.dir[0] * s + l.dir[1] * c, l.dir[2]] })) };
   }
   if (P.flash >= 0) fx.flash = { ...FLASHES[P.flash], amt: P.flashAmt / 100 };
+  const e = fxById(P.fx);
+  if (e) { fx.fxMode = e.mode; fx.fxAmt = P.fxAmt / 100; }
+  if (P.ov) fx.over = P.ovAmt / 100;
+  fx.blur = P.blur / 100;
   return fx;
 }
 function getLut(id) {
@@ -301,7 +338,7 @@ function showTab(t) {
   const box = $('#items'); box.innerHTML = '';
   $('#note').textContent = ''; $('#textedit').hidden = true;
   if (!base) return;
-  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, light: tabLight, sticker: tabSticker, crop: tabCrop, cutout: tabCutout, text: tabText })[t](box);
+  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && P.light >= 0);
 }
@@ -513,6 +550,106 @@ function drawStickers() {
   });
 }
 
+// ---------- 創意玩法 ----------
+const FX_ICON = { comic: '💥', pop: '🔴', sketch: '✏️', pencil: '🖍️', mosaic: '🟪', glitch: '📺', mirror: '🪞', ghost: '👥', double: '🌄' };
+// 小縮圖：照片縮小一份，給光效、背景、邊框的預覽用
+function small() {
+  if (!base.small) {
+    const [w, h] = fitSize(base.canvas.width, base.canvas.height, 160);
+    base.small = newCanvas(w, h); base.small.getContext('2d').drawImage(base.canvas, 0, 0, w, h);
+  }
+  return base.small;
+}
+const thumbCache = new Map();
+function thumbOf(key, make) {
+  const k = key + '|' + base.canvas.width + 'x' + base.canvas.height;
+  if (!thumbCache.has(k)) { if (thumbCache.size > 80) thumbCache.clear(); thumbCache.set(k, make()); }
+  return thumbCache.get(k);
+}
+function squareThumb(draw) {
+  const c = newCanvas(124, 124), ctx = c.getContext('2d'), s = small();
+  const k = Math.max(124 / s.width, 124 / s.height);
+  ctx.drawImage(s, (124 - s.width * k) / 2, (124 - s.height * k) / 2, s.width * k, s.height * k);
+  draw?.(ctx);
+  return c.toDataURL('image/jpeg', 0.8);
+}
+const ovThumb = o => thumbOf('ov' + o.id, () => squareThumb(ctx => { ctx.globalCompositeOperation = 'screen'; ctx.drawImage(paint(OVERLAYS, o.id, 124, 124), 0, 0); }));
+const listThumb = (list, id) => thumbOf('p' + id, () => paint(list, id, 124, 124).toDataURL('image/jpeg', 0.8));
+
+function tabFun(box) {
+  [['blur', '景深'], ['fx', '特效'], ['ov', '光效']].forEach(([k, lb]) => box.append(item({
+    label: lb, icon: lb, cls: 'wide', on: cSec === k, set: k === 'blur' ? P.blur > 0 : k === 'fx' ? !!P.fx : !!P.ov,
+    onclick: () => { cSec = k; if (k === 'blur' && !P.blur) { P.blur = 60; findPerson(true); render(); commit(); } showTab('fun'); },
+  })));
+  if (cSec === 'blur') {
+    box.append(item({ label: '關閉', icon: I.off, on: !P.blur, onclick: () => { P.blur = 0; render(); commit(); showTab('fun'); } }));
+    setSlider('虛化', 0, 100, P.blur, v => { P.blur = v; if (v) findPerson(true); render(); });
+    $('#note').textContent = base.seg ? '自動找出人像，把背景模糊掉，像大光圈拍的。' : '正在找人像…';
+    if (!base.seg && P.blur) findPerson(true).then(() => tab === 'fun' && showTab('fun'));
+    return;
+  }
+  if (cSec === 'fx') {
+    box.append(item({ label: '無', icon: I.off, on: !P.fx, onclick: () => { P.fx = ''; render(); commit(); showTab('fun'); } }));
+    FX.forEach(e => box.append(item({
+      label: e.name, icon: FX_ICON[e.id], cls: 'emo2', on: P.fx === e.id,
+      onclick: async () => {
+        if (P.fx !== e.id) { P.fx = e.id; P.fxAmt = e.def; }
+        showTab('fun'); render(); commit();
+        if (e.seg && !base.seg) { await findPerson(); render(); }
+      },
+    })));
+    const e = fxById(P.fx);
+    if (!e) { hideSlider(); $('#note').textContent = '漫畫、素描、分身、雙重曝光這些都在這裡。'; return; }
+    setSlider('強度', 0, 100, P.fxAmt, v => { P.fxAmt = v; render(); });
+    $('#note').textContent = { ghost: '自動找出人像，往旁邊複製出殘影。', double: '人的輪廓裡透出第二張圖，可以換成自己的照片。', mirror: '左半邊鏡射到右邊。' }[e.id] || '';
+    if (e.id === 'double') {
+      EXPOSURES.forEach(x => box.append(item({ label: x.name, cls: 'ft', on: P.ex === x.id, style: `background-image:url(${listThumb(EXPOSURES, x.id)})`,
+        onclick: () => { P.ex = x.id; render(); commit(); showTab('fun'); } })));
+      box.append(item({ label: '選照片', icon: I.plus, on: P.ex === 'own', onclick: () => $('#file2').click() }));
+    }
+    return;
+  }
+  box.append(item({ label: '無', icon: I.off, on: !P.ov, onclick: () => { P.ov = ''; render(); commit(); showTab('fun'); } }));
+  OVERLAYS.forEach(o => box.append(item({
+    label: o.name, cls: 'ft', on: P.ov === o.id, style: `background-image:url(${ovThumb(o)})`,
+    onclick: () => { if (P.ov !== o.id) P.ovAmt = 80; P.ov = o.id; render(); commit(); showTab('fun'); },
+  })));
+  if (P.ov) setSlider('強度', 0, 100, P.ovAmt, v => { P.ovAmt = v; render(); });
+  else hideSlider();
+  $('#note').textContent = '漏光、光斑、星光這些光效，可以跟特效一起用。';
+}
+$('#file2').onchange = async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file) return;
+  try {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const [w, h] = fitSize(bmp.width, bmp.height, 1600);
+    exOwn = newCanvas(w, h); exOwn.getContext('2d').drawImage(bmp, 0, 0, w, h); exN++;
+    P.ex = 'own'; render(); commit(); showTab('fun');
+  } catch (err) { console.error(err); toast('這張照片打不開'); }
+};
+
+// ---------- 邊框 ----------
+function frameThumb(f) {
+  return thumbOf('f' + f.id, () => {
+    const s = small(), g = f.geom(s.width, s.height), k = 124 / Math.max(g.W, g.H);
+    const c = newCanvas(124, 124), ctx = c.getContext('2d');
+    ctx.fillStyle = '#2a2a2e'; ctx.fillRect(0, 0, 124, 124);
+    ctx.translate((124 - g.W * k) / 2, (124 - g.H * k) / 2); ctx.scale(k, k);
+    drawFrame(ctx, f, s.width, s.height, s, (cx, gg) => cx.drawImage(s, gg.x, gg.y));
+    return c.toDataURL('image/jpeg', 0.85);
+  });
+}
+function tabFrame(box) {
+  hideSlider();
+  box.append(item({ label: '無', icon: I.off, on: !P.frame, onclick: () => { P.frame = ''; layout(); commit(); showTab('frame'); } }));
+  FRAMES.forEach(f => box.append(item({
+    label: f.name, cls: 'ft', on: P.frame === f.id, style: `background-image:url(${frameThumb(f)});background-size:contain;background-repeat:no-repeat`,
+    onclick: () => { P.frame = f.id; layout(); commit(); showTab('frame'); },
+  })));
+  $('#note').textContent = P.frame ? '存檔時邊框會一起存進去。' : '拍立得、底片、模糊背景這些邊框，存檔會一起存進去。';
+}
+
 // ---------- 裁切、旋轉 ----------
 function tabCrop(box) {
   hideSlider();
@@ -528,9 +665,9 @@ function tabCrop(box) {
 }
 function startCrop() {
   cropState = { x: 0, y: 0, w: 1, h: 1, ratio: 'free' };
-  $('#crop').classList.add('on'); drawCrop();
+  $('#crop').classList.add('on'); layout();
 }
-function endCrop() { cropState = null; $('#crop').classList.remove('on'); }
+function endCrop() { cropState = null; $('#crop').classList.remove('on'); layout(); }
 function setRatio(r) {
   cropState.ratio = r;
   if (r === 'free') return drawCrop();
@@ -629,10 +766,11 @@ function transform(kind) {
 // ---------- 去背 ----------
 function tabCutout(box) {
   hideSlider();
-  const opts = [['keep', '保留背景', I.person], ['clear', '透明', ''], ['color', '換底色', '']];
+  const opts = [['keep', '保留背景', I.person], ['clear', '透明', ''], ['color', '換底色', ''], ['img', '換背景', '']];
   opts.forEach(([k, label, icon]) => box.append(item({
     label, icon, on: P.bg === k,
-    style: k === 'clear' ? 'background:repeating-conic-gradient(#555 0 25%,#333 0 50%) 0 0/12px 12px' : k === 'color' ? `background:${P.bgColor}` : '',
+    style: k === 'clear' ? 'background:repeating-conic-gradient(#555 0 25%,#333 0 50%) 0 0/12px 12px' : k === 'color' ? `background:${P.bgColor}`
+      : k === 'img' ? `background:url(${listThumb(BACKDROPS, P.bgImg)}) center/cover` : '',
     onclick: async () => {
       P.bg = k; showTab('cutout');
       if (k !== 'keep') await findPerson();
@@ -651,6 +789,10 @@ function tabCutout(box) {
     pick.onclick = () => { const cp = $('#colorPick'); cp.value = P.bgColor; cp.oninput = () => { P.bgColor = cp.value; render(); }; cp.onchange = () => { commit(); showTab('cutout'); }; cp.click(); };
     box.append(pick);
   }
+  if (P.bg === 'img') BACKDROPS.forEach(b => box.append(item({
+    label: b.name, cls: 'ft', on: P.bgImg === b.id, style: `background-image:url(${listThumb(BACKDROPS, b.id)})`,
+    onclick: () => { P.bgImg = b.id; render(); commit(); showTab('cutout'); },
+  })));
   $('#note').textContent = P.bg === 'clear' ? '透明背景會存成 PNG。' : '自動找出照片裡的人，換掉背景。';
 }
 
@@ -726,8 +868,15 @@ async function save() {
   busy('輸出中…');
   try {
     draw();
-    const W = base.canvas.width, H = base.canvas.height, out = newCanvas(W, H), ctx = out.getContext('2d');
-    ctx.drawImage($('#gl'), 0, 0);
+    const W = base.canvas.width, H = base.canvas.height, gl = $('#gl'), f = P.frame ? frameById(P.frame) : null;
+    const g = f ? f.geom(W, H) : { W, H, x: 0, y: 0 };
+    // iPhone 的 canvas 最大約 1600 萬像素，邊框加大後超過就整張等比縮小
+    const sc = Math.min(1, Math.sqrt(16e6 / (g.W * g.H)));
+    const out = newCanvas(g.W * sc, g.H * sc), ctx = out.getContext('2d');
+    ctx.scale(sc, sc);
+    if (f) drawFrame(ctx, f, W, H, gl, (c, gg) => c.drawImage(gl, gg.x, gg.y, W, H));
+    else ctx.drawImage(gl, 0, 0);
+    ctx.save(); ctx.beginPath(); ctx.rect(g.x, g.y, W, H); ctx.clip(); ctx.translate(g.x, g.y);
     for (const s of stickers) {
       const w = s.size * W;
       ctx.save(); ctx.globalAlpha = s.op; ctx.translate(s.x * W, s.y * H); ctx.rotate(s.rot); if (s.flip) ctx.scale(-1, 1);
@@ -749,6 +898,7 @@ async function save() {
         ctx.fillStyle = t.color; ctx.fillText(ln, t.x * W, y0 + i * lh);
       });
     }
+    ctx.restore();
     const png = P.bg === 'clear';
     const blob = await new Promise(r => out.toBlob(r, png ? 'image/png' : 'image/jpeg', 0.95));
     const name = `隨手修-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.${png ? 'png' : 'jpg'}`;
