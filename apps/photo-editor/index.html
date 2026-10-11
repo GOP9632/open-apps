@@ -44,6 +44,9 @@ button{background:none;border:0;padding:0;cursor:pointer}
 #wrap{position:absolute;left:0;top:0;display:none}
 #wrap.on{display:block}
 #gl{display:block;width:100%;height:100%;background:repeating-conic-gradient(#2a2a2e 0 25%,#1f1f23 0 50%) 0 0/20px 20px}
+#pop{position:absolute;inset:0;width:100%;height:100%;display:none}
+#wrap.popon #pop{display:block}
+.st canvas{width:100%;height:100%;display:block}
 #orig{position:absolute;inset:0;width:100%;height:100%;display:none}
 #wrap.cmp #orig{display:block}
 .badge{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:rgba(0,0,0,.55);padding:4px 10px;border-radius:10px;font-size:13px;display:none}
@@ -58,17 +61,21 @@ button{background:none;border:0;padding:0;cursor:pointer}
 
 /* 文字貼圖 */
 #texts{position:absolute;inset:0;pointer-events:none}
-.tx{position:absolute;transform:translate(-50%,-50%);white-space:pre;line-height:1.2;font-weight:700;pointer-events:auto;cursor:move;touch-action:none;padding:2px 6px;border:1.5px dashed transparent;border-radius:6px}
+.tx{position:absolute;transform:translate(-50%,-50%);pointer-events:auto;cursor:move;touch-action:none;padding:2px;border:1.5px dashed transparent;border-radius:6px}
+.tx canvas{display:block;pointer-events:none}
 .tx.sel{border-color:rgba(255,255,255,.8)}
 
 /* 貼紙 */
 #stickers{position:absolute;inset:0;pointer-events:none;overflow:hidden}
 .st{position:absolute;pointer-events:auto;touch-action:none;cursor:move;display:grid;place-items:center;outline:1.5px dashed transparent;outline-offset:2px;border-radius:4px}
-.st svg{width:100%;height:100%;display:block}
+.st svg,.st img{width:100%;height:100%;display:block;pointer-events:none;-webkit-user-select:none;user-select:none}
+.st{-webkit-mask-size:100% 100%;mask-size:100% 100%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}
+.st.erasing{cursor:crosshair}
 .st.sel{outline-color:rgba(255,255,255,.85)}
 #wrap.lightdrag{cursor:grab}
 #lightdot{position:absolute;width:26px;height:26px;margin:-13px 0 0 -13px;border:2px solid #fff;border-radius:50%;background:rgba(255,236,170,.35);box-shadow:0 0 0 1px rgba(0,0,0,.35),0 0 12px rgba(255,230,150,.8);pointer-events:none;z-index:5}
 .it.stk .ic svg{width:38px;height:30px;stroke:none;fill:initial;stroke-width:initial}
+.it.stk .ic img{max-width:38px;max-height:34px;display:block}
 .it.stk .ic svg *{stroke-linecap:initial}
 .it.emo{width:52px}
 .it.emo2 .ic{font-size:24px;font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif}
@@ -129,6 +136,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .note{color:var(--muted);font-size:13px;padding:0 18px 8px;min-height:18px}
 .textedit{display:flex;gap:8px;padding:0 12px 10px}
 .textedit[hidden]{display:none}
+.textedit input{flex:1;height:40px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);padding:0 12px;color:var(--text)}
 .textedit textarea{flex:1;min-height:44px;max-height:96px;resize:none;border-radius:12px;border:1px solid var(--line);background:var(--panel2);padding:10px 12px;color:var(--text)}
 
 #toast{position:fixed;left:50%;bottom:calc(var(--safe-b) + 190px);transform:translateX(-50%);background:rgba(30,30,34,.95);padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9;max-width:86vw;text-align:center}
@@ -144,6 +152,32 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   #panel{grid-column:2;grid-row:2;width:380px;min-height:0;overflow-y:auto;border-radius:18px 0 0 0;display:flex;flex-direction:column}
   #panel .items{flex-wrap:wrap;overflow:visible}
   #panel .tabs{order:-1;border-top:0;border-bottom:1px solid var(--line);margin-bottom:10px}
+}
+/* 拼貼、範本（collage.js） */
+#empty .two{display:flex;gap:10px}
+#empty .two .big{flex:1}
+#cg{position:fixed;inset:0;z-index:7;background:var(--bg);display:none;flex-direction:column}
+#cg.on{display:flex}
+#cgStage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}
+#cgCanvas{display:block;box-shadow:0 6px 28px rgba(0,0,0,.45);touch-action:none}
+.cgbtn{height:36px;padding:0 14px;border-radius:18px;background:var(--panel2);color:var(--text);font-weight:600;margin-right:6px}
+.cgp{background:var(--panel);border-radius:18px 18px 0 0;padding:10px 0 calc(var(--safe-b) + 4px)}
+.it.lo .ic{color:#8a8a93}
+.it.lo.on .ic{color:var(--accent)}
+.it.lo .ic svg{fill:none}
+.it.lo .ic polygon{stroke:none}
+.it.tp{width:auto;min-width:64px}
+.it.tp .ic{height:74px;border-radius:8px;overflow:hidden;background:#fff}
+.it.tp .ic canvas{width:100%;height:100%;display:block}
+.it.tp span:last-child{max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.it.ft .ic canvas{border-radius:12px}
+@media (min-width:900px){
+  #cg.on{display:grid;grid-template-columns:minmax(0,1fr) 380px;grid-template-rows:auto minmax(0,1fr)}
+  #cg .top{grid-column:1/-1}
+  #cgStage{grid-column:1;grid-row:2}
+  .cgp{grid-column:2;grid-row:2;min-height:0;overflow-y:auto;border-radius:18px 0 0 0;display:flex;flex-direction:column}
+  .cgp .items{flex-wrap:wrap;overflow:visible}
+  .cgp .tabs{order:-1;border-top:0;border-bottom:1px solid var(--line);margin-bottom:10px}
 }
 </style>
 </head>
@@ -163,6 +197,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div id="fbox"><canvas id="frame" hidden></canvas>
     <div id="wrap">
       <canvas id="gl"></canvas>
+      <canvas id="pop"></canvas>
       <canvas id="orig"></canvas>
       <div class="badge">原圖</div>
       <div id="stickers"></div>
@@ -176,6 +211,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
       <p>修圖、濾鏡、美顏、去背、消除，全部免費。<br>照片只在你的裝置上處理，不會上傳。</p>
       <button class="big" id="bPick">選一張照片</button>
       <button class="big alt" id="bCam">拍照</button>
+      <div class="two"><button class="big alt" id="bCollage">拼貼</button><button class="big alt" id="bTpl">範本</button></div>
       <small>電腦上也可以直接把照片拖進來或貼上。</small>
     </div>
   </main>
@@ -184,6 +220,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div class="srow hide" id="srow"><label id="sLabel"></label><input type="range" id="slider" min="-100" max="100" value="0" aria-label="強度"><output id="sVal">0</output></div>
     <div class="note" id="note"></div>
     <div class="textedit" id="textedit" hidden><textarea id="textInput" rows="1" placeholder="輸入文字"></textarea></div>
+    <div class="textedit" id="stsearch" hidden><input id="stkQ" type="search" placeholder="搜尋貼紙，例如愛心、星星" enterkeyhint="search"></div>
     <div class="items" id="cats" hidden></div>
     <div class="items" id="items"></div>
     <nav class="tabs" id="tabs">
@@ -199,6 +236,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
       <button class="tab" data-tab="hair">頭髮</button>
       <button class="tab" data-tab="light">光影</button>
       <button class="tab" data-tab="sticker">貼紙</button>
+      <button class="tab" data-tab="cut">摳圖</button>
       <button class="tab" data-tab="fun">創意</button>
       <button class="tab" data-tab="frame">邊框</button>
       <button class="tab" data-tab="text">文字</button>
@@ -212,7 +250,10 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 <input type="file" id="cam" accept="image/*" capture="environment" hidden>
 <input type="color" id="colorPick" hidden>
 <input type="file" id="file2" accept="image/*" hidden>
+<input type="file" id="fileMulti" accept="image/*" multiple hidden>
 <input type="file" id="file3" accept="image/*" hidden>
+<input type="file" id="file4" accept="image/*" hidden>
+<input type="file" id="file5" accept="image/*" hidden>
 <div id="toast"></div>
 <div id="busy"><div id="busyText">處理中…</div></div>
 <script type="module" src="app.js"></script>
