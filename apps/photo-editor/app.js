@@ -5,6 +5,7 @@ import { STICKERS, EMOJIS, EMOJI_FONT, stickerById, stickerImage } from './stick
 import { FX, OVERLAYS, BG_PHOTOS, EXPOSURES, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
 import { matte } from './matte.js';
 import { HAIR, HAIR_P0, DYES, HairFx, prepHair, hairWarps, hairNeedsSeg, hairColorOn } from './hair.js';
+import { tabErase, eraseLeave } from './erase.js';
 
 const $ = s => document.querySelector(s);
 const MAX_SIDE = 4096, MAX_AREA = 16e6;
@@ -423,12 +424,13 @@ function item({ label, icon, on, set, onclick, cls = '', style = '' }) {
 
 function showTab(t) {
   if (t !== 'crop' && cropState) endCrop();
+  if (t !== 'erase') eraseLeave();
   tab = t;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   const box = $('#items'); box.innerHTML = '';
   $('#note').textContent = ''; $('#textedit').hidden = true;
   if (!base) return;
-  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, hair: tabHair, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText })[t](box);
+  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, hair: tabHair, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && P.light >= 0);
 }
@@ -461,6 +463,10 @@ function paramItems(box, list, def, itemsOnly) {
     els[cur].classList.toggle('set', isSet(cur));
   });
 }
+
+// 消除筆在 erase.js，這裡把它要用的東西傳過去
+const eraseApp = { get base() { return base; }, setBase, commit, item, hideSlider, showTab, toast, busy };
+function tabEraseHere(box) { tabErase(box, eraseApp); }
 
 function tabAdjust(box) { paramItems(box, ADJUST, 'brightness'); }
 
