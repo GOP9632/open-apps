@@ -1,0 +1,15 @@
+{
+  "name": "美食收藏",
+  "short_name": "美食收藏",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#faf8f5",
+  "theme_color": "#f76707",
+  "lang": "zh-Hant",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }],
+  "share_target": {
+    "action": "./",
+    "method": "GET",
+    "params": { "title": "share_title", "text": "share_text", "url": "share_url" }
+  }
+}
