@@ -20,22 +20,13 @@ void main(){
 // 位移圖 x、y 各用高低兩個通道存 16 位元，uStep 是一格代表幾個像素
 const FS_DISP = `#version 300 es
 precision highp float;
-in vec2 vUV; uniform sampler2D uTex, uDisp, uSeg; uniform vec2 uSize; uniform float uStep, uProtect; out vec4 o;
+in vec2 vUV; uniform sampler2D uTex, uDisp, uSegB; uniform vec2 uSize; uniform float uStep, uProtect; out vec4 o;
 void main(){
   vec4 e = texture(uDisp, vUV) * 255.0;
   vec2 d = (vec2(e.r * 256.0 + e.b, e.g * 256.0 + e.a) - 32768.0) * uStep;
-  vec2 uv = vUV + d / uSize;
-  o = texture(uTex, uv);
-  if (uProtect > 0.5) {
-    // 背景保護（同主 shader）：背景留在原位，空隙取反方向的背景
-    float mv = clamp(length(d) * 1.5, 0.0, 1.0);
-    if (mv > 0.0) {
-      vec2 uvm = vUV - d * 2.0 / uSize;
-      float s0 = texture(uSeg, vUV).r, s1 = texture(uSeg, uv).r;
-      vec4 bg = mix(texture(uTex, vUV), texture(uTex, uvm), smoothstep(0.15, 0.6, s0));
-      o = mix(o, mix(bg, o, smoothstep(0.2, 0.7, s1)), mv);
-    }
-  }
+  // 背景保護（同主 shader）：位移乘上擴張羽化過的人像遮罩
+  if (uProtect > 0.5) d *= smoothstep(0.02, 0.3, texture(uSegB, vUV).r);
+  o = texture(uTex, vUV + d / uSize);
 }`;
 
 const FS_COPY = `#version 300 es
@@ -184,6 +175,10 @@ void main(){
       else { p = c + (p - c) * (1.0 - uW2[i].z * f * f); }
     }
   }
+  if (uProtect > 0.5) {
+    // 背景保護：位移量乘上「人像往外擴一點、邊緣羽化」的遮罩，背景的位移壓到 0，背景根本不動
+    p = pS + (p - pS) * smoothstep(0.02, 0.3, texture(uSegB, pS / uSize).r);
+  }
   vec2 uv = p / uSize;
   vec2 popT = floor(clamp(uv, 0.0, 0.999) * 2.0); // 波普四格：在哪一格
   if (uFx == 2) uv = fract(uv * 2.0);
@@ -194,21 +189,6 @@ void main(){
     uv = (floor(uv * cell) + 0.5) / cell;
   }
   vec3 col = texture(uImg, uv).rgb;
-  if (uProtect > 0.5 && uFx != 5 && uFx != 7) {
-    // 背景保護：只有人（含頭髮）跟著變形，背景留在原位；人縮進去露出的空隙用去掉人像的模糊背景補
-    float mv = clamp(length(p - pS) * 1.5, 0.0, 1.0);
-    if (mv > 0.0) {
-      vec2 uv0 = pS / uSize;
-      float s0 = texture(uSeg, uv0).r, s1 = texture(uSeg, uv).r;
-      // 空隙先找反方向的背景（清楚），找不到再用模糊背景
-      vec2 uvm = (pS - (p - pS) * 2.0) / uSize;
-      vec4 fa = texture(uBgA, uv0), fb = texture(uBgB, uv0);
-      vec3 fill = fa.a > 0.02 ? fa.rgb / fa.a : fb.rgb / max(fb.a, 1e-4);
-      fill = mix(texture(uImg, uvm).rgb, fill, smoothstep(0.2, 0.5, texture(uSeg, uvm).r));
-      vec3 bg = mix(texture(uImg, uv0).rgb, fill, smoothstep(0.15, 0.6, s0));
-      col = mix(col, mix(bg, col, smoothstep(0.2, 0.7, s1)), mv);
-    }
-  }
   if (uFx == 6) {
     // 故障：一條條橫向錯位，紅藍分開
     float row = floor(uv.y * 32.0), h = hash(vec2(row, 3.0));
@@ -719,7 +699,7 @@ export class Renderer {
       this.pass(d, null, this.w, this.h, this.fbPost.t);
       gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.disp.tex); gl.uniform1i(d.u.uDisp, 1);
       gl.uniform2f(d.u.uSize, this.w, this.h); gl.uniform1f(d.u.uStep, this.disp.step);
-      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.tSeg); gl.uniform1i(d.u.uSeg, 2);
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.tSegB); gl.uniform1i(d.u.uSegB, 2);
       gl.uniform1f(d.u.uProtect, p.bgProtect === 0 ? 0 : 1);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
