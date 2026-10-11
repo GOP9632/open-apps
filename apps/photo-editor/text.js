@@ -29,7 +29,7 @@ export const T0 = {
   stroke: 30, strokeColor: null,             // null 表示自動配黑或白
   shadow: 0, shadowColor: '#000000', shadowBlur: 30, shadowAngle: -45, shadowDist: 20,
   bg: 0, bgColor: '#000000',
-  ls: 0, lh: 0,                              // 字距、行距
+  ls: 0, lh: 0, vert: false,                 // 字距、行距、直書
   curve: 0, curveOff: 0,                     // 彎曲：曲線 -100~100、位移 -100~100
   tpl: null,
 };
@@ -105,8 +105,17 @@ export function layout(ctx, t, fs) {
   });
   const maxW = Math.max(fs * 0.5, ...rows.map(r => r.w)), n = rows.length;
   const glyphs = [], lines = [];
-  const c = t.curve / 100;
-  if (Math.abs(c) < 0.01) {
+  const c = t.vert ? 0 : t.curve / 100;
+  if (t.vert) {
+    // 直書：一行變成一欄，由上往下，欄由右往左排；直書不彎曲、不畫底線
+    const cols = rows.map(r => ({ g: r.g, h: r.g.length * fs + sp * Math.max(0, r.g.length - 1) }));
+    const maxH = Math.max(fs, ...cols.map(c2 => c2.h));
+    cols.forEach((col, i) => {
+      const x = ((n - 1) / 2 - i) * lh;
+      let y = t.align === 'left' ? -maxH / 2 : t.align === 'right' ? maxH / 2 - col.h : -col.h / 2;
+      col.g.forEach(g => { glyphs.push({ ...g, x, y: y + fs / 2, a: 0, w: Math.max(g.w, fs) }); y += fs + sp; });
+    });
+  } else if (Math.abs(c) < 0.01) {
     rows.forEach((r, i) => {
       const y = (i - (n - 1) / 2) * lh;
       let x = t.align === 'left' ? -maxW / 2 : t.align === 'right' ? maxW / 2 - r.w : -r.w / 2;

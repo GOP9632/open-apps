@@ -727,7 +727,7 @@ function tabLight(box) {
 // 選項照醒圖貼圖面板：大小、旋轉、不透明度、暈染（10 種混合模式）、擦除和復原筆、
 // 順序（置頂、上移、下移、置底）、橫向和直向翻轉、複製、刪除，加上分類貼紙庫、搜尋、匯入圖片
 let stCat = 'face', stSec = 'adjust', stQ = '';
-let stBrush = 30, stPen = 'erase';
+let stBrush = 30, stHard = 100, stPen = 'erase', stEsub = 'size';
 const ST_SECS = [['adjust', '調整'], ['blend', '混合'], ['erase', '擦除'], ['layer', '圖層']];
 function tabSticker(box) {
   const faces = base.faces;
@@ -757,7 +757,10 @@ function tabSticker(box) {
       box.append(item({ label: '擦除', icon: '擦除', cls: 'wide', on: stPen === 'erase', onclick: () => { stPen = 'erase'; showTab('sticker'); } }));
       box.append(item({ label: '復原', icon: '復原', cls: 'wide', on: stPen === 'restore', onclick: () => { stPen = 'restore'; showTab('sticker'); } }));
       box.append(item({ label: '全部復原', icon: '全部復原', cls: 'wide', onclick: () => { st.mask = null; redo(); } }));
-      setSlider('筆刷', 1, 100, stBrush, v => { stBrush = v; });
+      box.append(item({ label: '大小', icon: '大小', cls: 'wide', on: stEsub === 'size', onclick: () => { stEsub = 'size'; showTab('sticker'); } }));
+      box.append(item({ label: '硬度', icon: '硬度', cls: 'wide', on: stEsub === 'hard', onclick: () => { stEsub = 'hard'; showTab('sticker'); } }));
+      if (stEsub === 'size') setSlider('筆刷', 1, 100, stBrush, v => { stBrush = v; });
+      else setSlider('硬度', 0, 100, stHard, v => { stHard = v; });
       $('#note').textContent = stPen === 'erase' ? '在貼紙上塗抹，擦掉不要的地方。' : '在貼紙上塗抹，把擦掉的地方補回來。';
     } else {
       hideSlider();
@@ -886,8 +889,16 @@ function paintMask(c, s, d, a, b) {
   // 筆刷大小以螢幕寬度為準，跟消除筆一樣：100 大約是螢幕寬的 1/5
   const rad = Math.max(1, stBrush / 100 * wr.width * 0.1) * c.width / pw;
   ctx.globalCompositeOperation = stPen === 'erase' ? 'destination-out' : 'source-over';
-  ctx.strokeStyle = '#fff'; ctx.lineWidth = rad * 2; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x + 0.01, p1.y); ctx.stroke();
+  // 硬度 100 是實心圓，越低邊緣越柔：沿著線段蓋一串漸層圓點
+  const inner = rad * (0.2 + 0.8 * stHard / 100);
+  const n = Math.max(1, Math.ceil(Math.hypot(p1.x - p0.x, p1.y - p0.y) / Math.max(1, rad * 0.25)));
+  for (let k = 0; k <= n; k++) {
+    const x = p0.x + (p1.x - p0.x) * k / n, y = p0.y + (p1.y - p0.y) * k / n;
+    const g = ctx.createRadialGradient(x, y, inner, x, y, rad);
+    g.addColorStop(0, '#fff'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = stHard >= 100 ? '#fff' : g;
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+  }
 }
 function drawStickers() {
   const layer = $('#stickers'), wr = $('#wrap').getBoundingClientRect();
@@ -1273,7 +1284,7 @@ function tabText(box) {
   const redo = () => { drawTexts(); commit(); showTab('text'); };
   const isSet = {
     tpl: !!t.tpl, font: t.font > 0, style: t.italic || t.under || !t.bold || t.op < 100 || !!t.color2, stroke: t.stroke > 0,
-    shadow: t.shadow > 0, bg: t.bg > 0, curve: !!t.curve, arrange: t.align !== 'center' || !!t.ls || !!t.lh, layer: false,
+    shadow: t.shadow > 0, bg: t.bg > 0, curve: !!t.curve, arrange: t.align !== 'center' || !!t.ls || !!t.lh || t.vert, layer: false,
   };
   cats.append(item({ label: '完成', icon: '完成', cls: 'wide', onclick: () => { selText = -1; drawTexts(); showTab('text'); } }));
   TX_SECS.forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: txSec === k, set: isSet[k], onclick: () => { txSec = k; showTab('text'); } })));
@@ -1317,9 +1328,11 @@ function tabText(box) {
     setSlider('透明', 0, 100, t.bg, v => { t.bg = v; drawTexts(); });
   } else if (txSec === 'curve') {
     subSliders(box, 'curve', [['curve', '曲線', -100, 100], ['curveOff', '位移', -100, 100]], t);
-    $('#note').textContent = '往右拱起、往左彎下，位移讓文字沿著弧線轉。';
+    $('#note').textContent = t.vert ? '直書文字不能彎曲，先到「排列」改回橫書。' : '往右拱起、往左彎下，位移讓文字沿著弧線轉。';
   } else if (txSec === 'arrange') {
-    [['left', '靠左'], ['center', '置中'], ['right', '靠右']].forEach(([k, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: t.align === k, onclick: () => { t.align = k; redo(); } })));
+    box.append(item({ label: t.vert ? '直書' : '橫書', icon: t.vert ? '直書' : '橫書', cls: 'wide', on: t.vert, onclick: () => { t.vert = !t.vert; redo(); } }));
+    (t.vert ? [['left', '靠上'], ['center', '置中'], ['right', '靠下']] : [['left', '靠左'], ['center', '置中'], ['right', '靠右']])
+      .forEach(([k, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: t.align === k, onclick: () => { t.align = k; redo(); } })));
     subSliders(box, 'arrange', [['ls', '字距', -20, 100], ['lh', '行距', -20, 100]], t);
   } else {
     const mv = to => { const [x] = texts.splice(selText, 1); selText = Math.max(0, Math.min(texts.length, to)); texts.splice(selText, 0, x); redo(); };
