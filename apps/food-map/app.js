@@ -2,15 +2,21 @@
 // 美食收藏：單頁 app。沒填雲端設定時資料存在這台裝置；填了 Supabase 就能多人登入、建群組、一起滑卡。
 
 // ---------- 常數 ----------
+// [名稱, emoji, 主色]
 const CATS = {
-  restaurant: ['餐廳', '🍽️'], cafe: ['咖啡廳', '☕'], bakery: ['麵包店', '🥐'], dessert: ['甜點', '🍰'],
-  snack: ['小吃', '🥟'], brunch: ['早午餐', '🥞'], bar: ['酒吧', '🍸'], drink: ['飲料', '🧋'], other: ['其他', '📍'],
+  restaurant: ['餐廳', '🍴', '#ff7a45'], cafe: ['咖啡廳', '☕', '#a9744f'], bakery: ['麵包店', '🥐', '#e8a33d'], dessert: ['甜點', '🍰', '#f06595'],
+  snack: ['小吃', '🥟', '#f59f00'], brunch: ['早午餐', '🥞', '#fab005'], bar: ['酒吧', '🍸', '#7950f2'], drink: ['飲料', '🧋', '#20c997'], other: ['其他', '📍', '#868e96'],
 };
 const MEALS = { breakfast: '早餐', lunch: '午餐', tea: '下午茶', dinner: '晚餐', night: '宵夜' };
 const PRICES = { 1: '$200 內', 2: '$200–500', 3: '$500–1000', 4: '$1000 以上' };
 const CITIES = ['台北', '新北', '基隆', '桃園', '新竹', '苗栗', '台中', '彰化', '南投', '雲林', '嘉義', '台南', '高雄', '屏東', '宜蘭', '花蓮', '台東', '澎湖', '金門', '馬祖'];
-const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const CITY_RE = /(台北|臺北|新北|基隆|桃園|新竹|苗栗|台中|臺中|彰化|南投|雲林|嘉義|台南|臺南|高雄|屏東|宜蘭|花蓮|台東|臺東|澎湖|金門|連江)[市縣]?/;
+// 地圖：OpenFreeMap 的向量圖資（免費、不用 key），淺色用 positron、深色用 dark
+const MAP_STYLE = () => `https://tiles.openfreemap.org/styles/${matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'positron'}`;
+const TAIPEI = [121.5436, 25.0418];
+const AV_COLORS = ['#ff7a45', '#f06595', '#7950f2', '#228be6', '#12b886', '#fab005', '#e8590c', '#be4bdb'];
+const GROUP_GRADS = ['linear-gradient(135deg,#ff8a3d,#ff3d6e)', 'linear-gradient(135deg,#7950f2,#f06595)', 'linear-gradient(135deg,#12b886,#228be6)', 'linear-gradient(135deg,#fab005,#ff6b6b)', 'linear-gradient(135deg,#4c6ef5,#15aabf)', 'linear-gradient(135deg,#e64980,#fd7e14)'];
+const GROUP_EMO = ['🍜', '🍣', '🍕', '🥘', '🍰', '🧋', '🍔', '🥟'];
 
 const PROMPT = `你是美食收藏助理。從使用者給的社群貼文、網頁文字或截圖，找出裡面介紹的「實體店家」（餐廳、咖啡廳、麵包店、甜點店、小吃、酒吧、飲料店等）。
 只回 JSON：{"places":[{"name":"店名（不含分店）","branch":"分店名，沒有就空字串","address":"完整地址，沒寫就空字串","city":"縣市，用簡短寫法：台北、新北、桃園、台中、台南、高雄、新竹…；國外寫城市名；不知道就空字串","district":"行政區，例如大安區；不知道就空字串","category":"cafe|restaurant|bakery|dessert|snack|brunch|bar|drink|other 選一個","cuisine":"料理類型，例如日式拉麵、義式、韓式烤肉，可空白","price":每人預算 1(200元以下) 2(200-500) 3(500-1000) 4(1000以上)，看不出來填 null,"meals":["適合時段，從 breakfast lunch tea dinner night 選，可多選"],"hours":"營業時間原文，沒有就空字串","note":"一句話重點，例如招牌菜、特色","tags":["最多 4 個短標籤，例如 不限時、有插座、寵物友善、要訂位"]}]}
@@ -20,6 +26,45 @@ const PROMPT = `你是美食收藏助理。從使用者給的社群貼文、網�
 - 地址照原文，臺改成台。
 - 只用文字裡有的資訊，不要自己編地址。`;
 
+// ---------- 圖示（線條風格，同 Lucide） ----------
+const ICONS = {
+  heart: 'M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z',
+  map: 'M14.1 5.55a2 2 0 0 0 1.8 0l3.65-1.83A1 1 0 0 1 21 4.62v12.76a1 1 0 0 1-.55.9l-4.55 2.27a2 2 0 0 1-1.8 0L9.9 18.45a2 2 0 0 0-1.8 0l-3.65 1.83A1 1 0 0 1 3 19.38V6.62a1 1 0 0 1 .55-.9L8.1 3.45a2 2 0 0 1 1.8 0z M15 5.76v15 M9 3.24v15',
+  plus: 'M5 12h14 M12 5v14',
+  dice: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M8 8h.01 M16 8h.01 M12 12h.01 M8 16h.01 M16 16h.01',
+  users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8 4 4 0 1 0 0-8z M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',
+  search: 'M11 3a8 8 0 1 0 0 16 8 8 0 1 0 0-16z M21 21l-4.3-4.3',
+  x: 'M18 6 6 18 M6 6l12 12',
+  nav: 'M3 11l19-9-9 19-2-8-8-2z',
+  locate: 'M12 9a3 3 0 1 0 0 6 3 3 0 1 0 0-6z M12 2v3 M12 19v3 M2 12h3 M19 12h3 M12 5a7 7 0 1 0 0 14 7 7 0 1 0 0-14z',
+  edit: 'M12 20h9 M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z',
+  share: 'M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8 M16 6l-4-4-4 4 M12 2v13',
+  ext: 'M15 3h6v6 M10 14 21 3 M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6',
+  back: 'M15 18l-6-6 6-6',
+  next: 'M9 18l6-6-6-6',
+  star: 'M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z',
+  check: 'M20 6 9 17l-5-5',
+  image: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M9 7a2 2 0 1 0 0 4 2 2 0 1 0 0-4z M21 15l-3.09-3.09a2 2 0 0 0-2.82 0L6 21',
+  clip: 'M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2',
+  spark: 'M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z',
+  pin: 'M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z M12 7a3 3 0 1 0 0 6 3 3 0 1 0 0-6z',
+  clock: 'M12 2a10 10 0 1 0 0 20 10 10 0 1 0 0-20z M12 6v6l4 2',
+  user: 'M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2 M12 3a4 4 0 1 0 0 8 4 4 0 1 0 0-8z',
+  trash: 'M3 6h18 M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6 M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2',
+  out: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4 M16 17l5-5-5-5 M21 12H9',
+  down: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3',
+  up: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M17 8l-5-5-5 5 M12 3v12',
+  copy: 'M9 9h11v11H9z M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1',
+  msg: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+  key: 'M15.5 7.5a3.5 3.5 0 1 0 0 .01z M13 10l-9 9 M7 16l2 2 M4 19l2 2',
+  cloud: 'M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z',
+  refresh: 'M3 12a9 9 0 0 1 15-6.7L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-15 6.7L3 16 M3 21v-5h5',
+  list: 'M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01',
+  link: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71 M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71',
+  ticket: 'M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z M13 5v2 M13 17v2 M13 11v2',
+};
+const ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24"><path d="${ICONS[n]}"/></svg>`;
+
 // ---------- 小工具 ----------
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -28,11 +73,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const normCity = c => (c || '').replace(/^臺/, '台').replace(/[市縣]$/, '').replace('連江', '馬祖').trim();
 const cat = p => CATS[p.category] || CATS.other;
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
-const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 私密模式 */ } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 私密模式或空間滿了 */ } };
+const hash = s => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7) >>> 0;
+const buzz = p => { try { navigator.vibrate?.(p); } catch { /* 不支援 */ } };
 let toastTimer;
 function toast(msg, ms = 2600) {
-  const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
 }
 function parseAddr(addr) {
   const a = (addr || '').replace(/臺/g, '台');
@@ -47,9 +94,19 @@ function distKm(a, b) {
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
 }
-const fmtKm = d => d < 1 ? `${Math.round(d * 1000)} 公尺` : `${d.toFixed(1)} 公里`;
+const fmtKm = d => d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(d < 10 ? 1 : 0)} km`;
 const mapsUrl = p => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([p.name, p.branch, p.address || normCity(p.city)].filter(Boolean).join(' '))}`;
 const initial = n => (n || '?').trim().slice(0, 1).toUpperCase();
+const area = p => [normCity(p.city), p.district].filter(Boolean).join(' · ');
+const priceTag = n => n ? `<span class="price"><b>${'$'.repeat(n)}</b><span>${'$'.repeat(4 - n)}</span></span>` : '';
+const avatar = (id, size) => `<span class="avatar" style="background:${AV_COLORS[hash(id) % AV_COLORS.length]}${size ? `;width:${size}px;height:${size}px;font-size:${size * .42}px` : ''}">${esc(initial(nameOf(id)))}</span>`;
+
+// 照片：有照片就顯示照片，沒有就用分類顏色和 emoji 做一張封面
+function photo(p) {
+  const [, e, c] = cat(p);
+  if (p.photo) return `<img src="${esc(p.photo)}" alt="" loading="lazy" decoding="async" class="loading" onload="this.classList.remove('loading')" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'placeholder',style:'background:linear-gradient(150deg,${c},${c}bb)',innerHTML:'<span class=pe>${e}</span>'}))">`;
+  return `<div class="placeholder" style="background:linear-gradient(150deg,${c} 0%,${c}c0 100%)"><span class="pe">${e}</span></div>`;
+}
 
 // ---------- 狀態 ----------
 const S = {
@@ -59,9 +116,10 @@ const S = {
   places: [], groups: [], members: [], groupPlaces: [], profiles: {}, rounds: [], swipes: [],
   tab: load('food.tab', 'list'),
   f: { q: '', city: '', cat: '', status: '', scope: 'all', sort: 'new' },
-  pos: null, group: null, round: null, map: null, cluster: null,
+  pos: null, group: null, round: null,
   draw: load('food.draw', { cities: [], cats: [], meal: '', price: 0, status: '', scope: 'all', recent: [] }),
 };
+if (S.tab === 'me' || !['list', 'map', 'draw', 'groups', 'me'].includes(S.tab)) S.tab = 'list';
 const cloud = () => !!S.sb;
 const isMine = p => !cloud() || p.owner === S.user?.id;
 const nameOf = id => S.profiles[id]?.name || '朋友';
@@ -111,6 +169,7 @@ const DB = {
       save('food.places', S.places); return p;
     }
     const row = { ...p }; delete row.owner; delete row.created_at;
+    if (row.photo == null) delete row.photo;
     const q = p.id ? S.sb.from('places').update(row).eq('id', p.id) : S.sb.from('places').insert(row);
     const { data, error } = await q.select().single();
     if (error) throw error;
@@ -126,6 +185,33 @@ const DB = {
   },
   async rpc(fn, args) { const { data, error } = await S.sb.rpc(fn, args); if (error) throw error; return data; },
   async q(promise) { const { data, error } = await promise; if (error) throw error; return data; },
+};
+
+// ---------- 照片 ----------
+const Photo = {
+  // 縮小成 JPEG；雲端版存到 Supabase Storage，只存在裝置時存成小張的 data URL
+  async shrink(src, max, q = 0.82) {
+    const blob = src instanceof Blob ? src : await (await fetch(src)).blob();
+    const img = await createImageBitmap(blob);
+    const k = Math.min(1, max / Math.max(img.width, img.height));
+    const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return new Promise(r => c.toBlob(b => r(b), 'image/jpeg', q));
+  },
+  async store(src) {
+    if (!src) return '';
+    try {
+      if (!cloud()) {
+        const b = await Photo.shrink(src, 480, 0.75);
+        return await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(b); });
+      }
+      const b = await Photo.shrink(src, 1000);
+      const path = `${S.user.id}/${uid()}.jpg`;
+      const { error } = await S.sb.storage.from('food-photos').upload(path, b, { contentType: 'image/jpeg', cacheControl: '31536000' });
+      if (error) throw error;
+      return S.sb.storage.from('food-photos').getPublicUrl(path).data.publicUrl;
+    } catch (e) { console.warn('photo store failed', e); return ''; }
+  },
 };
 
 // ---------- 抓店家（連結、文字、截圖） ----------
@@ -184,11 +270,8 @@ const Extract = {
   },
   // 截圖縮小成 1280px 的 JPEG，避免超過大小限制
   async shrink(file) {
-    const img = await createImageBitmap(file);
-    const k = Math.min(1, 1280 / Math.max(img.width, img.height));
-    const c = document.createElement('canvas'); c.width = img.width * k; c.height = img.height * k;
-    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-    return c.toDataURL('image/jpeg', 0.85);
+    const b = await Photo.shrink(file, 1280, 0.85);
+    return new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(b); });
   },
 };
 
@@ -233,6 +316,29 @@ const Geo = {
   },
 };
 
+// ---------- 我的位置（持續更新） ----------
+const Me = {
+  watching: false,
+  start(ask) {
+    if (Me.watching || !navigator.geolocation) return;
+    if (!ask && !load('food.geoOk', false)) return;
+    Me.watching = true;
+    navigator.geolocation.watchPosition(p => {
+      const first = !S.pos;
+      S.pos = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy };
+      save('food.geoOk', true);
+      MapView.updateMe(first);
+      if (first && S.tab !== 'map') { S.keepScroll = true; if (!$('.sheet-bg')) App.render(); }
+    }, () => { Me.watching = false; if (ask) toast('沒有拿到位置權限，可以到瀏覽器設定打開'); }, { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 });
+  },
+  async once() {
+    if (S.pos) return S.pos;
+    Me.start(true);
+    for (let i = 0; i < 40 && !S.pos; i++) await sleep(250);
+    return S.pos;
+  },
+};
+
 // ---------- 篩選 ----------
 function visiblePlaces(f = S.f) {
   let list = S.places.slice();
@@ -260,90 +366,101 @@ const citiesInUse = () => {
   const known = CITIES.filter(c => set.has(c));
   return set.size > known.length ? [...known, '其他'] : known;
 };
+const scopes = () => cloud() ? [['all', '全部'], ['mine', '只看我的'], ...S.groups.map(g => [g.id, g.name])] : [];
 
-function filterBar({ map = false } = {}) {
-  const f = S.f;
-  const scopes = cloud() ? [['all', '全部'], ['mine', '我的'], ...S.groups.map(g => [g.id, '👥 ' + g.name])] : [];
-  return `
-  <div class="row" style="margin-bottom:6px"><input class="search grow" id="q" placeholder="🔍 搜尋店名、地址、料理、標籤" value="${esc(f.q)}" oninput="App.setF('q', this.value, true)"></div>
-  <div class="filters">
-    ${scopes.length ? `<select class="chip" onchange="App.setF('scope', this.value)">${scopes.map(([v, t]) => `<option value="${esc(v)}" ${f.scope === v ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>` : ''}
-    <select class="chip ${f.city ? 'on' : ''}" onchange="App.setF('city', this.value)"><option value="">📍 所有地區</option>${citiesInUse().map(c => `<option ${f.city === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
+function filterChips({ map = false } = {}) {
+  const f = S.f, sc = scopes();
+  const scopeName = (sc.find(([v]) => v === f.scope) || sc[0] || [])[1];
+  const selChip = (label, on, opts, key) => `<label class="chip ${on ? 'on' : ''}">${label} ▾<select onchange="App.setF('${key}', this.value)">${opts}</select></label>`;
+  return `<div class="chips">
+    ${sc.length ? selChip(`${ic('users')} ${esc(scopeName)}`, f.scope !== 'all', sc.map(([v, t]) => `<option value="${esc(v)}" ${f.scope === v ? 'selected' : ''}>${esc(t)}</option>`).join(''), 'scope') : ''}
+    ${selChip(`${ic('pin')} ${esc(f.city || '地區')}`, !!f.city, `<option value="">所有地區</option>${citiesInUse().map(c => `<option ${f.city === c ? 'selected' : ''}>${c}</option>`).join('')}`, 'city')}
     <span class="chip ${f.status === 'want' ? 'on' : ''}" onclick="App.setF('status', '${f.status === 'want' ? '' : 'want'}')">想去</span>
     <span class="chip ${f.status === 'been' ? 'on' : ''}" onclick="App.setF('status', '${f.status === 'been' ? '' : 'been'}')">去過</span>
-    ${Object.entries(CATS).map(([k, [t, e]]) => `<span class="chip ${f.cat === k ? 'on' : ''}" onclick="App.setF('cat', '${f.cat === k ? '' : k}')">${e} ${t}</span>`).join('')}
-    ${map ? '' : `<span class="chip ${f.sort === 'near' ? 'on' : ''}" onclick="App.sortNear()">🧭 離我最近</span>`}
+    ${map ? '' : `<span class="chip ${f.sort === 'near' ? 'on' : ''}" onclick="App.sortNear()">${ic('locate')} 離我最近</span>`}
+  </div>
+  <div class="chips">
+    <span class="chip ${!f.cat ? 'on' : ''}" onclick="App.setF('cat', '')">全部</span>
+    ${Object.entries(CATS).map(([k, [t, e]]) => `<span class="chip ${f.cat === k ? 'on' : ''}" onclick="App.setF('cat', '${f.cat === k ? '' : k}')"><span class="e">${e}</span>${t}</span>`).join('')}
   </div>`;
 }
 
-function placeCard(p) {
-  const [t, e] = cat(p);
+function placeCard(p, i = 0) {
   const d = S.pos && p.lat != null ? fmtKm(distKm(S.pos, p)) : '';
-  const shared = S.groupPlaces.filter(g => g.place_id === p.id).length;
-  return `<div class="place" onclick="App.openPlace('${p.id}')">
-    <div class="emo">${e}</div>
-    <div class="grow" style="min-width:0">
-      <div class="name">${esc(p.name)}${p.branch ? ` <span class="muted">${esc(p.branch)}</span>` : ''}</div>
-      <div class="meta"><span>${esc([normCity(p.city), p.district].filter(Boolean).join(' · ') || '還沒填地區')}</span>${d ? `<span>· ${d}</span>` : ''}</div>
-      <div class="meta" style="margin-top:5px">
-        <span class="tag ${p.status}">${p.status === 'been' ? '去過' + (p.rating ? ' ' + '★'.repeat(p.rating) : '') : '想去'}</span>
-        <span class="tag">${t}${p.cuisine ? '・' + esc(p.cuisine) : ''}</span>
-        ${p.price ? `<span class="tag">${PRICES[p.price]}</span>` : ''}
-        ${(p.meals || []).map(m => `<span class="tag">${MEALS[m] || m}</span>`).join('')}
-        ${!isMine(p) ? `<span class="tag">👤 ${esc(nameOf(p.owner))}</span>` : shared ? `<span class="tag">👥 已分享</span>` : ''}
-        ${p.lat == null ? '<span class="tag" title="還沒有地圖位置">📍?</span>' : ''}
-      </div>
-      ${p.note ? `<div class="muted" style="margin-top:5px">${esc(p.note)}</div>` : ''}
+  const [t, e] = cat(p);
+  return `<div class="pcard" style="--i:${i}" onclick="App.openPlace('${p.id}')">
+    <div class="ph">${photo(p)}
+      <span class="badge ${p.status}">${p.status === 'been' ? `去過${p.rating ? ' ★' + p.rating : ''}` : '想去'}</span>
+      ${d ? `<span class="dist">${d}</span>` : ''}
+      ${!isMine(p) ? `<span class="who">${avatar(p.owner, 26)}</span>` : ''}
+      ${p.lat == null ? `<span class="nopos">沒有位置</span>` : ''}
+    </div>
+    <div class="pc-body">
+      <div class="pc-name">${esc(p.name)}${p.branch ? ` <span class="muted" style="font-weight:600">${esc(p.branch)}</span>` : ''}</div>
+      <div class="pc-meta">${e} ${esc(p.cuisine || t)}${area(p) ? ' · ' + esc(area(p)) : ''}${p.price ? ' · ' : ''}${priceTag(p.price)}</div>
     </div>
   </div>`;
 }
 
 // ---------- 畫面 ----------
-const TABS = [['list', '🍜', '收藏'], ['map', '🗺️', '地圖'], ['draw', '🎲', '抽一間'], ['groups', '👥', '群組'], ['me', '🙂', '我的']];
+const TABS = [['list', 'heart', '收藏'], ['map', 'map', '地圖'], ['draw', 'dice', '抽一間'], ['groups', 'users', '群組']];
 
 const Views = {
+  header() {
+    const t = S.tab;
+    const n = S.places.filter(isMine).length;
+    const title = { list: ['美食收藏', n ? `${n} 間收藏・${S.places.filter(p => isMine(p) && p.status === 'been').length} 間去過` : '把想吃的店都存在這裡'], draw: ['今天吃什麼？', '選條件，交給運氣'], groups: ['美食群組', '跟朋友一起收藏、一起決定'], me: ['我的', ''] }[t] || ['', ''];
+    if (t === 'groups' && S.group) return '';
+    return `<div class="grow"><h1>${title[0]}</h1>${title[1] ? `<div class="sub">${title[1]}</div>` : ''}</div>
+      ${t === 'me' ? '' : `<button class="me-btn" onclick="App.tab('me')" aria-label="我的">${cloud() && S.me ? esc(initial(S.me.name)) : ic('user')}</button>`}`;
+  },
   list() {
     const list = visiblePlaces();
-    if (!S.places.length) return `${filterBar()}<div class="empty"><div class="big">🍜</div><h2>還沒有收藏</h2><p>在 IG 看到想吃的店，按「分享」→「複製連結」，<br>回來點右下角的 ＋ 貼上就好。</p><button class="primary big" onclick="App.openAdd()">＋ 新增第一間</button></div>`;
-    return `${filterBar()}<div class="muted" style="margin:2px 2px 8px">${list.length} 間</div>
-      ${list.length ? `<div class="grid">${list.map(placeCard).join('')}</div>` : '<div class="empty">沒有符合條件的店</div>'}`;
+    if (!S.places.length) return `<div class="empty">
+        <div class="art">🍜</div><h2>收藏第一間想吃的店</h2>
+        <p>在 IG、Threads、TikTok 看到想吃的，複製連結貼過來，AI 會幫你找出店名、地址和分類。</p>
+        <div class="steps"><div><b>1</b>在貼文按「分享」→「複製連結」</div><div><b>2</b>回來按下方的 ＋</div><div><b>3</b>確認店家，收藏完成 🎉</div></div>
+        <button class="btn primary big" onclick="App.openAdd()">${ic('plus')} 新增第一間</button></div>`;
+    return `<div class="search">${ic('search')}<input id="q" placeholder="搜尋店名、地區、料理、標籤" value="${esc(S.f.q)}" oninput="App.setF('q', this.value, true)" enterkeyhint="search"></div>
+      ${filterChips()}
+      <div class="count-line"><span>${list.length} 間${S.f.sort === 'near' ? '・由近到遠' : ''}</span></div>
+      ${list.length ? `<div class="grid">${list.map(placeCard).join('')}</div>` : `<div class="empty"><div class="art">🔍</div><h2>沒有符合的店</h2><p>換個條件試試看</p><button class="btn" onclick="App.clearF()">清除篩選</button></div>`}`;
   },
-  map() { return `${filterBar({ map: true })}<div id="map"></div>`; },
   draw() {
     const d = S.draw;
     const chips = (key, items, multi) => items.map(([v, t]) => {
       const on = multi ? d[key].includes(v) : d[key] === v;
       return `<span class="chip ${on ? 'on' : ''}" onclick="App.drawSet('${key}', ${JSON.stringify(v).replace(/"/g, '&quot;')}, ${multi})">${t}</span>`;
     }).join('');
-    const scopes = cloud() ? [['all', '全部'], ['mine', '我的'], ...S.groups.map(g => [g.id, '👥 ' + g.name])] : [];
+    const sc = scopes();
     const pool = Draw.pool();
-    return `<h2>不知道吃什麼？抽一間</h2>
-      <div class="draw-box" id="drawbox">
-        <div class="emo">🎲</div>
-        <div class="draw-name">${pool.length ? `有 ${pool.length} 間可以抽` : '沒有符合條件的店'}</div>
-        <div class="muted">${pool.length ? '選好條件，按下去就對了' : '放寬一點條件試試'}</div>
-        <div style="margin-top:16px"><button class="primary big" ${pool.length ? '' : 'disabled'} onclick="App.doDraw()">🎲 抽！</button></div>
-      </div>
-      <div class="card">
-        ${scopes.length ? `<div class="fgroup"><div class="t">從哪裡抽</div><div class="filters">${chips('scope', scopes, false)}</div></div>` : ''}
-        <div class="fgroup"><div class="t">地區（可多選，不選＝全部）</div><div class="filters">${chips('cities', citiesInUse().map(c => [c, c]), true)}${S.pos ? `<span class="chip ${d.near ? 'on' : ''}" onclick="App.drawSet('near', ${d.near ? 0 : 3}, false)">🧭 附近 3 公里</span>` : `<span class="chip" onclick="App.locate().then(() => App.render())">🧭 用我的位置</span>`}</div></div>
-        <div class="fgroup"><div class="t">分類（可多選）</div><div class="filters">${chips('cats', Object.entries(CATS).map(([k, [t, e]]) => [k, e + ' ' + t]), true)}</div></div>
-        <div class="fgroup"><div class="t">時段</div><div class="filters">${chips('meal', [['', '不限'], ['now', '⏰ 現在'], ...Object.entries(MEALS)], false)}</div></div>
-        <div class="fgroup"><div class="t">每人預算</div><div class="filters">${chips('price', [[0, '不限'], [1, '200 內'], [2, '500 內'], [3, '1000 內']], false)}</div></div>
-        <div class="fgroup"><div class="t">狀態</div><div class="filters">${chips('status', [['', '都可以'], ['want', '只抽想去的'], ['been', '只抽去過的']], false)}</div></div>
-        <p class="muted" style="margin:8px 0 0">沒填時段或價位的店也會一起抽。最近抽到的 5 間會先跳過。</p>
+    return `<div class="draw-stage"><div class="slot idle" id="slot">
+        <div class="dice"><div class="big">🎲</div><b>${pool.length ? `${pool.length} 間候選` : '沒有符合條件的店'}</b><div style="opacity:.9;font-size:14px">${pool.length ? '按下去，今天就吃它' : '放寬一點條件試試'}</div></div>
+      </div></div>
+      <div class="draw-cta" id="drawcta"><button class="btn primary big" style="min-width:220px" ${pool.length ? '' : 'disabled'} onclick="App.doDraw()">${ic('dice')} 抽一間</button></div>
+      <div class="card" style="margin-top:18px">
+        ${sc.length ? `<div class="fgroup" style="margin-top:0"><div class="t">從哪裡抽</div><div class="chips wrap">${chips('scope', sc, false)}</div></div>` : ''}
+        <div class="fgroup" ${sc.length ? '' : 'style="margin-top:0"'}><div class="t">地區</div><div class="chips wrap">${chips('cities', citiesInUse().map(c => [c, c]), true)}<span class="chip hot ${d.near ? 'on' : ''}" onclick="App.drawNear()">${ic('locate')} 附近 3 公里</span></div></div>
+        <div class="fgroup"><div class="t">分類</div><div class="chips wrap">${chips('cats', Object.entries(CATS).map(([k, [t, e]]) => [k, `<span class="e">${e}</span>${t}`]), true)}</div></div>
+        <div class="fgroup"><div class="t">時段</div><div class="chips wrap">${chips('meal', [['', '不限'], ['now', '⏰ 現在'], ...Object.entries(MEALS)], false)}</div></div>
+        <div class="fgroup"><div class="t">每人預算</div><div class="chips wrap">${chips('price', [[0, '不限'], [1, '200 內'], [2, '500 內'], [3, '1000 內']], false)}</div></div>
+        <div class="fgroup"><div class="t">狀態</div><div class="chips wrap">${chips('status', [['', '都可以'], ['want', '想去的'], ['been', '去過的']], false)}</div></div>
+        <p class="muted" style="margin:14px 0 0">沒填時段或價位的店也會一起抽，最近抽到的 5 間會先跳過。</p>
       </div>`;
   },
   groups() {
     if (!cloud()) return Views.needCloud('群組和滑卡配對');
     if (S.group) return Views.groupDetail(S.groups.find(g => g.id === S.group));
-    return `<div class="row" style="margin-bottom:12px"><h2 class="grow" style="margin:0">我的美食群組</h2><button onclick="App.joinPrompt()">輸入邀請碼</button><button class="primary" onclick="App.createGroup()">＋ 建立群組</button></div>
-      ${S.groups.length ? S.groups.map(g => {
+    return `<div class="row" style="margin:4px 0 16px"><button class="btn primary grow" onclick="App.createGroup()">${ic('plus')} 建立群組</button><button class="btn grow" onclick="App.joinPrompt()">${ic('ticket')} 輸入邀請碼</button></div>
+      ${S.groups.length ? S.groups.map((g, i) => {
         const mem = S.members.filter(m => m.group_id === g.id);
         const n = S.groupPlaces.filter(x => x.group_id === g.id).length;
-        return `<div class="card" style="cursor:pointer" onclick="App.openGroup('${g.id}')"><div class="row"><div class="grow"><h3>👥 ${esc(g.name)}</h3><div class="muted">${mem.length} 人 · ${n} 間店</div></div>
-          <div>${mem.slice(0, 5).map(m => `<span class="avatar" style="margin-left:-8px">${esc(initial(nameOf(m.user_id)))}</span>`).join('')}</div></div></div>`;
-      }).join('') : `<div class="empty"><div class="big">👥</div><p>建一個群組，把邀請連結傳給朋友。<br>大家的收藏可以放在一起，還能一起滑卡決定吃什麼。</p></div>`}`;
+        const live = S.rounds.filter(r => r.group_id === g.id && S.swipes.filter(s => s.round_id === r.id && s.user_id === S.user.id).length < r.place_ids.length).length;
+        return `<div class="gcard" style="animation-delay:${i * 50}ms" onclick="App.openGroup('${g.id}')">
+          <div class="gbanner" style="background:${GROUP_GRADS[hash(g.id) % GROUP_GRADS.length]}"><span class="em">${GROUP_EMO[hash(g.id) % GROUP_EMO.length]}</span><h3>${esc(g.name)}</h3></div>
+          <div class="gbody"><div class="avatars">${mem.slice(0, 5).map(m => avatar(m.user_id)).join('')}</div><div class="grow muted" style="font-weight:600">${mem.length} 人・${n} 間店</div>${live ? `<span class="tag hot">💘 ${live} 輪待滑</span>` : ''}${ic('next')}</div>
+        </div>`;
+      }).join('') : `<div class="empty"><div class="art">👯</div><h2>揪朋友一起吃</h2><p>建一個群組，把邀請連結傳到 LINE。大家的口袋名單放在一起，還能一起滑卡配對。</p></div>`}`;
   },
   groupDetail(g) {
     if (!g) { S.group = null; return Views.groups(); }
@@ -351,28 +468,27 @@ const Views = {
     const ids = new Set(S.groupPlaces.filter(x => x.group_id === g.id).map(x => x.place_id));
     const places = S.places.filter(p => ids.has(p.id));
     const rounds = S.rounds.filter(r => r.group_id === g.id);
-    return `<div class="row" style="margin-bottom:10px"><button class="ghost" onclick="App.openGroup(null)">← 群組</button><h2 class="grow" style="margin:0">👥 ${esc(g.name)}</h2></div>
-      <div class="card">
-        <div class="row"><div class="grow"><b>成員</b> <span class="muted">${mem.length} 人</span></div><button class="primary" onclick="App.invite('${g.id}')">邀請好友</button></div>
-        <div class="row" style="margin-top:8px">${mem.map(m => `<span class="row" style="gap:4px"><span class="avatar">${esc(initial(nameOf(m.user_id)))}</span>${esc(nameOf(m.user_id))}${m.user_id === g.owner ? ' <span class="tag">建立者</span>' : ''}</span>`).join('')}</div>
+    return `<div class="round-top" style="padding-top:calc(6px + env(safe-area-inset-top))"><button class="icon-btn" onclick="App.openGroup(null)" aria-label="返回">${ic('back')}</button><span class="grow"></span><button class="btn sm soft" onclick="App.invite('${g.id}')">${ic('users')} 邀請好友</button></div>
+      <div class="ghero"><div class="gbanner" style="background:${GROUP_GRADS[hash(g.id) % GROUP_GRADS.length]}"><span class="em" style="font-size:120px">${GROUP_EMO[hash(g.id) % GROUP_EMO.length]}</span><div style="position:relative"><h3>${esc(g.name)}</h3><div style="opacity:.92;font-size:14px;margin-top:2px">${mem.length} 位成員・${places.length} 間店</div></div></div></div>
+      <div class="row wrap" style="gap:8px;margin-bottom:16px">${mem.map(m => `<span class="member">${avatar(m.user_id, 26)}${esc(nameOf(m.user_id))}${m.user_id === g.owner ? ' 👑' : ''}</span>`).join('')}</div>
+      <div class="match-card">
+        <h3>滑卡配對</h3><p>每個人各自左滑右滑，大家都想吃的店會立刻配對成功。</p>
+        <button class="btn" ${places.length ? '' : 'disabled'} onclick="App.newRound('${g.id}')">${ic('heart')} 開始新一輪</button>
+        ${places.length ? '' : '<p style="margin:10px 0 0;font-size:13px">先把店分享到群組，才能開始滑。</p>'}
+        ${rounds.slice(0, 6).map(r => Views.roundRow(r, mem)).join('')}
       </div>
-      <div class="card match">
-        <div class="row"><div class="grow"><h3>💘 滑卡配對</h3><div style="font-size:13px">每個人各自左滑右滑，大家都喜歡的店就配對成功。</div></div><button class="primary" ${places.length ? '' : 'disabled'} onclick="App.newRound('${g.id}')">開始新一輪</button></div>
-        ${places.length ? '' : '<p style="font-size:13px;margin:8px 0 0">先把店分享到群組，才能開始滑。</p>'}
-        ${rounds.map(r => Views.roundRow(r, mem)).join('')}
-      </div>
-      <div class="row" style="margin:16px 0 8px"><h3 class="grow" style="margin:0">群組裡的店（${places.length}）</h3><button onclick="App.shareMany('${g.id}')">＋ 從我的收藏加入</button><button onclick="App.setF('scope','${g.id}');App.tab('map')">🗺️ 看地圖</button></div>
-      <div class="grid">${places.map(placeCard).join('') || '<div class="muted">還沒有店。</div>'}</div>
-      <div class="row" style="margin-top:24px"><button class="danger" onclick="App.leaveGroup('${g.id}')">${g.owner === S.user.id ? '刪除群組' : '退出群組'}</button></div>`;
+      <div class="section-t"><span class="grow">群組裡的店 <span class="muted" style="font-size:15px">${places.length}</span></span><button class="btn sm" onclick="App.setF('scope','${g.id}');App.tab('map')">${ic('map')}</button><button class="btn sm soft" onclick="App.shareMany('${g.id}')">${ic('plus')} 加店</button></div>
+      ${places.length ? `<div class="grid">${places.map(placeCard).join('')}</div>` : '<div class="empty" style="padding:20px"><p>還沒有店，按「加店」從你的收藏挑。</p></div>'}
+      <div style="margin-top:30px;text-align:center"><button class="btn ghost danger" onclick="App.leaveGroup('${g.id}')">${g.owner === S.user.id ? '刪除群組' : '退出群組'}</button></div>`;
   },
   roundRow(r, mem) {
     const sw = S.swipes.filter(s => s.round_id === r.id);
     const done = mem.filter(m => sw.filter(s => s.user_id === m.user_id).length >= r.place_ids.length).length;
     const matches = Swipe.matches(r).filter(x => x.all).length;
     const mine = sw.filter(s => s.user_id === S.user.id).length;
-    return `<div style="background:rgba(255,255,255,.6);border-radius:12px;padding:10px 12px;margin-top:10px;cursor:pointer" onclick="App.openRound('${r.id}')">
-      <div class="row"><b class="grow">${esc(r.title || '一起決定吃什麼')}</b>${matches ? `<span class="tag" style="background:#e64980;color:#fff;border:0">💘 ${matches} 間配對</span>` : ''}</div>
-      <div style="font-size:12px">${r.place_ids.length} 間 · ${done}/${mem.length} 人滑完 · ${mine < r.place_ids.length ? `<b>你還有 ${r.place_ids.length - mine} 張</b>` : '你滑完了'} · ${new Date(r.created_at).toLocaleDateString('zh-TW')}</div>
+    return `<div class="rrow" onclick="App.openRound('${r.id}')">
+      <div class="grow"><div class="t">${esc(r.title || '一起決定吃什麼')}</div><div class="s">${done}/${mem.length} 人滑完・${mine < r.place_ids.length ? `<b>你還有 ${r.place_ids.length - mine} 張</b>` : '你滑完了'}</div></div>
+      ${matches ? `<span class="pill">💘 ${matches}</span>` : ''}${ic('next')}
     </div>`;
   },
   round() {
@@ -380,103 +496,208 @@ const Views = {
     if (!r) { S.round = null; return Views.groups(); }
     const mine = new Set(S.swipes.filter(s => s.round_id === r.id && s.user_id === S.user.id).map(s => s.place_id));
     const left = r.place_ids.filter(id => !mine.has(id) && S.places.some(p => p.id === id));
-    const head = `<div class="row" style="margin-bottom:6px"><button class="ghost" onclick="App.openRound(null)">← ${esc(S.groups.find(g => g.id === r.group_id)?.name || '群組')}</button><b class="grow">${esc(r.title || '一起決定吃什麼')}</b></div>`;
+    const total = r.place_ids.length;
+    const head = `<div class="round-top"><button class="icon-btn" onclick="App.openRound(null)" aria-label="返回">${ic('back')}</button><div class="t">${esc(r.title || '一起決定吃什麼')}</div><button class="icon-btn" onclick="S.showResult=${!S.showResult};App.render()" aria-label="結果">${ic(S.showResult ? 'x' : 'list')}</button></div>
+      <div class="prog"><i style="width:${(total - left.length) / total * 100}%"></i></div>`;
     if (left.length && !S.showResult) {
-      const p = S.places.find(x => x.id === left[0]);
-      const [t, e] = cat(p);
-      return `${head}<div class="muted" style="text-align:center">還有 ${left.length} 張 · 右滑喜歡，左滑不要</div>
-        <div class="deck"><div class="swipe-card" id="scard" data-id="${p.id}">
-          <div class="stamp like">想吃</div><div class="stamp nope">跳過</div>
-          <div class="hero">${e}</div>
-          <div class="name">${esc(p.name)}${p.branch ? ` <span class="muted" style="font-size:16px">${esc(p.branch)}</span>` : ''}</div>
-          <div class="meta" style="font-size:14px">${esc([normCity(p.city), p.district].filter(Boolean).join(' · '))}${S.pos && p.lat != null ? ' · ' + fmtKm(distKm(S.pos, p)) : ''}</div>
-          <div class="meta" style="margin-top:8px"><span class="tag">${t}${p.cuisine ? '・' + esc(p.cuisine) : ''}</span>${p.price ? `<span class="tag">${PRICES[p.price]}</span>` : ''}${(p.meals || []).map(m => `<span class="tag">${MEALS[m]}</span>`).join('')}</div>
-          ${p.note ? `<p style="margin:10px 0 0">${esc(p.note)}</p>` : ''}
-          <div class="grow"></div>
-          <div class="muted">👤 ${esc(nameOf(p.owner))} 收藏${p.source_url ? ` · <a href="${esc(p.source_url)}" target="_blank" rel="noopener" onpointerdown="event.stopPropagation()">看原始貼文</a>` : ''}</div>
-        </div></div>
-        <div class="swipe-btns"><button onclick="App.swipe(false)" title="跳過（←）">✕</button><button onclick="App.swipe(true)" style="color:var(--like)" title="想吃（→）">♥</button></div>
-        <p style="text-align:center"><button class="ghost" onclick="S.showResult=true;App.render()">先看目前結果</button></p>`;
+      const cards = left.slice(0, 3).map(id => S.places.find(x => x.id === id));
+      return `${head}
+        <div class="deck">${cards.map((p, i) => Views.swipeCard(p, i)).reverse().join('')}</div>
+        <div class="sbtns"><button class="sbtn no" onclick="App.swipe(false)" aria-label="跳過">${ic('x')}</button><button class="sbtn info" onclick="App.openPlace('${cards[0].id}')" aria-label="詳細">${ic('spark')}</button><button class="sbtn yes" onclick="App.swipe(true)" aria-label="想吃">${ic('heart')}</button></div>
+        <p class="muted" style="text-align:center;margin:8px 0 0">還有 ${left.length} 張・右滑想吃，左滑跳過</p>`;
     }
     const mem = S.members.filter(m => m.group_id === r.group_id);
     const res = Swipe.matches(r);
     const waiting = mem.filter(m => S.swipes.filter(s => s.round_id === r.id && s.user_id === m.user_id).length < r.place_ids.length);
     return `${head}
-      ${left.length ? `<p><button class="primary" onclick="S.showResult=false;App.render()">繼續滑（還有 ${left.length} 張）</button></p>` : ''}
-      ${waiting.length ? `<div class="note">還在等 ${waiting.map(m => esc(nameOf(m.user_id))).join('、')} 滑完。結果會自動更新。</div>` : '<div class="note">🎉 大家都滑完了！</div>'}
-      <h3 style="margin-top:16px">結果</h3>
-      ${res.filter(x => x.likes).map(x => `<div class="place ${x.all ? 'match' : ''}" onclick="App.openPlace('${x.p.id}')" style="margin-bottom:8px">
-        <div class="emo">${x.all ? '💘' : cat(x.p)[1]}</div>
-        <div class="grow"><div class="name">${esc(x.p.name)}</div><div class="meta">${esc(normCity(x.p.city))} · ${x.likes}/${mem.length} 人想吃${x.all ? ' · <b>配對成功</b>' : ''}</div>
-          <div class="bar" style="margin-top:6px"><i style="width:${x.likes / mem.length * 100}%"></i></div>
-          <div class="meta">${x.who.map(id => esc(nameOf(id))).join('、')}</div></div>
-        <a href="${mapsUrl(x.p)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">導航</a>
-      </div>`).join('') || '<div class="muted">還沒有人按喜歡。</div>'}`;
+      <div class="card" style="margin-top:16px;text-align:center">${waiting.length ? `<div style="font-size:30px">⏳</div><b>還在等 ${waiting.map(m => esc(nameOf(m.user_id))).join('、')}</b><div class="muted">滑完結果會自動更新</div>` : `<div style="font-size:30px">🎉</div><b>大家都滑完了！</b>`}
+        ${left.length ? `<div style="margin-top:12px"><button class="btn primary" onclick="S.showResult=false;App.render()">繼續滑（還有 ${left.length} 張）</button></div>` : ''}</div>
+      <div class="section-t">結果</div>
+      ${res.filter(x => x.likes).map((x, i) => `<div class="res ${x.all ? 'all' : ''}" style="--i:${i}" onclick="App.openPlace('${x.p.id}')">
+        <div class="ph">${photo(x.p)}</div>
+        <div class="grow"><div style="font-weight:800">${x.all ? '💘 ' : ''}${esc(x.p.name)}</div><div class="muted">${x.likes}/${mem.length} 人想吃・${esc(x.who.map(nameOf).join('、'))}</div>
+          <div class="bar"><i style="width:${x.likes / mem.length * 100}%"></i></div></div>
+        <a class="icon-btn" href="${mapsUrl(x.p)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" aria-label="導航">${ic('nav')}</a>
+      </div>`).join('') || '<div class="empty" style="padding:20px"><p>還沒有人按想吃。</p></div>'}`;
+  },
+  swipeCard(p, i) {
+    const [t, e] = cat(p);
+    return `<div class="scard ${i === 0 ? 'top' : 'back' + i}" ${i === 0 ? 'id="scard"' : ''} data-id="${p.id}">
+      ${i === 0 ? '<div class="stamp like">想吃</div><div class="stamp nope">跳過</div>' : ''}
+      <div class="ph">${photo(p)}</div>
+      <div class="cap">
+        <div class="n">${esc(p.name)}${p.branch ? ` <span style="font-size:17px;opacity:.8">${esc(p.branch)}</span>` : ''}</div>
+        <div class="m">${e} ${esc(p.cuisine || t)}${area(p) ? '・' + esc(area(p)) : ''}${S.pos && p.lat != null ? '・' + fmtKm(distKm(S.pos, p)) : ''}</div>
+        <div class="tags">${p.price ? `<span class="tag">${PRICES[p.price]}</span>` : ''}${(p.meals || []).map(m => `<span class="tag">${MEALS[m]}</span>`).join('')}${(p.tags || []).slice(0, 3).map(x => `<span class="tag">#${esc(x)}</span>`).join('')}</div>
+        ${p.note ? `<p>${esc(p.note)}</p>` : ''}
+        <div class="by">${avatar(p.owner, 20)} ${esc(nameOf(p.owner))} 收藏${p.source_url ? `・<a href="${esc(p.source_url)}" target="_blank" rel="noopener" style="color:#fff;text-decoration:underline" onpointerdown="event.stopPropagation()">原始貼文</a>` : ''}</div>
+      </div>
+    </div>`;
   },
   me() {
     const c = S.cfg;
-    return `<h2>我的</h2>
-      ${cloud() ? `<div class="card"><h3>帳號</h3>
-        <label>顯示名稱（群組裡朋友看到的名字）</label><div class="row"><input id="myname" class="grow" value="${esc(S.me?.name || '')}"><button onclick="App.saveName()">儲存</button></div>
-        <p class="muted">${esc(S.user?.email)}</p><button onclick="App.signOut()">登出</button></div>`
-        : `<div class="card"><h3>現在是「只存在這台裝置」模式</h3><p class="muted">收藏、地圖、抽籤都能用。要多人登入、好友群組、滑卡配對，需要先接上免費的 Supabase 雲端（照 README 的步驟做一次就好）。</p></div>`}
-      <div class="card"><h3>AI 抓店家</h3>
-        <p class="muted">${cloud() ? '接上雲端後，大家共用伺服器的 Groq key，不用自己填。下面的 key 只在雲端失敗時備用。' : '從貼文文字或截圖找店名，用 Groq 的免費模型。'}</p>
-        <label>Groq API key（到 <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> 免費申請，gsk_ 開頭；只存在這台裝置）</label>
-        <div class="row"><input id="groqKey" type="password" class="grow" value="${esc(S.settings.groqKey)}"><button onclick="App.saveSettings()">儲存</button></div></div>
-      <div class="card"><h3>備份</h3>
-        <div class="row"><button onclick="App.exportJson()">⬇️ 匯出我的收藏</button><label class="chip" style="margin:0;padding:7px 14px;border-radius:10px">⬆️ 匯入<input type="file" accept=".json,application/json" class="hidden" onchange="App.importJson(this.files[0])"></label></div>
-        ${cloud() && load('food.places', []).length ? `<p class="note" style="margin-top:10px">這台裝置上還有 ${load('food.places', []).length} 間登入前的收藏。<button onclick="App.migrateLocal()">上傳到我的帳號</button></p>` : ''}</div>
-      <details class="card"><summary><b>進階：雲端設定</b></summary>
-        <p class="muted">通常改 config.js 就好。這裡填的只對這台裝置有效，適合先試試看。</p>
-        <label>Supabase Project URL</label><input id="sbUrl" value="${esc(c.supabaseUrl || '')}" placeholder="https://xxxx.supabase.co">
-        <label>Publishable key</label><input id="sbKey" value="${esc(c.supabaseKey || '')}" placeholder="sb_publishable_…">
-        <div class="row" style="margin-top:10px"><button onclick="App.saveCloud()">儲存並重新載入</button><button class="ghost" onclick="App.saveCloud(true)">清除</button></div>
-      </details>
-      <p class="muted" style="text-align:center">開源：<a href="https://github.com/GOP9632/open-apps/tree/main/apps/food-map" target="_blank" rel="noopener">GitHub</a> · 地圖 © OpenStreetMap</p>`;
+    const mine = S.places.filter(isMine);
+    return `${cloud() ? `<div class="profile"><div class="av">${esc(initial(S.me?.name))}</div><div class="grow"><div class="n">${esc(S.me?.name || '')}</div><div class="e">${esc(S.user?.email)}</div></div><button class="icon-btn" style="background:rgba(255,255,255,.25);box-shadow:none;color:#fff" onclick="App.renameMe()" aria-label="改名">${ic('edit')}</button></div>`
+        : `<div class="profile"><div class="av">🍜</div><div class="grow"><div class="n">只存在這台裝置</div><div class="e">收藏、地圖、抽籤都能用；群組和滑卡要接上雲端</div></div></div>`}
+      <div class="stats"><div><b>${mine.length}</b><span>收藏</span></div><div><b>${mine.filter(p => p.status === 'been').length}</b><span>去過</span></div><div><b>${new Set(mine.map(p => normCity(p.city)).filter(Boolean)).size}</b><span>個城市</span></div></div>
+      <div class="list">
+        <details class="list" style="margin:0;box-shadow:none;border-radius:0"><summary><span class="ic">${ic('key')}</span><span class="grow">AI 抓店家</span><span class="muted">${S.settings.groqKey ? '已設定' : cloud() ? '用雲端' : '未設定'}</span></summary><div class="inner">
+          <p class="muted">${cloud() ? '接上雲端後，大家共用伺服器的 Groq key，不用自己填。這裡的 key 只在雲端失敗時備用。' : '從貼文文字或截圖找店名，用 Groq 的免費模型。'}到 <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> 免費申請（gsk_ 開頭），只存在這台裝置。</p>
+          <div class="row"><input id="groqKey" class="input grow" type="password" value="${esc(S.settings.groqKey)}" placeholder="gsk_…"><button class="btn" onclick="App.saveSettings()">儲存</button></div></div></details>
+        <button onclick="App.exportJson()"><span class="ic">${ic('down')}</span><span class="grow">匯出我的收藏</span>${ic('next')}</button>
+        <label style="cursor:pointer"><span class="ic">${ic('up')}</span><span class="grow">匯入備份</span>${ic('next')}<input type="file" accept=".json,application/json" class="hidden" onchange="App.importJson(this.files[0])"></label>
+        ${cloud() && load('food.places', []).length ? `<button onclick="App.migrateLocal()"><span class="ic">${ic('cloud')}</span><span class="grow">上傳登入前的 ${load('food.places', []).length} 間收藏</span>${ic('next')}</button>` : ''}
+        <details class="list" style="margin:0;box-shadow:none;border-radius:0"><summary><span class="ic">${ic('cloud')}</span><span class="grow">進階：雲端設定</span></summary><div class="inner">
+          <p class="muted">通常改 config.js 就好。這裡填的只對這台裝置有效。</p>
+          <label class="field"><span>Supabase Project URL</span><input id="sbUrl" value="${esc(c.supabaseUrl || '')}" placeholder="https://xxxx.supabase.co"></label>
+          <label class="field"><span>Publishable key</span><input id="sbKey" value="${esc(c.supabaseKey || '')}" placeholder="sb_publishable_…"></label>
+          <div class="row" style="margin-top:12px"><button class="btn" onclick="App.saveCloud()">儲存並重新載入</button><button class="btn ghost" onclick="App.saveCloud(true)">清除</button></div></div></details>
+      </div>
+      ${cloud() ? `<div class="list"><button onclick="App.signOut()" style="color:var(--danger)"><span class="ic" style="background:#ffe3e3;color:var(--danger)">${ic('out')}</span><span class="grow">登出</span></button></div>` : ''}
+      <p class="muted" style="text-align:center;margin-top:20px">開源：<a href="https://github.com/GOP9632/open-apps/tree/main/apps/food-map" target="_blank" rel="noopener">GitHub</a>・地圖 © OpenFreeMap、OpenStreetMap</p>`;
   },
   needCloud(what) {
-    return `<div class="empty"><div class="big">☁️</div><h2>${what}要先接上雲端</h2><p>好友群組需要一個共用的資料庫。<br>用 Supabase 免費方案，設定一次，大家打開同一個網址就能用。</p><p><a href="https://github.com/GOP9632/open-apps/tree/main/apps/food-map#接上雲端" target="_blank" rel="noopener">設定步驟</a></p></div>`;
+    return `<div class="empty"><div class="art">☁️</div><h2>${what}要先接上雲端</h2><p>好友群組需要一個共用的資料庫。用 Supabase 免費方案，設定一次，大家打開同一個網址就能用。</p><a class="btn" href="https://github.com/GOP9632/open-apps/tree/main/apps/food-map#接上雲端" target="_blank" rel="noopener">設定步驟</a></div>`;
   },
   auth() {
     const m = S.authMode || 'in';
-    return `<div style="max-width:380px;margin:30px auto" class="card">
-      <div style="text-align:center;font-size:44px">🍜</div>
-      <h2 style="text-align:center">${m === 'in' ? '登入' : '建立帳號'}</h2>
-      ${load('food.pendingJoin', '') ? '<div class="note">登入後會自動加入朋友的群組。</div>' : ''}
-      ${m === 'up' ? '<label>名字（朋友看到的）</label><input id="au-name" autocomplete="nickname">' : ''}
-      <label>Email</label><input id="au-email" type="email" autocomplete="email">
-      <label>密碼（至少 6 個字）</label><input id="au-pw" type="password" autocomplete="${m === 'in' ? 'current-password' : 'new-password'}" onkeydown="if(event.key==='Enter')App.auth()">
-      <div id="au-err" class="err" style="margin-top:8px"></div>
-      <button class="primary big" style="width:100%;margin-top:12px" onclick="App.auth()">${m === 'in' ? '登入' : '建立帳號'}</button>
-      <p style="text-align:center" class="muted">${m === 'in' ? '還沒有帳號？<a href="#" onclick="S.authMode=\'up\';App.render();return false">建立一個</a>' : '已經有帳號？<a href="#" onclick="S.authMode=\'in\';App.render();return false">登入</a>'}</p>
+    const fl = [['🍜', 8, 12], ['🍰', 82, 9], ['☕', 12, 78], ['🥐', 86, 70], ['🍣', 70, 88], ['🧋', 22, 45]];
+    return `<div class="auth">
+      ${fl.map(([e, x, y], i) => `<span class="fl" style="left:${x}%;top:${y}%;animation-delay:${i * .6}s">${e}</span>`).join('')}
+      <img class="logo" src="icon.svg" alt="">
+      <h1>美食收藏</h1>
+      <p class="tag-line">IG 看到就收藏，地圖幫你整理，跟朋友滑卡決定吃什麼。</p>
+      <div class="box">
+        <div class="seg" style="margin:14px 0 4px"><button class="${m === 'in' ? 'on' : ''}" onclick="S.authMode='in';App.render()">登入</button><button class="${m === 'up' ? 'on' : ''}" onclick="S.authMode='up';App.render()">建立帳號</button></div>
+        ${load('food.pendingJoin', '') ? '<div class="tag hot" style="margin-top:12px;height:auto;padding:8px 12px">登入後會自動加入朋友的群組 🎉</div>' : ''}
+        ${m === 'up' ? '<label class="field"><span>名字（朋友看到的）</span><input id="au-name" autocomplete="nickname"></label>' : ''}
+        <label class="field"><span>Email</span><input id="au-email" type="email" autocomplete="email" inputmode="email"></label>
+        <label class="field"><span>密碼${m === 'up' ? '（至少 6 個字）' : ''}</span><input id="au-pw" type="password" autocomplete="${m === 'in' ? 'current-password' : 'new-password'}" onkeydown="if(event.key==='Enter')App.auth()"></label>
+        <div id="au-err" class="err" style="margin-top:10px"></div>
+        <button class="btn primary big block" style="margin-top:12px" id="au-go" onclick="App.auth()">${m === 'in' ? '登入' : '建立帳號'}</button>
+      </div>
     </div>`;
   },
 };
 
-// ---------- 地圖 ----------
+// ---------- 地圖（MapLibre 向量地圖） ----------
 const MapView = {
-  draw() {
-    const el = $('#map'); if (!el || !window.L) return;
-    if (S.map) { S.map.remove(); S.map = null; }
-    const map = S.map = L.map(el, { zoomControl: true }).setView([25.04, 121.53], 12);
-    L.tileLayer(TILES, { maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
-    const group = S.cluster = L.markerClusterGroup ? L.markerClusterGroup({ maxClusterRadius: 40, showCoverageOnHover: false }) : L.layerGroup();
+  map: null, markers: new Map(), meMarker: null, sel: null, style: null,
+  async getStyle() {
+    if (MapView.style) return MapView.style;
+    try {
+      const j = await (await fetch(MAP_STYLE())).json();
+      // 地名優先用中文
+      for (const l of j.layers) if (l.layout?.['text-field']) l.layout['text-field'] = ['coalesce', ['get', 'name:zh-Hant'], ['get', 'name:zh'], ['get', 'name']];
+      return (MapView.style = j);
+    } catch { return MAP_STYLE(); }
+  },
+  async ensure() {
+    if (MapView.map || !window.maplibregl) return;
+    const map = MapView.map = new maplibregl.Map({ container: 'bigmap', style: await MapView.getStyle(), center: S.pos ? [S.pos.lng, S.pos.lat] : TAIPEI, zoom: 12, attributionControl: { compact: true }, pitchWithRotate: false, dragRotate: false });
+    map.touchZoomRotate.disableRotation();
+    map.on('zoom', () => $('#bigmap').classList.toggle('zoomed-out', map.getZoom() < 11.5));
+    map.on('click', e => { if (!e.originalEvent.target.closest('.pin')) MapView.select(null); });
+    await new Promise(r => map.loaded() ? r() : map.once('load', r));
+  },
+  pinEl(p) {
+    const el = document.createElement('div');
+    el.className = `pin ${p.status === 'been' ? 'been' : ''}`;
+    el.style.setProperty('--c', cat(p)[2]);
+    el.innerHTML = `<div class="b">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : `<span>${cat(p)[1]}</span>`}</div>`;
+    el.onclick = ev => { ev.stopPropagation(); MapView.select(p.id, true); };
+    return el;
+  },
+  async sync(fit) {
+    await MapView.ensure();
+    const map = MapView.map; if (!map) return;
+    map.resize();
     const list = visiblePlaces().filter(p => p.lat != null);
+    const want = new Set(list.map(p => p.id));
+    for (const [id, m] of MapView.markers) if (!want.has(id)) { m.remove(); MapView.markers.delete(id); }
     for (const p of list) {
-      const icon = L.divIcon({ className: '', html: `<div class="pin ${p.status === 'been' ? 'been' : ''} ${isMine(p) ? '' : 'other'}"><span>${cat(p)[1]}</span></div>`, iconSize: [36, 36], iconAnchor: [4, 34], popupAnchor: [14, -30] });
-      L.marker([p.lat, p.lng], { icon, title: p.name }).bindPopup(`<b>${esc(p.name)}</b> ${p.branch ? esc(p.branch) : ''}<br><span style="color:#888">${cat(p)[0]}${p.cuisine ? '・' + esc(p.cuisine) : ''}${p.price ? ' · ' + PRICES[p.price] : ''}${p.approx ? ' · 位置是大概的' : ''}</span>${p.note ? '<br>' + esc(p.note) : ''}<br><a href="#" onclick="App.openPlace('${p.id}');return false">詳細</a> · <a href="${mapsUrl(p)}" target="_blank" rel="noopener">導航</a>`).addTo(group);
+      const key = p.id, old = MapView.markers.get(key);
+      if (old && old._sig === p.updated_at) continue;
+      old?.remove();
+      const m = new maplibregl.Marker({ element: MapView.pinEl(p), anchor: 'bottom' }).setLngLat([p.lng, p.lat]).addTo(map);
+      m._sig = p.updated_at; MapView.markers.set(key, m);
     }
-    map.addLayer(group);
-    if (list.length) map.fitBounds(L.latLngBounds(list.map(p => [p.lat, p.lng])).pad(0.15), { maxZoom: 15 });
-    if (S.pos) L.circleMarker([S.pos.lat, S.pos.lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#1c7ed6', fillOpacity: 1 }).addTo(map);
-    const Locate = L.Control.extend({ onAdd: () => { const b = L.DomUtil.create('button'); b.textContent = '🧭'; b.title = '我的位置'; b.style.cssText = 'font-size:18px;padding:4px 8px'; b.onclick = e => { L.DomEvent.stop(e); App.locate().then(() => S.pos && map.setView([S.pos.lat, S.pos.lng], 15) && MapView.draw()); }; return b; } });
-    new Locate({ position: 'topright' }).addTo(map);
-    const missing = visiblePlaces().length - list.length;
-    if (missing) {
-      const Info = L.Control.extend({ onAdd: () => { const d = L.DomUtil.create('div'); d.style.cssText = 'background:var(--panel);padding:4px 10px;border-radius:8px;font-size:12px'; d.textContent = `${missing} 間還沒有位置，打開店家可以補`; return d; } });
-      new Info({ position: 'bottomleft' }).addTo(map);
+    MapView.cards(list);
+    if (fit) {
+      // 先看我附近的店（30 公里內），附近沒有才看全部
+      const near = S.pos ? list.filter(p => distKm(S.pos, p) < 30) : [];
+      const show = near.length ? near : list;
+      if (show.length) {
+        const b = new maplibregl.LngLatBounds(); show.forEach(p => b.extend([p.lng, p.lat]));
+        map.fitBounds(b, { padding: { top: 150, bottom: 260, left: 50, right: 50 }, maxZoom: 15, duration: fit === 'jump' ? 0 : 900 });
+      } else if (S.pos) map.jumpTo({ center: [S.pos.lng, S.pos.lat], zoom: 14 });
     }
+    MapView.updateMe();
+  },
+  cards(list) {
+    const box = $('#mapcards');
+    const sorted = S.pos ? list.slice().sort((a, b) => distKm(S.pos, a) - distKm(S.pos, b)) : list;
+    document.body.classList.toggle('no-cards', !sorted.length);
+    box.innerHTML = sorted.map(p => {
+      const d = S.pos ? fmtKm(distKm(S.pos, p)) : '';
+      return `<div class="mcard ${MapView.sel === p.id ? 'sel' : ''}" data-id="${p.id}" onclick="App.openPlace('${p.id}')">
+        <div class="ph">${photo(p)}</div>
+        <div class="b"><div class="n">${esc(p.name)}</div><div class="m">${cat(p)[1]} ${esc(p.cuisine || cat(p)[0])}${p.price ? '・' + priceTag(p.price) : ''}</div><div class="m">${esc(area(p))}${d ? '・' + d : ''}</div>
+          <div class="acts"><a class="btn primary" href="${mapsUrl(p)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${ic('nav')} 導航</a><span class="tag ${p.status === 'been' ? '' : 'hot'}" style="align-self:center">${p.status === 'been' ? '去過' : '想去'}</span></div></div>
+      </div>`;
+    }).join('');
+    // 卡片滑到哪一張，地圖就跟到那間
+    clearTimeout(MapView._st);
+    box.onscroll = () => {
+      clearTimeout(MapView._st);
+      MapView._st = setTimeout(() => {
+        const mid = box.scrollLeft + box.clientWidth / 2;
+        let best = null, bd = 1e9;
+        for (const c of box.children) { const d = Math.abs(c.offsetLeft + c.offsetWidth / 2 - mid); if (d < bd) { bd = d; best = c; } }
+        if (best && best.dataset.id !== MapView.sel) MapView.select(best.dataset.id, false, true);
+      }, 140);
+    };
+  },
+  select(id, fromPin, fromCards) {
+    MapView.sel = id;
+    for (const [k, m] of MapView.markers) m.getElement().classList.toggle('sel', k === id);
+    for (const c of $('#mapcards').children) c.classList.toggle('sel', c.dataset.id === id);
+    if (!id) return;
+    buzz(8);
+    const p = S.places.find(x => x.id === id);
+    if (p?.lat != null) MapView.map.easeTo({ center: [p.lng, p.lat], zoom: Math.max(MapView.map.getZoom(), 14), offset: [0, -60], duration: 600 });
+    if (!fromCards) $(`.mcard[data-id="${id}"]`)?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  },
+  updateMe(first) {
+    const map = MapView.map; if (!map || !S.pos) return;
+    if (!MapView.meMarker) {
+      const el = document.createElement('div'); el.className = 'me-dot';
+      MapView.meMarker = new maplibregl.Marker({ element: el }).setLngLat([S.pos.lng, S.pos.lat]).addTo(map);
+    } else MapView.meMarker.setLngLat([S.pos.lng, S.pos.lat]);
+    $('#locbtn')?.classList.add('on');
+    if (first && S.tab === 'map' && !visiblePlaces().some(p => p.lat != null)) map.easeTo({ center: [S.pos.lng, S.pos.lat], zoom: 14 });
+  },
+  async locate() {
+    buzz(8);
+    const pos = await Me.once();
+    if (pos && MapView.map) MapView.map.flyTo({ center: [pos.lng, pos.lat], zoom: 15, speed: 1.6 });
+  },
+  chrome() {
+    $('#maptop').innerHTML = `<div class="search">${ic('search')}<input id="q" class="grow" placeholder="搜尋地圖上的店" value="${esc(S.f.q)}" oninput="App.setF('q', this.value, true)" enterkeyhint="search"><button class="me-btn" onclick="App.tab('me')" aria-label="我的">${cloud() && S.me ? esc(initial(S.me.name)) : ic('user')}</button></div>${filterChips({ map: true })}`;
+    $('#mapside').innerHTML = `<button class="icon-btn glass ${S.pos ? 'on' : ''}" id="locbtn" onclick="MapView.locate()" aria-label="我的位置">${ic('locate')}</button><button class="icon-btn glass" onclick="MapView.sync(true)" aria-label="看全部">${ic('refresh')}</button>`;
+  },
+  // 店家詳細、編輯用的小地圖
+  async mini(el, p, editable, onPick) {
+    if (!el || !window.maplibregl) return null;
+    const center = p.lat != null ? [p.lng, p.lat] : S.pos ? [S.pos.lng, S.pos.lat] : TAIPEI;
+    const m = new maplibregl.Map({ container: el, style: await MapView.getStyle(), center, zoom: p.lat != null ? 15.5 : 12, attributionControl: false, interactive: editable, dragRotate: false });
+    let mk = p.lat != null ? new maplibregl.Marker({ element: MapView.pinEl(p), anchor: 'bottom' }).setLngLat(center).addTo(m) : null;
+    if (mk) mk.getElement().onclick = null;
+    if (editable) m.on('click', e => {
+      if (mk) mk.setLngLat(e.lngLat); else { mk = new maplibregl.Marker({ element: MapView.pinEl(p), anchor: 'bottom' }).setLngLat(e.lngLat).addTo(m); mk.getElement().onclick = null; }
+      buzz(8); onPick?.(e.lngLat);
+    });
+    return m;
   },
 };
 
@@ -499,6 +720,25 @@ const Draw = {
   },
 };
 
+// ---------- 特效 ----------
+const FX = {
+  confetti(n = 70) {
+    const colors = ['#ff6a2b', '#ff3d6e', '#fab005', '#20c997', '#7950f2', '#228be6'];
+    for (let i = 0; i < n; i++) {
+      const c = document.createElement('i'); c.className = 'confetti';
+      c.style.cssText = `left:${Math.random() * 100}vw;background:${colors[i % colors.length]};--dx:${(Math.random() - .5) * 160}px;--r:${Math.random() * 900 - 450}deg;--t:${1.4 + Math.random() * 1.4}s;animation-delay:${Math.random() * .25}s;${Math.random() > .5 ? 'border-radius:50%;width:9px;height:9px' : ''}`;
+      document.body.appendChild(c); setTimeout(() => c.remove(), 3200);
+    }
+  },
+  hearts(n = 16) {
+    for (let i = 0; i < n; i++) {
+      const h = document.createElement('span'); h.className = 'heart-f'; h.textContent = ['💖', '💘', '❤️', '🧡'][i % 4];
+      h.style.cssText = `left:${Math.random() * 100}vw;--dx:${(Math.random() - .5) * 120}px;--r:${(Math.random() - .5) * 60}deg;animation-delay:${Math.random() * .8}s;font-size:${22 + Math.random() * 18}px`;
+      document.body.appendChild(h); setTimeout(() => h.remove(), 4000);
+    }
+  },
+};
+
 // ---------- 滑卡 ----------
 const Swipe = {
   matches(r) {
@@ -512,21 +752,24 @@ const Swipe = {
   },
   bind() {
     const card = $('#scard'); if (!card) return;
-    let x0 = null, y0 = 0, dx = 0;
+    let x0 = null, y0 = 0, dx = 0, dy = 0, t0 = 0;
     const like = card.querySelector('.stamp.like'), nope = card.querySelector('.stamp.nope');
-    card.onpointerdown = e => { x0 = e.clientX; y0 = e.clientY; card.setPointerCapture(e.pointerId); card.style.transition = 'none'; };
+    const back = document.querySelector('.scard.back1');
+    card.onpointerdown = e => { x0 = e.clientX; y0 = e.clientY; t0 = performance.now(); card.setPointerCapture(e.pointerId); card.style.transition = 'none'; card.style.animation = 'none'; };
     card.onpointermove = e => {
       if (x0 == null) return;
-      dx = e.clientX - x0; const dy = e.clientY - y0;
-      card.style.transform = `translate(${dx}px, ${dy * 0.3}px) rotate(${dx / 18}deg)`;
-      like.style.opacity = Math.max(0, Math.min(1, dx / 90)); nope.style.opacity = Math.max(0, Math.min(1, -dx / 90));
+      dx = e.clientX - x0; dy = e.clientY - y0;
+      card.style.transform = `translate(${dx}px, ${dy * 0.35}px) rotate(${dx / 16}deg)`;
+      like.style.opacity = Math.max(0, Math.min(1, dx / 80)); nope.style.opacity = Math.max(0, Math.min(1, -dx / 80));
+      if (back) { const k = Math.min(1, Math.abs(dx) / 140); back.style.transform = `translateY(${14 - 14 * k}px) scale(${.95 + .05 * k})`; }
     };
     card.onpointerup = () => {
       if (x0 == null) return; x0 = null;
-      card.style.transition = 'transform .25s';
-      if (Math.abs(dx) > 90) App.swipe(dx > 0);
-      else { card.style.transform = ''; like.style.opacity = nope.style.opacity = 0; }
-      dx = 0;
+      const v = Math.abs(dx) / Math.max(1, performance.now() - t0);
+      card.style.transition = 'transform .3s var(--spring)';
+      if (Math.abs(dx) > 100 || (Math.abs(dx) > 40 && v > .6)) App.swipe(dx > 0);
+      else { card.style.transform = ''; like.style.opacity = nope.style.opacity = 0; if (back) { back.style.transition = 'transform .3s'; back.style.transform = ''; } }
+      dx = dy = 0;
     };
   },
 };
@@ -540,67 +783,95 @@ const App = {
       if (code) { save('food.pendingJoin', ''); await App.join(code); }
       App.realtime();
     }
+    S.animate = true;
     App.render();
     App.handleShare();
+    Me.start(false);
   },
   render() {
     const needAuth = cloud() && !S.user;
-    $('#tabs').innerHTML = needAuth ? '' : TABS.map(([k, i, t]) => `<button class="${S.tab === k ? 'on' : ''}" onclick="App.tab('${k}')"><span class="i">${i}</span>${t}</button>`).join('');
-    $('#who').textContent = cloud() && S.user ? (S.me?.name || '') : cloud() ? '' : '只存在這台裝置';
-    $('#fab').classList.toggle('hidden', needAuth || S.tab === 'me' || !!S.round);
-    if (needAuth) { $('#main').innerHTML = Views.auth(); return; }
+    const onMap = !needAuth && S.tab === 'map';
+    const onRound = !needAuth && S.tab === 'groups' && !!S.round;
+    document.body.classList.toggle('on-map', onMap);
+    document.body.classList.toggle('on-round', onRound);
+    const tabs = $('#tabs');
+    tabs.classList.toggle('away', needAuth || onRound);
+    tabs.innerHTML = [...TABS.slice(0, 2).map(App.tabBtn), `<button class="add" onclick="App.openAdd()" aria-label="新增店家">${ic('plus')}</button>`, ...TABS.slice(2).map(App.tabBtn)].join('');
+    if (needAuth) { $('#top').innerHTML = ''; $('#top').classList.add('hidden'); $('#main').innerHTML = Views.auth(); return; }
+    $('#top').classList.toggle('hidden', onRound || (S.tab === 'groups' && !!S.group));
+    $('#top').innerHTML = Views.header();
+    if (onMap) {
+      MapView.chrome();
+      const first = !MapView.map || S.animate;
+      MapView.sync(first ? (MapView.map ? true : 'jump') : false);
+      S.animate = false;
+      return;
+    }
     const y = window.scrollY;
-    $('#main').innerHTML = S.tab === 'groups' && S.round ? Views.round() : Views[S.tab]();
-    if (S.tab === 'map') MapView.draw();
-    if (S.round) Swipe.bind();
+    const main = $('#main');
+    main.classList.toggle('enter', !!S.animate);
+    main.innerHTML = onRound ? Views.round() : Views[S.tab]();
+    S.animate = false;
+    if (onRound) Swipe.bind();
     if (S.keepScroll) window.scrollTo(0, y);
     S.keepScroll = false;
   },
-  tab(t) { S.tab = t; save('food.tab', t); if (t !== 'groups') S.round = null; App.render(); window.scrollTo(0, 0); },
+  tabBtn([k, i, t]) { return `<button class="tab ${S.tab === k ? 'on' : ''}" onclick="App.tab('${k}')">${ic(i)}<span>${t}</span></button>`; },
+  tab(t) {
+    if (t === S.tab && t === 'groups' && (S.group || S.round)) { S.group = null; S.round = null; }
+    else if (t === S.tab && t !== 'me') { window.scrollTo({ top: 0, behavior: 'smooth' }); if (t !== 'map') return; }
+    buzz(6);
+    S.tab = t; if (t !== 'me') save('food.tab', t); if (t !== 'groups') S.round = null;
+    S.animate = true; App.render(); window.scrollTo(0, 0);
+    if (t === 'map') Me.start(true);
+  },
   setF(k, v, typing) {
     S.f[k] = v;
     if (typing) {
       clearTimeout(App._qt);
       App._qt = setTimeout(() => {
+        if (S.tab === 'map') { MapView.sync(false); return; }
         const el = $('#q'), pos = el?.selectionStart;
-        App.render(); const n = $('#q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); }
-      }, 200);
-    } else App.render();
+        S.keepScroll = true; App.render(); const n = $('#q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); }
+      }, 180);
+    } else {
+      buzz(5); S.keepScroll = true;
+      if (S.tab === 'map') { MapView.chrome(); MapView.sync(true); } else App.render();
+    }
   },
-  async locate() {
-    if (!navigator.geolocation) return toast('這個瀏覽器拿不到位置');
-    return new Promise(res => navigator.geolocation.getCurrentPosition(p => { S.pos = { lat: p.coords.latitude, lng: p.coords.longitude }; res(); }, () => { toast('沒有拿到位置權限'); res(); }, { enableHighAccuracy: true, timeout: 10000 }));
-  },
+  clearF() { S.f = { ...S.f, q: '', city: '', cat: '', status: '' }; App.render(); },
   async sortNear() {
     if (S.f.sort === 'near') { S.f.sort = 'new'; return App.render(); }
-    if (!S.pos) await App.locate();
-    if (S.pos) { S.f.sort = 'near'; App.render(); }
+    if (await Me.once()) { S.f.sort = 'near'; S.keepScroll = true; App.render(); }
   },
 
   // ----- 新增 -----
   openAdd(prefill = '') {
-    S.cands = null;
-    App.sheet(`<div class="sheet-h"><h2>新增店家</h2><button class="ghost" onclick="App.close()">✕</button></div>
-      <p class="muted" style="margin:0 0 8px">貼上 IG Reels／貼文、Threads、TikTok、Google 地圖連結，或直接貼貼文文字。</p>
-      <textarea id="add-in" rows="4" placeholder="https://www.instagram.com/reel/…">${esc(prefill)}</textarea>
-      <div class="row" style="margin-top:8px">
-        <button onclick="App.pasteClip()">📋 貼上</button>
-        <label class="chip" style="margin:0;padding:7px 14px;border-radius:10px;font-size:15px;color:var(--text)">🖼️ 截圖<input type="file" accept="image/*" class="hidden" onchange="App.addImage(this.files[0])"></label>
+    S.cands = null; buzz(8);
+    App.sheet(`<div class="sheet-h"><h2>新增店家</h2><button class="icon-btn" onclick="App.close()" aria-label="關閉">${ic('x')}</button></div>
+      <button class="btn primary paste-big" onclick="App.pasteClip()">${ic('clip')} 貼上剛剛複製的連結</button>
+      <div class="sources"><span>Instagram</span><span>Threads</span><span>TikTok</span><span>Google 地圖</span><span>部落格</span></div>
+      <div class="or">或</div>
+      <textarea id="add-in" class="input" rows="3" placeholder="在這裡貼上連結，或直接貼貼文文字">${esc(prefill)}</textarea>
+      <div class="row" style="margin-top:10px">
+        <label class="btn" style="cursor:pointer">${ic('image')} 截圖<input type="file" accept="image/*" class="hidden" onchange="App.addImage(this.files[0])"></label>
+        <button class="btn ghost" onclick="App.editPlace(null)">${ic('edit')} 自己填</button>
         <span class="grow"></span>
-        <button class="primary" id="add-go" onclick="App.addGo()">找店家</button>
+        <button class="btn dark" id="add-go" onclick="App.addGo()">${ic('spark')} 找店家</button>
       </div>
-      <div id="add-out"></div>
-      <p style="margin-top:14px"><button class="ghost" onclick="App.editPlace(null)">✏️ 不用了，我自己填</button></p>`);
-    setTimeout(() => $('#add-in')?.focus(), 50);
+      <div id="add-out"></div>`);
     if (prefill) App.addGo();
   },
   async pasteClip() {
-    try { $('#add-in').value = await navigator.clipboard.readText(); App.addGo(); }
-    catch { toast('瀏覽器不讓讀剪貼簿，請長按輸入框貼上'); }
+    try {
+      const t = await navigator.clipboard.readText();
+      if (!t.trim()) throw new Error('empty');
+      $('#add-in').value = t; App.addGo();
+    } catch { $('#add-in').focus(); toast('長按輸入框選「貼上」也可以'); }
   },
   async addImage(file) {
     if (!file) return;
-    $('#add-out').innerHTML = '<p class="muted"><span class="spin"></span> 正在看截圖…</p>';
+    App.progress(1, '正在看截圖');
     try { App.addRun({ image: await Extract.shrink(file), text: $('#add-in').value.trim() }); }
     catch (e) { $('#add-out').innerHTML = `<p class="err">${esc(e.message)}</p>`; }
   },
@@ -611,21 +882,30 @@ const App = {
     const rest = url ? v.replace(url, '').trim() : v;
     App.addRun({ url, text: rest.length > 15 ? rest : '' });
   },
+  progress(step, label0) {
+    const steps = [label0 || '讀取貼文', 'AI 找出店家', '找地圖位置'];
+    const out = $('#add-out'); if (!out) return;
+    out.innerHTML = `<div class="progress">${steps.map((s, i) => `<div class="${i < step - 1 ? 'done' : i === step - 1 ? 'on' : ''}"><i>${i < step - 1 ? ic('check') : ''}</i>${s}</div>`).join('')}</div>`;
+  },
   async addRun(input) {
-    const out = $('#add-out'), go = $('#add-go');
-    out.innerHTML = '<p class="muted"><span class="spin"></span> 正在讀貼文、找店名…</p>'; go.disabled = true;
+    const go = $('#add-go'); if (go) go.disabled = true;
+    App.progress(1);
+    const t = setTimeout(() => $('#add-out .progress') && App.progress(2), 1600);
     try {
       const r = await Extract.run(input);
+      clearTimeout(t);
       const src = r.source || {};
+      const photoData = src.thumbData || '';
       S.cands = (r.places || []).map(p => ({
         ...p, name: (p.name || '').trim(), city: normCity(p.city) || parseAddr(p.address).city, district: p.district || parseAddr(p.address).district,
         category: CATS[p.category] ? p.category : 'restaurant', meals: (p.meals || []).filter(m => MEALS[m]), price: [1, 2, 3, 4].includes(+p.price) ? +p.price : null,
-        source_url: src.url || input.url || '', source_text: (src.caption || input.text || '').slice(0, 2000), on: true,
+        source_url: src.url || input.url || '', source_text: (src.caption || input.text || '').slice(0, 2000), on: true, photoData,
       })).filter(p => p.name);
       if (!S.cands.length) {
-        out.innerHTML = `<div class="note" style="margin-top:12px">沒找到店家。${src.caption ? `<br>讀到的文字：<br><i>${esc(src.caption.slice(0, 300))}</i>` : ''}<br>可以改貼店名或地址，或<a href="#" onclick="App.editPlace(null, {source_url: '${esc(input.url || '')}'});return false">自己填</a>。</div>`;
+        $('#add-out').innerHTML = `<div class="card" style="margin-top:14px;text-align:center"><div style="font-size:34px">🤔</div><b>沒找到店家</b>${src.caption ? `<p class="muted" style="text-align:left">讀到的文字：${esc(src.caption.slice(0, 240))}</p>` : ''}<p class="muted">可以改貼店名或地址，或自己填。</p><button class="btn" onclick="App.editPlace(null, {source_url: '${esc(input.url || '')}'})">${ic('edit')} 自己填</button></div>`;
         return;
       }
+      buzz([10, 40, 10]);
       App.renderCands();
       // 背景補座標
       for (const c of S.cands) {
@@ -637,28 +917,32 @@ const App = {
         App.renderCands();
       }
     } catch (e) {
-      out.innerHTML = `<p class="err">${esc(e.message)}</p>`;
+      clearTimeout(t);
+      const out = $('#add-out'); if (out) out.innerHTML = `<div class="card" style="margin-top:14px"><p class="err" style="margin:0">${esc(e.message)}</p></div>`;
     } finally { if (go) go.disabled = false; }
   },
   renderCands() {
     const out = $('#add-out'); if (!out || !S.cands) return;
     const dup = c => S.places.find(p => isMine(p) && p.name.replace(/\s/g, '') === c.name.replace(/\s/g, '') && (!c.city || !p.city || normCity(p.city) === c.city));
     const n = S.cands.filter(c => c.on).length;
-    out.innerHTML = `<p style="margin:14px 0 0"><b>找到 ${S.cands.length} 間</b> <span class="muted">（名稱、分類可以直接改）</span></p>
-      ${S.cands.map((c, i) => `<div class="cand ${c.on ? '' : 'off'}">
-        <div class="row"><input type="checkbox" style="width:auto" ${c.on ? 'checked' : ''} onchange="S.cands[${i}].on=this.checked;App.renderCands()">
-          <input class="grow" style="font-weight:600" value="${esc(c.name)}" onchange="S.cands[${i}].name=this.value"></div>
-        <div class="two" style="margin-top:6px">
-          <select onchange="S.cands[${i}].category=this.value">${Object.entries(CATS).map(([k, [t, e]]) => `<option value="${k}" ${c.category === k ? 'selected' : ''}>${e} ${t}</option>`).join('')}</select>
-          <select onchange="S.cands[${i}].city=this.value"><option value="">地區？</option>${[...new Set([...CITIES, c.city].filter(Boolean))].map(x => `<option ${c.city === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
+    const first = !out.querySelector('.cand');
+    out.innerHTML = `<div class="section-t" style="margin-top:18px">${ic('spark')} 找到 ${S.cands.length} 間<span class="muted" style="font-weight:500;font-size:13px">名稱、分類可以直接改</span></div>
+      ${S.cands.map((c, i) => `<div class="cand ${c.on ? 'on' : 'off'}" style="${first ? `animation-delay:${i * 70}ms` : 'animation:none'}">
+        <div class="ph" style="position:relative" onclick="S.cands[${i}].on=!S.cands[${i}].on;App.renderCands()">${photo({ ...c, photo: c.photoData })}<span class="tick">${ic('check')}</span></div>
+        <div class="grow">
+          <input class="nm" value="${esc(c.name)}" onchange="S.cands[${i}].name=this.value">
+          <div class="muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc([c.district, c.address].filter(Boolean).join('・') || '沒有地址')}${c.price ? '・' + PRICES[c.price] : ''}</div>
+          <div class="mini-sel">
+            <label class="chip">${cat(c)[1]} ${cat(c)[0]} ▾<select onchange="S.cands[${i}].category=this.value;App.renderCands()">${Object.entries(CATS).map(([k, [t, e]]) => `<option value="${k}" ${c.category === k ? 'selected' : ''}>${e} ${t}</option>`).join('')}</select></label>
+            <label class="chip">${esc(c.city || '地區？')} ▾<select onchange="S.cands[${i}].city=this.value;App.renderCands()"><option value="">地區？</option>${[...new Set([...CITIES, c.city].filter(Boolean))].map(x => `<option ${c.city === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label>
+          </div>
+          <div class="loc ${c.lat != null ? 'ok' : ''}">${c.locating ? '<span class="spin" style="width:12px;height:12px;border-width:2px"></span> 找地圖位置…' : c.lat != null ? `${ic('pin')} ${c.approx ? '已找到大概位置' : '已找到位置'}` : `${ic('pin')} 找不到位置，存好後可以補`}</div>
+          ${c.note ? `<div class="muted" style="margin-top:4px">💬 ${esc(c.note)}</div>` : ''}
+          ${dup(c) ? '<div class="err" style="font-size:12.5px;margin-top:4px">已經收藏過同名的店</div>' : ''}
         </div>
-        <div class="muted" style="margin-top:6px">${esc([c.district, c.address].filter(Boolean).join(' · ') || '沒有地址')}${c.cuisine ? ' · ' + esc(c.cuisine) : ''}${c.price ? ' · ' + PRICES[c.price] : ''}</div>
-        <div class="muted">${c.locating ? '<span class="spin"></span> 找地圖位置…' : c.lat != null ? (c.approx ? '📍 已找到大概位置' : '📍 已找到位置') : '📍 找不到位置，存好後可以在地圖上點'}</div>
-        ${c.note ? `<div class="muted">💬 ${esc(c.note)}</div>` : ''}
-        ${dup(c) ? '<div class="err">已經收藏過同名的店</div>' : ''}
       </div>`).join('')}
-      ${cloud() && S.groups.length ? `<label>同時分享到群組</label><div class="filters" style="flex-wrap:wrap">${S.groups.map(g => `<span class="chip ${(S.addGroups || []).includes(g.id) ? 'on' : ''}" onclick="App.toggleAddGroup('${g.id}')">👥 ${esc(g.name)}</span>`).join('')}</div>` : ''}
-      <button class="primary big" style="width:100%;margin-top:12px" ${n ? '' : 'disabled'} onclick="App.saveCands()">收藏 ${n} 間</button>`;
+      ${cloud() && S.groups.length ? `<div class="fgroup"><div class="t">同時分享到群組</div><div class="chips wrap">${S.groups.map(g => `<span class="chip ${(S.addGroups || []).includes(g.id) ? 'on' : ''}" onclick="App.toggleAddGroup('${g.id}')">${ic('users')} ${esc(g.name)}</span>`).join('')}</div></div>` : ''}
+      <div class="sticky-foot"><button class="btn primary big block" id="savec" ${n ? '' : 'disabled'} onclick="App.saveCands()">${ic('heart')} 收藏 ${n} 間</button></div>`;
   },
   toggleAddGroup(id) {
     const a = S.addGroups || []; S.addGroups = a.includes(id) ? a.filter(x => x !== id) : [...a, id];
@@ -666,17 +950,23 @@ const App = {
   },
   async saveCands() {
     const pick = S.cands.filter(c => c.on);
+    const btn = $('#savec'); if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin" style="border-top-color:#fff"></span> 收藏中…'; }
     try {
+      const photos = new Map();
       const saved = [];
       for (const c of pick) {
+        let ph = '';
+        if (c.photoData) { if (!photos.has(c.photoData)) photos.set(c.photoData, await Photo.store(c.photoData)); ph = photos.get(c.photoData); }
         const p = { name: c.name, branch: c.branch || '', address: c.address || '', city: c.city || '', district: c.district || '', lat: c.lat ?? null, lng: c.lng ?? null, approx: !!c.approx,
           category: c.category, cuisine: c.cuisine || '', price: c.price, meals: c.meals || [], hours: c.hours || '', status: 'want', rating: null, note: c.note || '', tags: (c.tags || []).slice(0, 6),
-          source_url: c.source_url || '', source_text: c.source_text || '' };
+          source_url: c.source_url || '', source_text: c.source_text || '', photo: ph };
         saved.push(await DB.savePlace(p));
       }
       if (cloud()) for (const g of (S.addGroups || []).filter(id => S.groups.some(x => x.id === id))) await App.share(g, saved.map(p => p.id), true);
-      App.close(); toast(`收藏了 ${saved.length} 間 🎉`); App.render();
-    } catch (e) { toast('儲存失敗：' + e.message, 5000); }
+      App.close(); buzz([12, 50, 12]); FX.confetti(40); toast(`收藏了 ${saved.length} 間 🎉`);
+      if (S.tab !== 'map' && S.tab !== 'list') S.tab = 'list';
+      S.animate = true; App.render();
+    } catch (e) { toast('儲存失敗：' + e.message, 5000); if (btn) { btn.disabled = false; btn.textContent = '再試一次'; } }
   },
 
   // ----- 店家詳細／編輯 -----
@@ -685,64 +975,69 @@ const App = {
     const [t, e] = cat(p);
     const mine = isMine(p);
     const myGroups = S.groups.filter(g => S.groupPlaces.some(x => x.group_id === g.id && x.place_id === p.id));
-    App.sheet(`<div class="sheet-h"><div class="emo">${e}</div><h2>${esc(p.name)} ${p.branch ? `<span class="muted">${esc(p.branch)}</span>` : ''}</h2><button class="ghost" onclick="App.close()">✕</button></div>
-      <div class="meta"><span class="tag">${t}${p.cuisine ? '・' + esc(p.cuisine) : ''}</span>${p.price ? `<span class="tag">${PRICES[p.price]}</span>` : ''}${(p.meals || []).map(m => `<span class="tag">${MEALS[m]}</span>`).join('')}${(p.tags || []).map(x => `<span class="tag">#${esc(x)}</span>`).join('')}</div>
-      <p style="margin:10px 0 4px">📍 ${esc(p.address || [normCity(p.city), p.district].filter(Boolean).join(' ') || '沒有地址')}${S.pos && p.lat != null ? ` <span class="muted">（${fmtKm(distKm(S.pos, p))}）</span>` : ''}</p>
-      ${p.hours ? `<p style="margin:4px 0">🕑 ${esc(p.hours)}</p>` : ''}
-      ${p.note ? `<p style="margin:4px 0">💬 ${esc(p.note)}</p>` : ''}
-      ${!mine ? `<p class="muted">👤 ${esc(nameOf(p.owner))} 的收藏</p>` : ''}
-      ${mine ? `<div class="row" style="margin:12px 0"><div class="seg grow"><button class="${p.status === 'want' ? 'on' : ''}" onclick="App.quick('${p.id}', {status:'want'})">想去</button><button class="${p.status === 'been' ? 'on' : ''}" onclick="App.quick('${p.id}', {status:'been'})">去過了</button></div>
-        ${p.status === 'been' ? `<div class="stars">${[1, 2, 3, 4, 5].map(n => `<span class="${(p.rating || 0) >= n ? 'on' : ''}" onclick="App.quick('${p.id}', {rating:${n}})">★</span>`).join('')}</div>` : ''}</div>` : ''}
-      <div class="row" style="margin:12px 0">
-        <a href="${mapsUrl(p)}" target="_blank" rel="noopener"><button class="primary">🧭 Google 地圖導航</button></a>
-        ${p.source_url ? `<a href="${esc(p.source_url)}" target="_blank" rel="noopener"><button>📱 原始貼文</button></a>` : ''}
-        ${mine ? `<button onclick="App.editPlace('${p.id}')">✏️ 編輯</button>` : `<button onclick="App.copyToMine('${p.id}')">⭐ 收進我的</button>`}
+    const shareText = `${p.name}${p.branch ? ' ' + p.branch : ''}\n${p.address || area(p)}\n${mapsUrl(p)}`;
+    App.sheet(`<div class="hero-ph">${photo(p)}<button class="icon-btn glass x" onclick="App.close()" aria-label="關閉">${ic('x')}</button></div>
+      <div class="d-name">${esc(p.name)}${p.branch ? `<small>${esc(p.branch)}</small>` : ''}</div>
+      <div class="d-meta">${e} ${esc(p.cuisine || t)}${area(p) ? '・' + esc(area(p)) : ''}${p.price ? '・' + PRICES[p.price] : ''}</div>
+      ${(p.meals || []).length || (p.tags || []).length ? `<div class="tags">${(p.meals || []).map(m => `<span class="tag hot">${MEALS[m]}</span>`).join('')}${(p.tags || []).map(x => `<span class="tag">#${esc(x)}</span>`).join('')}</div>` : ''}
+      <div class="acts">
+        <a class="act primary" href="${mapsUrl(p)}" target="_blank" rel="noopener"><span class="ic">${ic('nav')}</span>導航</a>
+        ${p.source_url ? `<a class="act" href="${esc(p.source_url)}" target="_blank" rel="noopener"><span class="ic">${ic('ext')}</span>原始貼文</a>` : `<button class="act" onclick="App.copy(${esc(JSON.stringify(p.address || p.name))})"><span class="ic">${ic('copy')}</span>複製地址</button>`}
+        <button class="act" onclick="App.shareOut(${esc(JSON.stringify(shareText))})"><span class="ic">${ic('share')}</span>分享</button>
+        ${mine ? `<button class="act" onclick="App.editPlace('${p.id}')"><span class="ic">${ic('edit')}</span>編輯</button>` : `<button class="act" onclick="App.copyToMine('${p.id}')"><span class="ic">${ic('heart')}</span>收進我的</button>`}
       </div>
-      ${p.lat != null ? `<div id="mini" class="minimap"></div>${p.approx ? '<p class="muted">位置是用地址大概找的，可以在「編輯」裡點地圖修正。</p>' : ''}` : mine ? '<p class="muted">還沒有地圖位置，到「編輯」裡點地圖就能補上。</p>' : ''}
-      ${mine && cloud() && S.groups.length ? `<label>分享到群組</label><div class="filters" style="flex-wrap:wrap">${S.groups.map(g => { const on = myGroups.includes(g); return `<span class="chip ${on ? 'on' : ''}" onclick="App.${on ? 'unshare' : 'share'}('${g.id}', ['${p.id}']).then(() => App.openPlace('${p.id}'))">👥 ${esc(g.name)}</span>`; }).join('')}</div>` : ''}
-      ${p.source_text ? `<details style="margin-top:12px"><summary class="muted">原始貼文文字</summary><p style="white-space:pre-wrap;font-size:13px">${esc(p.source_text)}</p></details>` : ''}`);
-    if (p.lat != null) setTimeout(() => App.mini(p, false), 30);
-  },
-  mini(p, editable) {
-    const el = $('#mini'); if (!el) return;
-    const center = p.lat != null ? [p.lat, p.lng] : S.pos ? [S.pos.lat, S.pos.lng] : [25.04, 121.53];
-    const m = L.map(el, { zoomControl: false, attributionControl: false }).setView(center, p.lat != null ? 16 : 12);
-    L.tileLayer(TILES, { maxZoom: 19 }).addTo(m);
-    let mk = p.lat != null ? L.marker(center).addTo(m) : null;
-    if (editable) m.on('click', e => {
-      S.edit.lat = e.latlng.lat; S.edit.lng = e.latlng.lng; S.edit.approx = false;
-      if (mk) mk.setLatLng(e.latlng); else mk = L.marker(e.latlng).addTo(m);
-      $('#pinmsg').textContent = '📍 位置已更新';
-    });
-    S.miniMap = m;
+      ${mine ? `<div style="margin-top:14px"><div class="seg"><button class="${p.status === 'want' ? 'on' : ''}" onclick="App.quick('${p.id}', {status:'want'})">想去</button><button class="${p.status === 'been' ? 'on' : ''}" onclick="App.quick('${p.id}', {status:'been'})">去過了</button></div>
+        ${p.status === 'been' ? `<div class="stars">${[1, 2, 3, 4, 5].map(n => `<button class="${(p.rating || 0) >= n ? 'on' : ''}" onclick="App.quick('${p.id}', {rating:${n}})" aria-label="${n} 星">${ic('star')}</button>`).join('')}</div>` : ''}</div>` : ''}
+      <div class="info">
+        <div>${ic('pin')}<div class="grow">${esc(p.address || area(p) || '沒有地址')}${S.pos && p.lat != null ? `<div class="muted">距離你 ${fmtKm(distKm(S.pos, p))}${p.approx ? '・位置是大概的' : ''}</div>` : p.approx ? '<div class="muted">位置是大概的，可以在編輯裡修正</div>' : ''}</div></div>
+        ${p.hours ? `<div>${ic('clock')}<div class="grow" style="white-space:pre-wrap">${esc(p.hours)}</div></div>` : ''}
+        ${p.note ? `<div>${ic('msg')}<div class="grow">${esc(p.note)}</div></div>` : ''}
+        ${!mine ? `<div>${ic('user')}<div class="grow">${esc(nameOf(p.owner))} 的收藏</div></div>` : ''}
+      </div>
+      ${p.lat != null ? '<div id="mini" class="minimap"></div>' : mine ? '<p class="muted" style="margin-top:12px">還沒有地圖位置，到「編輯」裡點地圖就能補上。</p>' : ''}
+      ${mine && cloud() && S.groups.length ? `<div class="fgroup"><div class="t">分享到群組</div><div class="chips wrap">${S.groups.map(g => { const on = myGroups.includes(g); return `<span class="chip ${on ? 'on' : ''}" onclick="App.${on ? 'unshare' : 'share'}('${g.id}', ['${p.id}']).then(() => App.openPlace('${p.id}', true))">${on ? ic('check') : ic('users')} ${esc(g.name)}</span>`; }).join('')}</div></div>` : ''}
+      ${p.source_text ? `<details style="margin-top:14px"><summary class="muted" style="cursor:pointer">原始貼文文字</summary><p style="white-space:pre-wrap;font-size:13.5px;color:var(--text2)">${esc(p.source_text)}</p></details>` : ''}`, { hero: true, keep: arguments[1] });
+    if (p.lat != null) setTimeout(async () => { S.miniMap = await MapView.mini($('#mini'), p, false); }, 60);
   },
   async quick(id, patch) {
     const p = S.places.find(x => x.id === id);
-    try { await DB.savePlace({ ...p, ...patch }); S.keepScroll = true; App.render(); App.openPlace(id); }
+    buzz(8);
+    if (patch.status === 'been' && p.status !== 'been') FX.confetti(30);
+    try { await DB.savePlace({ ...p, ...patch }); S.keepScroll = true; App.render(); App.openPlace(id, true); }
     catch (e) { toast('儲存失敗：' + e.message); }
   },
   editPlace(id, base = {}) {
-    const p = id ? { ...S.places.find(x => x.id === id) } : { name: '', branch: '', address: '', city: '', district: '', lat: null, lng: null, approx: false, category: 'restaurant', cuisine: '', price: null, meals: [], hours: '', status: 'want', rating: null, note: '', tags: [], source_url: '', source_text: '', ...base };
+    const p = id ? { ...S.places.find(x => x.id === id) } : { name: '', branch: '', address: '', city: '', district: '', lat: null, lng: null, approx: false, category: 'restaurant', cuisine: '', price: null, meals: [], hours: '', status: 'want', rating: null, note: '', tags: [], source_url: '', source_text: '', photo: '', ...base };
     S.edit = p;
-    const f = (k, label, ph = '') => `<label>${label}</label><input value="${esc(p[k] || '')}" placeholder="${ph}" onchange="S.edit.${k}=this.value">`;
-    App.sheet(`<div class="sheet-h"><h2>${id ? '編輯' : '自己新增'}</h2><button class="ghost" onclick="App.close()">✕</button></div>
-      <div class="two"><div>${f('name', '店名 *')}</div><div>${f('branch', '分店')}</div></div>
-      <label>地址</label><div class="row"><input class="grow" id="ed-addr" value="${esc(p.address)}" onchange="S.edit.address=this.value;Object.assign(S.edit, Object.fromEntries(Object.entries(parseAddr(this.value)).filter(([k, v]) => v && !S.edit[k])))"><button onclick="App.geoEdit()">找位置</button></div>
-      <div id="mini" class="minimap"></div><p class="muted" id="pinmsg">點地圖可以放置或移動位置。</p>
+    const f = (k, label, ph = '') => `<label class="field"><span>${label}</span><input value="${esc(p[k] || '')}" placeholder="${ph}" onchange="S.edit.${k}=this.value"></label>`;
+    App.sheet(`<div class="sheet-h"><h2>${id ? '編輯店家' : '自己新增'}</h2><button class="icon-btn" onclick="App.close()" aria-label="關閉">${ic('x')}</button></div>
+      <div class="photo-edit" id="ed-photo">${photo(p)}<label class="btn sm" style="cursor:pointer">${ic('image')} ${p.photo ? '換照片' : '加照片'}<input type="file" accept="image/*" class="hidden" onchange="App.pickPhoto(this.files[0])"></label></div>
+      <div class="two">${f('name', '店名 *')}${f('branch', '分店')}</div>
+      <label class="field"><span>地址</span><div class="row"><input class="grow" id="ed-addr" value="${esc(p.address)}" onchange="S.edit.address=this.value;Object.assign(S.edit, Object.fromEntries(Object.entries(parseAddr(this.value)).filter(([k, v]) => v && !S.edit[k])))"><button class="btn" onclick="App.geoEdit()">${ic('locate')} 找位置</button></div></label>
+      <div id="mini" class="minimap"></div><p class="muted" id="pinmsg" style="margin:6px 2px 0">點地圖可以放置或移動位置。</p>
       <div class="two">
-        <div><label>縣市</label><select onchange="S.edit.city=this.value"><option value="">—</option>${[...new Set([...CITIES, p.city].filter(Boolean))].map(c => `<option ${normCity(p.city) === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></div>
-        <div>${f('district', '區', '大安區')}</div>
-        <div><label>分類</label><select onchange="S.edit.category=this.value">${Object.entries(CATS).map(([k, [t, e]]) => `<option value="${k}" ${p.category === k ? 'selected' : ''}>${e} ${t}</option>`).join('')}</select></div>
-        <div>${f('cuisine', '料理類型', '日式拉麵')}</div>
-        <div><label>每人預算</label><select onchange="S.edit.price=+this.value||null"><option value="">不知道</option>${Object.entries(PRICES).map(([k, t]) => `<option value="${k}" ${+p.price === +k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
-        <div>${f('hours', '營業時間')}</div>
+        <label class="field"><span>縣市</span><select onchange="S.edit.city=this.value"><option value="">—</option>${[...new Set([...CITIES, p.city].filter(Boolean))].map(c => `<option ${normCity(p.city) === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
+        ${f('district', '區', '大安區')}
+        <label class="field"><span>分類</span><select onchange="S.edit.category=this.value">${Object.entries(CATS).map(([k, [t, e]]) => `<option value="${k}" ${p.category === k ? 'selected' : ''}>${e} ${t}</option>`).join('')}</select></label>
+        ${f('cuisine', '料理類型', '日式拉麵')}
+        <label class="field"><span>每人預算</span><select onchange="S.edit.price=+this.value||null"><option value="">不知道</option>${Object.entries(PRICES).map(([k, t]) => `<option value="${k}" ${+p.price === +k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+        ${f('hours', '營業時間')}
       </div>
-      <label>適合時段</label><div class="filters" style="flex-wrap:wrap">${Object.entries(MEALS).map(([k, t]) => `<span class="chip ${p.meals.includes(k) ? 'on' : ''}" onclick="this.classList.toggle('on');S.edit.meals=S.edit.meals.includes('${k}')?S.edit.meals.filter(x=>x!=='${k}'):[...S.edit.meals,'${k}']">${t}</span>`).join('')}</div>
-      <label>筆記</label><textarea rows="2" onchange="S.edit.note=this.value">${esc(p.note)}</textarea>
-      <label>標籤（用空白或逗號分開）</label><input value="${esc((p.tags || []).join(' '))}" onchange="S.edit.tags=this.value.split(/[\\s,，、]+/).filter(Boolean)">
+      <div class="fgroup"><div class="t">適合時段</div><div class="chips wrap">${Object.entries(MEALS).map(([k, t]) => `<span class="chip ${p.meals.includes(k) ? 'on' : ''}" onclick="this.classList.toggle('on');S.edit.meals=S.edit.meals.includes('${k}')?S.edit.meals.filter(x=>x!=='${k}'):[...S.edit.meals,'${k}']">${t}</span>`).join('')}</div></div>
+      <label class="field"><span>筆記</span><textarea rows="2" onchange="S.edit.note=this.value">${esc(p.note)}</textarea></label>
+      <label class="field"><span>標籤（用空白或逗號分開）</span><input value="${esc((p.tags || []).join(' '))}" onchange="S.edit.tags=this.value.split(/[\\s,，、]+/).filter(Boolean)"></label>
       ${f('source_url', '來源連結', 'https://')}
-      <div class="row" style="margin-top:16px">${id ? `<button class="danger" onclick="App.delPlace('${id}')">刪除</button>` : ''}<span class="grow"></span><button onclick="App.close()">取消</button><button class="primary" onclick="App.saveEdit()">儲存</button></div>`);
-    setTimeout(() => App.mini(p, true), 30);
+      <div class="sticky-foot row">${id ? `<button class="btn danger" onclick="App.delPlace('${id}')">${ic('trash')}</button>` : ''}<button class="btn grow" onclick="App.close()">取消</button><button class="btn primary grow" id="ed-save" onclick="App.saveEdit()">儲存</button></div>`);
+    setTimeout(async () => { S.miniMap = await MapView.mini($('#mini'), p, true, ll => { S.edit.lat = ll.lat; S.edit.lng = ll.lng; S.edit.approx = false; $('#pinmsg').textContent = '📍 位置已更新'; }); }, 60);
+  },
+  async pickPhoto(file) {
+    if (!file) return;
+    const box = $('#ed-photo'); box.style.opacity = .6;
+    const url = await Photo.store(file);
+    box.style.opacity = 1;
+    if (!url) return toast('照片存不起來，請再試一次');
+    S.edit.photo = url;
+    box.querySelector('img,.placeholder').outerHTML = photo(S.edit);
   },
   async geoEdit() {
     const e = S.edit; e.address = $('#ed-addr').value;
@@ -750,7 +1045,8 @@ const App = {
     const g = await Geo.locate(e);
     if (!g) { $('#pinmsg').textContent = '找不到，請直接點地圖。'; return; }
     Object.assign(e, { lat: g.lat, lng: g.lng, approx: g.approx, city: e.city || g.city, district: e.district || g.district });
-    S.miniMap?.remove(); App.mini(e, true);
+    S.miniMap?.remove();
+    S.miniMap = await MapView.mini($('#mini'), e, true, ll => { e.lat = ll.lat; e.lng = ll.lng; e.approx = false; $('#pinmsg').textContent = '📍 位置已更新'; });
     $('#pinmsg').textContent = g.approx ? '📍 找到大概位置，可以點地圖修正' : '📍 找到了';
   },
   async saveEdit() {
@@ -758,7 +1054,7 @@ const App = {
     if (!e.name?.trim()) return toast('店名要填');
     e.city = normCity(e.city);
     try {
-      const saved = await DB.savePlace(e); App.close(); toast('已儲存'); S.keepScroll = true; App.render();
+      const saved = await DB.savePlace(e); App.close(); toast('已儲存'); buzz(10); S.keepScroll = true; App.render();
       // 沒點地圖也沒按「找位置」，就在背景用地址補上位置
       if (saved.lat == null && (saved.address || saved.city)) {
         const g = await Geo.locate(saved);
@@ -767,24 +1063,30 @@ const App = {
     } catch (err) { toast('儲存失敗：' + err.message, 5000); }
   },
   async delPlace(id) {
-    if (!confirm('確定刪除這間店？')) return;
-    try { await DB.deletePlace(id); App.close(); S.keepScroll = true; App.render(); }
+    if (!await App.confirm('刪除這間店？', '刪掉之後，群組裡也會一起消失。', '刪除', true)) return;
+    try { await DB.deletePlace(id); App.close(); S.keepScroll = true; App.render(); toast('已刪除'); }
     catch (e) { toast('刪除失敗：' + e.message); }
   },
   async copyToMine(id) {
     const p = { ...S.places.find(x => x.id === id) };
     for (const k of ['id', 'owner', 'created_at', 'updated_at']) delete p[k];
     Object.assign(p, { status: 'want', rating: null });
-    try { const n = await DB.savePlace(p); toast('已收進你的收藏'); App.openPlace(n.id); App.render(); }
+    try { const n = await DB.savePlace(p); buzz(10); toast('已收進你的收藏 💛'); App.render(); App.openPlace(n.id); }
     catch (e) { toast('失敗：' + e.message); }
   },
+  copy(t) { navigator.clipboard?.writeText(t).then(() => toast('已複製'), () => toast('複製失敗')); },
+  shareOut(t) { if (navigator.share) navigator.share({ text: t }).catch(() => {}); else App.copy(t); },
 
   // ----- 抽籤 -----
   drawSet(k, v, multi) {
     const d = S.draw;
     if (multi) d[k] = d[k].includes(v) ? d[k].filter(x => x !== v) : [...d[k], v];
     else d[k] = v;
-    save('food.draw', d); S.keepScroll = true; App.render();
+    buzz(5); save('food.draw', d); S.keepScroll = true; App.render();
+  },
+  async drawNear() {
+    if (S.draw.near) return App.drawSet('near', 0, false);
+    if (await Me.once()) App.drawSet('near', 3, false);
   },
   async doDraw(exclude) {
     const d = S.draw;
@@ -793,52 +1095,51 @@ const App = {
     const fresh = pool.filter(p => !d.recent.slice(0, 5).includes(p.id));
     if (fresh.length) pool = fresh;
     if (!pool.length) return toast('沒有可以抽的店');
-    const box = $('#drawbox'); box.classList.add('rolling');
-    const nameEl = box.querySelector('.draw-name'), emo = box.querySelector('.emo');
+    const slot = $('#slot'), cta = $('#drawcta');
+    slot.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    cta.querySelectorAll('button,a').forEach(b => b.disabled = true);
+    slot.classList.remove('idle', 'win');
     const pick = pool[Math.floor(Math.random() * pool.length)];
-    box.querySelector('button').disabled = true;
-    // 先快後慢地跳名字
-    for (let i = 0, t = 50; i < 16; i++, t *= 1.16) {
-      const p = i === 15 ? pick : pool[Math.floor(Math.random() * pool.length)];
-      nameEl.textContent = p.name; emo.textContent = cat(p)[1];
+    const face = (p, final) => `<div class="ph">${photo(p)}</div><div class="cap"><div class="k">${final ? '今天就吃' : '・・・'}</div><div class="n">${esc(p.name)}</div><div class="m">${cat(p)[1]} ${esc(p.cuisine || cat(p)[0])}${area(p) ? '・' + esc(area(p)) : ''}${p.price ? '・' + PRICES[p.price] : ''}${S.pos && p.lat != null ? '・' + fmtKm(distKm(S.pos, p)) : ''}</div></div>`;
+    // 先快後慢地翻牌
+    const n = Math.min(18, 8 + pool.length * 2);
+    for (let i = 0, t = 60; i < n; i++, t *= 1.13) {
+      const p = i === n - 1 ? pick : pool[Math.floor(Math.random() * pool.length)];
+      slot.innerHTML = face(p, i === n - 1);
+      slot.classList.remove('flip'); void slot.offsetWidth; slot.classList.add('flip');
+      buzz(4);
       await sleep(t);
     }
-    box.classList.remove('rolling');
+    slot.classList.remove('flip'); slot.classList.add('win');
+    buzz([15, 60, 25]); FX.confetti();
     d.recent = [pick.id, ...d.recent.filter(x => x !== pick.id)].slice(0, 10); save('food.draw', d);
-    const [t] = cat(pick);
-    box.innerHTML = `<div class="emo">${cat(pick)[1]}</div><div class="muted" style="margin-top:8px">今天就吃</div>
-      <div class="draw-name">${esc(pick.name)}${pick.branch ? ` <span class="muted" style="font-size:16px">${esc(pick.branch)}</span>` : ''}</div>
-      <div class="meta" style="justify-content:center">${esc([normCity(pick.city), pick.district].filter(Boolean).join(' · '))} · ${t}${pick.price ? ' · ' + PRICES[pick.price] : ''}${S.pos && pick.lat != null ? ' · ' + fmtKm(distKm(S.pos, pick)) : ''}</div>
-      ${pick.note ? `<p>${esc(pick.note)}</p>` : ''}
-      <div class="row" style="justify-content:center;margin-top:14px">
-        <a href="${mapsUrl(pick)}" target="_blank" rel="noopener"><button class="primary">🧭 就這間，導航</button></a>
-        <button onclick="App.doDraw('${pick.id}')">🎲 換一間</button>
-        <button class="ghost" onclick="App.openPlace('${pick.id}')">詳細</button>
-      </div>`;
+    slot.onclick = () => App.openPlace(pick.id);
+    cta.innerHTML = `<a class="btn primary big" href="${mapsUrl(pick)}" target="_blank" rel="noopener">${ic('nav')} 就這間</a><button class="btn big" onclick="App.doDraw('${pick.id}')">${ic('refresh')} 換一間</button>`;
   },
 
   // ----- 帳號 -----
   async auth() {
-    const email = $('#au-email').value.trim(), pw = $('#au-pw').value, err = $('#au-err');
-    err.textContent = '';
+    const email = $('#au-email').value.trim(), pw = $('#au-pw').value, err = $('#au-err'), go = $('#au-go');
+    err.textContent = ''; go.disabled = true;
     try {
       if (S.authMode === 'up') {
         const name = $('#au-name').value.trim();
         if (!name) throw new Error('請填名字');
         const { data, error } = await S.sb.auth.signUp({ email, password: pw, options: { data: { name } } });
         if (error) throw error;
-        if (!data.session) { err.textContent = '帳號建好了，請到信箱點確認信再回來登入。（想省掉這步，可以在 Supabase 關掉 Confirm email）'; S.authMode = 'in'; }
+        if (!data.session) { err.textContent = '帳號建好了，請到信箱點確認信再回來登入。'; S.authMode = 'in'; }
       } else {
         const { error } = await S.sb.auth.signInWithPassword({ email, password: pw });
         if (error) throw error;
       }
     } catch (e) {
       err.textContent = /Invalid login/.test(e.message) ? 'Email 或密碼不對' : /already registered/.test(e.message) ? '這個 Email 已經註冊過，請直接登入' : e.message;
-    }
+      $('.auth .box')?.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-8px)' }, { transform: 'translateX(8px)' }, { transform: 'translateX(0)' }], { duration: 300 });
+    } finally { if (go) go.disabled = false; }
   },
-  async signOut() { await S.sb.auth.signOut(); },
-  async saveName() {
-    const name = $('#myname').value.trim(); if (!name) return;
+  async signOut() { if (await App.confirm('要登出嗎？', '', '登出', true)) await S.sb.auth.signOut(); },
+  async renameMe() {
+    const name = (await App.ask('你的名字', '群組裡的朋友會看到這個名字', S.me?.name))?.trim(); if (!name) return;
     try { await DB.q(S.sb.from('profiles').update({ name }).eq('id', S.user.id)); S.me.name = name; toast('已更新'); App.render(); }
     catch (e) { toast(e.message); }
   },
@@ -849,32 +1150,33 @@ const App = {
   },
 
   // ----- 群組 -----
-  openGroup(id) { S.group = id; S.round = null; App.render(); window.scrollTo(0, 0); },
+  openGroup(id) { S.group = id; S.round = null; S.animate = true; App.render(); window.scrollTo(0, 0); },
   async createGroup() {
-    const name = prompt('群組名稱（例如：大學同學吃貨團）'); if (!name?.trim()) return;
-    try { const g = await DB.q(S.sb.from('groups').insert({ name: name.trim() }).select().single()); await DB.loadAll(); App.openGroup(g.id); App.invite(g.id); }
+    const name = (await App.ask('建立美食群組', '取個名字，例如：大學同學吃貨團'))?.trim(); if (!name) return;
+    try { const g = await DB.q(S.sb.from('groups').insert({ name }).select().single()); await DB.loadAll(); FX.confetti(30); App.openGroup(g.id); App.invite(g.id); }
     catch (e) { toast('建立失敗：' + e.message); }
   },
   invite(gid) {
     const g = S.groups.find(x => x.id === gid);
     const link = `${location.origin}${location.pathname}?join=${g.invite_code}`;
     const text = `來加入我的美食群組「${g.name}」，一起收藏、一起滑卡決定吃什麼 🍜\n${link}`;
-    App.sheet(`<div class="sheet-h"><h2>邀請好友</h2><button class="ghost" onclick="App.close()">✕</button></div>
-      <p>把連結傳給朋友，他們登入後就會加入「${esc(g.name)}」。</p>
-      <input readonly value="${esc(link)}" onclick="this.select()">
-      <p class="muted">或請朋友在「群組 → 輸入邀請碼」輸入：<b style="font-size:18px;letter-spacing:2px">${esc(g.invite_code)}</b></p>
-      <div class="row">${navigator.share ? `<button class="primary" onclick="navigator.share({text: ${esc(JSON.stringify(text))}}).catch(()=>{})">分享…</button>` : ''}
-      <button onclick="navigator.clipboard.writeText(${esc(JSON.stringify(text))}).then(()=>toast('已複製'))">複製邀請</button>
-      <a href="https://line.me/R/share?text=${encodeURIComponent(text)}" target="_blank" rel="noopener"><button>傳到 LINE</button></a></div>`);
+    App.sheet(`<div class="sheet-h"><h2>邀請好友</h2><button class="icon-btn" onclick="App.close()" aria-label="關閉">${ic('x')}</button></div>
+      <p style="margin:0 0 14px;color:var(--text2)">把連結傳給朋友，他們登入後就會加入「${esc(g.name)}」。</p>
+      <div class="card" style="text-align:center"><div class="muted">邀請碼</div><div style="font-size:34px;font-weight:900;letter-spacing:6px;margin:4px 0">${esc(g.invite_code)}</div><div class="muted">朋友也可以在「群組 → 輸入邀請碼」輸入</div></div>
+      <div style="display:grid;gap:10px">
+        <a class="btn big block" style="background:#06c755;color:#fff;box-shadow:none" href="https://line.me/R/share?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">傳到 LINE</a>
+        ${navigator.share ? `<button class="btn primary big block" onclick="navigator.share({text: ${esc(JSON.stringify(text))}}).catch(()=>{})">${ic('share')} 分享到其他 App</button>` : ''}
+        <button class="btn big block" onclick="App.copy(${esc(JSON.stringify(text))})">${ic('copy')} 複製邀請連結</button>
+      </div>`);
   },
-  joinPrompt() { const c = prompt('輸入朋友給你的邀請碼'); if (c?.trim()) App.join(c.trim()); },
+  async joinPrompt() { const c = (await App.ask('輸入邀請碼', '朋友傳給你的 8 碼'))?.trim(); if (c) App.join(c); },
   async join(code) {
-    try { const gid = await DB.rpc('join_group', { code }); await DB.loadAll(); S.tab = 'groups'; S.group = gid; toast(`加入「${S.groups.find(g => g.id === gid)?.name || '群組'}」了 🎉`); App.render(); }
+    try { const gid = await DB.rpc('join_group', { code }); await DB.loadAll(); S.tab = 'groups'; S.group = gid; FX.confetti(40); toast(`加入「${S.groups.find(g => g.id === gid)?.name || '群組'}」了 🎉`); S.animate = true; App.render(); }
     catch (e) { toast('加入失敗：' + e.message, 4000); }
   },
   async leaveGroup(gid) {
     const g = S.groups.find(x => x.id === gid), owner = g.owner === S.user.id;
-    if (!confirm(owner ? `刪除「${g.name}」？所有成員都會看不到這個群組。` : `退出「${g.name}」？`)) return;
+    if (!await App.confirm(owner ? `刪除「${g.name}」？` : `退出「${g.name}」？`, owner ? '所有成員都會看不到這個群組。' : '', owner ? '刪除' : '退出', true)) return;
     try {
       if (owner) await DB.q(S.sb.from('groups').delete().eq('id', gid));
       else await DB.q(S.sb.from('group_members').delete().eq('group_id', gid).eq('user_id', S.user.id));
@@ -884,7 +1186,7 @@ const App = {
   async share(gid, ids, quiet) {
     const rows = ids.filter(id => !S.groupPlaces.some(x => x.group_id === gid && x.place_id === id)).map(place_id => ({ group_id: gid, place_id }));
     if (!rows.length) return;
-    try { const d = await DB.q(S.sb.from('group_places').insert(rows).select()); S.groupPlaces.push(...d); if (!quiet) toast('已分享到群組'); S.keepScroll = true; App.render(); }
+    try { const d = await DB.q(S.sb.from('group_places').insert(rows).select()); S.groupPlaces.push(...d); buzz(8); if (!quiet) toast('已分享到群組'); S.keepScroll = true; App.render(); }
     catch (e) { toast('分享失敗：' + e.message); }
   },
   async unshare(gid, ids) {
@@ -895,10 +1197,14 @@ const App = {
     const have = new Set(S.groupPlaces.filter(x => x.group_id === gid).map(x => x.place_id));
     const mine = S.places.filter(p => isMine(p) && !have.has(p.id));
     S.pick = new Set();
-    App.sheet(`<div class="sheet-h"><h2>從我的收藏加入</h2><button class="ghost" onclick="App.close()">✕</button></div>
-      ${mine.length ? `<div class="row"><button onclick="document.querySelectorAll('.pk').forEach(c=>{c.checked=true;S.pick.add(c.value)})">全選</button><span class="muted">${mine.length} 間還沒分享</span></div>
-      ${mine.map(p => `<label class="row" style="color:var(--text);font-size:15px;margin:6px 0"><input type="checkbox" class="pk" value="${p.id}" style="width:auto" onchange="this.checked?S.pick.add(this.value):S.pick.delete(this.value)"> ${cat(p)[1]} ${esc(p.name)} <span class="muted">${esc(normCity(p.city))}</span></label>`).join('')}
-      <button class="primary big" style="width:100%;margin-top:10px" onclick="App.share('${gid}', [...S.pick]).then(App.close)">加入群組</button>` : '<p class="muted">你的收藏都已經在群組裡了。</p>'}`);
+    const upd = () => { const b = $('#pk-go'); if (b) { b.disabled = !S.pick.size; b.textContent = S.pick.size ? `加入 ${S.pick.size} 間` : '選幾間店'; } };
+    App._pkUpd = upd;
+    App.sheet(`<div class="sheet-h"><h2>從我的收藏加入</h2><button class="icon-btn" onclick="App.close()" aria-label="關閉">${ic('x')}</button></div>
+      ${mine.length ? `<div class="row" style="margin-bottom:6px"><span class="muted grow">${mine.length} 間還沒分享</span><button class="btn sm" onclick="document.querySelectorAll('.cand').forEach((c,i)=>{c.classList.add('on');c.classList.remove('off');S.pick.add(c.dataset.id)});App._pkUpd()">全選</button></div>
+      ${mine.map((p, i) => `<div class="cand off" data-id="${p.id}" style="animation-delay:${Math.min(i, 10) * 40}ms;cursor:pointer;align-items:center" onclick="this.classList.toggle('on');this.classList.toggle('off');S.pick.has('${p.id}')?S.pick.delete('${p.id}'):S.pick.add('${p.id}');App._pkUpd()">
+        <div class="ph" style="position:relative;width:58px;height:58px">${photo(p)}<span class="tick">${ic('check')}</span></div>
+        <div class="grow"><b>${esc(p.name)}</b><div class="muted">${cat(p)[1]} ${esc(area(p))}</div></div></div>`).join('')}
+      <div class="sticky-foot"><button class="btn primary big block" id="pk-go" disabled onclick="App.share('${gid}', [...S.pick]).then(App.close)">選幾間店</button></div>` : '<div class="empty"><p>你的收藏都已經在群組裡了。</p></div>'}`);
   },
   newRound(gid) {
     const ids = new Set(S.groupPlaces.filter(x => x.group_id === gid).map(x => x.place_id));
@@ -906,15 +1212,15 @@ const App = {
     const cities = [...new Set(all.map(p => normCity(p.city)).filter(Boolean))];
     S.nr = { gid, cities: [], cats: [], meal: '', price: 0, max: 15 };
     const chips = (k, items) => items.map(([v, t]) => `<span class="chip" onclick="this.classList.toggle('on');const a=S.nr.${k};const i=a.indexOf('${v}');i<0?a.push('${v}'):a.splice(i,1);App.nrCount()">${t}</span>`).join('');
-    App.sheet(`<div class="sheet-h"><h2>開始滑卡</h2><button class="ghost" onclick="App.close()">✕</button></div>
-      <label>這輪要決定什麼</label><input id="nr-title" placeholder="例如：週五晚餐吃什麼" value="一起決定吃什麼">
-      ${cities.length > 1 ? `<label>地區（不選＝全部）</label><div class="filters" style="flex-wrap:wrap">${chips('cities', cities.map(c => [c, c]))}</div>` : ''}
-      <label>分類（不選＝全部）</label><div class="filters" style="flex-wrap:wrap">${chips('cats', Object.entries(CATS).filter(([k]) => all.some(p => p.category === k)).map(([k, [t, e]]) => [k, e + ' ' + t]))}</div>
-      <label>時段</label><select onchange="S.nr.meal=this.value;App.nrCount()"><option value="">不限</option>${Object.entries(MEALS).map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select>
-      <label>每人預算</label><select onchange="S.nr.price=+this.value;App.nrCount()"><option value="0">不限</option><option value="1">200 內</option><option value="2">500 內</option><option value="3">1000 內</option></select>
-      <label>最多幾張</label><select onchange="S.nr.max=+this.value;App.nrCount()">${[10, 15, 20, 30, 50].map(n => `<option ${n === 15 ? 'selected' : ''}>${n}</option>`).join('')}</select>
-      <p id="nr-count" class="muted"></p>
-      <button class="primary big" style="width:100%" onclick="App.startRound()">開始</button>`);
+    const one = (k, items) => `<div class="chips wrap" data-k="${k}">${items.map(([v, t], i) => `<span class="chip ${i === 0 ? 'on' : ''}" onclick="this.parentNode.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));this.classList.add('on');S.nr.${k}=${JSON.stringify(v).replace(/"/g, '&quot;')};App.nrCount()">${t}</span>`).join('')}</div>`;
+    App.sheet(`<div class="sheet-h"><h2>開始滑卡</h2><button class="icon-btn" onclick="App.close()" aria-label="關閉">${ic('x')}</button></div>
+      <label class="field" style="margin-top:0"><span>這輪要決定什麼</span><input id="nr-title" placeholder="例如：週五晚餐吃什麼" value="一起決定吃什麼"></label>
+      ${cities.length > 1 ? `<div class="fgroup"><div class="t">地區（不選＝全部）</div><div class="chips wrap">${chips('cities', cities.map(c => [c, c]))}</div></div>` : ''}
+      <div class="fgroup"><div class="t">分類（不選＝全部）</div><div class="chips wrap">${chips('cats', Object.entries(CATS).filter(([k]) => all.some(p => p.category === k)).map(([k, [t, e]]) => [k, `<span class="e">${e}</span>${t}`]))}</div></div>
+      <div class="fgroup"><div class="t">時段</div>${one('meal', [['', '不限'], ...Object.entries(MEALS)])}</div>
+      <div class="fgroup"><div class="t">每人預算</div>${one('price', [[0, '不限'], [1, '200 內'], [2, '500 內'], [3, '1000 內']])}</div>
+      <div class="fgroup"><div class="t">最多幾張</div>${one('max', [[15, '15'], [10, '10'], [20, '20'], [30, '30'], [50, '50']])}</div>
+      <div class="sticky-foot"><button class="btn primary big block" id="nr-go" onclick="App.startRound()">開始</button></div>`);
     App.nrCount();
   },
   nrPool() {
@@ -926,7 +1232,7 @@ const App = {
     if (n.price) l = l.filter(p => !p.price || p.price <= n.price);
     return l.sort(() => Math.random() - 0.5).slice(0, n.max);
   },
-  nrCount() { const c = App.nrPool().length; $('#nr-count').textContent = c ? `會有 ${c} 張卡` : '沒有符合條件的店'; },
+  nrCount() { const c = App.nrPool().length, b = $('#nr-go'); if (b) { b.disabled = !c; b.innerHTML = c ? `${ic('heart')} 開始滑 ${c} 張` : '沒有符合條件的店'; } },
   async startRound() {
     const pool = App.nrPool(); if (!pool.length) return toast('沒有符合條件的店');
     const n = S.nr;
@@ -935,28 +1241,53 @@ const App = {
       S.rounds.unshift(r); App.close(); App.openRound(r.id);
     } catch (e) { toast('失敗：' + e.message); }
   },
-  openRound(id) { S.round = id; S.showResult = false; App.render(); window.scrollTo(0, 0); },
+  openRound(id) { S.round = id; S.showResult = false; S.animate = true; App.render(); window.scrollTo(0, 0); },
   async swipe(liked) {
     const card = $('#scard'); if (!card || card.dataset.busy) return;
     card.dataset.busy = 1;
+    buzz(liked ? 12 : 6);
     const pid = card.dataset.id, r = S.rounds.find(x => x.id === S.round);
-    card.style.transition = 'transform .3s, opacity .3s';
-    card.style.transform = `translateX(${liked ? 500 : -500}px) rotate(${liked ? 25 : -25}deg)`; card.style.opacity = 0;
+    card.style.transition = 'transform .35s ease-in, opacity .35s';
+    card.style.transform = `translate(${liked ? 600 : -600}px, 40px) rotate(${liked ? 28 : -28}deg)`; card.style.opacity = 0;
+    card.querySelector(`.stamp.${liked ? 'like' : 'nope'}`).style.opacity = 1;
+    const back = document.querySelector('.scard.back1'); if (back) { back.style.transition = 'transform .3s var(--ease)'; back.style.transform = 'none'; }
     const row = { round_id: r.id, user_id: S.user.id, place_id: pid, liked };
     S.swipes.push(row);
-    if (liked) App.checkMatch(r, pid);
     // 先換下一張，存檔在背景跑，滑起來才不會卡
     DB.q(S.sb.from('swipes').upsert(row)).catch(e => { toast('沒存到，請再滑一次：' + e.message); S.swipes = S.swipes.filter(s => s !== row); App.render(); });
-    await sleep(250); App.render();
+    await sleep(260); App.render();
+    if (liked) App.checkMatch(r, pid);
   },
   checkMatch(r, pid) {
     const m = Swipe.matches(r).find(x => x.p.id === pid);
-    if (m?.all) toast(`💘 配對成功：${m.p.name}！大家都想吃`, 4000);
+    if (m?.all) App.matchShow(m);
   },
+  matchShow(m) {
+    buzz([20, 80, 20, 80, 40]);
+    $('#overlay').innerHTML = `<div class="overlay" onclick="if(event.target===this)App.matchClose()">
+      <div class="ring">${`<div class="ph">${photo(m.p)}</div>`}</div>
+      <h2>配對成功！</h2>
+      <p>大家都想吃 <b>${esc(m.p.name)}</b></p>
+      <div class="avatars" style="margin-bottom:18px">${m.who.map(id => avatar(id, 36)).join('')}</div>
+      <a class="btn big w" href="${mapsUrl(m.p)}" target="_blank" rel="noopener">${ic('nav')} 就去這間</a>
+      <button class="btn big o" onclick="App.matchClose()">繼續滑</button>
+    </div>`;
+    FX.hearts(); FX.confetti(60);
+  },
+  matchClose() { $('#overlay').innerHTML = ''; },
   realtime() {
     if (App._ch) S.sb.removeChannel(App._ch);
     let t;
-    const refresh = () => { clearTimeout(t); t = setTimeout(async () => { const before = new Set(S.rounds.flatMap(r => Swipe.matches(r).filter(x => x.all).map(x => r.id + x.p.id))); await DB.loadAll(); S.keepScroll = true; if (!$('.sheet-bg') && !$('#scard')?.style.transform) App.render(); for (const r of S.rounds) for (const x of Swipe.matches(r)) if (x.all && !before.has(r.id + x.p.id)) toast(`💘 配對成功：${x.p.name}！`, 4000); }, 600); };
+    const refresh = () => {
+      clearTimeout(t);
+      t = setTimeout(async () => {
+        const before = new Set(S.rounds.flatMap(r => Swipe.matches(r).filter(x => x.all).map(x => r.id + x.p.id)));
+        await DB.loadAll(); S.keepScroll = true;
+        const swiping = $('#scard') && $('#scard').style.transform;
+        if (!$('.sheet-bg') && !swiping && S.tab !== 'map') App.render();
+        for (const r of S.rounds) for (const x of Swipe.matches(r)) if (x.all && !before.has(r.id + x.p.id) && !$('#overlay .overlay')) App.matchShow(x);
+      }, 600);
+    };
     App._ch = S.sb.channel('food').on('postgres_changes', { event: '*', schema: 'food', table: 'swipes' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'food', table: 'group_places' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'food', table: 'swipe_rounds' }, refresh).subscribe();
@@ -987,7 +1318,7 @@ const App = {
   async migrateLocal() {
     const list = load('food.places', []);
     try {
-      for (const p of list) { const c = { ...p }; for (const k of ['id', 'owner', 'created_at', 'updated_at']) delete c[k]; await DB.savePlace(c); }
+      for (const p of list) { const c = { ...p }; for (const k of ['id', 'owner', 'created_at', 'updated_at']) delete c[k]; if (c.photo?.startsWith('data:')) c.photo = await Photo.store(c.photo); await DB.savePlace(c); }
       localStorage.removeItem('food.places'); toast(`上傳了 ${list.length} 間`); App.render();
     } catch (e) { toast('上傳失敗：' + e.message, 5000); }
   },
@@ -1003,22 +1334,71 @@ const App = {
     if (ps && !(cloud() && !S.user)) { save('food.pendingShare', ''); App.openAdd(ps); }
   },
 
-  // ----- 抽屜 -----
-  sheet(html) {
+  // ----- 抽屜、對話框 -----
+  sheet(html, { hero = false, keep = false } = {}) {
     S.miniMap?.remove(); S.miniMap = null;
-    $('#sheet').innerHTML = `<div class="sheet-bg" onclick="if(event.target===this)App.close()"><div class="sheet">${html}</div></div>`;
+    const old = $('#sheet .sheet');
+    if (keep && old) {
+      // 同一個抽屜更新內容（例如切換想去／去過），不要重播動畫
+      const st = old.scrollTop; old.className = `sheet ${hero ? 'hero' : ''}`; old.innerHTML = `<div class="grab"></div>${html}`; old.scrollTop = st;
+      App.dragSheet(); return;
+    }
+    $('#sheet').innerHTML = `<div class="sheet-bg" onclick="if(event.target===this)App.close()"><div class="sheet ${hero ? 'hero' : ''}" role="dialog"><div class="grab"></div>${html}</div></div>`;
     document.body.style.overflow = 'hidden';
+    requestAnimationFrame(() => requestAnimationFrame(() => $('.sheet-bg')?.classList.add('in')));
+    App.dragSheet();
   },
-  close() { S.miniMap?.remove(); S.miniMap = null; $('#sheet').innerHTML = ''; document.body.style.overflow = ''; },
+  // 往下拖可以關掉抽屜
+  dragSheet() {
+    const sh = $('#sheet .sheet'), bg = $('.sheet-bg'); if (!sh) return;
+    let y0 = null, dy = 0;
+    const start = e => { if (sh.scrollTop > 0 || e.target.closest('input,textarea,select,.minimap,.chips')) return; y0 = e.touches ? e.touches[0].clientY : e.clientY; dy = 0; };
+    const move = e => {
+      if (y0 == null) return;
+      dy = (e.touches ? e.touches[0].clientY : e.clientY) - y0;
+      if (dy <= 0) { sh.style.transform = ''; return; }
+      sh.classList.add('dragging'); sh.style.transform = `translateY(${dy}px)`; bg.style.opacity = Math.max(.3, 1 - dy / 500);
+      if (e.cancelable) e.preventDefault();
+    };
+    const end = () => {
+      if (y0 == null) return; y0 = null;
+      sh.classList.remove('dragging'); bg.style.opacity = '';
+      if (dy > 110) App.close(); else sh.style.transform = '';
+    };
+    sh.ontouchstart = start; sh.ontouchmove = move; sh.ontouchend = end;
+    sh.querySelector('.grab').onpointerdown = e => { start(e); const mv = ev => move(ev), up = () => { end(); removeEventListener('pointermove', mv); removeEventListener('pointerup', up); }; addEventListener('pointermove', mv); addEventListener('pointerup', up); };
+  },
+  close() {
+    S.miniMap?.remove(); S.miniMap = null;
+    const bg = $('.sheet-bg'); if (!bg) return;
+    bg.classList.remove('in'); const sh = bg.querySelector('.sheet'); sh.style.transform = '';
+    document.body.style.overflow = '';
+    setTimeout(() => { if ($('.sheet-bg') === bg) $('#sheet').innerHTML = ''; }, 320);
+  },
+  dialog(html) {
+    return new Promise(res => {
+      App._dlg = v => { $('#dialog').innerHTML = ''; res(v); };
+      $('#dialog').innerHTML = `<div class="dlg-bg" onclick="if(event.target===this)App._dlg(null)"><div class="dlg">${html}</div></div>`;
+      setTimeout(() => $('#dlg-in')?.focus(), 80);
+    });
+  },
+  ask(title, hint = '', value = '') {
+    return App.dialog(`<h3>${esc(title)}</h3>${hint ? `<p>${esc(hint)}</p>` : ''}<input id="dlg-in" class="input" value="${esc(value)}" onkeydown="if(event.key==='Enter')App._dlg(this.value)">
+      <div class="row"><button class="btn" onclick="App._dlg(null)">取消</button><button class="btn primary" onclick="App._dlg($('#dlg-in').value)">確定</button></div>`);
+  },
+  confirm(title, msg, ok = '確定', danger) {
+    return App.dialog(`<h3>${esc(title)}</h3>${msg ? `<p>${esc(msg)}</p>` : ''}<div class="row"><button class="btn" onclick="App._dlg(false)">取消</button><button class="btn ${danger ? 'dark' : 'primary'}" style="${danger ? 'background:var(--danger);color:#fff' : ''}" onclick="App._dlg(true)">${esc(ok)}</button></div>`);
+  },
 };
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && $('.sheet-bg')) App.close();
+  if (e.key === 'Escape') { if ($('#dialog .dlg')) App._dlg(null); else if ($('#overlay .overlay')) App.matchClose(); else if ($('.sheet-bg')) App.close(); }
   if ($('#scard') && !$('.sheet-bg') && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) {
     if (e.key === 'ArrowRight') App.swipe(true);
     if (e.key === 'ArrowLeft') App.swipe(false);
   }
 });
+addEventListener('scroll', () => $('#top').classList.toggle('scrolled', scrollY > 8), { passive: true });
 
 (async () => {
   S.addGroups = load('food.addGroups', []);

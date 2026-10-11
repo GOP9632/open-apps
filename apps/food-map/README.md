@@ -7,7 +7,8 @@
 ## 功能
 
 - **一鍵導入**：貼上 IG Reels／貼文、Threads、TikTok、Google 地圖連結，或直接貼貼文文字、丟截圖，AI 找出店名、地址、分類、價位、時段。IG 貼文有地點標記時，直接用它的座標。
-- **地圖**：依咖啡廳、餐廳、麵包店等分類顯示，可依縣市篩選、看離我多遠、一鍵 Google 地圖導航。
+- **地圖**：向量地圖顯示你現在的位置，店家用照片當圖釘，下方卡片左右滑會跟著地圖移動；可依分類、縣市篩選，一鍵 Google 地圖導航。
+- **照片**：導入 IG／TikTok 時自動存下貼文封面，也可以自己換照片。
 - **分類**：縣市（台北、桃園、台中…）、分類、想去／去過、評分、筆記、標籤、搜尋。
 - **美食群組**：建立群組、用連結或邀請碼找朋友加入，把收藏分享進群組，也能把朋友的店收進自己的清單。
 - **滑卡配對**：在群組開一輪，每個人各自左滑右滑，大家都想吃的店即時跳出「配對成功」。
@@ -41,11 +42,11 @@
 - `index.html`：版面與樣式
 - `app.js`：全部程式（資料層、導入、地圖、群組、滑卡、抽籤）
 - `config.js`：雲端設定
-- `supabase/schema.sql`：food schema 的資料表、權限（RLS）、加入群組、即時同步
+- `supabase/schema.sql`：food schema 的資料表、權限（RLS）、加入群組、即時同步、店家照片的 Storage bucket（food-photos）
 - `supabase/functions/extract/index.ts`：讀 IG／TikTok／Google 地圖／一般網頁，交給 Groq 找店家
 
 ## 技術
 
-- 地圖：Leaflet + OpenStreetMap 圖資；地址轉座標用 OpenStreetMap Nominatim（免費，台灣門牌常常只對到巷或路，會標「大概位置」，可以在地圖上點修正）。
+- 地圖：MapLibre GL + OpenFreeMap 向量圖資（免費、不用 key，深色模式自動換深色地圖）；地址轉座標用 OpenStreetMap Nominatim（免費，台灣門牌常常只對到巷或路，會標「大概位置」，可以在地圖上點修正）。
 - AI：Groq 免費模型，文字用 `openai/gpt-oss-120b`。截圖要能看圖的模型，Groq 常換：預設的不在時，函式會自動從 Groq 的模型清單挑一個看得懂圖的（2026-10 是 `qwen/qwen3.8-27b`）。也可以在 Supabase Secrets 用 `GROQ_TEXT_MODEL`、`GROQ_VISION_MODEL` 指定。抓店家功能只讓登入的人用，避免 Groq 額度被別人用掉。
 - IG：用搜尋引擎爬蟲的方式讀公開貼文的說明文字和地點標記，不需要登入。私人帳號讀不到，IG 改版也可能失效，這時改貼文字即可。

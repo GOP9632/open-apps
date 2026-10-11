@@ -103,6 +103,21 @@ async function webpage(url: string) {
   return { caption, author: meta(page.html, "og:site_name"), location: null, thumb: meta(page.html, "og:image") };
 }
 
+// 貼文封面：IG 的圖片網址過幾天就失效，所以抓下來交給 app 存到自己的 Storage
+async function inlineImage(url: string) {
+  if (!url) return "";
+  try {
+    const r = await fetch(url, { headers: { "User-Agent": BOT_UA } });
+    const type = r.headers.get("content-type") ?? "";
+    if (!r.ok || !type.startsWith("image/")) return "";
+    const b = new Uint8Array(await r.arrayBuffer());
+    if (b.length > 3_000_000) return "";
+    let bin = "";
+    for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000));
+    return `data:${type.split(";")[0]};base64,${btoa(bin)}`;
+  } catch { return ""; }
+}
+
 async function groq(messages: unknown[], model: string) {
   if (!GROQ_KEY) throw new Error("伺服器還沒設定 GROQ_API_KEY");
   const r = await fetch(`${GROQ_BASE}/chat/completions`, {
@@ -173,7 +188,8 @@ export async function extract(body: { url?: string; text?: string; image?: strin
     const hit = places.length === 1 ? places[0] : places.find((p) => String(loc.name ?? "").includes(String(p.name)));
     if (hit && hit.lat == null) Object.assign(hit, { lat: loc.lat, lng: loc.lng, address: hit.address || loc.address || "" });
   }
-  return { source: { url: src.url, author: src.author ?? "", caption: String(src.caption ?? "").slice(0, 3000), thumb: src.thumb ?? "" }, places };
+  const thumb = String(src.thumb ?? "");
+  return { source: { url: src.url, author: src.author ?? "", caption: String(src.caption ?? "").slice(0, 3000), thumb, thumbData: await inlineImage(thumb) }, places };
 }
 
 Deno.serve(async (req) => {
