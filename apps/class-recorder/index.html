@@ -557,12 +557,14 @@ const effChat = () => useCloud() ? 'cloud' : S.chatProvider || S.summaryProvider
 const llmKey = () => keyFor(effSummary());
 const needWhat = () => useCloud() ? '先登入（左下角「🔑 登入」），就能免費使用 AI。' : '先到設定填入 AI 的 API key。';
 // schema 只有 Gemini 用得到；其他服務改用文字說明格式
-async function callLLM(prompt, { schema, shape, provider = effSummary(), model, kind = 'notes' } = {}) {
+// small：雲端 Gemini 當天額度用完、改用 Groq 時用的短版 prompt
+async function callLLM(prompt, { schema, shape, provider = effSummary(), model, kind = 'notes', small } = {}) {
   const p = provider;
   if (p === 'cloud') {
     const backend = (await Cloud.getStatus())[kind];
-    if (schema && backend !== 'gemini') prompt += '\n\n只輸出 JSON，不要任何其他文字，格式如下：\n' + shape;
-    return (await Cloud.call({ task: 'llm', kind, prompt, schema: backend === 'gemini' ? schema : undefined })).text || '';
+    const fmtNote = schema ? '\n\n只輸出 JSON，不要任何其他文字，格式如下：\n' + shape : '';
+    if (backend !== 'gemini') prompt += fmtNote;
+    return (await Cloud.call({ task: 'llm', kind, prompt, schema: backend === 'gemini' ? schema : undefined, groqPrompt: backend === 'gemini' && small ? small + fmtNote : undefined })).text || '';
   }
   model ||= { openai: 'gpt-5-mini', anthropic: 'claude-haiku-5-5', gemini: S.geminiModel, groq: 'openai/gpt-oss-120b' }[p];
   if (schema && p !== 'gemini') prompt += '\n\n只輸出 JSON，不要任何其他文字，格式如下：\n' + shape;
@@ -614,16 +616,16 @@ const NOTES_SCHEMA = obj({
 const NOTES_SHAPE = '{"overview":"...","keywords":["..."],"actionItems":[{"text":"...","start":123}],"outline":[{"start":0,"title":"...","bullets":["..."]}],"glossary":[{"term":"...","meaning":"..."}],"unclear":[{"text":"...","start":456}],"questions":[{"q":"...","a":"..."}]}';
 
 // Groq 免費方案每分鐘只收約 8000 token：太長的逐字稿平均抽樣到放得下
-async function notesTranscript(s) {
+async function notesTranscript(s, forceSmall) {
   const full = transcriptText(s, { sec: true });
-  const groq = effSummary() === 'groq' || (effSummary() === 'cloud' && (await Cloud.getStatus()).notes === 'groq');
+  const groq = forceSmall || effSummary() === 'groq' || (effSummary() === 'cloud' && (await Cloud.getStatus()).notes === 'groq');
   if (!groq || full.length <= 5000) return full;
   const lines = full.split('\n'), k = Math.ceil(full.length / 5000);
   return '（逐字稿太長，以下是平均抽出的片段）\n' + lines.filter((_, i) => i % k === 0).join('\n');
 }
 async function makeNotes(s) {
   const bms = s.bookmarks.map(b => `[${fmt(b.t)}] ${b.label}`).join('\n') || '（無）';
-  const prompt = `你是幫大學生整理上課筆記的助教。下面是一段錄音的逐字稿，每行開頭是 [時間|秒數] 說話者：內容（可能有辨識錯字，請依上下文理解）。
+  const build = tr => `你是幫大學生整理上課筆記的助教。下面是一段錄音的逐字稿，每行開頭是 [時間|秒數] 說話者：內容（可能有辨識錯字，請依上下文理解）。
 請用台灣繁體中文整理成 JSON。規則：不要開場白或問候；不要用 LaTeX 或 $ 符號，數學式寫成一般文字（例如 p < 0.05、α）；用台灣慣用詞（例如迴歸、變異數）；英文術語保留原文。所有 start 欄位填那句話開頭「|」後面的秒數，對不到就填 -1。
 - overview：3 到 5 句的概述，說這段在講什麼、結論是什麼
 - keywords：5 到 10 個關鍵字，必須是逐字稿裡原樣出現過的詞
@@ -637,8 +639,9 @@ async function makeNotes(s) {
 ${bms}
 
 逐字稿：
-${await notesTranscript(s)}`;
-  const n = parseJSON(await toTW(await callLLM(prompt, { schema: NOTES_SCHEMA, shape: NOTES_SHAPE, model: S.summaryModel })));
+${tr}`;
+  const small = effSummary() === 'cloud' ? build(await notesTranscript(s, true)) : undefined;
+  const n = parseJSON(await toTW(await callLLM(build(await notesTranscript(s)), { schema: NOTES_SCHEMA, shape: NOTES_SHAPE, model: S.summaryModel, small })));
   const list = x => Array.isArray(x) ? x : [];
   const t = x => Number.isFinite(+x) ? +x : -1;
   return {

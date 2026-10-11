@@ -2,7 +2,7 @@
 // 部署：Supabase 後台 → Edge Functions → Deploy a new function → 名稱填 recorder-ai → 整份貼上 → Deploy
 // Secrets（Edge Functions → Secrets）：
 //   GROQ_API_KEY    必填（美食收藏已經設過就不用再設）。沒有 Gemini 時用它轉寫（不分講者）和問答
-//   GEMINI_API_KEY  建議填，要用「沒綁帳單」的 Google 專案產生的免費 key。有它才分得出老師和學生
+//   GEMINI_API_KEY  建議填，要用「沒綁帳單」的 Google 專案產生的免費 key。有它才分得出老師和學生；當天免費次數用完會自動改用 Groq
 //   選填：GEMINI_MODEL、GROQ_CHAT_MODEL、DAILY_AUDIO_MIN（每人每天可轉寫幾分鐘，預設 120）、
 //        DAILY_AI_CALLS（每人每天 AI 筆記加問答幾次，預設 60）、GLOBAL_AUDIO_MIN（全部人加起來每天幾分鐘，預設 480）
 
@@ -90,9 +90,18 @@ function b64ToBytes(b64: string) {
 const wavSeconds = (b64: string) => Math.max(1, (b64.length * 3 / 4 - 44) / 32000);
 
 type Seg = { start: number; end: number; text: string; label?: string | null };
-async function transcribe(body: { audio: string; glossary?: string[]; teacherSample?: string; language?: string }): Promise<{ segments: Seg[]; engine: string }> {
-  const words = (body.glossary ?? []).map(String).filter(Boolean).slice(0, 60);
+type TBody = { audio: string; glossary?: string[]; teacherSample?: string; language?: string };
+// 免費 Gemini 每天次數有限，用完（429）就改用 Groq 繼續轉，只是不分講者
+async function transcribe(body: TBody) {
   if (GEMINI_KEY) {
+    try { return await transcribeGemini(body); } catch (e) { if (!(GROQ_KEY && e instanceof HttpError && e.status === 429)) throw e; }
+  }
+  return await transcribeGroq(body);
+}
+
+async function transcribeGemini(body: TBody): Promise<{ segments: Seg[]; engine: string }> {
+  const words = (body.glossary ?? []).map(String).filter(Boolean).slice(0, 60);
+  {
     let instr = "請把上課錄音逐字轉寫成台灣繁體中文，英文詞保留英文原文、不要翻譯，不要摘要或省略。用台灣慣用詞（例如迴歸、變異數、程式、影片）。依說話者與句子切段，每段給 start、end（相對於這段錄音開頭的秒數）、speaker、text。";
     instr += body.teacherSample ? "第一段音檔是老師的聲音樣本，只用來辨認誰是老師，不要轉寫。上課錄音裡老師的 speaker 一律寫「老師」，其他人寫「學生A」「學生B」依此類推。" : "speaker 用「A」「B」「C」區分不同的人。";
     if (words.length) instr += "可能出現的專有名詞：" + words.join("、") + "。";
@@ -105,6 +114,10 @@ async function transcribe(body: { audio: string; glossary?: string[]; teacherSam
     try { arr = JSON.parse(txt); } catch { throw new HttpError(502, "Gemini 回傳的格式看不懂：" + txt.slice(0, 200)); }
     return { engine: "gemini", segments: arr.map((x) => ({ start: +x.start || 0, end: +x.end || +x.start || 0, text: x.text, label: x.speaker || null })) };
   }
+}
+
+async function transcribeGroq(body: TBody): Promise<{ segments: Seg[]; engine: string }> {
+  const words = (body.glossary ?? []).map(String).filter(Boolean).slice(0, 60);
   const f = new FormData();
   f.append("file", new Blob([b64ToBytes(body.audio)], { type: "audio/wav" }), "chunk.wav");
   f.append("model", GROQ_WHISPER_MODEL);
@@ -118,10 +131,12 @@ async function transcribe(body: { audio: string; glossary?: string[]; teacherSam
   return { engine: "groq", segments: segs };
 }
 
-async function llm(body: { kind?: string; prompt: string; schema?: unknown }) {
+async function llm(body: { kind?: string; prompt: string; schema?: unknown; groqPrompt?: string }) {
   const b = backends()[body.kind === "notes" ? "notes" : "chat"];
-  if (b === "gemini") return { text: await gemini([{ text: body.prompt }], body.schema), backend: b };
-  return { text: await groqChat(String(body.prompt).slice(0, 60000)), backend: b };
+  if (b === "gemini") {
+    try { return { text: await gemini([{ text: body.prompt }], body.schema), backend: b }; } catch (e) { if (!(GROQ_KEY && e instanceof HttpError && e.status === 429)) throw e; }
+  }
+  return { text: await groqChat(String(b === "gemini" && body.groqPrompt || body.prompt).slice(0, 60000)), backend: "groq" };
 }
 
 Deno.serve(async (req) => {

@@ -32,7 +32,7 @@
 3. Edge Functions → Deploy a new function → 名稱 `recorder-ai` → 貼上 `supabase/functions/recorder-ai/index.ts` → Deploy，然後把 **Verify JWT** 關掉（函式自己會檢查登入）
 4. Edge Functions → Secrets：
    - `GROQ_API_KEY`：美食收藏已經設過，不用再設。只有它的話，轉寫用 Groq Whisper，**分不出老師和學生**
-   - `GEMINI_API_KEY`（建議）：用「沒綁帳單」的 Google 帳號到 https://aistudio.google.com/apikey 產生，有它才分得出講者。不要用綁了預付帳單的那把
+   - `GEMINI_API_KEY`（建議）：用「沒綁帳單」的 Google 帳號到 https://aistudio.google.com/apikey 產生，有它才分得出講者。不要用綁了預付帳單的那把。免費 Gemini 每天次數有限，用完當天會自動改用 Groq 繼續轉寫（那幾段不分講者），隔天恢復
    - 選填：`DAILY_AUDIO_MIN`（每人每天轉寫分鐘，預設 120）、`DAILY_AI_CALLS`（每人每天筆記加問答次數，預設 60）、`GLOBAL_AUDIO_MIN`（全部人每天總分鐘，預設 480）
 
 `config.js` 只放網址和 publishable key（本來就是公開的），不要放 secret key。
