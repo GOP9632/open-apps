@@ -1,6 +1,6 @@
 // 網路優先，斷線時用快取打開 app（資料在雲端或 localStorage）
-const CACHE = 'food-map-v3';
-const FILES = ['./', './index.html', './app.js', './config.js', './manifest.json', './icon.svg'];
+const CACHE = 'food-map-v4';
+const FILES = ['./', './index.html', './app.js', './config.js', './manifest.json', './icon.svg', './apple-touch-icon.png'];
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 self.addEventListener('fetch', e => {
