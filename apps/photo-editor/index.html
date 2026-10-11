@@ -145,6 +145,32 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   #panel .items{flex-wrap:wrap;overflow:visible}
   #panel .tabs{order:-1;border-top:0;border-bottom:1px solid var(--line);margin-bottom:10px}
 }
+/* 拼貼、範本（collage.js） */
+#empty .two{display:flex;gap:10px}
+#empty .two .big{flex:1}
+#cg{position:fixed;inset:0;z-index:7;background:var(--bg);display:none;flex-direction:column}
+#cg.on{display:flex}
+#cgStage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}
+#cgCanvas{display:block;box-shadow:0 6px 28px rgba(0,0,0,.45);touch-action:none}
+.cgbtn{height:36px;padding:0 14px;border-radius:18px;background:var(--panel2);color:var(--text);font-weight:600;margin-right:6px}
+.cgp{background:var(--panel);border-radius:18px 18px 0 0;padding:10px 0 calc(var(--safe-b) + 4px)}
+.it.lo .ic{color:#8a8a93}
+.it.lo.on .ic{color:var(--accent)}
+.it.lo .ic svg{fill:none}
+.it.lo .ic polygon{stroke:none}
+.it.tp{width:auto;min-width:64px}
+.it.tp .ic{height:74px;border-radius:8px;overflow:hidden;background:#fff}
+.it.tp .ic canvas{width:100%;height:100%;display:block}
+.it.tp span:last-child{max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.it.ft .ic canvas{border-radius:12px}
+@media (min-width:900px){
+  #cg.on{display:grid;grid-template-columns:minmax(0,1fr) 380px;grid-template-rows:auto minmax(0,1fr)}
+  #cg .top{grid-column:1/-1}
+  #cgStage{grid-column:1;grid-row:2}
+  .cgp{grid-column:2;grid-row:2;min-height:0;overflow-y:auto;border-radius:18px 0 0 0;display:flex;flex-direction:column}
+  .cgp .items{flex-wrap:wrap;overflow:visible}
+  .cgp .tabs{order:-1;border-top:0;border-bottom:1px solid var(--line);margin-bottom:10px}
+}
 </style>
 </head>
 <body>
@@ -176,6 +202,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
       <p>修圖、濾鏡、美顏、去背、消除，全部免費。<br>照片只在你的裝置上處理，不會上傳。</p>
       <button class="big" id="bPick">選一張照片</button>
       <button class="big alt" id="bCam">拍照</button>
+      <div class="two"><button class="big alt" id="bCollage">拼貼</button><button class="big alt" id="bTpl">範本</button></div>
       <small>電腦上也可以直接把照片拖進來或貼上。</small>
     </div>
   </main>
@@ -211,6 +238,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 <input type="file" id="cam" accept="image/*" capture="environment" hidden>
 <input type="color" id="colorPick" hidden>
 <input type="file" id="file2" accept="image/*" hidden>
+<input type="file" id="fileMulti" accept="image/*" multiple hidden>
 <input type="file" id="file3" accept="image/*" hidden>
 <div id="toast"></div>
 <div id="busy"><div id="busyText">處理中…</div></div>

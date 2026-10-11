@@ -12,6 +12,7 @@ import { SKIN, WRINKLE, SKIN_P0, skinOn, skinKey, prepSkin, SkinFx, skinNote } f
 import { BODY, BODY_P0, bodyOn, detectBody, measureBody, bodyWarps, bodyNote } from './body.js';
 import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } from './faceshape.js';
 import { WarpField } from './warpfield.js';
+import { initCollage, openCollage } from './collage.js';
 import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightAnchor } from './relight.js';
 
 const $ = s => document.querySelector(s);
@@ -74,6 +75,7 @@ const I = {
   bulb: '<svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/></svg>',
   flash: '<svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>',
   copy: '<svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>',
+  grid: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="18" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>',
   off: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>',
 };
 
@@ -946,6 +948,10 @@ function frameThumb(f) {
 }
 function tabFrame(box) {
   hideSlider();
+  box.append(item({ label: '拼貼範本', icon: I.grid, onclick: async () => {
+    busy('準備中…'); let c; try { c = await compose(); } finally { busy(); render(); }
+    openCollage('tpl', [c]);
+  } }));
   box.append(item({ label: '無', icon: I.off, on: !P.frame, onclick: () => { P.frame = ''; layout(); commit(); showTab('frame'); } }));
   FRAMES.forEach(f => box.append(item({
     label: f.name, cls: 'ft', on: P.frame === f.id, style: `background-image:url(${frameThumb(f)});background-size:contain;background-repeat:no-repeat`,
@@ -1171,42 +1177,47 @@ $('#stage').addEventListener('pointerdown', e => {
 });
 
 // ---------- 儲存 ----------
+// 把目前的成品（含邊框、貼紙、文字）畫成一張 canvas，存檔和「拼貼／範本」共用
+async function compose() {
+  draw();
+  const W = base.canvas.width, H = base.canvas.height, gl = $('#gl'), f = P.frame ? frameById(P.frame) : null;
+  const g = f ? f.geom(W, H) : { W, H, x: 0, y: 0 };
+  // iPhone 的 canvas 最大約 1600 萬像素，邊框加大後超過就整張等比縮小
+  const sc = Math.min(1, Math.sqrt(16e6 / (g.W * g.H)));
+  const out = newCanvas(g.W * sc, g.H * sc), ctx = out.getContext('2d');
+  ctx.scale(sc, sc);
+  if (f) drawFrame(ctx, f, W, H, gl, (c, gg) => c.drawImage(gl, gg.x, gg.y, W, H));
+  else ctx.drawImage(gl, 0, 0);
+  ctx.save(); ctx.beginPath(); ctx.rect(g.x, g.y, W, H); ctx.clip(); ctx.translate(g.x, g.y);
+  for (const s of stickers) {
+    const w = s.size * W;
+    ctx.save(); ctx.globalAlpha = s.op; ctx.translate(s.x * W, s.y * H); ctx.rotate(s.rot); if (s.flip) ctx.scale(-1, 1);
+    if (s.kind === 'emoji') {
+      ctx.font = `${w * 0.82}px ${EMOJI_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(s.v, 0, 0);
+    } else {
+      const h = w / stickerById(s.v).ar;
+      ctx.drawImage(await stickerImage(s.v), -w / 2, -h / 2, w, h);
+    }
+    ctx.restore();
+  }
+  for (const t of texts) {
+    const fs = t.size * W;
+    ctx.font = `700 ${fs}px ${FONTS[t.font][0]}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const lines = (t.text || '').split('\n'), lh = fs * 1.2, y0 = t.y * H - (lines.length - 1) * lh / 2;
+    lines.forEach((ln, i) => {
+      if (t.stroke) { ctx.lineWidth = fs / 8; ctx.lineJoin = 'round'; ctx.strokeStyle = strokeColor(t.color); ctx.strokeText(ln, t.x * W, y0 + i * lh); }
+      ctx.fillStyle = t.color; ctx.fillText(ln, t.x * W, y0 + i * lh);
+    });
+  }
+  ctx.restore();
+  return out;
+}
 async function save() {
   if (!base) return;
   busy('輸出中…');
   try {
-    draw();
-    const W = base.canvas.width, H = base.canvas.height, gl = $('#gl'), f = P.frame ? frameById(P.frame) : null;
-    const g = f ? f.geom(W, H) : { W, H, x: 0, y: 0 };
-    // iPhone 的 canvas 最大約 1600 萬像素，邊框加大後超過就整張等比縮小
-    const sc = Math.min(1, Math.sqrt(16e6 / (g.W * g.H)));
-    const out = newCanvas(g.W * sc, g.H * sc), ctx = out.getContext('2d');
-    ctx.scale(sc, sc);
-    if (f) drawFrame(ctx, f, W, H, gl, (c, gg) => c.drawImage(gl, gg.x, gg.y, W, H));
-    else ctx.drawImage(gl, 0, 0);
-    ctx.save(); ctx.beginPath(); ctx.rect(g.x, g.y, W, H); ctx.clip(); ctx.translate(g.x, g.y);
-    for (const s of stickers) {
-      const w = s.size * W;
-      ctx.save(); ctx.globalAlpha = s.op; ctx.translate(s.x * W, s.y * H); ctx.rotate(s.rot); if (s.flip) ctx.scale(-1, 1);
-      if (s.kind === 'emoji') {
-        ctx.font = `${w * 0.82}px ${EMOJI_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(s.v, 0, 0);
-      } else {
-        const h = w / stickerById(s.v).ar;
-        ctx.drawImage(await stickerImage(s.v), -w / 2, -h / 2, w, h);
-      }
-      ctx.restore();
-    }
-    for (const t of texts) {
-      const fs = t.size * W;
-      ctx.font = `700 ${fs}px ${FONTS[t.font][0]}`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const lines = (t.text || '').split('\n'), lh = fs * 1.2, y0 = t.y * H - (lines.length - 1) * lh / 2;
-      lines.forEach((ln, i) => {
-        if (t.stroke) { ctx.lineWidth = fs / 8; ctx.lineJoin = 'round'; ctx.strokeStyle = strokeColor(t.color); ctx.strokeText(ln, t.x * W, y0 + i * lh); }
-        ctx.fillStyle = t.color; ctx.fillText(ln, t.x * W, y0 + i * lh);
-      });
-    }
-    ctx.restore();
+    const out = await compose();
     const png = P.bg === 'clear';
     const blob = await new Promise(r => out.toBlob(r, png ? 'image/png' : 'image/jpeg', 0.95));
     const name = `隨手修-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.${png ? 'png' : 'jpg'}`;
@@ -1227,6 +1238,12 @@ $('#bSave').onclick = save;
 $('#bPick').onclick = () => $('#file').click();
 $('#bOpen').onclick = () => $('#file').click();
 $('#bCam').onclick = () => $('#cam').click();
+// 拼貼、範本：一次選多張照片
+let multiFor = 'grid';
+$('#bCollage').onclick = () => { multiFor = 'grid'; $('#fileMulti').click(); };
+$('#bTpl').onclick = () => { multiFor = 'tpl'; $('#fileMulti').click(); };
+$('#fileMulti').onchange = e => { const f = [...e.target.files]; e.target.value = ''; if (f.length) openCollage(multiFor, f); };
+initCollage({ loadFile, toast, busy });
 ['#file', '#cam'].forEach(s => $(s).onchange = e => { loadFile(e.target.files[0]); e.target.value = ''; });
 addEventListener('dragover', e => e.preventDefault());
 addEventListener('drop', e => { e.preventDefault(); const f = [...e.dataTransfer.files].find(f => f.type.startsWith('image/')); if (f) loadFile(f); });
