@@ -13,6 +13,8 @@
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif}
 button,select,input,textarea{font:inherit;color:inherit}
+/* iPhone 會把小於 16px 的輸入框自動放大，而且不會縮回來，所以輸入框一律 16px 以上 */
+select,input,textarea{font-size:16px}
 button{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
 button:hover{border-color:var(--accent)}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -73,7 +75,7 @@ details.fset summary{cursor:pointer;font-weight:600}
 .sess-layout.one{grid-template-columns:minmax(0,1fr)}
 .title-input{font-size:22px;font-weight:700;border:0;padding:4px 0;background:transparent;border-radius:0}
 .title-input:focus{outline:none;border-bottom:2px solid var(--accent)}
-.folder-sel{width:auto;padding:3px 8px;font-size:13px}
+.folder-sel{width:auto;padding:3px 8px}
 .speakers,.kws{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px}
 .spk{display:inline-flex;gap:6px;align-items:center;border-radius:99px;padding:3px 10px 3px 3px;font-size:13px}
 .av{width:24px;height:24px;border-radius:50%;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none}
@@ -179,7 +181,6 @@ details.menu summary:hover{background:var(--accent-soft)}
   .player .ptime{font-size:12px}
   .big-time{font-size:44px}
   .seg-text{padding-left:0}
-  input,select,textarea{font-size:16px}
 }
 </style>
 </head>
