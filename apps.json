@@ -30,5 +30,14 @@
       "打開 build 資料夾裡的 Mop.app，想常用就拖進「應用程式」"
     ],
     "guide": "https://github.com/GOP9632/open-apps/tree/main/apps/mac-cleaner"
+  },
+  {
+    "name": "隨手修",
+    "icon": "📸",
+    "like": "美圖秀秀、醒圖",
+    "desc": "調色、濾鏡、磨皮美白、瘦臉大眼、去背換底色、加文字，原尺寸匯出沒有浮水印。照片只在裝置上處理。",
+    "type": "web",
+    "url": "https://gop9632.github.io/open-apps/apps/photo-editor/",
+    "guide": "https://github.com/GOP9632/open-apps/tree/main/apps/photo-editor"
   }
 ]

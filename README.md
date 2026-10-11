@@ -7,6 +7,7 @@
 | [課堂錄音](apps/class-recorder/) | Otter、Notta、Plaud | 第一版原型 | https://gop9632.github.io/open-apps/apps/class-recorder/ |
 | [美食收藏](apps/food-map/) | Yaay | 第一版 | https://gop9632.github.io/open-apps/apps/food-map/ |
 | [Mop](apps/mac-cleaner/) | CleanMyMac、DaisyDisk | 第一版 | Mac App，見資料夾說明 |
+| [隨手修](apps/photo-editor/) | 美圖秀秀、醒圖 | 第一版 | https://gop9632.github.io/open-apps/apps/photo-editor/ |
 
 規劃文件放在 `docs/plans/`。
 
