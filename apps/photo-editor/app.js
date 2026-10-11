@@ -8,6 +8,7 @@ import { GRADE_P0, gradeOn, gradeFn, gradeKey, tabGrade, gradeHide } from './gra
 import { HAIR, HAIR_P0, DYES, HairFx, prepHair, hairWarps, hairNeedsSeg, hairColorOn } from './hair.js';
 import { tabErase, eraseLeave } from './erase.js';
 import { makeupLayer, makeupTab } from './makeup.js';
+import { SKIN, WRINKLE, SKIN_P0, skinOn, skinKey, prepSkin, SkinFx, skinNote } from './skin.js';
 import { BODY, BODY_P0, bodyOn, detectBody, measureBody, bodyWarps, bodyNote } from './body.js';
 import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } from './faceshape.js';
 import { WarpField } from './warpfield.js';
@@ -29,6 +30,7 @@ const P0 = {
   mk: {}, mkLook: -1, mkLookAmt: 100,
   ...BODY_P0,
   ...GRADE_P0,
+  ...SKIN_P0,
 };
 
 const I = {
@@ -297,12 +299,29 @@ let hairFx = null, hairKey = '', hairFor = null;
 function syncHair() {
   const want = hairColorOn(P) && base.hair;
   const key = want ? HAIR_P0_KEYS.map(k => P[k]).join('|') : '';
-  if (hairFor === base && key === hairKey) return;
-  const first = hairFor !== base;
-  hairFor = base; hairKey = key;
-  if (want) { hairFx ||= new HairFx(); R.setImage(hairFx.apply(base.canvas, base.hair, P)); }
-  else if (!first) R.setImage(base.canvas);
+  const sWant = skinOn(P) && base.skin;
+  const sKey = sWant ? skinKey(P) : '';
   if (hairNeedsSeg(P) && !base.hair) getHair(base);
+  if (skinOn(P) && !base.skin) getSkin(base);
+  if (hairFor === base && key === hairKey && sKey === skinKeyNow) return;
+  const first = hairFor !== base;
+  hairFor = base; hairKey = key; skinKeyNow = sKey;
+  // 先改頭髮，再改膚質，最後交給主管線
+  let img = base.canvas;
+  if (want) { hairFx ||= new HairFx(); img = hairFx.apply(base.canvas, base.hair, P); }
+  if (sWant) { skinFx ||= new SkinFx(); img = skinFx.apply(img, base.skin, P, key); }
+  if (want || sWant || !first) R.setImage(img);
+}
+// 膚質、祛皺：要皮膚分割和臉，同一張照片只準備一次
+let skinFx = null, skinKeyNow = '';
+function getSkin(b) {
+  b.skinP ||= Promise.all([getSeg(b), findFaces()]).then(([s, f]) => {
+    if (!s) { b.skinP = null; return null; }
+    b.skin = prepSkin(b.canvas, s, f || []);
+    if (b === base) { hairFor = null; render(); if (tab === 'skin') showTab('skin'); }
+    return b.skin;
+  }).catch(e => { console.warn(e); b.skinP = null; return null; });
+  return b.skinP;
 }
 const HAIR_P0_KEYS = Object.keys(HAIR_P0);
 function getHair(b) {
@@ -470,7 +489,7 @@ function showTab(t) {
   $('#note').textContent = ''; $('#textedit').hidden = true; $('#cats').hidden = true;
   gradeHide();
   if (!base) return;
-  ({ grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, hair: tabHair, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
+  ({ grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, hair: tabHair, skin: tabSkin, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && P.light >= 0);
 }
@@ -549,6 +568,22 @@ function tabBeauty(box) {
       render();
     });
   } else paramItems(box, BEAUTY, 'smooth');
+}
+
+// ---------- 膚質、祛皺 ----------
+let skSec = 'skin';
+function tabSkin(box) {
+  if (!base.faces) findFaces();
+  if (!base.skin) getSkin(base);
+  const list = skSec === 'skin' ? SKIN : WRINKLE;
+  // 上面一排：膚質、祛皺兩類（跟醒圖美顏面板的分類一樣）
+  const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
+  [['skin', '膚質', SKIN], ['wrinkle', '祛皺', WRINKLE]].forEach(([s, lb, l]) => cats.append(item({
+    label: lb, icon: lb, cls: 'wide', on: skSec === s, set: l.some(x => isSet(x[0])),
+    onclick: () => { skSec = s; cur = l[0][0]; showTab('skin'); },
+  })));
+  paramItems(box, list, list[0][0]);
+  $('#note').textContent = skinNote(base, cur);
 }
 
 // ---------- 身體 ----------
