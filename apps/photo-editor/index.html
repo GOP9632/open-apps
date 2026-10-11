@@ -132,10 +132,10 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 #busy div{background:var(--panel);padding:16px 20px;border-radius:14px}
 
 @media (min-width:900px){
-  #app{flex-direction:row;flex-wrap:wrap}
-  .top{width:100%}
-  #stage{height:calc(100% - 60px)}
-  #panel{width:380px;height:calc(100% - 60px);border-radius:18px 0 0 0;display:flex;flex-direction:column}
+  #app{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto minmax(0,1fr)}
+  .top{grid-column:1/-1}
+  #stage{grid-column:1;grid-row:2}
+  #panel{grid-column:2;grid-row:2;width:380px;min-height:0;overflow-y:auto;border-radius:18px 0 0 0;display:flex;flex-direction:column}
   #panel .items{flex-wrap:wrap;overflow:visible}
   #panel .tabs{order:-1;border-top:0;border-bottom:1px solid var(--line);margin-bottom:10px}
 }
