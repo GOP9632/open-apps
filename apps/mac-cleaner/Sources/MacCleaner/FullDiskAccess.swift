@@ -73,15 +73,19 @@ struct FullDiskAccessBanner: View {
             if !granted {
                 HStack(spacing: 12) {
                     Image(systemName: "lock.shield").font(.title2)
+                    // 不要用 fixedSize(vertical:)：HStack 可能給文字很窄的寬度，文字會長得非常高，
+                    // 把整個視窗的內容撐到比視窗還高，側欄上下都被裁掉
                     VStack(alignment: .leading, spacing: 2) {
                         Text("打開「完整磁碟取用權限」，掃描就不會一直跳視窗").font(.callout.weight(.semibold))
+                            .lineLimit(1).minimumScaleFactor(0.8)
                         Text("允許一次，之後不會再問。到系統設定把 Mop 的開關打開，再回來就好。沒打開時，其他 App 的資料只會列名稱、不算大小。")
                             .font(.caption).foregroundStyle(.white.opacity(0.75))
-                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(2)
                     }
-                    Spacer()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     Button("打開系統設定") { FullDiskAccess.openSettings() }
                         .controlSize(.large)
+                        .fixedSize()
                 }
                 .padding(14)
                 .glassCard()
