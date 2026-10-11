@@ -15,12 +15,12 @@ const cors = {
 };
 
 export const PROMPT = `你是美食收藏助理。從使用者給的社群貼文、網頁文字或截圖，找出裡面介紹的「實體店家」（餐廳、咖啡廳、麵包店、甜點店、小吃、酒吧、飲料店等）。
-只回 JSON：{"places":[{"name":"店名（不含分店）","branch":"分店名，沒有就空字串","address":"完整地址，沒寫就空字串","city":"縣市，用簡短寫法：台北、新北、桃園、台中、台南、高雄、新竹…；國外寫城市名；不知道就空字串","district":"行政區，例如大安區；不知道就空字串","category":"cafe|restaurant|bakery|dessert|snack|brunch|bar|drink|other 選一個","cuisine":"料理類型，例如日式拉麵、義式、韓式烤肉，可空白","price":每人預算 1(200元以下) 2(200-500) 3(500-1000) 4(1000以上)，看不出來填 null,"meals":["適合時段，從 breakfast lunch tea dinner night 選，可多選"],"hours":"營業時間原文，沒有就空字串","note":"一句話重點，例如招牌菜、特色","tags":["最多 4 個短標籤，例如 不限時、有插座、寵物友善、要訂位"]}]}
+只回 JSON：{"places":[{"name":"店名（不含分店）","branch":"分店名，沒有就空字串","address":"完整地址，沒寫就空字串","city":"縣市，用簡短寫法：台北、新北、桃園、台中、台南、高雄、新竹…；國外寫城市名；不知道就空字串","district":"行政區，例如大安區；不知道就空字串","category":"cafe|restaurant|bakery|dessert|snack|brunch|bar|drink|other 選一個","cuisine":"料理類型，例如日式拉麵、義式、韓式烤肉，可空白","price":每人預算 1(200元以下) 2(200-500) 3(500-1000) 4(1000以上)，看不出來填 null,"meals":["適合時段，從 breakfast lunch tea dinner night 選，可多選"],"hours":"營業時間原文，沒有就空字串","note":"一句話說這家賣什麼、哪裡好吃","dishes":["貼文推薦或說好吃的菜色／品項，照貼文的叫法，最多 6 個，沒提到就空陣列"],"tags":["最多 4 個短標籤，例如 不限時、有插座、寵物友善、要訂位"]}]}
 規則：
 - 一篇貼文介紹多間店就列多間；完全沒有店家就回 {"places":[]}。
 - 店名從 📍、🏠、店名：、@帳號、地點標記等線索判斷，不要把 hashtag 或網紅名字當店名。
 - 地址照原文，臺改成台。
-- 只用文字裡有的資訊，不要自己編地址。`;
+- 只用文字裡有的資訊，不要自己編地址或菜色。`;
 
 function decode(s: string) {
   return s.replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))

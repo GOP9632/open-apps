@@ -102,6 +102,12 @@ const priceTag = n => n ? `<span class="price"><b>${'$'.repeat(n)}</b><span>${'$
 const avatar = (id, size) => `<span class="avatar" style="background:${AV_COLORS[hash(id) % AV_COLORS.length]}${size ? `;width:${size}px;height:${size}px;font-size:${size * .42}px` : ''}">${esc(initial(nameOf(id)))}</span>`;
 
 // 照片：有照片就顯示照片，沒有就用分類顏色和 emoji 做一張封面
+// 貼文推薦的菜色：去掉空白和重複，最多 8 個
+const cleanDishes = a => [...new Set((Array.isArray(a) ? a : []).map(x => String(x || '').trim()).filter(x => x && x.length <= 30))].slice(0, 8);
+const srcName = u => /instagram\.com/.test(u) ? 'Instagram 貼文' : /threads\.(net|com)/.test(u) ? 'Threads 貼文' : /tiktok\.com/.test(u) ? 'TikTok 影片' : /google\.|goo\.gl/.test(u) ? 'Google 地圖' : u ? (() => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return '來源'; } })() : '貼文內容';
+// 有貼文連結、但缺照片或必點菜色的店，回原始貼文補一次（每個連結只補一次）
+const needsEnrich = p => isMine(p) && /^https?:\/\//.test(p.source_url || '') && !/google\.|goo\.gl/.test(p.source_url) && (!p.photo || !(p.dishes || []).length) && !load('food.enriched', {})[p.id + '|' + p.source_url];
+
 function photo(p) {
   const [, e, c] = cat(p);
   if (p.photo) return `<img src="${esc(p.photo)}" alt="" loading="lazy" decoding="async" class="loading" onload="this.classList.remove('loading')" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'placeholder',style:'background:linear-gradient(150deg,${c},${c}bb)',innerHTML:'<span class=pe>${e}</span>'}))">`;
@@ -398,6 +404,7 @@ function placeCard(p, i = 0) {
     <div class="pc-body">
       <div class="pc-name">${esc(p.name)}${p.branch ? ` <span class="muted" style="font-weight:600">${esc(p.branch)}</span>` : ''}</div>
       <div class="pc-meta">${e} ${esc(p.cuisine || t)}${area(p) ? ' · ' + esc(area(p)) : ''}${p.price ? ' · ' : ''}${priceTag(p.price)}</div>
+      ${(p.dishes || []).length ? `<div class="pc-dish">必點 ${esc(p.dishes.slice(0, 3).join('・'))}</div>` : p.note ? `<div class="pc-dish muted">${esc(p.note)}</div>` : ''}
     </div>
   </div>`;
 }
@@ -544,6 +551,7 @@ const Views = {
         <details class="list" style="margin:0;box-shadow:none;border-radius:0"><summary><span class="ic">${ic('key')}</span><span class="grow">AI 抓店家</span><span class="muted">${S.settings.groqKey ? '已設定' : cloud() ? '用雲端' : '未設定'}</span></summary><div class="inner">
           <p class="muted">${cloud() ? '接上雲端後，大家共用伺服器的 Groq key，不用自己填。這裡的 key 只在雲端失敗時備用。' : '從貼文文字或截圖找店名，用 Groq 的免費模型。'}到 <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> 免費申請（gsk_ 開頭），只存在這台裝置。</p>
           <div class="row"><input id="groqKey" class="input grow" type="password" value="${esc(S.settings.groqKey)}" placeholder="gsk_…"><button class="btn" onclick="App.saveSettings()">儲存</button></div></div></details>
+        <button onclick="App.shareSetup()"><span class="ic">${ic('share')}</span><span class="grow">從 IG 一鍵分享進來</span><span class="muted">設定</span>${ic('next')}</button>
         <button onclick="App.exportJson()"><span class="ic">${ic('down')}</span><span class="grow">匯出我的收藏</span>${ic('next')}</button>
         <label style="cursor:pointer"><span class="ic">${ic('up')}</span><span class="grow">匯入備份</span>${ic('next')}<input type="file" accept=".json,application/json" class="hidden" onchange="App.importJson(this.files[0])"></label>
         ${cloud() && load('food.places', []).length ? `<button onclick="App.migrateLocal()"><span class="ic">${ic('cloud')}</span><span class="grow">上傳登入前的 ${load('food.places', []).length} 間收藏</span>${ic('next')}</button>` : ''}
@@ -787,6 +795,7 @@ const App = {
     App.render();
     App.handleShare();
     Me.start(false);
+    setTimeout(() => App.enrich(), 2500);
   },
   render() {
     const needAuth = cloud() && !S.user;
@@ -899,7 +908,7 @@ const App = {
       S.cands = (r.places || []).map(p => ({
         ...p, name: (p.name || '').trim(), city: normCity(p.city) || parseAddr(p.address).city, district: p.district || parseAddr(p.address).district,
         category: CATS[p.category] ? p.category : 'restaurant', meals: (p.meals || []).filter(m => MEALS[m]), price: [1, 2, 3, 4].includes(+p.price) ? +p.price : null,
-        source_url: src.url || input.url || '', source_text: (src.caption || input.text || '').slice(0, 2000), on: true, photoData,
+        dishes: cleanDishes(p.dishes), source_url: src.url || input.url || '', source_text: (src.caption || input.text || '').slice(0, 2000), on: true, photoData,
       })).filter(p => p.name);
       if (!S.cands.length) {
         $('#add-out').innerHTML = `<div class="card" style="margin-top:14px;text-align:center"><div style="font-size:34px">🤔</div><b>沒找到店家</b>${src.caption ? `<p class="muted" style="text-align:left">讀到的文字：${esc(src.caption.slice(0, 240))}</p>` : ''}<p class="muted">可以改貼店名或地址，或自己填。</p><button class="btn" onclick="App.editPlace(null, {source_url: '${esc(input.url || '')}'})">${ic('edit')} 自己填</button></div>`;
@@ -938,6 +947,7 @@ const App = {
           </div>
           <div class="loc ${c.lat != null ? 'ok' : ''}">${c.locating ? '<span class="spin" style="width:12px;height:12px;border-width:2px"></span> 找地圖位置…' : c.lat != null ? `${ic('pin')} ${c.approx ? '已找到大概位置' : '已找到位置'}` : `${ic('pin')} 找不到位置，存好後可以補`}</div>
           ${c.note ? `<div class="muted" style="margin-top:4px">💬 ${esc(c.note)}</div>` : ''}
+          ${c.dishes.length ? `<div class="dish-line">${ic('star')} 必點：${esc(c.dishes.join('、'))}</div>` : ''}
           ${dup(c) ? '<div class="err" style="font-size:12.5px;margin-top:4px">已經收藏過同名的店</div>' : ''}
         </div>
       </div>`).join('')}
@@ -958,7 +968,7 @@ const App = {
         let ph = '';
         if (c.photoData) { if (!photos.has(c.photoData)) photos.set(c.photoData, await Photo.store(c.photoData)); ph = photos.get(c.photoData); }
         const p = { name: c.name, branch: c.branch || '', address: c.address || '', city: c.city || '', district: c.district || '', lat: c.lat ?? null, lng: c.lng ?? null, approx: !!c.approx,
-          category: c.category, cuisine: c.cuisine || '', price: c.price, meals: c.meals || [], hours: c.hours || '', status: 'want', rating: null, note: c.note || '', tags: (c.tags || []).slice(0, 6),
+          category: c.category, cuisine: c.cuisine || '', price: c.price, meals: c.meals || [], hours: c.hours || '', status: 'want', rating: null, note: c.note || '', tags: (c.tags || []).slice(0, 6), dishes: c.dishes || [],
           source_url: c.source_url || '', source_text: c.source_text || '', photo: ph };
         saved.push(await DB.savePlace(p));
       }
@@ -980,6 +990,7 @@ const App = {
       <div class="d-name">${esc(p.name)}${p.branch ? `<small>${esc(p.branch)}</small>` : ''}</div>
       <div class="d-meta">${e} ${esc(p.cuisine || t)}${area(p) ? '・' + esc(area(p)) : ''}${p.price ? '・' + PRICES[p.price] : ''}</div>
       ${(p.meals || []).length || (p.tags || []).length ? `<div class="tags">${(p.meals || []).map(m => `<span class="tag hot">${MEALS[m]}</span>`).join('')}${(p.tags || []).map(x => `<span class="tag">#${esc(x)}</span>`).join('')}</div>` : ''}
+      ${(p.dishes || []).length ? `<div class="must"><div class="t">${ic('star')} 必點</div><div class="chips wrap">${p.dishes.map(x => `<span class="dish">${esc(x)}</span>`).join('')}</div></div>` : ''}
       <div class="acts">
         <a class="act primary" href="${mapsUrl(p)}" target="_blank" rel="noopener"><span class="ic">${ic('nav')}</span>導航</a>
         ${p.source_url ? `<a class="act" href="${esc(p.source_url)}" target="_blank" rel="noopener"><span class="ic">${ic('ext')}</span>原始貼文</a>` : `<button class="act" onclick="App.copy(${esc(JSON.stringify(p.address || p.name))})"><span class="ic">${ic('copy')}</span>複製地址</button>`}
@@ -996,7 +1007,7 @@ const App = {
       </div>
       ${p.lat != null ? '<div id="mini" class="minimap"></div>' : mine ? '<p class="muted" style="margin-top:12px">還沒有地圖位置，到「編輯」裡點地圖就能補上。</p>' : ''}
       ${mine && cloud() && S.groups.length ? `<div class="fgroup"><div class="t">分享到群組</div><div class="chips wrap">${S.groups.map(g => { const on = myGroups.includes(g); return `<span class="chip ${on ? 'on' : ''}" onclick="App.${on ? 'unshare' : 'share'}('${g.id}', ['${p.id}']).then(() => App.openPlace('${p.id}', true))">${on ? ic('check') : ic('users')} ${esc(g.name)}</span>`; }).join('')}</div></div>` : ''}
-      ${p.source_text ? `<details style="margin-top:14px"><summary class="muted" style="cursor:pointer">原始貼文文字</summary><p style="white-space:pre-wrap;font-size:13.5px;color:var(--text2)">${esc(p.source_text)}</p></details>` : ''}`, { hero: true, keep: arguments[1] });
+      ${p.source_url || p.source_text ? `<div class="post"><div class="post-h"><span class="src">${esc(srcName(p.source_url))}</span>${p.source_url ? `<a class="btn sm" href="${esc(p.source_url)}" target="_blank" rel="noopener">${ic('ext')} 看原始貼文</a>` : ''}</div>${p.source_text ? `<p class="post-t" onclick="this.classList.toggle('open')">${esc(p.source_text)}</p>` : ''}</div>` : ''}`, { hero: true, keep: arguments[1] });
     if (p.lat != null) setTimeout(async () => { S.miniMap = await MapView.mini($('#mini'), p, false); }, 60);
   },
   async quick(id, patch) {
@@ -1007,7 +1018,7 @@ const App = {
     catch (e) { toast('儲存失敗：' + e.message); }
   },
   editPlace(id, base = {}) {
-    const p = id ? { ...S.places.find(x => x.id === id) } : { name: '', branch: '', address: '', city: '', district: '', lat: null, lng: null, approx: false, category: 'restaurant', cuisine: '', price: null, meals: [], hours: '', status: 'want', rating: null, note: '', tags: [], source_url: '', source_text: '', photo: '', ...base };
+    const p = id ? { ...S.places.find(x => x.id === id) } : { name: '', branch: '', address: '', city: '', district: '', lat: null, lng: null, approx: false, category: 'restaurant', cuisine: '', price: null, meals: [], hours: '', status: 'want', rating: null, note: '', tags: [], dishes: [], source_url: '', source_text: '', photo: '', ...base };
     S.edit = p;
     const f = (k, label, ph = '') => `<label class="field"><span>${label}</span><input value="${esc(p[k] || '')}" placeholder="${ph}" onchange="S.edit.${k}=this.value"></label>`;
     App.sheet(`<div class="sheet-h"><h2>${id ? '編輯店家' : '自己新增'}</h2><button class="icon-btn" onclick="App.close()" aria-label="關閉">${ic('x')}</button></div>
@@ -1026,6 +1037,7 @@ const App = {
       <div class="fgroup"><div class="t">適合時段</div><div class="chips wrap">${Object.entries(MEALS).map(([k, t]) => `<span class="chip ${p.meals.includes(k) ? 'on' : ''}" onclick="this.classList.toggle('on');S.edit.meals=S.edit.meals.includes('${k}')?S.edit.meals.filter(x=>x!=='${k}'):[...S.edit.meals,'${k}']">${t}</span>`).join('')}</div></div>
       <label class="field"><span>筆記</span><textarea rows="2" onchange="S.edit.note=this.value">${esc(p.note)}</textarea></label>
       <label class="field"><span>標籤（用空白或逗號分開）</span><input value="${esc((p.tags || []).join(' '))}" onchange="S.edit.tags=this.value.split(/[\\s,，、]+/).filter(Boolean)"></label>
+      <label class="field"><span>必點菜色（用逗號或頓號分開）</span><input value="${esc((p.dishes || []).join('、'))}" onchange="S.edit.dishes=cleanDishes(this.value.split(/[,，、\n]+/))"></label>
       ${f('source_url', '來源連結', 'https://')}
       <div class="sticky-foot row">${id ? `<button class="btn danger" onclick="App.delPlace('${id}')">${ic('trash')}</button>` : ''}<button class="btn grow" onclick="App.close()">取消</button><button class="btn primary grow" id="ed-save" onclick="App.saveEdit()">儲存</button></div>`);
     setTimeout(async () => { S.miniMap = await MapView.mini($('#mini'), p, true, ll => { S.edit.lat = ll.lat; S.edit.lng = ll.lng; S.edit.approx = false; $('#pinmsg').textContent = '📍 位置已更新'; }); }, 60);
@@ -1055,6 +1067,7 @@ const App = {
     e.city = normCity(e.city);
     try {
       const saved = await DB.savePlace(e); App.close(); toast('已儲存'); buzz(10); S.keepScroll = true; App.render();
+      if (needsEnrich(saved)) App.enrich([saved]);
       // 沒點地圖也沒按「找位置」，就在背景用地址補上位置
       if (saved.lat == null && (saved.address || saved.city)) {
         const g = await Geo.locate(saved);
@@ -1323,10 +1336,68 @@ const App = {
     } catch (e) { toast('上傳失敗：' + e.message, 5000); }
   },
 
+  // ----- 舊收藏回原始貼文補照片、必點菜色 -----
+  async enrich(list) {
+    if (S.enriching || (cloud() && !S.user)) return;
+    const todo = (list || S.places).filter(needsEnrich);
+    if (!todo.length) return;
+    S.enriching = true;
+    let changed = 0;
+    for (const p0 of todo) {
+      const done = load('food.enriched', {}); done[p0.id + '|' + p0.source_url] = 1; save('food.enriched', done);
+      try {
+        const r = await Extract.run({ url: p0.source_url });
+        const key = x => String(x || '').replace(/\s/g, '').toLowerCase();
+        const cands = r.places || [];
+        const hit = cands.find(c => key(c.name) && (key(c.name).includes(key(p0.name)) || key(p0.name).includes(key(c.name)))) || (cands.length === 1 ? cands[0] : null);
+        const p = S.places.find(x => x.id === p0.id); if (!p) continue;
+        const patch = {};
+        if (!p.photo && r.source?.thumbData) { const url = await Photo.store(r.source.thumbData); if (url) patch.photo = url; }
+        if (!(p.dishes || []).length && hit && cleanDishes(hit.dishes).length) patch.dishes = cleanDishes(hit.dishes);
+        if (!p.source_text && r.source?.caption) patch.source_text = r.source.caption.slice(0, 2000);
+        if (!p.note && hit?.note) patch.note = hit.note;
+        if (Object.keys(patch).length) { await DB.savePlace({ ...p, ...patch }); changed++; }
+      } catch (e) { console.warn('enrich failed', p0.name, e); }
+    }
+    S.enriching = false;
+    if (changed) {
+      S.keepScroll = true;
+      if (!$('.sheet-bg')) { if (S.tab === 'map') MapView.sync(); else App.render(); }
+      toast(`幫 ${changed} 間店補上了照片和必點菜色`);
+    }
+  },
+
+  // ----- 從 IG 一鍵分享進來的設定說明 -----
+  shareSetup() {
+    const base = `${location.origin}${location.pathname}?add=`;
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const iosSteps = `<ol class="howto">
+        <li>打開 iPhone 內建的「<b>捷徑</b>」App，按右上角 <b>＋</b>，把名稱改成「<b>收進美食收藏</b>」。</li>
+        <li>按下方的 <b>ⓘ</b>（或右上角設定），打開「<b>在分享表單中顯示</b>」。</li>
+        <li>搜尋並加入「<b>URL</b>」動作，貼上下面這串，然後在最後面點一下，從上方變數選「<b>捷徑輸入</b>」。
+          <div class="copy-row"><code>${esc(base)}</code><button class="btn sm" onclick="App.copy(${esc(JSON.stringify(base))})">${ic('copy')} 複製</button></div></li>
+        <li>再加入「<b>打開 URL</b>」動作，按完成。</li>
+        <li>之後在 IG 按 <b>分享</b> → <b>分享到…</b> → 選「<b>收進美食收藏</b>」，就會打開這裡自動找店家，按收藏就好。</li>
+      </ol>
+      <p class="muted">捷徑會用 Safari 打開，第一次要在 Safari 登入一次。想讓它排在分享選單前面，可以在分享選單最右邊「編輯動作」把它加到最愛。</p>`;
+    const androidSteps = `<ol class="howto">
+        <li>用 Chrome 打開這個網頁，選單裡按「<b>加到主畫面</b>」（安裝應用程式）。</li>
+        <li>之後在 IG 按 <b>分享</b> → <b>分享到…</b>，選「<b>美食收藏</b>」就會自動找店家。</li>
+      </ol>`;
+    App.sheet(`<div class="sheet-h"><h2>從 IG 一鍵分享進來</h2><button class="icon-btn" onclick="App.close()" aria-label="關閉">${ic('x')}</button></div>
+      <p class="muted" style="margin-top:0">設定一次，以後在 IG 看到喜歡的店，按分享就能收藏，不用複製貼上。</p>
+      <div class="seg" style="margin:6px 0 12px"><button class="${ios ? 'on' : ''}" onclick="this.parentNode.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b===this));$('#ss-body').innerHTML=App._ssIos">iPhone</button><button class="${ios ? '' : 'on'}" onclick="this.parentNode.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b===this));$('#ss-body').innerHTML=App._ssAnd">Android</button></div>
+      <div id="ss-body">${ios ? iosSteps : androidSteps}</div>`);
+    App._ssIos = iosSteps; App._ssAnd = androidSteps;
+  },
+
   // ----- 外部分享進來（Android 把 IG 分享到這個 app）、邀請連結 -----
   handleShare() {
     const u = new URL(location.href), q = u.searchParams;
-    const shared = [q.get('share_url'), q.get('share_text'), q.get('share_title')].filter(Boolean).join('\n');
+    // iPhone 捷徑會開 ?add=<連結>，連結本身可能帶 ? 和 &，所以整段照原樣拿
+    const add = (location.search.match(/[?&]add=(.*)$/) || [])[1];
+    let shared = [q.get('share_url'), q.get('share_text'), q.get('share_title')].filter(Boolean).join('\n');
+    if (add) { try { shared = decodeURIComponent(add); } catch { shared = add; } }
     if (q.has('join') || shared) history.replaceState(null, '', location.pathname);
     if (shared && !(cloud() && !S.user)) App.openAdd(shared);
     else if (shared) save('food.pendingShare', shared);
