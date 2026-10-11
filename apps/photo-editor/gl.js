@@ -16,6 +16,17 @@ void main(){
   gl_Position = vec4(a, 0.0, 1.0);
 }`;
 
+// 臉型：主 shader 畫完後再照位移圖取樣一次（warpfield.js）。
+// 位移圖 x、y 各用高低兩個通道存 16 位元，uStep 是一格代表幾個像素
+const FS_DISP = `#version 300 es
+precision highp float;
+in vec2 vUV; uniform sampler2D uTex, uDisp; uniform vec2 uSize; uniform float uStep; out vec4 o;
+void main(){
+  vec4 e = texture(uDisp, vUV) * 255.0;
+  vec2 d = (vec2(e.r * 256.0 + e.b, e.g * 256.0 + e.a) - 32768.0) * uStep;
+  o = texture(uTex, vUV + d / uSize);
+}`;
+
 const FS_COPY = `#version 300 es
 precision highp float;
 in vec2 vUV; uniform sampler2D uTex; out vec4 o;
@@ -441,7 +452,7 @@ export class Renderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    this.pCopy = program(gl, FS_COPY);
+    this.pCopy = program(gl, FS_COPY); this.pDisp = program(gl, FS_DISP); this.fbPost = this.fbo();
     this.pBil = program(gl, FS_BILATERAL);
     this.pMain = program(gl, FS_MAIN);
     this.pGauss = program(gl, FS_GAUSS); this.pW = program(gl, FS_WCOPY);
@@ -575,7 +586,10 @@ export class Renderer {
   // fx：{ faces: [faceGeom], light: { lights, amt, amb, bg, mode }, flash: { amt, lift, spec, bg, shadow, retro } }
   render(p, warps, fx = {}) {
     const gl = this.gl, u = this.pMain.u;
-    this.pass(this.pMain, null, this.w, this.h);
+    // 有臉型變形時先畫到暫存，最後再變形一次畫到畫面
+    const post = this.disp?.step > 0;
+    if (post) this.sizeFbo(this.fbPost, this.w, this.h);
+    this.pass(this.pMain, post ? this.fbPost : null, this.w, this.h);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     const texs = [[this.tImg, 'uImg'], [this.tSmooth, 'uSmooth'], [this.tMask, 'uMask'], [this.tSeg, 'uSeg'], [this.tLut, 'uLut'], [this.tMask2, 'uMask2'], [this.tSegB, 'uSegB'],
       [this.fbS[0].t, 'uBlurS'], [this.fbM[0].t, 'uBgA'], [this.fbL[0].t, 'uBgB'], [this.tOver, 'uOver'], [this.tEx, 'uEx'], [this.tBgImg, 'uBgImg'],
@@ -635,5 +649,14 @@ export class Renderer {
     const hex = p.bgColor || '#ffffff';
     gl.uniform3f(u.uBgColor, parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (post) {
+      const d = this.pDisp;
+      this.pass(d, null, this.w, this.h, this.fbPost.t);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.disp.tex); gl.uniform1i(d.u.uDisp, 1);
+      gl.uniform2f(d.u.uSize, this.w, this.h); gl.uniform1f(d.u.uStep, this.disp.step);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
   }
+  // 臉型位移圖：{ tex, step }，step = 0 表示沒有
+  setDisp(d) { this.disp = d; }
 }
