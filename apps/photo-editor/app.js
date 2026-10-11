@@ -15,6 +15,7 @@ import { WarpField } from './warpfield.js';
 import { FONTS, T0, TEXT_COLORS, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
 import { initCollage, openCollage } from './collage.js';
 import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightAnchor } from './relight.js';
+import { tabLooks } from './looks.js';
 import { STROKES, STROKE_COLORS, STROKE0, strokeLayer, alphaFromMatte, alphaBox } from './outline.js';
 import { SHAPES, MASK0, LAYER_LIMIT, shapePath, photoLayer, cutLayer, layerInfo, cloneAlpha, compose as composeLayer, brush } from './layers.js';
 import { POPS, POP_BGS, POP_P0, drawPop } from './popout.js';
@@ -35,6 +36,7 @@ const P0 = {
   ...HAIR_P0,
   bgProtect: 1, // 背景保護：變形時背景不跟著彎
   mk: {}, mkLook: -1, mkLookAmt: 100,
+  look: '', lookAmt: 100, // 一鍵出片
   ...BODY_P0,
   ...GRADE_P0,
   ...SKIN_P0,
@@ -118,7 +120,7 @@ let stickers = [];   // { kind: 'svg' | 'emoji' | 'img', v, x, y, size, rot, fli
 let side = 'both';
 let selSt = -1;
 let hist = [], hi = -1;
-let tab = 'adjust', cur = 'brightness', selText = -1;
+let tab = 'looks', cur = 'brightness', selText = -1;
 let cropState = null;
 let cSec = 'pop';         // 創意分頁目前在哪一區：出框、景深、特效、光效
 let exOwn = null, exN = 0; // 雙重曝光自己選的第二張照片
@@ -158,7 +160,7 @@ async function loadFile(file) {
     $('#wrap').classList.add('on'); $('#panel').classList.remove('off');
     ['#bSave', '#bCmp'].forEach(s => $(s).disabled = false);
     commit();
-    showTab('adjust');
+    showTab('looks');
   } catch (e) {
     console.error(e); toast('這張照片打不開');
   } finally { busy(); }
@@ -216,7 +218,7 @@ function findFaces() {
     if (b === base) { R.setMask2(b.mask2); render(); }
     const seg = f.length ? await getSeg(b) : null;
     b.mask = f.length ? skinMask(f, b.canvas.width, b.canvas.height, seg) : null;
-    if (b === base) { R.setMask(b.mask); render(); if (tab === 'beauty' || tab === 'sticker' || tab === 'makeup') showTab(tab); }
+    if (b === base) { R.setMask(b.mask); render(); if (tab === 'beauty' || tab === 'sticker' || tab === 'makeup' || tab === 'looks') showTab(tab); }
     return f;
   }).catch(e => { console.warn(e); b.faces = []; b.faceErr = true; if (b === base && (tab === 'beauty' || tab === 'makeup')) showTab(tab); return []; });
   return b.facesP;
@@ -490,7 +492,7 @@ function showTab(t) {
   $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true;
   gradeHide();
   if (!base) return;
-  ({ grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, hair: tabHair, skin: tabSkin, light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
+  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, hair: tabHair, skin: tabSkin, light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
   lightDot();
@@ -624,6 +626,15 @@ function protectItem() {
     label: '背景保護', on: !!P.bgProtect, set: !!P.bgProtect,
     icon: '<svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>',
     onclick: () => { P.bgProtect = P.bgProtect ? 0 : 1; toast(P.bgProtect ? '背景保護已開：變形時背景不會跟著彎' : '背景保護已關'); render(); commit(); showTab(tab); },
+  });
+}
+
+// ---------- 一鍵出片（looks.js） ----------
+function tabLooksHere(box) {
+  tabLooks(box, {
+    P: () => P, P0, base: () => base, item, setSlider, hideSlider, render, commit, needSeg,
+    findPerson: () => findPerson(true).then(() => render()),
+    cats: () => $('#cats'), refresh: () => showTab('looks'), note: t => { $('#note').textContent = t; },
   });
 }
 
