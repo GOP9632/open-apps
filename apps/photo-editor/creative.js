@@ -119,46 +119,6 @@ export const BG_PHOTOS = [
   ['whitecafe', '白色咖啡廳'], ['tokyo', '東京夜街'], ['rain', '雨夜街頭'], ['citylights', '城市光斑'],
 ].map(([id, name]) => ({ id, name, src: `bg/${id}.jpg` }));
 
-// ---------- 雙重曝光用的第二張圖（使用者也可以自己選照片） ----------
-export const EXPOSURES = [
-  { id: 'forest', name: '山林', draw(ctx, w, h) {
-    const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#f6efe4'); g.addColorStop(1, '#d8e3e6');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-    const r = rng(21);
-    [['#9bb3b8', 0.45], ['#5f7f86', 0.58], ['#2f4a52', 0.72], ['#15262c', 0.86]].forEach(([c, base], k) => {
-      ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(0, h);
-      let y = h * base;
-      for (let x = 0; x <= w; x += w / 60) { y += (r() - 0.5) * h * 0.03; y = Math.min(h * (base + 0.06), Math.max(h * (base - 0.12), y)); ctx.lineTo(x, y); }
-      ctx.lineTo(w, h); ctx.fill();
-      if (k >= 2) for (let i = 0; i < 26; i++) { // 松樹
-        const x = r() * w, s = h * (0.06 + r() * 0.08) * (k - 1) * 0.6, yb = h * (base + 0.04);
-        ctx.beginPath(); ctx.moveTo(x, yb - s); ctx.lineTo(x + s * 0.28, yb); ctx.lineTo(x - s * 0.28, yb); ctx.fill();
-      }
-    });
-  } },
-  { id: 'stars', name: '星空', draw(ctx, w, h) {
-    const g = ctx.createLinearGradient(0, 0, w, h); g.addColorStop(0, '#0a0f2c'); g.addColorStop(1, '#3a1d5c');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-    ctx.save(); ctx.translate(w / 2, h / 2); ctx.rotate(-0.6);
-    const m = Math.max(w, h), mw = ctx.createLinearGradient(0, -m * 0.12, 0, m * 0.12);
-    mw.addColorStop(0, 'rgba(0,0,0,0)'); mw.addColorStop(0.5, 'rgba(190,170,255,.35)'); mw.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = mw; ctx.fillRect(-m, -m * 0.12, m * 2, m * 0.24); ctx.restore();
-    const r = rng(17);
-    for (let i = 0; i < 600; i++) { ctx.fillStyle = `rgba(255,255,255,${0.3 + r() * 0.7})`; ctx.beginPath(); ctx.arc(r() * w, r() * h, m * 0.0012 * (1 + r() * 2), 0, 7); ctx.fill(); }
-  } },
-  { id: 'flowers', name: '花海', draw(ctx, w, h) {
-    const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#ffe9f1'); g.addColorStop(1, '#ffd0de');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-    const r = rng(31), m = Math.max(w, h);
-    for (let i = 0; i < 160; i++) {
-      const x = r() * w, y = r() * h, s = m * (0.01 + r() * 0.03), hue = [340, 10, 290, 45][i % 4];
-      ctx.fillStyle = `hsla(${hue},80%,${55 + r() * 20}%,.9)`;
-      for (let p = 0; p < 5; p++) { const a = p / 5 * Math.PI * 2; ctx.beginPath(); ctx.ellipse(x + Math.cos(a) * s * 0.6, y + Math.sin(a) * s * 0.6, s * 0.55, s * 0.32, a, 0, 7); ctx.fill(); }
-      ctx.fillStyle = '#ffd43b'; ctx.beginPath(); ctx.arc(x, y, s * 0.25, 0, 7); ctx.fill();
-    }
-  } },
-];
-
 export function paint(list, id, w, h) {
   const c = canvas(w, h), ctx = c.getContext('2d');
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height);
