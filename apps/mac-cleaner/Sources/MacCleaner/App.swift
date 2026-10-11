@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 用 `swift run` 直接跑時也要像一般 App 一樣出現在前面
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        DebugSnapshot.scheduleIfRequested()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -62,7 +63,7 @@ enum Page: String, CaseIterable, Identifiable {
 }
 
 struct ContentView: View {
-    @State private var section: Page? = .smart
+    @State private var section: Page? = DebugSnapshot.initialPage ?? .smart
     @StateObject private var junk = JunkModel()
     @StateObject private var large = LargeFilesModel()
     @StateObject private var apps = UninstallModel()
@@ -79,7 +80,7 @@ struct ContentView: View {
             // 自己畫側欄，不用系統 List：系統側欄在透明標題列底下會捲動錯位，把上面的項目藏到標題列後面
             Sidebar(selection: Binding(get: { page }, set: { section = $0 }))
                 .navigationSplitViewColumnWidth(min: 200, ideal: 220)
-            .safeAreaInset(edge: .bottom) { DiskBar(volume: volume).padding(12) }
+            .safeAreaInset(edge: .bottom) { DiskBar(volume: volume).padding(12).debugFrame("側欄底部磁碟條") }
         } detail: {
             ZStack {
                 page.theme.background.ignoresSafeArea()
@@ -116,7 +117,7 @@ struct Sidebar: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
-                row(.smart)
+                row(.smart).debugFrame("側欄第一列 智慧掃描")
                 ForEach(Page.groups, id: \.title) { group in
                     Text(group.title)
                         .font(.caption.weight(.semibold))
