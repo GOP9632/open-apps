@@ -1,5 +1,5 @@
 // 網路優先，斷線時用快取打開 app（資料在雲端或 localStorage）
-const CACHE = 'food-map-v2';
+const CACHE = 'food-map-v3';
 const FILES = ['./', './index.html', './app.js', './config.js', './manifest.json', './icon.svg'];
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));

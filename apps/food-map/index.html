@@ -248,6 +248,24 @@ body.no-cards .maplibregl-ctrl-bottom-left,body.no-cards .maplibregl-ctrl-bottom
 .info{background:var(--panel);border-radius:var(--r2);box-shadow:var(--sh1),inset 0 0 0 1px var(--line);margin-top:12px;overflow:hidden}
 .info>div{display:flex;gap:12px;padding:13px 16px;align-items:flex-start;font-size:14.5px}
 .info>div+div{border-top:1px solid var(--line)}
+.must{margin-top:14px}
+.must .t,.post .src{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:800;color:var(--accent-text);margin-bottom:8px}
+.must .t svg{width:15px;height:15px;fill:currentColor}
+.dish{padding:7px 13px;border-radius:12px;font-size:14px;font-weight:700;background:var(--accent-soft);color:var(--accent-text)}
+.post{background:var(--panel);border-radius:var(--r2);box-shadow:var(--sh1),inset 0 0 0 1px var(--line);margin-top:12px;padding:14px 16px}
+.post-h{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.post .src{margin:0;color:var(--text2)}
+.post-t{white-space:pre-wrap;font-size:14px;line-height:1.6;color:var(--text2);margin:10px 0 0;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer;position:relative}
+.post-t:not(.open)::after{content:'點一下看全文';position:absolute;right:0;bottom:0;padding-left:28px;background:linear-gradient(90deg,transparent,var(--panel) 24px);color:var(--accent-text);font-weight:700;font-size:13px}
+.post-t.open{-webkit-line-clamp:unset;display:block}
+.pc-dish{font-size:12.5px;font-weight:700;color:var(--accent-text);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pc-dish.muted{font-weight:500;color:var(--muted)}
+.dish-line{font-size:13px;font-weight:700;color:var(--accent-text);margin-top:4px;display:flex;gap:4px;align-items:center}
+.dish-line svg{width:13px;height:13px;fill:currentColor;flex:none}
+.howto{padding-left:22px;margin:4px 0 12px;line-height:1.65}
+.howto li{margin-bottom:10px}
+.copy-row{display:flex;gap:8px;align-items:center;margin-top:8px;background:var(--bg2);border-radius:12px;padding:8px 8px 8px 12px}
+.copy-row code{flex:1;min-width:0;font-size:12.5px;word-break:break-all}
 .info svg.i{width:19px;height:19px;color:var(--muted);margin-top:2px}
 .seg{display:flex;background:var(--bg2);border-radius:14px;padding:4px;gap:4px;position:relative}
 .seg button{flex:1;height:38px;border-radius:11px;font-weight:700;font-size:14.5px;color:var(--muted);transition:background .25s,color .25s,box-shadow .25s}
