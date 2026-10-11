@@ -38,7 +38,7 @@ export async function detectFaces(src) {
     c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
     c.getContext('2d').drawImage(src, x, y, w, h, 0, 0, c.width, c.height);
     for (const lm of fl.detect(c).faceLandmarks || []) {
-      const pts = lm.map(p => ({ x: x + p.x * w, y: y + p.y * h }));
+      const pts = lm.map(p => ({ x: x + p.x * w, y: y + p.y * h, z: p.z * w }));
       const fw = Math.hypot(pts[454].x - pts[234].x, pts[454].y - pts[234].y);
       // 臉貼到區塊邊緣的不算，等相鄰區塊（重疊的地方）找完整的
       const xs = pts.map(p => p.x), ys = pts.map(p => p.y), m = fw * 0.05;
