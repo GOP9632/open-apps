@@ -27,6 +27,7 @@ const P0 = {
   light: -1, lightAmt: 60, lightRot: 0, flash: -1, flashAmt: 60,
   blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'forest', bgImg: 'beach', bgBlur: 30, frame: '',
   ...HAIR_P0,
+  bgProtect: 1, // 背景保護：變形時背景不跟著彎
   mk: {}, mkLook: -1, mkLookAmt: 100,
   ...BODY_P0,
   ...GRADE_P0,
@@ -614,6 +615,15 @@ function tabHair(box) {
   }
   box.append(item({ label: '染髮', icon: '<svg viewBox="0 0 24 24"><path d="M5 20c0-9 3-15 7-15s7 6 7 15"/><path d="M15 3l4 4-6 6-2-2z" fill="currentColor" opacity=".4"/></svg>', set: !!P.hairDye, onclick: () => { cur = 'hairDye'; showTab('hair'); } }));
   paramItems(box, HAIR, 'hairUni');
+  box.append(protectItem());
+}
+// 背景保護開關：蓬鬆感、臉型、身體這些變形都會用到
+function protectItem() {
+  return item({
+    label: '背景保護', on: !!P.bgProtect, set: !!P.bgProtect,
+    icon: '<svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>',
+    onclick: () => { P.bgProtect = P.bgProtect ? 0 : 1; toast(P.bgProtect ? '背景保護已開：變形時背景不會跟著彎' : '背景保護已關'); render(); commit(); showTab(tab); },
+  });
 }
 
 // ---------- 美妝（makeup.js） ----------
