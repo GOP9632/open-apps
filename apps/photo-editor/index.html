@@ -16,6 +16,7 @@ html{touch-action:manipulation}
 :root{
   --bg:#0e0e10;--panel:#17171a;--panel2:#222227;--line:#2c2c32;--text:#f4f4f5;--muted:#9a9aa3;
   --accent:#ff5c8a;--accent2:#ffb36b;--grad:linear-gradient(135deg,#ff8a6b,#ff5c8a);
+  --text2:rgba(255,255,255,.7);--text3:rgba(255,255,255,.35);--line2:rgba(255,255,255,.12);
   --safe-t:env(safe-area-inset-top);--safe-b:env(safe-area-inset-bottom);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -38,7 +39,15 @@ button{background:none;border:0;padding:0;cursor:pointer}
 
 /* 畫面 */
 #stage{flex:1;position:relative;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}
-#fbox{position:relative;flex:none}
+#fbox{position:relative;flex:none;transform-origin:50% 50%;will-change:transform}
+#stage.pan{cursor:grab}
+#stage.panning{cursor:grabbing}
+#zoom{position:absolute;left:12px;bottom:12px;display:none;align-items:center;gap:2px;background:rgba(23,23,26,.85);border:1px solid var(--line2);border-radius:10px;padding:2px;z-index:6}
+#zoom.on{display:flex}
+@media (max-width:899px){#zoom.on:not(.zoomed){display:none}}
+#zoom button{height:30px;min-width:30px;padding:0 6px;border-radius:8px;color:var(--text2);font-size:13px;font-variant-numeric:tabular-nums}
+#zoom button:hover{background:var(--line2);color:var(--text)}
+#zoom #zPct{min-width:52px}
 #frame{position:absolute;inset:0;width:100%;height:100%;display:block}
 #frame[hidden]{display:none}
 #wrap{position:absolute;left:0;top:0;display:none}
@@ -103,7 +112,7 @@ button{background:none;border:0;padding:0;cursor:pointer}
 .srow label{width:44px;color:var(--muted);font-size:13px;flex:none}
 .srow output{width:40px;text-align:right;font-variant-numeric:tabular-nums;flex:none;font-size:14px}
 input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:28px;background:transparent;margin:0}
-input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:linear-gradient(90deg,var(--accent) var(--fill-a,0%),#fff var(--fill-a,0%),#fff var(--fill-b,0%),#4a4a52 var(--fill-b,0%))}
+input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:linear-gradient(90deg,#4a4a52 var(--fill-a,0%),#fff var(--fill-a,0%),#fff var(--fill-b,0%),#4a4a52 var(--fill-b,0%))}
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#fff;margin-top:-9.5px;box-shadow:0 1px 4px rgba(0,0,0,.4)}
 input[type=range]::-moz-range-track{height:3px;background:#4a4a52;border-radius:2px}
 input[type=range]::-moz-range-progress{height:3px;background:#fff}
@@ -128,12 +137,55 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .sw{width:30px;height:30px;border-radius:50%;flex:none;border:2px solid rgba(255,255,255,.25)}
 .sw.on{border-color:#fff;box-shadow:0 0 0 2px var(--accent)}
 
-.tabs{display:flex;justify-content:space-around;border-top:1px solid var(--line);padding-top:6px;overflow-x:auto;scrollbar-width:none}
+.tabs{display:flex;gap:4px;padding:2px 12px 6px;overflow-x:auto;scrollbar-width:none}
 .tabs::-webkit-scrollbar{display:none}
-.tab{flex:1 0 auto;min-width:44px;height:40px;padding:0 4px;color:var(--muted);font-size:14px}
-.tab.on{color:var(--text);font-weight:600}
+.tab{flex:none;height:30px;padding:0 12px;border-radius:15px;color:var(--muted);font-size:13px;white-space:nowrap}
+.tab.on{color:var(--text);font-weight:600;background:var(--panel2)}
 
+.phead{display:flex;align-items:flex-start;gap:8px;padding-right:12px}
+.phead .note{flex:1}
+#bTabReset{flex:none;height:26px;padding:0 10px;border-radius:13px;background:var(--panel2);color:var(--text2);font-size:13px;margin-top:-4px}
+#bTabReset[hidden]{display:none}
 .note{color:var(--muted);font-size:13px;padding:0 18px 8px;min-height:18px}
+
+/* 一個區塊的滑桿全部列出來（電腦版） */
+#rows{padding:2px 0 8px}
+#rows:empty{display:none}
+.row{display:flex;align-items:center;gap:10px;padding:2px 16px;min-height:38px}
+.row label{width:64px;flex:none;font-size:13px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row.set label{color:var(--text)}
+.row output{width:36px;flex:none;text-align:right;font-size:13px;font-variant-numeric:tabular-nums;color:var(--text2);cursor:pointer}
+.row input[type=range]{height:24px}
+
+/* 滑桿：漸層軌道、拖動時的數值泡泡 */
+input[type=range].grad::-webkit-slider-runnable-track{background:var(--trk)}
+input[type=range].grad::-moz-range-track{background:var(--trk)}
+input[type=range].grad::-moz-range-progress{background:transparent}
+#bubble{position:fixed;z-index:20;transform:translate(-50%,-100%);margin-top:-14px;background:#fff;color:#111;font-size:12px;font-weight:600;padding:3px 7px;border-radius:7px;pointer-events:none;display:none;font-variant-numeric:tabular-nums}
+#bubble.on{display:block}
+
+/* 主選單（7 組）和每組裡的分段 */
+#groups{display:flex;justify-content:space-around;border-top:1px solid var(--line);padding-top:4px;overflow-x:auto;scrollbar-width:none}
+#groups::-webkit-scrollbar{display:none}
+.g{flex:1 0 auto;min-width:46px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 2px;color:var(--muted);font-size:12px}
+.g svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.g.on{color:var(--text)}
+.g.on svg{stroke:var(--accent)}
+.tab .tdot{display:none;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:4px;vertical-align:middle}
+.tab.set .tdot{display:inline-block}
+.tab.out{display:none}
+.tabs.single{display:none}
+.tab .chev{display:none}
+
+/* 快捷鍵說明 */
+#keys{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;place-items:center;z-index:30}
+#keys.on{display:grid}
+#keys .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;width:min(520px,92vw);max-height:84vh;overflow:auto}
+#keys h2{font-size:15px;margin:0 0 10px}
+#keys dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-size:13px}
+#keys dt{color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
+#keys dd{margin:0;color:var(--text2)}
+.desk{display:none}
 .textedit{display:flex;gap:8px;padding:0 12px 10px}
 .textedit[hidden]{display:none}
 .textedit input{flex:1;height:40px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);padding:0 12px;color:var(--text)}
@@ -149,9 +201,28 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   #app{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto minmax(0,1fr)}
   .top{grid-column:1/-1}
   #stage{grid-column:1;grid-row:2}
-  #panel{grid-column:2;grid-row:2;width:380px;min-height:0;overflow-y:auto;border-radius:18px 0 0 0;display:flex;flex-direction:column}
+  #panel{grid-column:2;grid-row:2;width:424px;min-height:0;border-radius:18px 0 0 0;display:grid;grid-template-columns:minmax(0,1fr) 64px;padding:0}
   #panel .items{flex-wrap:wrap;overflow:visible}
-  #panel .tabs{order:-1;border-top:0;border-bottom:1px solid var(--line);margin-bottom:10px}
+  .desk{display:grid}
+  /* 分段：一個區塊一個標題列，點了展開，內容接在標題下面 */
+  #panel .tabs{grid-column:1;grid-row:1;display:flex;flex-direction:column;gap:0;padding:6px 0 16px;overflow-y:auto;min-height:0}
+  #panel .tabs.single{display:flex}
+  #panel .tabs.single > .tab{display:none}
+  #panel .tab{display:flex;align-items:center;flex:none;height:44px;padding:0 16px;border-radius:0;font-size:14px;color:var(--text2);background:none;text-align:left;border-bottom:1px solid var(--line2)}
+  #panel .tab.on{color:var(--text);background:none;border-bottom-color:transparent}
+  #panel .tab .chev{display:block;margin-left:auto;width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;transition:transform .15s}
+  #panel .tab.on .chev{transform:rotate(180deg)}
+  #panel .tab.out{display:none}
+  #pbody{border-bottom:1px solid var(--line2);padding-bottom:6px;display:flex;flex-direction:column}
+  #rows{order:10}
+  #panel .tabs.single #pbody{border-bottom:0}
+  /* 主選單：右邊一條直欄 */
+  #groups{grid-column:2;grid-row:1;flex-direction:column;justify-content:flex-start;gap:4px;border-top:0;border-left:1px solid var(--line);padding:8px 0;overflow-y:auto}
+  .g{flex:none;min-width:0;padding:8px 0;font-size:12px;position:relative}
+  .g.on::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:2px;border-radius:1px;background:var(--accent)}
+  .g:hover{color:var(--text)}
+  .tab:hover{color:var(--text)}
+  #srow{padding-top:8px}
 }
 /* 拼貼、範本（collage.js） */
 #empty .two{display:flex;gap:10px}
@@ -186,10 +257,12 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   <header class="top">
     <button class="ib" id="bOpen" title="換照片"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/></svg></button>
     <span class="sp"></span>
-    <button class="ib" id="bUndo" title="復原" disabled><svg viewBox="0 0 24 24"><path d="M9 7H4V2"/><path d="M4 7a9 9 0 1 1-1 7"/></svg></button>
-    <button class="ib" id="bRedo" title="重做" disabled><svg viewBox="0 0 24 24"><path d="M15 7h5V2"/><path d="M20 7a9 9 0 1 0 1 7"/></svg></button>
-    <button class="ib" id="bCmp" title="按住看原圖" disabled><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M12 4v16"/><path d="M12 4l9 16" opacity=".0"/></svg></button>
+    <button class="ib" id="bUndo" title="復原（⌘Z）" disabled><svg viewBox="0 0 24 24"><path d="M9 7H4V2"/><path d="M4 7a9 9 0 1 1-1 7"/></svg></button>
+    <button class="ib" id="bRedo" title="重做（⇧⌘Z）" disabled><svg viewBox="0 0 24 24"><path d="M15 7h5V2"/><path d="M20 7a9 9 0 1 0 1 7"/></svg></button>
+    <button class="ib" id="bResetAll" title="效果全部重設" disabled><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M9.5 9.5l5 5M14.5 9.5l-5 5"/></svg></button>
+    <button class="ib" id="bCmp" title="按住看原圖（空白鍵）" disabled><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M12 4v16"/><path d="M12 4l9 16" opacity=".0"/></svg></button>
     <span class="sp"></span>
+    <button class="ib desk" id="bKeys" title="快捷鍵（?）"><svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></button>
     <button class="save" id="bSave" disabled>儲存</button>
   </header>
 
@@ -206,6 +279,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
         <div class="box"><span class="h tl" data-h="tl"></span><span class="h tr" data-h="tr"></span><span class="h bl" data-h="bl"></span><span class="h br" data-h="br"></span></div></div>
     </div>
     </div>
+    <div id="zoom"><button id="zOut" title="縮小（⌘−）">−</button><button id="zPct" title="回到全覽（⌘0）">100%</button><button id="zIn" title="放大（⌘＋）">+</button></div>
     <div id="empty">
       <h1>隨手修</h1>
       <p>修圖、濾鏡、美顏、去背、消除，全部免費。<br>照片只在你的裝置上處理，不會上傳。</p>
@@ -217,12 +291,15 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   </main>
 
   <section id="panel" class="off">
+    <div id="pbody">
     <div class="srow hide" id="srow"><label id="sLabel"></label><input type="range" id="slider" min="-100" max="100" value="0" aria-label="強度"><output id="sVal">0</output></div>
-    <div class="note" id="note"></div>
+    <div id="rows"></div>
+    <div class="phead"><div class="note" id="note"></div><button id="bTabReset" hidden>重設</button></div>
     <div class="textedit" id="textedit" hidden><textarea id="textInput" rows="1" placeholder="輸入文字"></textarea></div>
     <div class="textedit" id="stsearch" hidden><input id="stkQ" type="search" placeholder="搜尋貼紙，例如愛心、星星" enterkeyhint="search"></div>
     <div class="items" id="cats" hidden></div>
     <div class="items" id="items"></div>
+    </div>
     <nav class="tabs" id="tabs">
       <button class="tab on" data-tab="looks">一鍵出片</button>
       <button class="tab" data-tab="adjust">調整</button>
@@ -244,6 +321,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
       <button class="tab" data-tab="cutout">去背</button>
       <button class="tab" data-tab="crop">裁切</button>
     </nav>
+    <nav id="groups"></nav>
   </section>
 </div>
 <input type="file" id="file" accept="image/*" hidden>
@@ -255,6 +333,8 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 <input type="file" id="file4" accept="image/*" hidden>
 <input type="file" id="file5" accept="image/*" hidden>
 <div id="toast"></div>
+<div id="bubble"></div>
+<div id="keys"><div class="box"><h2>快捷鍵</h2><dl id="keysList"></dl></div></div>
 <div id="busy"><div id="busyText">處理中…</div></div>
 <script type="module" src="app.js"></script>
 </body>

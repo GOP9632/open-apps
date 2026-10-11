@@ -176,7 +176,8 @@ const brushPx = () => Math.min(st.mask.width, st.mask.height) * (0.02 + 0.18 * s
 
 function bindDraw() {
   let drag = null;
-  const pos = e => { const r = ov.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * ov.width, y: (e.clientY - r.top) / r.height * ov.height, cx: e.clientX - r.left, cy: e.clientY - r.top, k: r.width / ov.width }; };
+  // cx、cy、k 是照片放大前的座標（畫布縮放時圓圈才會跟著手指）
+  const pos = e => { const r = ov.getBoundingClientRect(), u = r.width / ov.offsetWidth; return { x: (e.clientX - r.left) / r.width * ov.width, y: (e.clientY - r.top) / r.height * ov.height, cx: (e.clientX - r.left) / u, cy: (e.clientY - r.top) / u, k: ov.offsetWidth / ov.width }; };
   const showRing = p => {
     if (!st || st.tool === 'box') { ring.style.display = 'none'; return; }
     const d = brushPx() * p.k;
@@ -282,8 +283,8 @@ export function tabErase(box, app) {
     const paint = () => { inp.style.setProperty('--fill-a', '0%'); inp.style.setProperty('--fill-b', (inp.value - 1) / 99 * 100 + '%'); };
     inp.oninput = () => {
       s.size = +inp.value; outp.textContent = inp.value; paint();
-      const r = ov.getBoundingClientRect(), d = brushPx() * r.width / ov.width;
-      Object.assign(ring.style, { display: 'block', left: r.width / 2 + 'px', top: r.height / 2 + 'px', width: d + 'px', height: d + 'px' });
+      const w = ov.offsetWidth, h = ov.offsetHeight, d = brushPx() * w / ov.width;
+      Object.assign(ring.style, { display: 'block', left: w / 2 + 'px', top: h / 2 + 'px', width: d + 'px', height: d + 'px' });
     };
     inp.onchange = () => { ring.style.display = 'none'; };
     paint();

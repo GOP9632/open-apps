@@ -15,6 +15,7 @@ import { WarpField } from './warpfield.js';
 import { FONTS, T0, TEXT_COLORS, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
 import { initCollage, openCollage } from './collage.js';
 import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightAnchor } from './relight.js';
+import { enhanceRanges, paintRange, setGrad, nudge, canvasZoom } from './ui.js';
 import { tabLooks } from './looks.js';
 import { STROKES, STROKE_COLORS, STROKE0, strokeLayer, alphaFromMatte, alphaBox } from './outline.js';
 import { SHAPES, MASK0, LAYER_LIMIT, shapePath, photoLayer, cutLayer, layerInfo, cloneAlpha, compose as composeLayer, brush } from './layers.js';
@@ -158,7 +159,8 @@ async function loadFile(file) {
     setBase(c);
     $('#empty').style.display = 'none';
     $('#wrap').classList.add('on'); $('#panel').classList.remove('off');
-    ['#bSave', '#bCmp'].forEach(s => $(s).disabled = false);
+    ['#bSave', '#bCmp', '#bResetAll'].forEach(s => $(s).disabled = false);
+    view.reset(); $('#zoom').classList.add('on');
     commit();
     showTab('looks');
   } catch (e) {
@@ -246,6 +248,7 @@ function layout() {
   Object.assign($('#wrap').style, { left: Math.round(g.x * k) + 'px', top: Math.round(g.y * k) + 'px', width: Math.round(w * k) + 'px', height: Math.round(h * k) + 'px' });
   frameK = k; paintFrame();
   drawTexts(); drawStickers(); if (cropState) drawCrop();
+  view.apply();
 }
 // 裁切的時候先不顯示邊框
 const curFrame = () => !cropState && P.frame ? frameById(P.frame) : null;
@@ -258,6 +261,17 @@ function paintFrame() {
   const ctx = fc.getContext('2d'); ctx.setTransform(k, 0, 0, k, 0, 0);
   drawFrame(ctx, f, w, h, $('#gl'));
 }
+// 畫布縮放：觸控板捏合、⌘＋滾輪、⌘＋／⌘－／⌘0、手機雙指
+// 會在照片上拖曳的工具（消除、裁切、移動燈）不接手機雙指，免得跟筆刷打架
+const view = canvasZoom({
+  stage: $('#stage'), box: $('#fbox'),
+  canPan: (e, touch) => !!base && !e.target.closest('.st,.tx') && (!touch || !(tab === 'erase' || tab === 'crop' || (tab === 'light' && P.light))),
+  // 手機上平常不顯示縮放按鈕，放大了才出現（點百分比回到全覽）
+  onChange: z => { $('#zPct').textContent = Math.round(frameK * z * 100) + '%'; $('#zoom').classList.toggle('zoomed', z > 1); },
+});
+$('#zIn').onclick = () => view.zoomBy(1.25);
+$('#zOut').onclick = () => view.zoomBy(0.8);
+$('#zPct').onclick = () => view.reset();
 new ResizeObserver(layout).observe($('#stage'));
 
 let raf = 0;
@@ -459,21 +473,121 @@ function setSlider(label, min, max, val, onInput) {
   $('#sLabel').textContent = label;
   slider.min = min; slider.max = max; slider.value = val;
   slider._on = onInput;
+  setGrad(slider, label);
   paintSlider();
 }
 function hideSlider() { $('#srow').classList.add('hide'); slider._on = null; }
-function paintSlider() {
-  const min = +slider.min, max = +slider.max, v = +slider.value;
-  const pos = (v - min) / (max - min) * 100, zero = (0 - min) / (max - min) * 100;
-  slider.style.setProperty('--fill-a', Math.min(pos, zero) + '%');
-  slider.style.setProperty('--fill-b', Math.max(pos, zero) + '%');
-  $('#sVal').textContent = v;
-}
+function paintSlider() { paintRange(slider, $('#sVal')); }
+enhanceRanges();
 slider.addEventListener('input', () => { paintSlider(); slider._on?.(+slider.value); });
-slider.addEventListener('change', () => commit());
+slider.addEventListener('change', () => { commit(); syncNav(); });
 $('#sVal').onclick = () => { if (!slider._on) return; slider.value = Math.max(+slider.min, 0); paintSlider(); slider._on(+slider.value); commit(); };
 
 $('#tabs').onclick = e => { const b = e.target.closest('.tab'); if (b) showTab(b.dataset.tab); };
+
+// ---------- 主選單（照醒圖電腦版：少數幾個大類，底下再分段） ----------
+const GI = {
+  adjust: '<svg viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>',
+  portrait: I.person,
+  filter: I.tint,
+  compose: '<svg viewBox="0 0 24 24"><path d="M6 2v16h16"/><path d="M2 6h16v16"/></svg>',
+  erase: '<svg viewBox="0 0 24 24"><path d="M16 3l5 5-11 11H5v-5z"/><path d="M12 7l5 5M5 21h14"/></svg>',
+  text: '<svg viewBox="0 0 24 24"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg>',
+  fun: I.magic,
+};
+// [id, 名稱, 快捷鍵, 底下的分頁]；不在這裡的分頁（之後新增的）放到最後一組
+const GROUPS = [
+  ['adjust', '調節', 'A', ['adjust', 'grade', 'light']],
+  ['portrait', '人像', 'P', ['beauty', 'shape', 'skin', 'makeup', 'body', 'hair']],
+  ['filter', '濾鏡', 'F', ['looks', 'filter']],
+  ['compose', '構圖', 'C', ['crop', 'frame']],
+  ['erase', '消除', 'E', ['erase', 'cutout']],
+  ['text', '文字', 'T', ['text', 'sticker']],
+  ['fun', '創意', 'X', ['fun', 'cut']],
+];
+const groupOf = t => GROUPS.find(g => g[3].includes(t)) || GROUPS[GROUPS.length - 1];
+const lastTab = {};
+const wide = matchMedia('(min-width:900px)');
+const CHEV = '<svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>';
+document.querySelectorAll('#tabs .tab').forEach(b => b.insertAdjacentHTML('beforeend', '<i class="tdot"></i>' + CHEV));
+GROUPS.forEach(([id, name, key]) => {
+  const b = document.createElement('button');
+  b.className = 'g'; b.dataset.g = id; b.title = `${name}（${key}）`;
+  b.innerHTML = GI[id] + `<span>${name}</span>`;
+  b.onclick = () => openGroup(id);
+  $('#groups').append(b);
+});
+function openGroup(id) {
+  if (!base) return;
+  const g = GROUPS.find(x => x[0] === id);
+  const tabs = [...document.querySelectorAll('#tabs .tab')].map(b => b.dataset.tab).filter(t => groupOf(t) === g);
+  showTab(tabs.includes(lastTab[id]) ? lastTab[id] : tabs[0]);
+}
+function syncNav() {
+  const g = groupOf(tab);
+  lastTab[g[0]] = tab;
+  document.querySelectorAll('#groups .g').forEach(b => b.classList.toggle('on', b.dataset.g === g[0]));
+  let n = 0;
+  document.querySelectorAll('#tabs .tab').forEach(b => {
+    const mine = groupOf(b.dataset.tab) === g;
+    n += mine;
+    b.classList.toggle('out', !mine);
+    b.classList.toggle('set', mine && !!TAB_RESET[b.dataset.tab]?.on());
+  });
+  $('#tabs').classList.toggle('single', n < 2);
+  // 電腦版：內容接在目前分段的標題下面（像可收合的區塊）；手機版：內容在分段列上面
+  const pb = $('#pbody'), on = $(`#tabs .tab[data-tab="${tab}"]`);
+  if (wide.matches && on) { if (on.nextElementSibling !== pb) on.after(pb); }
+  else if (pb.parentElement !== $('#panel') || pb.nextElementSibling !== $('#tabs')) $('#tabs').before(pb);
+  const r = TAB_RESET[tab];
+  $('#bTabReset').hidden = !r || !r.on();
+}
+wide.addEventListener('change', () => { syncNav(); showTab(tab); });
+
+// ---------- 重設 ----------
+// 每個分頁：on() 有沒有調過，reset() 回到原樣
+const keysOf = list => list.flatMap(x => SIDED.includes(x[0]) ? [x[0], x[0] + 'L', x[0] + 'R'] : [x[0]]);
+const toP0 = keys => keys.forEach(k => { P[k] = clone(P0[k]); });
+const keysOn = keys => () => keys.some(k => JSON.stringify(P[k]) !== JSON.stringify(P0[k]));
+const tabKeys = {
+  adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...WRINKLE]),
+  body: Object.keys(BODY_P0), hair: Object.keys(HAIR_P0), makeup: ['mk', 'mkLook', 'mkLookAmt'], filter: ['filter', 'filterAmt'],
+  light: ['light', 'lightAmt', 'lightBri', 'lightCol', 'lightDist', 'lightX', 'lightY', 'flash', 'flashAmt'],
+  fun: ['blur', 'fx', 'fxAmt', 'ov', 'ovAmt', 'ex', ...Object.keys(POP_P0)], frame: ['frame'], cutout: ['bg', 'bgColor', 'bgImg', 'bgBlur'],
+};
+const TAB_RESET = Object.fromEntries(Object.entries(tabKeys).map(([t, keys]) => [t, { on: keysOn(keys), reset: () => toP0(keys) }]));
+TAB_RESET.grade = {
+  on: () => gradeOn(P),
+  reset: () => { Object.keys(P).forEach(k => { if (/^(hsl_|cg_)/.test(k)) delete P[k]; }); Object.assign(P, clone(GRADE_P0)); },
+};
+TAB_RESET.shape = { on: () => SHAPE_CATS.some(c => c.items.some(x => shapeIsSet(P, x.id))), reset: () => SHAPE_CATS.forEach(c => resetShape(P, c.id)) };
+$('#bTabReset').onclick = () => {
+  const r = TAB_RESET[tab]; if (!r) return;
+  r.reset(); layout(); render(); commit(); showTab(tab);
+};
+$('#bResetAll').onclick = () => {
+  if (!base) return;
+  P = { ...clone(P0) }; layout(); render(); commit(); showTab(tab);
+  toast('效果已全部重設，按復原可以找回來');
+};
+
+// ---------- 一個區塊的滑桿全部列出來（電腦版） ----------
+function sliderRow({ label, min, max, val, def, onInput }) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = `<label></label><input type="range"><output></output>`;
+  const [lb, inp, out] = row.children;
+  lb.textContent = label; lb.title = label;
+  Object.assign(inp, { min, max, value: val }); inp.setAttribute('aria-label', label);
+  if (def !== undefined) inp.dataset.def = def;
+  setGrad(inp, label);
+  const sync = () => { paintRange(inp, out); row.classList.toggle('set', +inp.value !== Math.min(max, Math.max(min, 0))); };
+  inp.addEventListener('input', () => { sync(); onInput(+inp.value); });
+  inp.addEventListener('change', () => { commit(); syncNav(); });
+  out.onclick = () => { inp.value = Math.min(max, Math.max(min, 0)); sync(); onInput(+inp.value); commit(); syncNav(); };
+  sync();
+  return row;
+}
 
 function item({ label, icon, on, set, onclick, cls = '', style = '' }) {
   const b = document.createElement('button');
@@ -488,7 +602,7 @@ function showTab(t) {
   if (t !== 'erase') eraseLeave();
   tab = t;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  const box = $('#items'); box.innerHTML = '';
+  const box = $('#items'); box.innerHTML = ''; $('#rows').innerHTML = ''; $('#items').hidden = false;
   $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true;
   gradeHide();
   if (!base) return;
@@ -496,10 +610,12 @@ function showTab(t) {
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
   lightDot();
+  syncNav();
 }
 
 const isSet = k => P[k] !== 0 || (SIDED.includes(k) && (P[k + 'L'] !== 0 || P[k + 'R'] !== 0));
 function paramItems(box, list, def, itemsOnly) {
+  if (!itemsOnly && wide.matches) return paramRows(box, list);
   if (!itemsOnly && !list.some(x => x[0] === cur)) cur = def;
   const els = {};
   for (const [k, label, icon] of list) {
@@ -525,6 +641,27 @@ function paramItems(box, list, def, itemsOnly) {
     P[key] = v; if (list === BEAUTY) P.oneTap = -1; render();
     els[cur].classList.toggle('set', isSet(cur));
   });
+}
+
+// 電腦版：每個項目一條滑桿，全部列出來
+function paramRows(box, list) {
+  hideSlider();
+  const sided = list === BEAUTY;
+  if (sided) {
+    box.append(...[['both', '兩邊'], ['L', '左'], ['R', '右']].map(([sd, lb]) => item({
+      label: lb, icon: lb, cls: 'wide', on: side === sd, onclick: () => { side = sd; showTab(tab); },
+    })));
+    $('#note').textContent += (($('#note').textContent ? '　' : '') + '瘦臉、大眼可以只調左邊或右邊');
+  } else $('#items').hidden = !box.children.length;
+  const rows = $('#rows');
+  for (const [k, label, , min, , max] of list) {
+    const key = sided && SIDED.includes(k) && side !== 'both' ? k + side : k;
+    const sfx = key !== k ? (side === 'L' ? '（左）' : '（右）') : '';
+    rows.append(sliderRow({
+      label: label + sfx, min: min ?? -100, max: max ?? 100, val: P[key],
+      onInput: v => { P[key] = v; cur = k; if (list === BEAUTY) P.oneTap = -1; render(); },
+    }));
+  }
 }
 
 // 消除筆在 erase.js，這裡把它要用的東西傳過去
@@ -978,7 +1115,7 @@ function cutView(s, w, h, plain) {
 }
 let brushR = 30;
 function drawStickers() {
-  const layer = $('#stickers'), wr = $('#wrap').getBoundingClientRect();
+  const layer = $('#stickers'), wr = { width: $('#wrap').offsetWidth };
   layer.innerHTML = '';
   stickers.forEach((s, i) => {
     const d = document.createElement('div'), px = s.size * wr.width;
@@ -1032,7 +1169,7 @@ function drawStickers() {
       if (pen) {
         const p = { x: e.clientX, y: e.clientY };
         paintMask(pen.c, s, d, pen.last, p); pen.last = p;
-        if (!rafM) rafM = requestAnimationFrame(() => { rafM = 0; touchCanvas(s.mask); stickerStyle(d, s, s.size * $('#wrap').getBoundingClientRect().width, ar); });
+        if (!rafM) rafM = requestAnimationFrame(() => { rafM = 0; touchCanvas(s.mask); stickerStyle(d, s, s.size * $('#wrap').offsetWidth, ar); });
         return;
       }
       if (!g || !pts.has(e.pointerId)) return;
@@ -1045,13 +1182,13 @@ function drawStickers() {
         s.x = g.x + (a.x - g.p.x) / r.width; s.y = g.y + (a.y - g.p.y) / r.height;
       }
       g.moved = true;
-      const [w2, h2] = stBox(s, s.size * r.width);
+      const ww = $('#wrap').offsetWidth, [w2, h2] = stBox(s, s.size * ww);
       stickerStyle(d, s, w2, w2 / h2);
-      if (s.kind === 'emoji') d.firstChild.style.fontSize = s.size * r.width * 0.82 + 'px';
+      if (s.kind === 'emoji') d.firstChild.style.fontSize = s.size * ww * 0.82 + 'px';
     });
     const up = e => {
       if (paint) { paint = null; drawStickers(); commit(); return; }
-      if (pen) { pen = null; touchCanvas(s.mask); stickerStyle(d, s, s.size * $('#wrap').getBoundingClientRect().width, ar); commit(); showTab('sticker'); return; }
+      if (pen) { pen = null; touchCanvas(s.mask); stickerStyle(d, s, s.size * $('#wrap').offsetWidth, ar); commit(); showTab('sticker'); return; }
       pts.delete(e.pointerId);
       if (g?.moved && !pts.size) { commit(); if (tab === T) showTab(T); }
       if (pts.size) start(); else g = null;
@@ -1742,7 +1879,7 @@ function paintText(cv, t, fs) {
   drawText(ctx, t, fs, L);
 }
 function drawTexts() {
-  const layer = $('#texts'), wr = $('#wrap').getBoundingClientRect();
+  const layer = $('#texts'), wr = { width: $('#wrap').offsetWidth };
   layer.innerHTML = '';
   texts.forEach((t, i) => {
     Object.assign(t, upgradeText(t));
@@ -1750,7 +1887,7 @@ function drawTexts() {
     d.className = 'tx' + (i === selText && tab === 'text' ? ' sel' : '');
     d.append(cv);
     const place = () => {
-      const w = $('#wrap').getBoundingClientRect().width;
+      const w = $('#wrap').offsetWidth;
       paintText(cv, t, t.size * w);
       Object.assign(d.style, { left: t.x * 100 + '%', top: t.y * 100 + '%', transform: `translate(-50%,-50%) rotate(${t.rot || 0}rad)` });
     };
@@ -1869,6 +2006,52 @@ initCollage({ loadFile, toast, busy });
 addEventListener('dragover', e => e.preventDefault());
 addEventListener('drop', e => { e.preventDefault(); const f = [...e.dataTransfer.files].find(f => f.type.startsWith('image/')); if (f) loadFile(f); });
 addEventListener('paste', e => { const f = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith('image/')); if (f) loadFile(f); });
+
+// ---------- 快捷鍵（照醒圖電腦版） ----------
+const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl ';
+const KEYS = [
+  ['空白鍵（按住）', '對比原圖'], [MOD + 'Z', '復原'], ['⇧' + MOD + 'Z', '重做'],
+  [MOD + '＋ ／ ' + MOD + '−', '放大、縮小'], [MOD + '0', '回到全覽'], ['觸控板捏合、' + MOD + '＋滾輪', '縮放'], ['放大後拖曳照片外面、滑鼠中鍵', '移動畫面'],
+  [MOD + 'S', '儲存'], [MOD + 'O', '換照片'],
+  ...GROUPS.map(([, name, key]) => [key, name]), ['⌥' + MOD + '↑ ／ ↓', '上一個、下一個主選單'],
+  ['↑ ／ ↓', '微調滑桿（加 ⇧ 一次 10）'], ['連點滑桿兩下', '歸零'], ['?', '這個說明'],
+];
+$('#keysList').innerHTML = KEYS.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+const keysPanel = on => $('#keys').classList.toggle('on', on);
+$('#bKeys').onclick = () => keysPanel(true);
+$('#keys').onclick = () => keysPanel(false);
+const typing = e => e.target.closest?.('textarea,select,[contenteditable]') || (e.target.matches?.('input') && !e.target.matches('[type=range],[type=button],[type=checkbox]'));
+let spaceCmp = false;
+addEventListener('keydown', e => {
+  if (typing(e)) return;
+  const mod = e.metaKey || e.ctrlKey, k = e.key;
+  if (k === 'Escape') { keysPanel(false); return; }
+  if (k === '?' && !mod) { keysPanel(!$('#keys').classList.contains('on')); e.preventDefault(); return; }
+  if (mod && (k === 's' || k === 'S')) { e.preventDefault(); save(); return; }
+  if (mod && (k === 'o' || k === 'O')) { e.preventDefault(); $('#file').click(); return; }
+  if (!base) return;
+  if (mod && (k === 'z' || k === 'Z')) { e.preventDefault(); e.shiftKey ? $('#bRedo').click() : $('#bUndo').click(); return; }
+  if (mod && (k === 'y' || k === 'Y')) { e.preventDefault(); $('#bRedo').click(); return; }
+  if (mod && (k === '=' || k === '+')) { e.preventDefault(); view.zoomBy(1.25); return; }
+  if (mod && (k === '-' || k === '_')) { e.preventDefault(); view.zoomBy(0.8); return; }
+  if (mod && k === '0') { e.preventDefault(); view.reset(); return; }
+  if (mod && e.altKey && (k === 'ArrowUp' || k === 'ArrowDown')) {
+    e.preventDefault();
+    const i = GROUPS.indexOf(groupOf(tab)), n = GROUPS.length;
+    openGroup(GROUPS[(i + (k === 'ArrowUp' ? n - 1 : 1)) % n][0]); return;
+  }
+  if (mod || e.altKey) return;
+  if (k === ' ') { e.preventDefault(); if (!e.repeat) { spaceCmp = true; cmp(true); } return; }
+  if (k === 'ArrowUp' || k === 'ArrowDown') {
+    if (e.target.matches?.('input[type=range]')) return; // 已經點在滑桿上就交給瀏覽器
+    if (nudge(k === 'ArrowUp' ? 1 : -1, e.shiftKey)) e.preventDefault();
+    return;
+  }
+  const g = GROUPS.find(x => x[2] === k.toUpperCase());
+  if (g && k.length === 1) { openGroup(g[0]); e.preventDefault(); }
+});
+addEventListener('keyup', e => { if (e.key === ' ' && spaceCmp) { spaceCmp = false; cmp(false); } });
+addEventListener('blur', () => { if (spaceCmp) { spaceCmp = false; cmp(false); } });
 
 // 給自動測試用
 window.__editor = { loadFile, get P() { return P; }, get base() { return base; }, get stickers() { return stickers; }, get texts() { return texts; }, redraw: () => { drawTexts(); drawStickers(); }, showTab, save, render };
