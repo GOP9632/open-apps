@@ -169,7 +169,7 @@ const Extract = {
   async groq(text, image) {
     const vision = !!image;
     const body = {
-      model: vision ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'openai/gpt-oss-120b', temperature: 0.2,
+      model: vision ? 'qwen/qwen3.8-27b' : 'openai/gpt-oss-120b', temperature: 0.2,
       response_format: { type: 'json_object' },
       messages: vision
         ? [{ role: 'user', content: [{ type: 'text', text: PROMPT + (text ? `\n\n補充文字：\n${text}` : '') }, { type: 'image_url', image_url: { url: image } }] }]
@@ -944,9 +944,9 @@ const App = {
     card.style.transform = `translateX(${liked ? 500 : -500}px) rotate(${liked ? 25 : -25}deg)`; card.style.opacity = 0;
     const row = { round_id: r.id, user_id: S.user.id, place_id: pid, liked };
     S.swipes.push(row);
-    try { await DB.q(S.sb.from('swipes').upsert(row)); }
-    catch (e) { toast('沒存到：' + e.message); S.swipes = S.swipes.filter(s => s !== row); }
     if (liked) App.checkMatch(r, pid);
+    // 先換下一張，存檔在背景跑，滑起來才不會卡
+    DB.q(S.sb.from('swipes').upsert(row)).catch(e => { toast('沒存到，請再滑一次：' + e.message); S.swipes = S.swipes.filter(s => s !== row); App.render(); });
     await sleep(250); App.render();
   },
   checkMatch(r, pid) {

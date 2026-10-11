@@ -110,9 +110,37 @@ async function groq(messages: unknown[], model: string) {
     headers: { Authorization: `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({ model, messages, temperature: 0.2, response_format: { type: "json_object" } }),
   });
-  if (!r.ok) throw new Error(`Groq ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  if (!r.ok) throw Object.assign(new Error(`Groq ${r.status}: ${(await r.text()).slice(0, 300)}`), { status: r.status });
   const j = await r.json();
   return JSON.parse(j.choices[0].message.content).places ?? [];
+}
+
+// Groq 的看圖模型常常下架換新，預設的不在了就從模型清單裡找一個看得懂圖的
+let visionModel = VISION_MODEL;
+async function groqVision(messages: unknown[]) {
+  try { return await groq(messages, visionModel); } catch (e) {
+    if ((e as { status?: number }).status !== 404) throw e;
+  }
+  const r = await fetch(`${GROQ_BASE}/models`, { headers: { Authorization: `Bearer ${GROQ_KEY}` } });
+  const ids: string[] = r.ok ? (await r.json()).data.map((m: { id: string }) => m.id) : [];
+  const picks = ids.filter((id) => /vision|-vl|vl-|scout|maverick|llama-4|gemma-3|pixtral|kimi-k2\.5|qwen3\.[5-9]/i.test(id) && id !== visionModel);
+  const errs: string[] = [];
+  for (const id of picks) {
+    try { const out = await groq(messages, id); visionModel = id; return out; } catch (e) { errs.push(`${id}: ${(e as Error).message.slice(0, 120)}`); }
+  }
+  throw new Error(`Groq 目前找不到能看圖的模型（可用：${ids.join(", ") || "讀不到清單"}；${errs.join(" / ")}）。請改貼貼文文字。`);
+}
+
+// 只讓登入的使用者用，免得 Groq 額度被別人用掉
+async function signedIn(req: Request) {
+  const url = Deno.env.get("SUPABASE_URL");
+  const auth = req.headers.get("Authorization") ?? "";
+  if (!url) return true; // 本機測試
+  if (!auth) return false;
+  // 用 app 送來的 publishable key 問 Supabase 這個登入是不是真的（舊的 anon key 可能已停用）
+  const apikey = req.headers.get("apikey") ?? Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+  const r = await fetch(`${url}/auth/v1/user`, { headers: { Authorization: auth, apikey } });
+  return r.ok;
 }
 
 export async function extract(body: { url?: string; text?: string; image?: string }) {
@@ -132,7 +160,7 @@ export async function extract(body: { url?: string; text?: string; image?: strin
     text = [src.author ? `發文者：@${src.author}` : "", loc?.name ? `地點標記：${loc.name}${loc.address ? `（${loc.address}）` : ""}` : "", String(src.caption ?? ""), text].filter(Boolean).join("\n");
   }
   if (body.image) {
-    places = await groq([{ role: "user", content: [{ type: "text", text: PROMPT + (text ? `\n\n補充文字：\n${text}` : "") }, { type: "image_url", image_url: { url: body.image } }] }], VISION_MODEL);
+    places = await groqVision([{ role: "user", content: [{ type: "text", text: PROMPT + (text ? `\n\n補充文字：\n${text}` : "") }, { type: "image_url", image_url: { url: body.image } }] }]);
   } else if (text.trim()) {
     const ai = await groq([{ role: "system", content: PROMPT }, { role: "user", content: text.slice(0, 12000) }], TEXT_MODEL);
     // Google 地圖連結已經有準確的座標，AI 只用來補分類等資訊
@@ -151,6 +179,7 @@ export async function extract(body: { url?: string; text?: string; image?: strin
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
+    if (!(await signedIn(req))) return Response.json({ error: "請先登入" }, { status: 401, headers: cors });
     const out = await extract(await req.json());
     return Response.json(out, { headers: cors });
   } catch (e) {

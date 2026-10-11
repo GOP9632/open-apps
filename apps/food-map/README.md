@@ -47,5 +47,5 @@
 ## 技術
 
 - 地圖：Leaflet + OpenStreetMap 圖資；地址轉座標用 OpenStreetMap Nominatim（免費，台灣門牌常常只對到巷或路，會標「大概位置」，可以在地圖上點修正）。
-- AI：Groq 免費模型，文字用 `openai/gpt-oss-120b`，截圖用 `meta-llama/llama-4-scout-17b-16e-instruct`，可在 Supabase Secrets 用 `GROQ_TEXT_MODEL`、`GROQ_VISION_MODEL` 換。
+- AI：Groq 免費模型，文字用 `openai/gpt-oss-120b`。截圖要能看圖的模型，Groq 常換：預設的不在時，函式會自動從 Groq 的模型清單挑一個看得懂圖的（2026-10 是 `qwen/qwen3.8-27b`）。也可以在 Supabase Secrets 用 `GROQ_TEXT_MODEL`、`GROQ_VISION_MODEL` 指定。抓店家功能只讓登入的人用，避免 Groq 額度被別人用掉。
 - IG：用搜尋引擎爬蟲的方式讀公開貼文的說明文字和地點標記，不需要登入。私人帳號讀不到，IG 改版也可能失效，這時改貼文字即可。
