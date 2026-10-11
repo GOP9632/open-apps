@@ -1,7 +1,7 @@
 import { Renderer } from './gl.js';
 import { FILTERS, bakeLUT, thumb } from './filters.js';
 import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor } from './ai.js';
-import { STICKERS, EMOJIS, EMOJI_FONT, stickerById, stickerImage } from './stickers.js';
+import { STICKERS, STICKER_CATS, EMOJIS, EMOJI_FONT, BLENDS, blendById, stickerAR, stickerURL, svgURL, renderSticker, putCanvas, getCanvas, canvasURL, touchCanvas, ownImages } from './stickers.js';
 import { FX, OVERLAYS, BG_PHOTOS, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
 import { matte } from './matte.js';
 import { GRADE_P0, gradeOn, gradeFn, gradeKey, tabGrade, gradeHide } from './grade.js';
@@ -12,6 +12,7 @@ import { SKIN, WRINKLE, SKIN_P0, skinOn, skinKey, prepSkin, SkinFx, skinNote } f
 import { BODY, BODY_P0, bodyOn, detectBody, measureBody, bodyWarps, bodyNote } from './body.js';
 import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } from './faceshape.js';
 import { WarpField } from './warpfield.js';
+import { FONTS, T0, TEXT_COLORS, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
 import { initCollage, openCollage } from './collage.js';
 import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightAnchor } from './relight.js';
 import { STROKES, STROKE_COLORS, STROKE0, strokeLayer, alphaFromMatte, alphaBox } from './outline.js';
@@ -106,16 +107,14 @@ const ONE_TAPS = [
   { name: '醒俊', set: { smooth: 30, white: 18, slim: 0, vface: 0, eyes: 0, nose: 0, mouth: 0 } },
 ];
 const RATIOS = [['free', '自由'], ['orig', '原比例'], [1, '1:1'], [3 / 4, '3:4'], [4 / 3, '4:3'], [9 / 16, '9:16'], [16 / 9, '16:9']];
-const TEXT_COLORS = ['#ffffff', '#111111', '#ff5c8a', '#ffb36b', '#ffe066', '#69db7c', '#4dabf7', '#b197fc'];
 const BG_COLORS = ['#ffffff', '#f1f3f5', '#ffe3ec', '#fff3bf', '#d3f9d8', '#d0ebff', '#e5dbff', '#212529'];
-const FONTS = [['-apple-system,"PingFang TC","Noto Sans TC",sans-serif', '黑體'], ['"Songti TC","Noto Serif TC",serif', '明體'], ['"Kaiti TC","BiauKai",cursive', '楷書']];
 
 // ---------- 狀態 ----------
 let R;               // Renderer
 let base = null;     // { canvas, faces, seg, mask, thumbs }
 let P = { ...P0 };
 let texts = [];
-let stickers = [];   // { kind: 'svg' | 'emoji', v, x, y, size, rot, flip, op }
+let stickers = [];   // { kind: 'svg' | 'emoji' | 'img', v, x, y, size, rot, flip, flipv, op, blend, mask }
 let side = 'both';
 let selSt = -1;
 let hist = [], hi = -1;
@@ -488,7 +487,7 @@ function showTab(t) {
   tab = t;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   const box = $('#items'); box.innerHTML = '';
-  $('#note').textContent = ''; $('#textedit').hidden = true; $('#cats').hidden = true;
+  $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true;
   gradeHide();
   if (!base) return;
   ({ grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, hair: tabHair, skin: tabSkin, light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
@@ -772,54 +771,186 @@ function lightDot() {
 })();
 
 // ---------- 貼紙 ----------
+// 選項照醒圖貼圖面板：大小、旋轉、不透明度、暈染（10 種混合模式）、擦除和復原筆、
+// 順序（置頂、上移、下移、置底）、橫向和直向翻轉、複製、刪除，加上分類貼紙庫、搜尋、匯入圖片
+let stCat = 'face', stSec = 'adjust', stQ = '';
+let stBrush = 30, stHard = 100, stPen = 'erase', stEsub = 'size';
+const ST_SECS = [['adjust', '調整'], ['blend', '混合'], ['erase', '擦除'], ['layer', '圖層']];
 function tabSticker(box) {
   const faces = base.faces;
   if (!faces) findFaces();
   const st = stickers[selSt]?.kind === 'cut' ? null : stickers[selSt];
+  const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
   if (st) {
-    box.append(item({ label: '完成', icon: I.check, onclick: () => { selSt = -1; showTab('sticker'); } }));
-    box.append(item({ label: '翻轉', icon: I.flip, onclick: () => { st.flip = !st.flip; drawStickers(); commit(); } }));
-    box.append(item({ label: '複製', icon: I.copy, onclick: () => {
-      stickers.push({ ...st, x: Math.min(0.95, st.x + 0.05), y: Math.min(0.95, st.y + 0.05) }); selSt = stickers.length - 1;
-      drawStickers(); commit(); showTab('sticker');
-    } }));
-    box.append(item({ label: '刪除', icon: I.trash, onclick: () => { stickers.splice(selSt, 1); selSt = -1; drawStickers(); commit(); showTab('sticker'); } }));
-    const modes = [['size', '大小'], ['rot', '旋轉'], ['op', '透明度']];
-    if (!modes.some(m => m[0] === cur)) cur = 'size';
-    modes.forEach(([k, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: cur === k, onclick: () => { cur = k; showTab('sticker'); } })));
-    if (cur === 'size') setSlider('大小', 3, 100, Math.round(st.size * 100), v => { st.size = v / 100; drawStickers(); });
-    if (cur === 'rot') setSlider('旋轉', -180, 180, Math.round(st.rot * 180 / Math.PI), v => { st.rot = v * Math.PI / 180; drawStickers(); });
-    if (cur === 'op') setSlider('透明', 10, 100, Math.round(st.op * 100), v => { st.op = v / 100; drawStickers(); });
-    $('#note').textContent = '拖曳移動，兩指可以縮放和旋轉。';
+    cats.append(item({ label: '完成', icon: '完成', cls: 'wide', onclick: () => { selSt = -1; showTab('sticker'); } }));
+    ST_SECS.forEach(([k, lb]) => cats.append(item({
+      label: lb, icon: lb, cls: 'wide', on: stSec === k, set: k === 'blend' ? (st.blend || 'normal') !== 'normal' : k === 'erase' ? !!st.mask : false,
+      onclick: () => { stSec = k; showTab('sticker'); drawStickers(); },
+    })));
+    const redo = () => { drawStickers(); commit(); showTab('sticker'); };
+    if (stSec === 'adjust') {
+      const modes = [['size', '大小'], ['rot', '旋轉'], ['op', '不透明度']];
+      if (!modes.some(m => m[0] === cur)) cur = 'size';
+      modes.forEach(([k, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: cur === k, onclick: () => { cur = k; showTab('sticker'); } })));
+      if (cur === 'size') setSlider('大小', 3, 100, Math.round(st.size * 100), v => { st.size = v / 100; drawStickers(); });
+      if (cur === 'rot') setSlider('旋轉', -180, 180, Math.round(st.rot * 180 / Math.PI), v => { st.rot = v * Math.PI / 180; drawStickers(); });
+      if (cur === 'op') setSlider('透明', 0, 100, Math.round(st.op * 100), v => { st.op = v / 100; drawStickers(); });
+      $('#note').textContent = '拖曳移動，兩指可以縮放和旋轉。';
+    } else if (stSec === 'blend') {
+      hideSlider();
+      BLENDS.forEach(([k, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: (st.blend || 'normal') === k, onclick: () => { st.blend = k; redo(); } })));
+      $('#note').textContent = '混合模式決定貼紙怎麼跟照片融在一起，例如色彩增值會讓白色變透明。';
+    } else if (stSec === 'erase') {
+      box.append(item({ label: '擦除', icon: '擦除', cls: 'wide', on: stPen === 'erase', onclick: () => { stPen = 'erase'; showTab('sticker'); } }));
+      box.append(item({ label: '復原', icon: '復原', cls: 'wide', on: stPen === 'restore', onclick: () => { stPen = 'restore'; showTab('sticker'); } }));
+      box.append(item({ label: '全部復原', icon: '全部復原', cls: 'wide', onclick: () => { st.mask = null; redo(); } }));
+      box.append(item({ label: '大小', icon: '大小', cls: 'wide', on: stEsub === 'size', onclick: () => { stEsub = 'size'; showTab('sticker'); } }));
+      box.append(item({ label: '硬度', icon: '硬度', cls: 'wide', on: stEsub === 'hard', onclick: () => { stEsub = 'hard'; showTab('sticker'); } }));
+      if (stEsub === 'size') setSlider('筆刷', 1, 100, stBrush, v => { stBrush = v; });
+      else setSlider('硬度', 0, 100, stHard, v => { stHard = v; });
+      $('#note').textContent = stPen === 'erase' ? '在貼紙上塗抹，擦掉不要的地方。' : '在貼紙上塗抹，把擦掉的地方補回來。';
+    } else {
+      hideSlider();
+      const mv = to => { const [x] = stickers.splice(selSt, 1); selSt = Math.max(0, Math.min(stickers.length, to)); stickers.splice(selSt, 0, x); redo(); };
+      const top = stickers.length - 1;
+      box.append(item({ label: '置頂', icon: '置頂', cls: 'wide', onclick: () => selSt < top && mv(top) }));
+      box.append(item({ label: '上移', icon: '上移', cls: 'wide', onclick: () => selSt < top && mv(selSt + 1) }));
+      box.append(item({ label: '下移', icon: '下移', cls: 'wide', onclick: () => selSt > 0 && mv(selSt - 1) }));
+      box.append(item({ label: '置底', icon: '置底', cls: 'wide', onclick: () => selSt > 0 && mv(0) }));
+      box.append(item({ label: '橫向翻轉', icon: I.flip, onclick: () => { st.flip = !st.flip; redo(); } }));
+      box.append(item({ label: '直向翻轉', icon: I.flipv, onclick: () => { st.flipv = !st.flipv; redo(); } }));
+      box.append(item({ label: '複製', icon: I.copy, onclick: () => {
+        stickers.push({ ...st, x: Math.min(0.95, st.x + 0.05), y: Math.min(0.95, st.y + 0.05) }); selSt = stickers.length - 1; redo();
+      } }));
+      if (st.kind === 'img') box.append(item({ label: '摳出人像', icon: I.person, onclick: () => cutoutSticker(st) }));
+      box.append(item({ label: '刪除', icon: I.trash, onclick: () => { stickers.splice(selSt, 1); selSt = -1; redo(); } }));
+      $('#note').textContent = stickers.length > 1 ? `第 ${selSt + 1} 層，共 ${stickers.length} 層` : '';
+    }
     return;
   }
   hideSlider();
-  $('#note').textContent = !faces ? '正在找臉…' : faces.length ? `臉部貼紙會自動貼到 ${faces.length} 張臉上` : '點一下加到照片上';
-  STICKERS.forEach(sk => box.append(item({
-    label: sk.name, cls: 'stk', icon: sk.svg, onclick: () => addSticker({ kind: 'svg', v: sk.id }, sk.face),
+  // 沒選貼紙：上面一排是分類，下面是貼紙庫，可以搜尋
+  STICKER_CATS.forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: !stQ && stCat === k, onclick: () => { stCat = k; stQ = ''; showTab('sticker'); } })));
+  const sr = $('#stsearch'); sr.hidden = false;
+  const q = $('#stkQ'); q.value = stQ;
+  q.oninput = () => { stQ = q.value.trim(); showTab('sticker'); q.focus(); };
+  $('#note').textContent = stQ ? '' : stCat === 'face' ? (!faces ? '正在找臉…' : faces.length ? `臉部貼紙會自動貼到 ${faces.length} 張臉上` : '點一下加到照片上')
+    : stCat === 'mine' ? '匯入自己的圖片當貼紙，人像照可以自動摳圖。' : '點一下加到照片上';
+  const list = stQ ? STICKERS.filter(sk => sk.name.toLowerCase().includes(stQ.toLowerCase()))
+    : stCat === 'emoji' || stCat === 'mine' ? [] : STICKERS.filter(sk => sk.cat === stCat);
+  list.forEach(sk => box.append(item({
+    label: sk.name, cls: 'stk', icon: `<img src="${svgURL(sk.id)}" alt="">`, onclick: () => addSticker({ kind: 'svg', v: sk.id }, sk.face),
   })));
-  EMOJIS.forEach(e => box.append(item({ label: '', cls: 'stk emo', icon: e, onclick: () => addSticker({ kind: 'emoji', v: e }) })));
+  if (stQ && !list.length) $('#note').textContent = '找不到這個貼紙，換個關鍵字試試。';
+  if (!stQ && stCat === 'emoji') EMOJIS.forEach(e => box.append(item({ label: '', cls: 'stk emo', icon: e, onclick: () => addSticker({ kind: 'emoji', v: e }) })));
+  if (!stQ && stCat === 'mine') {
+    box.append(item({ label: '匯入圖片', icon: I.plus, onclick: () => $('#file5').click() }));
+    ownImages().forEach(id => box.append(item({ label: '', cls: 'stk', icon: `<img src="${canvasURL(id)}" alt="">`, onclick: () => addSticker({ kind: 'img', v: id }) })));
+  }
 }
 function addSticker(s, face) {
   const W = base.canvas.width, H = base.canvas.height;
-  const add = (x, y, size, rot) => stickers.push({ ...s, x: x / W, y: y / H, size: size / W, rot, flip: false, op: 1 });
+  const add = (x, y, size, rot) => stickers.push({ ...s, x: x / W, y: y / H, size: size / W, rot, flip: false, flipv: false, op: 1, blend: 'normal', mask: null });
   if (face && base.faces?.length) {
     base.faces.forEach(pts => faceAnchor(pts, face).forEach(a => add(a.x, a.y, a.size, a.rot)));
     selSt = -1;
   } else {
-    add(W / 2, H / 2, Math.min(W, H) * 0.3, 0);
-    selSt = stickers.length - 1; cur = 'size';
+    add(W / 2, H / 2, Math.min(W, H) * (s.kind === 'img' ? 0.5 : 0.3 * Math.min(2, Math.max(1, stickerAR(s)))), 0);
+    selSt = stickers.length - 1; cur = 'size'; stSec = 'adjust';
   }
   drawStickers(); commit(); showTab('sticker');
 }
+// 匯入圖片當貼紙：長邊縮到 1024 像素
+$('#file5').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f || !base) return;
+  try {
+    const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' });
+    const [w, h] = fitSize(bmp.width, bmp.height, 1024), c = newCanvas(w, h);
+    c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    stCat = 'mine'; addSticker({ kind: 'img', v: putCanvas(c, 'img') });
+  } catch (err) { console.warn(err); toast('這張圖片打不開'); }
+};
+// 匯入的人像照自動摳圖，再把空白邊裁掉
+async function cutoutSticker(st) {
+  const src = getCanvas(st.v);
+  if (!src) return;
+  busy('摳圖中…');
+  try {
+    const m = await matte(src), w = src.width, h = src.height;
+    const c = newCanvas(w, h), ctx = c.getContext('2d');
+    ctx.drawImage(m, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h), a = d.data;
+    const o = src.getContext('2d').getImageData(0, 0, w, h).data;
+    let x0 = w, y0 = h, x1 = 0, y1 = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4, al = a[i];
+      a[i] = o[i]; a[i + 1] = o[i + 1]; a[i + 2] = o[i + 2]; a[i + 3] = Math.min(o[i + 3], al);
+      if (al > 20) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    }
+    if (x1 <= x0 || y1 <= y0) { toast('沒找到人像'); return; }
+    ctx.putImageData(d, 0, 0);
+    const out = newCanvas(x1 - x0 + 1, y1 - y0 + 1);
+    out.getContext('2d').drawImage(c, -x0, -y0);
+    // 裁掉邊之後，維持人在照片上的位置和大小
+    const k = st.size * base.canvas.width / w;
+    st.x += ((x0 + x1) / 2 - w / 2) * k / base.canvas.width; st.y += ((y0 + y1) / 2 - h / 2) * k / base.canvas.height;
+    st.size *= out.width / w; st.v = putCanvas(out, 'img'); st.mask = null;
+    drawStickers(); commit(); showTab('sticker');
+  } catch (err) { console.warn(err); toast('摳圖模型載入失敗，檢查一下網路再試一次'); }
+  finally { busy(); }
+}
 function stickerHTML(s, px) {
   if (s.kind === 'emoji') return `<span style="font-size:${px * 0.82}px;line-height:1;font-family:${EMOJI_FONT}">${s.v}</span>`;
-  return stickerById(s.v).svg;
+  return `<img src="${stickerURL(s)}" alt="" draggable="false">`;
+}
+function stickerStyle(d, s, px, ar) {
+  const m = s.mask ? `url(${canvasURL(s.mask)})` : '';
+  Object.assign(d.style, {
+    left: s.x * 100 + '%', top: s.y * 100 + '%', width: px + 'px', height: px / ar + 'px', opacity: s.op,
+    transform: `translate(-50%,-50%) rotate(${s.rot}rad) scale(${s.flip ? -1 : 1},${s.flipv ? -1 : 1})`,
+    mixBlendMode: blendById(s.blend)[3], webkitMaskImage: m, maskImage: m,
+  });
+}
+// 擦除筆：遮罩跟貼紙同比例，長邊 512 像素，白色是留下、透明是擦掉
+function stickerMask(s, ar) {
+  const old = s.mask && getCanvas(s.mask);
+  const [w, h] = ar >= 1 ? [512, Math.max(1, Math.round(512 / ar))] : [Math.max(1, Math.round(512 * ar)), 512];
+  const c = newCanvas(w, h), ctx = c.getContext('2d');
+  if (old) ctx.drawImage(old, 0, 0, w, h); else { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); }
+  s.mask = putCanvas(c, 'mask');
+  return c;
+}
+function paintMask(c, s, d, a, b) {
+  // 螢幕座標換成貼紙自己的座標：先轉回去，再處理翻轉
+  const r = d.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const wr = $('#wrap').getBoundingClientRect(), pw = s.size * wr.width;
+  const loc = p => {
+    let x = p.x - cx, y = p.y - cy;
+    const cs = Math.cos(-s.rot), sn = Math.sin(-s.rot);
+    [x, y] = [x * cs - y * sn, x * sn + y * cs];
+    if (s.flip) x = -x; if (s.flipv) y = -y;
+    return { x: (x / pw + 0.5) * c.width, y: (y / (pw / (c.width / c.height)) + 0.5) * c.height };
+  };
+  const p0 = loc(a), p1 = loc(b), ctx = c.getContext('2d');
+  // 筆刷大小以螢幕寬度為準，跟消除筆一樣：100 大約是螢幕寬的 1/5
+  const rad = Math.max(1, stBrush / 100 * wr.width * 0.1) * c.width / pw;
+  ctx.globalCompositeOperation = stPen === 'erase' ? 'destination-out' : 'source-over';
+  // 硬度 100 是實心圓，越低邊緣越柔：沿著線段蓋一串漸層圓點
+  const inner = rad * (0.2 + 0.8 * stHard / 100);
+  const n = Math.max(1, Math.ceil(Math.hypot(p1.x - p0.x, p1.y - p0.y) / Math.max(1, rad * 0.25)));
+  for (let k = 0; k <= n; k++) {
+    const x = p0.x + (p1.x - p0.x) * k / n, y = p0.y + (p1.y - p0.y) * k / n;
+    const g = ctx.createRadialGradient(x, y, inner, x, y, rad);
+    g.addColorStop(0, '#fff'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = stHard >= 100 ? '#fff' : g;
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+  }
 }
 // 貼紙外框的寬高（px：貼紙「本體」的寬度）。摳圖圖層加了描邊會變大，本體大小不變
 function stBox(s, px) {
   if (s.kind === 'cut') { const c = composeLayer(s); return c ? [px * c.canvas.width / c.w, px * c.canvas.height / c.w] : [px, px]; }
-  return [px, px / (s.kind === 'svg' ? stickerById(s.v).ar : 1)];
+  return [px, px / stickerAR(s)];
 }
 const stTab = s => s?.kind === 'cut' ? 'cut' : 'sticker';
 // 摳圖圖層畫成螢幕大小的小圖放進去（原圖可能很大）
@@ -841,14 +972,12 @@ function drawStickers() {
   stickers.forEach((s, i) => {
     const d = document.createElement('div'), px = s.size * wr.width;
     if (s.kind === 'cut' && !composeLayer(s)) return;
-    const [bw, bh] = stBox(s, px), T = stTab(s);
-    d.className = 'st' + (i === selSt && tab === T ? ' sel' : '');
+    const [bw, bh] = stBox(s, px), T = stTab(s), ar = bw / bh;
+    const sel = i === selSt && tab === T, erasing = sel && T === 'sticker' && stSec === 'erase';
+    d.className = 'st' + (sel ? ' sel' : '') + (erasing ? ' erasing' : '');
     if (s.kind === 'cut') d.append(cutView(s, bw, bh)); else d.innerHTML = stickerHTML(s, px);
-    Object.assign(d.style, {
-      left: s.x * 100 + '%', top: s.y * 100 + '%', width: bw + 'px', height: bh + 'px', opacity: s.op,
-      transform: `translate(-50%,-50%) rotate(${s.rot}rad) scaleX(${s.flip ? -1 : 1})`,
-    });
-    const pts = new Map(); let g = null, paint = null;
+    stickerStyle(d, s, bw, ar);
+    const pts = new Map(); let g = null, paint = null, pen = null;
     const start = () => {
       const [a, b] = [...pts.values()];
       g = { x: s.x, y: s.y, size: s.size, rot: s.rot, p: { ...a }, d: b ? Math.hypot(b.x - a.x, b.y - a.y) : 0, a: b ? Math.atan2(b.y - a.y, b.x - a.x) : 0, moved: false };
@@ -863,7 +992,7 @@ function drawStickers() {
     };
     const painting = () => tab === 'cut' && selSt === i && (cur === 'erase' || cur === 'restore');
     d.addEventListener('pointerdown', e => {
-      e.preventDefault(); e.stopPropagation(); d.setPointerCapture(e.pointerId);
+      e.preventDefault(); e.stopPropagation(); try { d.setPointerCapture(e.pointerId); } catch {}
       if (painting()) {
         s.v = cloneAlpha(s.v); // 每一筆存成新的一份，才能復原
         const p = local(e.clientX, e.clientY);
@@ -872,14 +1001,27 @@ function drawStickers() {
         d.replaceChildren(cutView(s, bw, bh, true));
         return;
       }
+      if (erasing) {
+        const p = { x: e.clientX, y: e.clientY };
+        pen = { c: stickerMask(s, ar), last: p };
+        paintMask(pen.c, s, d, p, p); touchCanvas(s.mask); stickerStyle(d, s, px, ar);
+        return;
+      }
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); start();
-      if (selSt !== i || tab !== T) { selSt = i; cur = 'size'; showTab(T); }
+      if (selSt !== i || tab !== T) { selSt = i; cur = 'size'; if (T === 'sticker') stSec = 'adjust'; showTab(T); }
     });
+    let rafM = 0;
     d.addEventListener('pointermove', e => {
       if (paint) {
         const p = local(e.clientX, e.clientY);
         brush(s.v, [paint.pts[paint.pts.length - 1], p], paint.r, cur === 'restore'); paint.pts.push(p);
         d.replaceChildren(cutView(s, bw, bh, true));
+        return;
+      }
+      if (pen) {
+        const p = { x: e.clientX, y: e.clientY };
+        paintMask(pen.c, s, d, pen.last, p); pen.last = p;
+        if (!rafM) rafM = requestAnimationFrame(() => { rafM = 0; touchCanvas(s.mask); stickerStyle(d, s, s.size * $('#wrap').getBoundingClientRect().width, ar); });
         return;
       }
       if (!g || !pts.has(e.pointerId)) return;
@@ -893,12 +1035,12 @@ function drawStickers() {
       }
       g.moved = true;
       const [w2, h2] = stBox(s, s.size * r.width);
-      Object.assign(d.style, { left: s.x * 100 + '%', top: s.y * 100 + '%', width: w2 + 'px', height: h2 + 'px',
-        transform: `translate(-50%,-50%) rotate(${s.rot}rad) scaleX(${s.flip ? -1 : 1})` });
+      stickerStyle(d, s, w2, w2 / h2);
       if (s.kind === 'emoji') d.firstChild.style.fontSize = s.size * r.width * 0.82 + 'px';
     });
     const up = e => {
       if (paint) { paint = null; drawStickers(); commit(); return; }
+      if (pen) { pen = null; touchCanvas(s.mask); stickerStyle(d, s, s.size * $('#wrap').getBoundingClientRect().width, ar); commit(); showTab('sticker'); return; }
       pts.delete(e.pointerId);
       if (g?.moved && !pts.size) { commit(); if (tab === T) showTab(T); }
       if (pts.size) start(); else g = null;
@@ -1401,6 +1543,10 @@ function transform(kind) {
     if (kind === 'flipH') t.x = 1 - t.x;
     if (kind === 'flipV') t.y = 1 - t.y;
   });
+  texts.forEach(t => {
+    if (kind === 'rot') t.rot = (t.rot || 0) + Math.PI / 2;
+    else t.rot = -(t.rot || 0);
+  });
   stickers.forEach(s => {
     if (kind === 'rot') s.rot += Math.PI / 2;
     if (kind === 'flipH') { s.rot = -s.rot; s.flip = !s.flip; }
@@ -1449,65 +1595,189 @@ function tabCutout(box) {
 }
 
 // ---------- 文字 ----------
+// 面板照醒圖文字工具：範本、字型、樣式、描邊、陰影、背景、彎曲、排列、圖層
+let txSec = 'tpl', txSub = {};
+const TX_SECS = [['tpl', '範本'], ['font', '字型'], ['style', '樣式'], ['stroke', '描邊'], ['shadow', '陰影'], ['bg', '背景'], ['curve', '彎曲'], ['arrange', '排列'], ['layer', '圖層']];
+// 範本縮圖：用同一支繪製程式畫一個「Aa」
+const tplThumbs = new Map();
+function tplThumb(tp) {
+  if (!tplThumbs.has(tp.id)) {
+    const c = newCanvas(92, 92), ctx = c.getContext('2d'), t = { ...T0, text: 'Aa' };
+    applyTemplate(t, tp); t.text = 'Aa';
+    ctx.translate(46, 46); drawText(ctx, t, 40);
+    tplThumbs.set(tp.id, c.toDataURL());
+  }
+  return tplThumbs.get(tp.id);
+}
+function addText(tp) {
+  const t = { ...T0 };
+  if (tp) applyTemplate(t, tp);
+  texts.push(t); selText = texts.length - 1; txSec = 'tpl';
+  loadFont(t.font, t.text).then(drawTexts);
+  drawTexts(); commit(); showTab('text');
+  setTimeout(() => { const ti = $('#textInput'); ti.focus(); ti.select(); }, 50);
+}
+// 一排色票，最後一個是自選顏色
+function swatches(box, val, set, extra = []) {
+  extra.forEach(e => box.append(e));
+  TEXT_COLORS.forEach(c => {
+    const b = document.createElement('button');
+    b.className = 'sw' + (val === c ? ' on' : ''); b.style.background = c; b.style.alignSelf = 'center';
+    b.onclick = () => { set(c); drawTexts(); commit(); showTab('text'); };
+    box.append(b);
+  });
+  const pick = document.createElement('button');
+  pick.className = 'sw'; pick.style.cssText = 'align-self:center;background:conic-gradient(red,yellow,lime,cyan,blue,magenta,red)';
+  pick.onclick = () => { const cp = $('#colorPick'); cp.value = val || '#ffffff'; cp.oninput = () => { set(cp.value); drawTexts(); }; cp.onchange = () => { commit(); showTab('text'); }; cp.click(); };
+  box.append(pick);
+}
+// 幾個滑桿共用一排切換鈕
+function subSliders(box, sec, defs, t) {
+  const k = txSub[sec] && defs.some(d => d[0] === txSub[sec]) ? txSub[sec] : defs[0][0];
+  txSub[sec] = k;
+  defs.forEach(([id, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: id === k, onclick: () => { txSub[sec] = id; showTab('text'); } })));
+  const [, lb, min, max] = defs.find(d => d[0] === k);
+  setSlider(lb.slice(0, 2), min, max, t[k], v => { t[k] = v; drawTexts(); });
+}
 function tabText(box) {
-  box.append(item({ label: '加文字', icon: I.plus, onclick: () => {
-    texts.push({ text: '輸入文字', x: 0.5, y: 0.5, size: 0.08, color: '#ffffff', stroke: true, font: 0 });
-    selText = texts.length - 1; drawTexts(); commit(); showTab('text');
-    setTimeout(() => { const ti = $('#textInput'); ti.focus(); ti.select(); }, 50);
-  } }));
   const t = texts[selText];
+  const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
   if (!t) {
     hideSlider();
-    $('#note').textContent = texts.length ? '點一下照片上的文字來編輯，拖曳可以移動。' : '';
+    cats.hidden = true;
+    box.append(item({ label: '加文字', icon: I.plus, onclick: () => addText() }));
+    TEMPLATES.forEach(tp => box.append(item({ label: tp.name, cls: 'ft', style: `background-image:url(${tplThumb(tp)});background-color:#3a3a42`, onclick: () => addText(tp) })));
+    $('#note').textContent = texts.length ? '點一下照片上的文字來編輯，拖曳移動，兩指縮放旋轉。' : '點「加文字」，或直接選一個範本。';
     return;
   }
   $('#textedit').hidden = false;
   const ti = $('#textInput'); ti.value = t.text;
-  ti.oninput = () => { t.text = ti.value; drawTexts(); };
+  ti.oninput = () => { t.text = ti.value; drawTexts(); if (FONTS[t.font].gf) loadFont(t.font, t.text).then(drawTexts); };
   ti.onchange = () => commit();
-  box.append(item({ label: '描邊', icon: I.stroke, on: t.stroke, onclick: () => { t.stroke = !t.stroke; drawTexts(); commit(); showTab('text'); } }));
-  box.append(item({ label: FONTS[t.font][1], icon: I.font, onclick: () => { t.font = (t.font + 1) % FONTS.length; drawTexts(); commit(); showTab('text'); } }));
-  box.append(item({ label: '刪除', icon: I.trash, onclick: () => { texts.splice(selText, 1); selText = -1; drawTexts(); commit(); showTab('text'); } }));
-  TEXT_COLORS.forEach(c => {
-    const b = document.createElement('button');
-    b.className = 'sw' + (t.color === c ? ' on' : ''); b.style.background = c; b.style.alignSelf = 'center';
-    b.onclick = () => { t.color = c; drawTexts(); commit(); showTab('text'); };
-    box.append(b);
-  });
-  setSlider('大小', 2, 30, Math.round(t.size * 100), v => { t.size = v / 100; drawTexts(); });
+  const redo = () => { drawTexts(); commit(); showTab('text'); };
+  const isSet = {
+    tpl: !!t.tpl, font: t.font > 0, style: t.italic || t.under || !t.bold || t.op < 100 || !!t.color2, stroke: t.stroke > 0,
+    shadow: t.shadow > 0, bg: t.bg > 0, curve: !!t.curve, arrange: t.align !== 'center' || !!t.ls || !!t.lh || t.vert, layer: false,
+  };
+  cats.append(item({ label: '完成', icon: '完成', cls: 'wide', onclick: () => { selText = -1; drawTexts(); showTab('text'); } }));
+  TX_SECS.forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: txSec === k, set: isSet[k], onclick: () => { txSec = k; showTab('text'); } })));
+  const sizeSlider = () => setSlider('大小', 2, 40, Math.round(t.size * 100), v => { t.size = v / 100; drawTexts(); });
+  hideSlider();
+  if (txSec === 'tpl') {
+    sizeSlider();
+    box.append(item({ label: '無', icon: I.off, on: !t.tpl, onclick: () => { applyTemplate(t, null); redo(); } }));
+    TEMPLATES.forEach(tp => box.append(item({
+      label: tp.name, cls: 'ft', on: t.tpl === tp.id, style: `background-image:url(${tplThumb(tp)});background-color:#3a3a42`,
+      onclick: () => { applyTemplate(t, tp); loadFont(t.font, t.text).then(drawTexts); redo(); },
+    })));
+  } else if (txSec === 'font') {
+    sizeSlider();
+    FONTS.forEach((f, i) => box.append(item({
+      label: f.name, icon: f.name.length > 3 ? f.name : '字', cls: 'wide', on: t.font === i, style: `font-family:${f.css.replace(/"/g, "'")};font-size:15px`,
+      onclick: () => { t.font = i; redo(); if (f.gf) loadFont(i, t.text).then(drawTexts); },
+    })));
+    FONTS.forEach((f, i) => f.gf && loadFont(i, f.name));
+    $('#note').textContent = '中文字型來自開源字型（SIL OFL），第一次用會下載。';
+  } else if (txSec === 'style') {
+    box.append(item({ label: '粗體', icon: '<b>B</b>', on: t.bold, onclick: () => { t.bold = !t.bold; redo(); } }));
+    box.append(item({ label: '斜體', icon: '<i>I</i>', on: t.italic, onclick: () => { t.italic = !t.italic; redo(); } }));
+    box.append(item({ label: '底線', icon: '<u>U</u>', on: t.under, onclick: () => { t.under = !t.under; redo(); } }));
+    box.append(item({ label: '漸層', icon: '漸', on: !!t.color2, onclick: () => { t.color2 = t.color2 ? null : TEXT_COLORS[(TEXT_COLORS.indexOf(t.color) + 3) % TEXT_COLORS.length]; redo(); } }));
+    if (t.color2) {
+      swatches(box, t.color2, c => { t.color2 = c; });
+      $('#note').textContent = '現在選的是漸層下半部的顏色。';
+    } else swatches(box, t.color, c => { t.color = c; });
+    setSlider('透明', 0, 100, t.op, v => { t.op = v; drawTexts(); });
+  } else if (txSec === 'stroke') {
+    const auto = item({ label: '自動', icon: '自動', cls: 'wide', on: !t.strokeColor, onclick: () => { t.strokeColor = null; if (!t.stroke) t.stroke = 30; redo(); } });
+    swatches(box, t.strokeColor, c => { t.strokeColor = c; if (!t.stroke) t.stroke = 30; }, [auto]);
+    setSlider('寬度', 0, 100, t.stroke, v => { t.stroke = v; drawTexts(); });
+  } else if (txSec === 'shadow') {
+    if (!t.shadow) { t.shadow = 60; drawTexts(); }
+    subSliders(box, 'shadow', [['shadow', '不透明度', 0, 100], ['shadowBlur', '模糊', 0, 100], ['shadowAngle', '角度', -180, 180], ['shadowDist', '位移', 0, 100]], t);
+    swatches(box, t.shadowColor, c => { t.shadowColor = c; if (!t.shadow) t.shadow = 60; });
+  } else if (txSec === 'bg') {
+    swatches(box, t.bg ? t.bgColor : null, c => { t.bgColor = c; if (!t.bg) t.bg = 100; }, [item({ label: '無', icon: I.off, on: !t.bg, onclick: () => { t.bg = 0; redo(); } })]);
+    setSlider('透明', 0, 100, t.bg, v => { t.bg = v; drawTexts(); });
+  } else if (txSec === 'curve') {
+    subSliders(box, 'curve', [['curve', '曲線', -100, 100], ['curveOff', '位移', -100, 100]], t);
+    $('#note').textContent = t.vert ? '直書文字不能彎曲，先到「排列」改回橫書。' : '往右拱起、往左彎下，位移讓文字沿著弧線轉。';
+  } else if (txSec === 'arrange') {
+    box.append(item({ label: t.vert ? '直書' : '橫書', icon: t.vert ? '直書' : '橫書', cls: 'wide', on: t.vert, onclick: () => { t.vert = !t.vert; redo(); } }));
+    (t.vert ? [['left', '靠上'], ['center', '置中'], ['right', '靠下']] : [['left', '靠左'], ['center', '置中'], ['right', '靠右']])
+      .forEach(([k, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: t.align === k, onclick: () => { t.align = k; redo(); } })));
+    subSliders(box, 'arrange', [['ls', '字距', -20, 100], ['lh', '行距', -20, 100]], t);
+  } else {
+    const mv = to => { const [x] = texts.splice(selText, 1); selText = Math.max(0, Math.min(texts.length, to)); texts.splice(selText, 0, x); redo(); };
+    const top = texts.length - 1;
+    box.append(item({ label: '置頂', icon: '置頂', cls: 'wide', onclick: () => selText < top && mv(top) }));
+    box.append(item({ label: '上移', icon: '上移', cls: 'wide', onclick: () => selText < top && mv(selText + 1) }));
+    box.append(item({ label: '下移', icon: '下移', cls: 'wide', onclick: () => selText > 0 && mv(selText - 1) }));
+    box.append(item({ label: '置底', icon: '置底', cls: 'wide', onclick: () => selText > 0 && mv(0) }));
+    box.append(item({ label: '複製', icon: I.copy, onclick: () => { texts.push({ ...t, x: Math.min(0.95, t.x + 0.04), y: Math.min(0.95, t.y + 0.04) }); selText = texts.length - 1; redo(); } }));
+    box.append(item({ label: '刪除', icon: I.trash, onclick: () => { texts.splice(selText, 1); selText = -1; redo(); } }));
+    sizeSlider();
+  }
+}
+// 每段文字畫成一張 canvas，跟存檔用同一支程式，看到什麼就存什麼
+const measureCtx = newCanvas(1, 1).getContext('2d');
+function paintText(cv, t, fs) {
+  const L = textLayout(measureCtx, t, fs), p = pad(t, fs), dpr = Math.min(3, devicePixelRatio || 1);
+  const w = L.box.w + p * 2, h = L.box.h + p * 2;
+  cv.width = Math.max(1, Math.ceil(w * dpr)); cv.height = Math.max(1, Math.ceil(h * dpr));
+  cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, w / 2 * dpr, h / 2 * dpr);
+  drawText(ctx, t, fs, L);
 }
 function drawTexts() {
   const layer = $('#texts'), wr = $('#wrap').getBoundingClientRect();
   layer.innerHTML = '';
   texts.forEach((t, i) => {
-    const d = document.createElement('div');
+    Object.assign(t, upgradeText(t));
+    const d = document.createElement('div'), cv = document.createElement('canvas');
     d.className = 'tx' + (i === selText && tab === 'text' ? ' sel' : '');
-    d.textContent = t.text || ' ';
-    Object.assign(d.style, {
-      left: t.x * 100 + '%', top: t.y * 100 + '%', fontSize: t.size * wr.width + 'px', color: t.color, fontFamily: FONTS[t.font][0],
-      textShadow: t.stroke ? strokeShadow(t.color, Math.max(1, t.size * wr.width / 16)) : 'none',
-    });
-    let drag = null;
+    d.append(cv);
+    const place = () => {
+      const w = $('#wrap').getBoundingClientRect().width;
+      paintText(cv, t, t.size * w);
+      Object.assign(d.style, { left: t.x * 100 + '%', top: t.y * 100 + '%', transform: `translate(-50%,-50%) rotate(${t.rot || 0}rad)` });
+    };
+    place();
+    // 拖曳移動，兩指縮放和旋轉
+    const pts = new Map(); let g = null;
+    const start = () => {
+      const [a, b] = [...pts.values()];
+      g = { x: t.x, y: t.y, size: t.size, rot: t.rot || 0, p: { ...a }, d: b ? Math.hypot(b.x - a.x, b.y - a.y) : 0, a: b ? Math.atan2(b.y - a.y, b.x - a.x) : 0, moved: g?.moved };
+    };
     d.addEventListener('pointerdown', e => {
-      e.preventDefault(); e.stopPropagation(); d.setPointerCapture(e.pointerId);
-      drag = { x: e.clientX, y: e.clientY, tx: t.x, ty: t.y, moved: false };
-      if (selText !== i || tab !== 'text') { selText = i; showTab('text'); drawTexts(); }
+      e.preventDefault(); e.stopPropagation(); try { d.setPointerCapture(e.pointerId); } catch {}
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); start();
+      if (selText !== i || tab !== 'text') { selText = i; showTab('text'); }
     });
     d.addEventListener('pointermove', e => {
-      if (!drag) return;
-      const r = $('#wrap').getBoundingClientRect();
-      t.x = drag.tx + (e.clientX - drag.x) / r.width; t.y = drag.ty + (e.clientY - drag.y) / r.height;
-      d.style.left = t.x * 100 + '%'; d.style.top = t.y * 100 + '%'; drag.moved = true;
+      if (!g || !pts.has(e.pointerId)) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const r = $('#wrap').getBoundingClientRect(), [a, b] = [...pts.values()];
+      if (b && g.d) {
+        t.size = Math.max(0.01, g.size * Math.hypot(b.x - a.x, b.y - a.y) / g.d);
+        t.rot = g.rot + Math.atan2(b.y - a.y, b.x - a.x) - g.a;
+        place();
+      } else {
+        t.x = g.x + (a.x - g.p.x) / r.width; t.y = g.y + (a.y - g.p.y) / r.height;
+        d.style.left = t.x * 100 + '%'; d.style.top = t.y * 100 + '%';
+      }
+      g.moved = true;
     });
-    d.addEventListener('pointerup', () => { if (drag?.moved) commit(); drag = null; });
+    const up = e => {
+      pts.delete(e.pointerId);
+      if (g?.moved && !pts.size) { commit(); if (tab === 'text' && txSec === 'layer') showTab('text'); }
+      if (pts.size) start(); else g = null;
+    };
+    d.addEventListener('pointerup', up); d.addEventListener('pointercancel', up);
     layer.append(d);
+    if (FONTS[t.font]?.gf && !FONTS[t.font].ok) loadFont(t.font, t.text).then(() => { FONTS[t.font].ok = true; place(); });
   });
-}
-const strokeColor = c => (parseInt(c.slice(1, 3), 16) * 299 + parseInt(c.slice(3, 5), 16) * 587 + parseInt(c.slice(5, 7), 16) * 114) / 1000 > 140 ? '#000' : '#fff';
-function strokeShadow(c, w) {
-  const s = strokeColor(c), o = [];
-  for (let a = 0; a < 16; a++) o.push(`${(Math.cos(a / 8 * Math.PI) * w).toFixed(1)}px ${(Math.sin(a / 8 * Math.PI) * w).toFixed(1)}px 0 ${s}`);
-  return o.join(',');
 }
 $('#stage').addEventListener('pointerdown', e => {
   if (tab === 'text' && !e.target.closest('.tx') && selText >= 0) { selText = -1; drawTexts(); showTab('text'); }
@@ -1532,27 +1802,23 @@ async function compose() {
   ctx.save(); ctx.beginPath(); ctx.rect(g.x, g.y, W, H); ctx.clip(); ctx.translate(g.x, g.y);
   for (const s of stickers) {
     const w = s.size * W;
-    ctx.save(); ctx.globalAlpha = s.op; ctx.translate(s.x * W, s.y * H); ctx.rotate(s.rot); if (s.flip) ctx.scale(-1, 1);
+    ctx.save(); ctx.globalAlpha = s.op; ctx.globalCompositeOperation = blendById(s.blend)[2];
+    ctx.translate(s.x * W, s.y * H); ctx.rotate(s.rot); ctx.scale(s.flip ? -1 : 1, s.flipv ? -1 : 1);
     if (s.kind === 'cut') {
       const c = composeLayer(s);
       if (c) { const k = w / c.w; ctx.drawImage(c.canvas, -c.canvas.width * k / 2, -c.canvas.height * k / 2, c.canvas.width * k, c.canvas.height * k); }
-    } else if (s.kind === 'emoji') {
-      ctx.font = `${w * 0.82}px ${EMOJI_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(s.v, 0, 0);
     } else {
-      const h = w / stickerById(s.v).ar;
-      ctx.drawImage(await stickerImage(s.v), -w / 2, -h / 2, w, h);
+      // 貼紙先畫成跟輸出一樣大的圖（套好擦除遮罩），再用混合模式疊上去
+      const h = w / stickerAR(s), k = ctx.getTransform(), px = Math.hypot(k.a, k.b);
+      ctx.drawImage(await renderSticker(s, w * px, h * px), -w / 2, -h / 2, w, h);
     }
     ctx.restore();
   }
+  await Promise.all(texts.map(t => loadFont(t.font, t.text)));
   for (const t of texts) {
-    const fs = t.size * W;
-    ctx.font = `700 ${fs}px ${FONTS[t.font][0]}`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const lines = (t.text || '').split('\n'), lh = fs * 1.2, y0 = t.y * H - (lines.length - 1) * lh / 2;
-    lines.forEach((ln, i) => {
-      if (t.stroke) { ctx.lineWidth = fs / 8; ctx.lineJoin = 'round'; ctx.strokeStyle = strokeColor(t.color); ctx.strokeText(ln, t.x * W, y0 + i * lh); }
-      ctx.fillStyle = t.color; ctx.fillText(ln, t.x * W, y0 + i * lh);
-    });
+    ctx.save(); ctx.translate(t.x * W, t.y * H); ctx.rotate(t.rot || 0);
+    drawText(ctx, upgradeText(t), t.size * W);
+    ctx.restore();
   }
   ctx.restore();
   return out;
@@ -1594,4 +1860,4 @@ addEventListener('drop', e => { e.preventDefault(); const f = [...e.dataTransfer
 addEventListener('paste', e => { const f = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith('image/')); if (f) loadFile(f); });
 
 // 給自動測試用
-window.__editor = { loadFile, get P() { return P; }, get base() { return base; }, get stickers() { return stickers; }, showTab, save, render };
+window.__editor = { loadFile, get P() { return P; }, get base() { return base; }, get stickers() { return stickers; }, get texts() { return texts; }, redraw: () => { drawTexts(); drawStickers(); }, showTab, save, render };
