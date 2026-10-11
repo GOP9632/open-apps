@@ -15,6 +15,8 @@
 <meta name="apple-mobile-web-app-title" content="美食收藏">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.0/dist/maplibre-gl.css">
 <style>
+/* 擋掉 iPhone 連點兩下放大（例如連按復原、返回），雙指縮放照常可用 */
+html{touch-action:manipulation}
 :root{
   --bg:#fbf7f2;--bg2:#f4eee6;--panel:#fff;--panel2:#fffaf5;--text:#1c1917;--text2:#44403c;--muted:#8a8178;--line:#ece4da;--line2:#e2d8cc;
   --accent:#ff6a2b;--accent2:#ff3d6e;--accent-soft:#fff0e6;--accent-text:#d9480f;
