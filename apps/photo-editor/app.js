@@ -4,6 +4,7 @@ import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurC
 import { STICKERS, EMOJIS, EMOJI_FONT, stickerById, stickerImage } from './stickers.js';
 import { FX, OVERLAYS, BG_PHOTOS, EXPOSURES, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
 import { matte } from './matte.js';
+import { GRADE_P0, gradeOn, gradeFn, gradeKey, tabGrade, gradeHide } from './grade.js';
 import { HAIR, HAIR_P0, DYES, HairFx, prepHair, hairWarps, hairNeedsSeg, hairColorOn } from './hair.js';
 import { tabErase, eraseLeave } from './erase.js';
 import { makeupLayer, makeupTab } from './makeup.js';
@@ -27,6 +28,7 @@ const P0 = {
   ...HAIR_P0,
   mk: {}, mkLook: -1, mkLookAmt: 100,
   ...BODY_P0,
+  ...GRADE_P0,
 };
 
 const I = {
@@ -267,7 +269,7 @@ function render() {
   if (needMatte() && !base.matteP) getMatte(base);
   raf = requestAnimationFrame(() => {
     raf = 0;
-    const lut = P.filter === 'none' ? null : getLut(P.filter);
+    const lut = gradeOn(P) ? getGradeLut() : P.filter === 'none' ? null : getLut(P.filter);
     R.setLut(lut);
     draw();
     if (curFrame()?.live) paintFrame();
@@ -278,7 +280,7 @@ function draw() {
   if (bodyOn(P) && !base.body) getBody(base);
   // 身體的變形要排在最前面（長腿會改到整張照片的上下位置）
   const warps = [...(base.body ? bodyWarps(base.body, base.faces, P) : []), ...(base.faces ? [...faceWarps(base.faces, P), ...hairWarps(base.faces, P, base.hair)] : [])];
-  R.render(P, warps, effects());
+  R.render(gradeOn(P) ? { ...P, filterAmt: 100 } : P, warps, effects());
 }
 // 身體塑形：找人體關節，再用人像分割量身體寬度
 function getBody(b) {
@@ -391,6 +393,13 @@ function effects() {
   if (P.bg === 'img') { fx.bgBlur = P.bgBlur / 100; fx.harm = harmony(); }
   return fx;
 }
+// 調色（HSL、曲線、分色）跟濾鏡合成一張 LUT，強度已經混在裡面
+let gradeLut = null, gradeLutKey = '';
+function getGradeLut() {
+  const k = gradeKey(P) + '|' + P.filter + '|' + P.filterAmt;
+  if (k !== gradeLutKey) { gradeLutKey = k; gradeLut = bakeLUT(gradeFn(P, P.filter === 'none' ? null : FILTERS.find(f => f.id === P.filter).fn)); }
+  return gradeLut;
+}
 function getLut(id) {
   if (!lutCache.has(id)) lutCache.set(id, bakeLUT(FILTERS.find(f => f.id === id).fn));
   return lutCache.get(id);
@@ -459,8 +468,9 @@ function showTab(t) {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   const box = $('#items'); box.innerHTML = '';
   $('#note').textContent = ''; $('#textedit').hidden = true; $('#cats').hidden = true;
+  gradeHide();
   if (!base) return;
-  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, hair: tabHair, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
+  ({ grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, hair: tabHair, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && P.light >= 0);
 }
@@ -499,6 +509,9 @@ const eraseApp = { get base() { return base; }, setBase, commit, item, hideSlide
 function tabEraseHere(box) { tabErase(box, eraseApp); }
 
 function tabAdjust(box) { paramItems(box, ADJUST, 'brightness'); }
+function tabGrade2(box) {
+  tabGrade(box, { P: () => P, render, commit, setSlider, hideSlider, item, note: t => { $('#note').textContent = t; }, refresh: () => showTab('grade') });
+}
 
 function tabFilter(box) {
   base.thumbs ||= FILTERS.map(f => thumb(base.canvas, f.fn));
