@@ -91,17 +91,16 @@ uniform vec2 uW3[${MAX_WARPS}]; // 頭的傾斜 cos、sin（收窄：最強的�
 uniform float uExposure, uBright, uContrast, uSat, uTemp, uTint, uHigh, uShadow, uSharp, uVig, uGrain, uFade;
 uniform float uSmoothAmt, uWhite, uLutAmt, uHasLut;
 uniform float uDark, uFold, uEyeB, uTeeth;
-// 臉的橢圓：中心 xy、半徑 xy；傾斜 cos、sin、左右轉頭 sin
-uniform int uFn;
-uniform vec4 uF1[${MAX_FACES}];
-uniform vec3 uF2[${MAX_FACES}];
-// 打光：最多兩盞燈
+// 打光、閃光燈：最多三盞點光源（閃光燈也算一盞）
+//   uLPos：位置 xy（照片 0~1）、高度 z（深度圖像素，負的是在人後面）、燈到臉中間的距離 w
+//   uLCol：顏色 × 強度；uLPar：包覆（光繞到暗面）、反光、影子柔和度、衰減次方
 uniform int uLn;
-uniform vec3 uLDir[2], uLCol[2];
-uniform float uLAmt, uLAmb, uLBg, uLMode;
-// 閃光燈
-uniform float uFAmt, uFLift, uFSpec, uFBg, uFShadow, uFRetro;
-uniform vec2 uFShOff;
+uniform vec4 uLPos[3], uLPar[3];
+uniform vec3 uLCol[3];
+uniform float uLAmbS, uLAmbB, uBgDepth, uThick, uHasGeo, uGeoMax;
+uniform vec2 uGeoTex;
+uniform vec4 uHaze; uniform vec3 uHazeCol;
+uniform float uFAmt, uFRetro;
 uniform float uBgMode; uniform vec3 uBgColor;
 // 創意特效：1 漫畫 2 波普 3 素描 4 彩鉛 5 馬賽克 6 故障 7 鏡像 8 分身 9 雙重曝光
 uniform float uProtect;
@@ -112,6 +111,30 @@ out vec4 o;
 
 float luma(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+
+// 深度圖（uSegB 的 G、B 是 16 位元高度）
+float geoH(vec2 q){ vec3 g = texture(uSegB, q).rgb; return (g.g * 65280.0 + g.b * 255.0) / 65535.0 * uGeoMax; }
+// 從 P 往燈走，路上有比光線還高的東西就是在影子裡；離得越遠影子邊越糊
+float shadow(vec3 P, vec3 L, float soft){
+  vec3 dv = L - P; float len = length(dv.xy);
+  if (len < 1.0) return 1.0;
+  vec3 dir = dv / len;
+  float res = 1.0, t = 1.5;
+  for (int s = 0; s < 28; s++) {
+    if (t > len) break;
+    vec3 q = P + dir * t;
+    vec2 qu = q.xy * uGeoTex;
+    if (qu.x < 0.0 || qu.y < 0.0 || qu.x > 1.0 || qu.y > 1.0) break;
+    float pq = texture(uSeg, qu).r;
+    float hq = geoH(qu) * pq - (1.0 - pq) * uBgDepth;
+    // 東西有厚度：光線從人的後面穿過去不算擋到（背光、輪廓光）
+    float pen = soft * t * 0.12 + 1.0;
+    float blk = clamp(0.5 + (hq - q.z - 1.5) / pen, 0.0, 1.0) * clamp(0.5 + (q.z - (hq - uThick)) / pen, 0.0, 1.0);
+    res = min(res, 1.0 - blk);
+    t = t * 1.22 + 1.0;
+  }
+  return res;
+}
 
 vec3 lut(vec3 c){
   float b = c.b * 63.0;
@@ -277,69 +300,73 @@ void main(){
     col = mix(col, tgt, mu.a);
   }
 
-  // 臉和身體的立體方向：臉當成跟著頭轉的橢球，身體用人像輪廓推出邊緣朝外
-  float pw = texture(uSeg, uv).r;
-  vec3 N = vec3(0.0, 0.0, 1.0); float fw = 0.0;
-  if (uLAmt > 0.0 || uFAmt > 0.0) {
-    float e = 0.004;
-    float gx = texture(uSegB, uv + vec2(e, 0.0)).r - texture(uSegB, uv - vec2(e, 0.0)).r;
-    float gy = texture(uSegB, uv + vec2(0.0, e)).r - texture(uSegB, uv - vec2(0.0, e)).r;
-    N = normalize(vec3(-gx * 8.0, -gy * 8.0, 1.0));
-    for (int i = 0; i < ${MAX_FACES}; i++) {
-      if (i >= uFn) break;
-      vec2 d = p - uF1[i].xy; vec2 cs = uF2[i].xy;
-      vec2 l = vec2(d.x * cs.x + d.y * cs.y, -d.x * cs.y + d.y * cs.x) / uF1[i].zw;
-      float r2 = dot(l, l);
-      if (r2 < 1.0) {
-        vec3 nf = vec3(l, sqrt(1.0 - r2) * 1.1);
-        nf.x += uF2[i].z * nf.z * 0.8;
-        nf = normalize(nf);
-        nf.xy = vec2(nf.x * cs.x - nf.y * cs.y, nf.x * cs.y + nf.y * cs.x);
-        float w = smoothstep(1.0, 0.65, r2);
-        N = normalize(mix(N, nf, w)); fw = max(fw, w);
-      }
+  // 打光、閃光燈：照深度圖（relight.js）算每個像素的立體方向，再用點光源照
+  //   深度圖座標：x、y 是深度圖的像素，z 是高度（朝鏡頭）；背景往後推 uBgDepth，
+  //   所以燈離背景比較遠、比較暗，人的影子也會投在背景上
+  if (uLn > 0) {
+    float pw = texture(uSeg, uv).r, skin = texture(uMask, uv).r;
+    vec2 gt = uGeoTex;
+    float h0 = geoH(uv);
+    vec3 N = vec3(0.0, 0.0, 1.0);
+    if (uHasGeo > 0.5) {
+      float hx = geoH(uv + vec2(gt.x, 0.0)) - geoH(uv - vec2(gt.x, 0.0));
+      float hy = geoH(uv + vec2(0.0, gt.y)) - geoH(uv - vec2(0.0, gt.y));
+      N = normalize(mix(vec3(0.0, 0.0, 1.0), normalize(vec3(-hx, -hy, 2.0)), smoothstep(0.1, 0.6, pw)));
     }
-  }
-
-  if (uLAmt > 0.0) {
-    // 每盞燈：照到的程度 d，亮度往上加，顏色往燈的顏色偏
-    float I = 0.0; vec3 tint = vec3(1.0), glow = vec3(0.0), rim = vec3(0.0);
-    for (int i = 0; i < 2; i++) {
+    vec3 Pw = vec3(uv / gt, h0 * pw - (1.0 - pw) * uBgDepth);
+    vec3 light = vec3(0.0), spec = vec3(0.0), rim = vec3(0.0);
+    for (int i = 0; i < 3; i++) {
       if (i >= uLn) break;
-      float d = max(dot(N, uLDir[i]), 0.0);
-      vec3 c = uLCol[i] / max(uLCol[i].r, max(uLCol[i].g, uLCol[i].b));
-      I += d; tint *= mix(vec3(1.0), c, d * 0.6); glow += c * d; rim += c * d;
+      vec3 Lp = vec3(uLPos[i].xy / gt, uLPos[i].z);
+      vec3 Lv = Lp - Pw; float dist = max(length(Lv), 1.0); vec3 Ld = Lv / dist;
+      float wr = uLPar[i].x + 0.3 * skin;
+      float diff = max((dot(N, Ld) + wr) / (1.0 + wr), 0.0);
+      // 衰減：在臉中間是 1，離燈越近越亮、越遠越暗（燈越近，明暗差越大）
+      float att = min(pow(uLPos[i].w * uLPos[i].w / (dist * dist), uLPar[i].w), 1.6);
+      float sh = uHasGeo > 0.5 ? shadow(Pw, Lp, uLPar[i].z) : 1.0;
+      // 燈在人後面（輪廓光、逆光）只照人，不照背景；邊緣直接亮起來，暗的頭髮也看得到一圈光
+      // 後面的燈只照到側面朝燈的地方，越邊緣越亮，所以是細細一圈
+      float back = uLPos[i].z < 0.0 ? smoothstep(0.45, 0.95, pw) : 1.0;
+      if (uLPos[i].z < 0.0) diff = pow(diff, 3.0);
+      vec3 li = uLCol[i] * diff * att * sh * back;
+      light += li;
+      if (uLPos[i].z < 0.0) rim += li * 0.45;
+      // 彩色的燈：皮膚的紅色很多，只用乘的話藍光、綠光幾乎看不到，所以再直接加一點燈的顏色
+      float cs = max(uLCol[i].r, max(uLCol[i].g, uLCol[i].b)) - min(uLCol[i].r, min(uLCol[i].g, uLCol[i].b));
+      rim += li * cs * 0.22 * pw;
+      vec3 Hv = normalize(Ld + vec3(0.0, 0.0, 1.0));
+      spec += uLCol[i] * pow(max(dot(N, Hv), 0.0), 36.0) * uLPar[i].y * att * sh * skin;
     }
-    vec3 lit = uLMode < 0.5
-      ? col * (uLAmb + (1.0 - uLAmb) * 1.6 * I) * tint + glow * 0.1
-      : 1.0 - (1.0 - col) * (1.0 - clamp(rim * 2.4, 0.0, 1.0));
-    vec3 bgTint = uLn > 1 ? mix(uLCol[0], uLCol[1], vUV.x) : uLCol[0];
-    vec3 bg = col * (1.0 - uLBg) + bgTint * uLBg * 0.15 * luma(col);
-    col = clamp(mix(col, mix(bg, lit, pw), uLAmt), 0.0, 1.0);
+    float L0 = luma(col);
+    vec3 lit = col * (mix(uLAmbB, uLAmbS, pw) + light) + spec * smoothstep(0.1, 0.45, L0) + rim;
+    // 逆光光暈：燈後面一團暖光，人的輪廓邊緣透光
+    if (uHaze.w > 0.0) {
+      vec2 dh = (vUV - uHaze.xy) * vec2(uSize.x / uSize.y, 1.0);
+      float g = exp(-dot(dh, dh) / (uHaze.z * uHaze.z));
+      float edge = clamp(1.0 - abs(pw - 0.5) * 2.0, 0.0, 1.0);
+      lit = 1.0 - (1.0 - lit) * (1.0 - uHazeCol * uHaze.w * (g * (1.0 - 0.6 * pw) + edge * g * 0.8));
+    }
+    // 亮部柔和壓縮（照亮度壓，顏色不會變白變灰）
+    float Ll = luma(lit);
+    if (Ll > 0.72) { float e = Ll - 0.72; lit *= (0.72 + e / (1.0 + e * 3.0)) / Ll; }
+    col = clamp(lit, 0.0, 1.0);
   }
 
   if (uFAmt > 0.0) {
     float k = uFAmt;
-    float L0 = luma(col);
-    // 主體像被正面打亮：整體乘亮，亮部柔和壓縮不爆白，深色衣服還是深色；偏冷白
-    vec3 c2 = col * (1.0 + 0.55 * uFLift * k * pw);
-    vec3 ex = max(c2 - 0.82, 0.0);
-    col = min(c2, 0.82) + ex / (1.0 + ex * 2.5);
-    col.b += 0.025 * k * (1.0 - uFRetro); col.r -= 0.012 * k * (1.0 - uFRetro);
-    // 額頭、鼻尖、顴骨的反光
-    col += pow(max(N.z, 0.0), 22.0) * fw * uFSpec * k * 0.32 * smoothstep(0.25, 0.6, L0);
-    // 背景很快變暗，主體後面一道硬影子
-    float rad = length((vUV - 0.5) * 2.0);
-    col *= 1.0 - uFBg * k * (1.0 - pw) * (0.5 + 0.5 * smoothstep(0.2, 1.3, rad));
-    col *= 1.0 - uFShadow * k * texture(uSegB, uv - uFShOff).r * (1.0 - pw) * 0.55;
+    // 閃光燈：偏冷白，亮的地方微微暈開
+    col.b += 0.02 * k * (1.0 - uFRetro); col.r -= 0.01 * k * (1.0 - uFRetro);
+    vec3 bl = texture(uBlurS, uv).rgb;
+    col = 1.0 - (1.0 - col) * (1.0 - max(bl - 0.62, 0.0) * k * (0.5 + 0.8 * uFRetro));
     if (uFRetro > 0.0) {
+      // CCD：對比高一點、顏色淡一點、偏暖黃、雜訊、暗角
       float r = uFRetro * k;
-      col = (col - 0.5) * (1.0 + 0.2 * r) + 0.5;
-      col = mix(vec3(luma(col)), col, 1.0 - 0.15 * r);
-      col.r += 0.025 * r; col.g += 0.012 * r;
-      col += (hash(vUV * uSize + 7.0) - 0.5) * 0.07 * r;
+      col = (col - 0.5) * (1.0 + 0.18 * r) + 0.5;
+      col = mix(vec3(luma(col)), col, 1.0 - 0.12 * r);
+      col.r += 0.02 * r; col.g += 0.012 * r;
+      col += (hash(vUV * uSize + 7.0) - 0.5) * 0.06 * r;
       vec2 dd = (vUV - 0.5) * 2.0;
-      col *= 1.0 - smoothstep(0.6, 1.5, length(dd)) * 0.35 * r;
+      col *= 1.0 - smoothstep(0.6, 1.5, length(dd)) * 0.3 * r;
     }
     col = clamp(col, 0.0, 1.0);
   }
@@ -600,7 +627,9 @@ export class Renderer {
     this.gauss(this.fbBf, 3);
   }
   setMask2(src) { src ? this.upload(this.tMask2, src) : this.blank(this.tMask2, 0); }
-  setSegB(src) { src ? this.upload(this.tSegB, src) : this.blank(this.tSegB, 255); }
+  setSegB(src) { src ? this.upload(this.tSegB, src) : this.blank(this.tSegB, 255); this.geo = null; }
+  // 深度圖（relight.js）：R 還是模糊的人像遮罩，所以直接取代 segB
+  setGeo(d) { this.upload(this.tSegB, d.canvas); this.geo = d; }
   // 美妝層：沒有妝的時候放一個全透明的點
   setMakeup(src) {
     if (src) { this.upload(this.tMakeup, src); return; }
@@ -610,7 +639,7 @@ export class Renderer {
   }
   setLut(src) { this.hasLut = !!src; if (src) this.upload(this.tLut, src); }
 
-  // fx：{ faces: [faceGeom], light: { lights, amt, amb, bg, mode }, flash: { amt, lift, spec, bg, shadow, retro } }
+  // fx：{ lit: { lights: [{ pos, col, par }], ambS, ambB, bgDepth, haze, hazeCol }, flash: { amt, retro } }
   render(p, warps, fx = {}) {
     const gl = this.gl, u = this.pMain.u;
     // 有臉型變形時先畫到暫存，最後再變形一次畫到畫面
@@ -634,18 +663,16 @@ export class Renderer {
     }
     gl.uniform1i(u.uWn, n);
     gl.uniform4fv(u.uW1, w1); gl.uniform4fv(u.uW2, w2); gl.uniform2fv(u.uW3, w3);
-    const faces = (fx.faces || []).slice(0, MAX_FACES), f1 = new Float32Array(MAX_FACES * 4), f2 = new Float32Array(MAX_FACES * 3);
-    faces.forEach((g, i) => { f1.set([g.cx, g.cy, g.rx, g.ry], i * 4); f2.set([Math.cos(g.roll), Math.sin(g.roll), Math.sin(g.yaw)], i * 3); });
-    gl.uniform1i(u.uFn, faces.length); gl.uniform4fv(u.uF1, f1); gl.uniform3fv(u.uF2, f2);
-    const L = fx.light, ls = L?.lights || [];
-    const ld = new Float32Array(6), lc = new Float32Array(6);
-    ls.slice(0, 2).forEach((l, i) => { ld.set(l.dir, i * 3); lc.set(l.col, i * 3); });
-    gl.uniform1i(u.uLn, Math.min(2, ls.length)); gl.uniform3fv(u.uLDir, ld); gl.uniform3fv(u.uLCol, lc);
-    gl.uniform1f(u.uLAmt, L ? L.amt : 0); gl.uniform1f(u.uLAmb, L?.amb ?? 0.6); gl.uniform1f(u.uLBg, L?.bg ?? 0.3); gl.uniform1f(u.uLMode, L?.mode ?? 0);
+    const L = fx.lit, ls = (L?.lights || []).slice(0, 3);
+    const lp = new Float32Array(12), lr = new Float32Array(12), lc = new Float32Array(9);
+    ls.forEach((l, i) => { lp.set(l.pos, i * 4); lr.set(l.par, i * 4); lc.set(l.col, i * 3); });
+    gl.uniform1i(u.uLn, ls.length); gl.uniform4fv(u.uLPos, lp); gl.uniform4fv(u.uLPar, lr); gl.uniform3fv(u.uLCol, lc);
+    gl.uniform1f(u.uLAmbS, L?.ambS ?? 1); gl.uniform1f(u.uLAmbB, L?.ambB ?? 1); gl.uniform1f(u.uBgDepth, L?.bgDepth ?? 0); gl.uniform1f(u.uThick, L?.thick ?? 1e4);
+    const g = this.geo;
+    gl.uniform1f(u.uHasGeo, g ? 1 : 0); gl.uniform1f(u.uGeoMax, g ? g.max : 0); gl.uniform2f(u.uGeoTex, 1 / (g?.w || 1), 1 / (g?.h || 1));
+    gl.uniform4fv(u.uHaze, L?.haze || [0, 0, 1, 0]); gl.uniform3fv(u.uHazeCol, L?.hazeCol || [1, 1, 1]);
     const F = fx.flash;
-    gl.uniform1f(u.uFAmt, F ? F.amt : 0); gl.uniform1f(u.uFLift, F?.lift ?? 1); gl.uniform1f(u.uFSpec, F?.spec ?? 1);
-    gl.uniform1f(u.uFBg, F?.bg ?? 0.5); gl.uniform1f(u.uFShadow, F?.shadow ?? 0); gl.uniform1f(u.uFRetro, F?.retro ?? 0);
-    gl.uniform2f(u.uFShOff, 0.012, 0.016);
+    gl.uniform1f(u.uFAmt, F ? F.amt : 0); gl.uniform1f(u.uFRetro, F?.retro ?? 0);
     const f = v => (v || 0) / 100;
     gl.uniform1f(u.uProtect, p.bgProtect === 0 ? 0 : 1);
     gl.uniform1f(u.uExposure, f(p.exposure) * 1.2);
