@@ -76,18 +76,9 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $section) {
-                Label(Page.smart.title, systemImage: Page.smart.icon).tag(Page.smart)
-                ForEach(Page.groups, id: \.title) { group in
-                    Section(group.title) {
-                        ForEach(group.pages) { p in
-                            Label(p.title, systemImage: p.icon).tag(p)
-                        }
-                    }
-                }
-            }
-            .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 190, ideal: 210)
+            // 自己畫側欄，不用系統 List：系統側欄在透明標題列底下會捲動錯位，把上面的項目藏到標題列後面
+            Sidebar(selection: Binding(get: { page }, set: { section = $0 }))
+                .navigationSplitViewColumnWidth(min: 200, ideal: 220)
             .safeAreaInset(edge: .bottom) { DiskBar(volume: volume).padding(12) }
         } detail: {
             ZStack {
@@ -111,12 +102,50 @@ struct ContentView: View {
                 .foregroundStyle(.white)
             }
             .animation(.easeInOut(duration: 0.25), value: page)
-            .toolbarBackground(.hidden, for: .windowToolbar)
             .onReceive(NotificationCenter.default.publisher(for: .didMoveToTrash)) { _ in
                 volume = DiskUsage.volume()
             }
         }
         .preferredColorScheme(.dark)
+    }
+}
+
+struct Sidebar: View {
+    @Binding var selection: Page
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                row(.smart)
+                ForEach(Page.groups, id: \.title) { group in
+                    Text(group.title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 14).padding(.bottom, 4).padding(.leading, 10)
+                    ForEach(group.pages) { row($0) }
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+        }
+    }
+
+    private func row(_ p: Page) -> some View {
+        let selected = selection == p
+        return Button { selection = p } label: {
+            HStack(spacing: 10) {
+                Image(systemName: p.icon)
+                    .frame(width: 22)
+                    .foregroundStyle(selected ? AnyShapeStyle(p.theme.glow) : AnyShapeStyle(.secondary))
+                Text(p.title)
+                Spacer()
+            }
+            .font(.body.weight(selected ? .semibold : .regular))
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(selected ? Color.white.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
