@@ -8,6 +8,8 @@ import { HAIR, HAIR_P0, DYES, HairFx, prepHair, hairWarps, hairNeedsSeg, hairCol
 import { tabErase, eraseLeave } from './erase.js';
 import { makeupLayer, makeupTab } from './makeup.js';
 import { BODY, BODY_P0, bodyOn, detectBody, measureBody, bodyWarps, bodyNote } from './body.js';
+import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } from './faceshape.js';
+import { WarpField } from './warpfield.js';
 
 const $ = s => document.querySelector(s);
 const MAX_SIDE = 4096, MAX_AREA = 16e6;
@@ -126,7 +128,8 @@ let exOwn = null, exN = 0; // 雙重曝光自己選的第二張照片
 let frameK = 1;
 const lutCache = new Map();
 
-try { R = new Renderer($('#gl')); }
+let WF;              // 臉型位移場
+try { R = new Renderer($('#gl')); WF = new WarpField(R.gl); }
 catch (e) { $('#empty p').textContent = '這個瀏覽器不支援 WebGL2，請改用新版 Safari、Chrome 或 Edge。'; }
 
 // ---------- 小工具 ----------
@@ -271,7 +274,7 @@ function render() {
   });
 }
 function draw() {
-  syncTex(); syncHair();
+  syncTex(); syncHair(); syncShape();
   if (bodyOn(P) && !base.body) getBody(base);
   // 身體的變形要排在最前面（長腿會改到整張照片的上下位置）
   const warps = [...(base.body ? bodyWarps(base.body, base.faces, P) : []), ...(base.faces ? [...faceWarps(base.faces, P), ...hairWarps(base.faces, P, base.hair)] : [])];
@@ -308,6 +311,11 @@ function getHair(b) {
     return b.hair;
   }).catch(e => { console.warn(e); b.hairP = null; return null; });
   return b.hairP;
+}
+// 臉型：所有滑桿換成位移圖
+function syncShape() {
+  const sm = base.faces?.length ? shapeMoves(base.faces, P) : { moves: [], pins: [] };
+  R.setDisp(WF.update(base.canvas.width, base.canvas.height, base.faces || [], sm.moves, sm.pins));
 }
 // 光效、背景、雙重曝光的圖：要用的時候才畫，照片比例變了就重畫
 const texKey = {};
@@ -450,9 +458,9 @@ function showTab(t) {
   tab = t;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   const box = $('#items'); box.innerHTML = '';
-  $('#note').textContent = ''; $('#textedit').hidden = true;
+  $('#note').textContent = ''; $('#textedit').hidden = true; $('#cats').hidden = true;
   if (!base) return;
-  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, makeup: tabMakeup, body: tabBody, hair: tabHair, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
+  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, hair: tabHair, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && P.light >= 0);
 }
@@ -565,6 +573,50 @@ function tabMakeup(box) {
   makeupTab(box, {
     P: () => P, base: () => base, item, setSlider, hideSlider, render, commit, findFaces,
     refresh: () => showTab('makeup'), note: t => { $('#note').textContent = t; },
+  });
+}
+
+// ---------- 臉型（照醒圖的臉型面板） ----------
+let shapeCat = 'face', shapeCur = '', shapeSide = 'both';
+const SHAPE_IC = {
+  nose: I.nose, face: I.slim, style: I.vface, eye: I.eye, mouth: I.mouth, d3: I.rotate, ratio: I.chin,
+  brow: '<svg viewBox="0 0 24 24"><path d="M3 13c3-4 9-6 18-3"/><path d="M5 17c2-1 5-1.5 8-1"/></svg>',
+};
+function tabShape(box) {
+  const faces = base.faces;
+  if (!faces) { $('#note').textContent = '正在找臉…'; findFaces(); }
+  else if (!faces.length) $('#note').textContent = base.faceErr ? '臉部偵測模型載入失敗，檢查一下網路再換一次照片。' : '這張照片沒找到臉，臉型只對人臉有效。';
+  else $('#note').textContent = `找到 ${faces.length} 張臉`;
+  const cat = SHAPE_CATS.find(c => c.id === shapeCat);
+  if (!cat.items.some(it => it.id === shapeCur)) shapeCur = cat.items[0].id;
+  const it = cat.items.find(x => x.id === shapeCur);
+  // 上面一排：分類，最後是重置這一類
+  const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
+  SHAPE_CATS.forEach(c => cats.append(item({
+    label: c.name, icon: c.name, cls: 'wide', on: c.id === shapeCat, set: c.items.some(x => shapeIsSet(P, x.id)),
+    onclick: () => { shapeCat = c.id; showTab('shape'); },
+  })));
+  cats.append(item({ label: '重置', icon: '重置', cls: 'wide', onclick: () => { resetShape(P, shapeCat); render(); commit(); showTab('shape'); } }));
+  if (it.sided) {
+    $('#note').textContent += '　可以只調左邊或右邊';
+    box.append(...[['both', '兩邊'], ['L', '左'], ['R', '右']].map(([sd, lb]) => item({
+      label: lb, icon: lb, cls: 'wide', on: shapeSide === sd, onclick: () => { shapeSide = sd; showTab('shape'); },
+    })));
+  }
+  const side = it.sided ? shapeSide : 'both';
+  const els = {};
+  cat.items.forEach(x => box.append(els[x.id] = item({
+    label: x.name, icon: SHAPE_IC[cat.id], on: x.id === shapeCur, set: shapeIsSet(P, x.id),
+    onclick: () => {
+      shapeCur = x.id;
+      // 第一次點開時套用醒圖的預設強度（風格類 30~60、臉部對稱 100 等）
+      if (x.def && !shapeIsSet(P, x.id)) { setShape(P, x.id, 'both', x.def); render(); commit(); }
+      showTab('shape');
+    },
+  })));
+  setSlider(it.name + (side === 'L' ? '左' : side === 'R' ? '右' : ''), it.min, 100, getShape(P, it.id, side), v => {
+    setShape(P, it.id, side, v); render();
+    cat.items.forEach(x => els[x.id].classList.toggle('set', shapeIsSet(P, x.id)));
   });
 }
 
