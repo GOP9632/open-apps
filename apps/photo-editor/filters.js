@@ -1,11 +1,11 @@
 // 濾鏡：每個濾鏡是一個 (r,g,b) → [r,g,b] 的顏色函式，數值 0～1。
 // 開啟時烘成 512×512 的 LUT 圖（64 階、8×8 格），在 GPU 上查表，強度滑桿就是跟原圖混合。
 
-const clamp = v => v < 0 ? 0 : v > 1 ? 1 : v;
-const lum = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+export const clamp = v => v < 0 ? 0 : v > 1 ? 1 : v;
+export const lum = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
 // 依控制點做平滑曲線（單調三次內插）
-function curve(points) {
+export function curve(points) {
   const xs = points.map(p => p[0] / 255), ys = points.map(p => p[1] / 255);
   const n = xs.length, d = [], m = [];
   for (let i = 0; i < n - 1; i++) d.push((ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]));

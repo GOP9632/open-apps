@@ -60,7 +60,7 @@ void main(){
 const FS_MAIN = `#version 300 es
 precision highp float;
 in vec2 vUV;
-uniform sampler2D uImg, uSmooth, uMask, uSeg, uLut, uMask2, uSegB, uBlurS, uBgA, uBgB, uOver, uEx, uBgImg, uBgMid, uBgFar;
+uniform sampler2D uImg, uSmooth, uMask, uSeg, uLut, uMask2, uSegB, uBlurS, uBgA, uBgB, uOver, uEx, uBgImg, uBgMid, uBgFar, uGlow;
 uniform vec2 uSize;
 uniform int uWn;
 uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）
@@ -85,10 +85,17 @@ uniform float uBgMode; uniform vec3 uBgColor;
 uniform int uFx; uniform float uFxAmt; uniform vec2 uExFit;
 uniform float uOAmt, uBlur;
 uniform float uBgBlurAmt, uHarmAmt; uniform vec3 uHarm;
+// 相機濾鏡的質感：顆粒（量、大小、彩色比例）、高光柔光、紅色光暈、柔焦、膚色保護、亮部偏暖、只動膚色的冷暖
+uniform float uCGrain, uCGSize, uCGColor, uCBloom, uCBthr, uCHal, uCSoft, uCSkin, uCWarmHi; uniform vec2 uCSkinWB;
 out vec4 o;
 
 float luma(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+// 平滑的雜訊，顆粒比較像底片的銀鹽，不是一格一格的數位雜點
+float vnoise(vec2 p){
+  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+}
 
 vec3 lut(vec3 c){
   float b = c.b * 63.0;
@@ -279,7 +286,26 @@ void main(){
   col = mix(col, col * 0.84 + 0.1, uFade);
   col = clamp(col, 0.0, 1.0);
 
+  vec3 pre = col;
   if (uHasLut > 0.5) col = mix(col, lut(col), uLutAmt);
+  if (uCSkin > 0.0) col = mix(col, pre, mk.g * uCSkin);
+  if (uCSkinWB != vec2(0.0)) {
+    float m = mk.g;
+    col.r += uCSkinWB.x * 0.06 * m; col.b -= uCSkinWB.x * 0.06 * m;
+    col.g -= uCSkinWB.y * 0.012 * m; col.rb += uCSkinWB.y * 0.006 * m;
+  }
+  if (uCBloom > 0.0 || uCHal > 0.0 || uCSoft > 0.0 || uCWarmHi > 0.0) {
+    // 用整張的大模糊圖：亮的地方往外暈開（柔光鏡、黑柔），底片的紅色光暈只出現在亮點外圍
+    vec3 g = texture(uGlow, uv).rgb;
+    if (uHasLut > 0.5) g = mix(g, lut(clamp(g, 0.0, 1.0)), uLutAmt);
+    float gl = luma(g), hw = smoothstep(uCBthr, 1.0, gl);
+    col = 1.0 - (1.0 - col) * (1.0 - g * hw * uCBloom);
+    col = mix(col, max(col, g * 0.92), uCSoft);
+    col += vec3(1.0, 0.25, 0.1) * hw * uCHal * 0.55 * (1.0 - smoothstep(0.6, 0.95, luma(col)));
+    // 藍調時刻：路燈、窗戶這些亮的地方偏暖
+    col += vec3(0.12, 0.05, -0.06) * smoothstep(0.5, 0.9, gl) * uCWarmHi;
+    col = clamp(col, 0.0, 1.0);
+  }
 
   if (uFx >= 1 && uFx <= 4) {
     // 邊緣：用保邊模糊過的圖算，比較乾淨
@@ -341,6 +367,14 @@ void main(){
     col = uVig > 0.0 ? col * (1.0 - uVig * v * 0.85) : mix(col, vec3(1.0), -uVig * v * 0.8);
   }
   if (uGrain > 0.0) col += (hash(vUV * uSize) - 0.5) * uGrain * 0.16;
+  if (uCGrain > 0.0) {
+    // 底片顆粒：中間調最明顯，亮部和暗部少；可以帶一點彩色
+    vec2 gp = vUV * uSize / (uCGSize * max(uSize.x, uSize.y) / 1500.0);
+    float n = vnoise(gp) + vnoise(gp * 2.03 + 17.0) * 0.5 - 0.75;
+    vec3 nc = vec3(vnoise(gp + 31.0), vnoise(gp + 57.0), vnoise(gp + 83.0)) - 0.5;
+    float L2 = luma(col), amp = uCGrain * (0.35 + 2.6 * L2 * (1.0 - L2));
+    col += (vec3(n) * (1.0 - uCGColor) + nc * uCGColor * 1.4) * amp;
+  }
   col = clamp(col, 0.0, 1.0);
 
   float a = 1.0;
@@ -411,7 +445,7 @@ export class Renderer {
     this.tOver = this.tex(); this.tEx = this.tex(); this.tBgImg = this.tex();
     this.blank(this.tOver, 0); this.blank(this.tEx, 255); this.blank(this.tBgImg, 255);
     this.fbBm = [this.fbo(), this.fbo()]; this.fbBf = [this.fbo(), this.fbo()];
-    this.fbA = this.fbo(); this.fbB = this.fbo();
+    this.fbA = this.fbo(); this.fbB = this.fbo(); this.fbG = [this.fbo(), this.fbo()];
     this.fbS = [this.fbo(), this.fbo()]; this.fbM = [this.fbo(), this.fbo()]; this.fbL = [this.fbo(), this.fbo()];
     this.hasLut = false;
   }
@@ -495,6 +529,10 @@ export class Renderer {
     this.size(this.fbS, 480);
     this.pass(this.pCopy, this.fbS[0], this.fbS[0].w, this.fbS[0].h, this.tImg); gl.drawArrays(gl.TRIANGLES, 0, 3);
     this.gauss(this.fbS, 2);
+    // 柔光、光暈用的整張大模糊
+    this.size(this.fbG, 160);
+    this.pass(this.pCopy, this.fbG[0], this.fbG[0].w, this.fbG[0].h, this.fbS[0].t); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    this.gauss(this.fbG, 3);
     this.size(this.fbM, 200); this.size(this.fbL, 48);
     this.pass(this.pW, this.fbM[0], this.fbM[0].w, this.fbM[0].h, this.fbS[0].t);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.tSeg); gl.uniform1i(this.pW.u.uSeg, 1);
@@ -525,12 +563,12 @@ export class Renderer {
 
   // fx：{ faces: [faceGeom], light: { lights, amt, amb, bg, mode }, flash: { amt, lift, spec, bg, shadow, retro } }
   render(p, warps, fx = {}) {
-    const gl = this.gl, u = this.pMain.u;
+    const gl = this.gl, u = this.pMain.u, C = fx.cam || {};
     this.pass(this.pMain, null, this.w, this.h);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     const texs = [[this.tImg, 'uImg'], [this.tSmooth, 'uSmooth'], [this.tMask, 'uMask'], [this.tSeg, 'uSeg'], [this.tLut, 'uLut'], [this.tMask2, 'uMask2'], [this.tSegB, 'uSegB'],
       [this.fbS[0].t, 'uBlurS'], [this.fbM[0].t, 'uBgA'], [this.fbL[0].t, 'uBgB'], [this.tOver, 'uOver'], [this.tEx, 'uEx'], [this.tBgImg, 'uBgImg'],
-      [this.fbBm[0].t, 'uBgMid'], [this.fbBf[0].t, 'uBgFar']];
+      [this.fbBm[0].t, 'uBgMid'], [this.fbBf[0].t, 'uBgFar'], [this.fbG[0].t, 'uGlow']];
     texs.forEach(([t, name], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(u[name], i); });
     gl.uniform2f(u.uSize, this.w, this.h);
     const n = Math.min(warps.length, MAX_WARPS), w1 = new Float32Array(MAX_WARPS * 4), w2 = new Float32Array(MAX_WARPS * 4), w3 = new Float32Array(MAX_WARPS * 2);
@@ -563,8 +601,8 @@ export class Renderer {
     gl.uniform1f(u.uTint, f(p.tint));
     gl.uniform1f(u.uHigh, f(p.highlights));
     gl.uniform1f(u.uShadow, f(p.shadows));
-    gl.uniform1f(u.uSharp, f(p.sharpen));
-    gl.uniform1f(u.uVig, f(p.vignette));
+    gl.uniform1f(u.uSharp, f(p.sharpen) + (C.sharp || 0));
+    gl.uniform1f(u.uVig, f(p.vignette) + (C.vig || 0));
     gl.uniform1f(u.uGrain, f(p.grain));
     gl.uniform1f(u.uFade, f(p.fade));
     gl.uniform1f(u.uSmoothAmt, f(p.smooth));
@@ -579,6 +617,10 @@ export class Renderer {
     gl.uniform1f(u.uOAmt, fx.over || 0); gl.uniform1f(u.uBlur, fx.blur || 0);
     gl.uniform1f(u.uBgBlurAmt, fx.bgBlur || 0); gl.uniform1f(u.uHarmAmt, fx.harm ? 1 : 0);
     gl.uniform3fv(u.uHarm, fx.harm || [1, 1, 1]);
+    gl.uniform1f(u.uCGrain, C.grain || 0); gl.uniform1f(u.uCGSize, C.gsize || 1); gl.uniform1f(u.uCGColor, C.gcolor || 0);
+    gl.uniform1f(u.uCBloom, C.bloom || 0); gl.uniform1f(u.uCBthr, C.bthr ?? 0.75); gl.uniform1f(u.uCHal, C.hal || 0);
+    gl.uniform1f(u.uCSoft, C.soft || 0); gl.uniform1f(u.uCSkin, C.skin || 0); gl.uniform1f(u.uCWarmHi, C.warmHi || 0);
+    gl.uniform2f(u.uCSkinWB, C.skinOnly?.temp || 0, C.skinOnly?.tint || 0);
     const mode = { keep: 0, clear: 1, color: 2, img: 3 }[p.bg] || 0;
     gl.uniform1f(u.uBgMode, mode);
     const hex = p.bgColor || '#ffffff';

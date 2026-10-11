@@ -4,6 +4,7 @@ import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurC
 import { STICKERS, EMOJIS, EMOJI_FONT, stickerById, stickerImage } from './stickers.js';
 import { FX, OVERLAYS, BG_PHOTOS, EXPOSURES, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
 import { matte } from './matte.js';
+import { CAMERAS, CAMERA_GROUPS, cameraById, dateText, drawDate } from './camera.js';
 
 const $ = s => document.querySelector(s);
 const MAX_SIDE = 4096, MAX_AREA = 16e6;
@@ -17,7 +18,7 @@ const P0 = {
   bg: 'keep', bgColor: '#ffffff',
   oneTap: -1, oneAmt: 100,
   light: -1, lightAmt: 60, lightRot: 0, flash: -1, flashAmt: 60,
-  blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'forest', bgImg: 'beach', bgBlur: 30, frame: '',
+  blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'forest', bgImg: 'beach', bgBlur: 30, frame: '', date: false,
 };
 
 const I = {
@@ -86,6 +87,12 @@ const LIGHTS = [
   { name: '輪廓光', lights: [{ dir: n3(-0.9, -0.2, -0.35), col: [1, 0.95, 0.85] }, { dir: n3(0.9, -0.2, -0.35), col: [1, 0.95, 0.85] }], amb: 1, bg: 0.35, mode: 1 },
   { name: '霓虹', lights: [{ dir: n3(-0.85, -0.1, 0.45), col: [1, 0.35, 0.7] }, { dir: n3(0.85, -0.1, 0.45), col: [0.3, 0.55, 1] }], amb: 0.45, bg: 0.5 },
 ];
+// 相機濾鏡裡的閃光款式，借用光影的閃光燈
+const CAM_FLASH = {
+  direct: { lift: 0.75, spec: 0.9, bg: 0.5, shadow: 1, retro: 0 },
+  burst: { lift: 0.9, spec: 1, bg: 0.8, shadow: 1, retro: 0.3 },
+  glow: { lift: 0.55, spec: 1.3, bg: 0.3, shadow: 0, retro: 0 },
+};
 const FLASHES = [
   { name: '直閃', lift: 1, spec: 1, bg: 0.55, shadow: 1, retro: 0 },
   { name: '柔閃', lift: 0.7, spec: 0.5, bg: 0.25, shadow: 0, retro: 0 },
@@ -117,6 +124,7 @@ let cropState = null;
 let cSec = 'fx';          // 創意分頁目前在哪一區：景深、特效、光效
 let exOwn = null, exN = 0; // 雙重曝光自己選的第二張照片
 let frameK = 1;
+let fSec = '';          // 濾鏡分頁目前在哪一組
 const lutCache = new Map();
 
 try { R = new Renderer($('#gl')); }
@@ -174,7 +182,8 @@ function applyBase() {
 }
 
 const fxById = id => FX.find(f => f.id === id);
-const needSeg = () => P.bg !== 'keep' || P.light >= 0 || P.flash >= 0 || P.blur > 0 || !!fxById(P.fx)?.seg;
+const curCam = () => P.filter.startsWith('c:') ? cameraById(P.filter.slice(2)) : null;
+const needSeg = () => P.bg !== 'keep' || P.light >= 0 || P.flash >= 0 || !!curCam()?.fx.flash || P.blur > 0 || !!fxById(P.fx)?.seg;
 // 換背景、去背、景深、分身要精細到頭髮絲，用摳圖模型
 const needMatte = () => P.bg !== 'keep' || P.blur > 0 || !!fxById(P.fx)?.seg;
 function getMatte(b) {
@@ -236,7 +245,22 @@ function layout() {
   fb.style.width = Math.round(g.W * k) + 'px'; fb.style.height = Math.round(g.H * k) + 'px';
   Object.assign($('#wrap').style, { left: Math.round(g.x * k) + 'px', top: Math.round(g.y * k) + 'px', width: Math.round(w * k) + 'px', height: Math.round(h * k) + 'px' });
   frameK = k; paintFrame();
-  drawTexts(); drawStickers(); if (cropState) drawCrop();
+  drawTexts(); drawStickers(); if (cropState) drawCrop(); paintDate();
+}
+// 日期戳：照片右下角，大小跟著照片短邊
+function dateAt(ctx, W, H) {
+  const s = Math.min(W, H);
+  drawDate(ctx, dateText(), W - s * 0.06, H - s * 0.05, s * 0.052);
+}
+function paintDate() {
+  const c = $('#date'), on = !!(base && P.date && !cropState);
+  c.hidden = !on;
+  if (!on) return;
+  const r = $('#wrap').getBoundingClientRect(), d = Math.min(2, devicePixelRatio || 1);
+  c.width = Math.max(1, Math.round(r.width * d)); c.height = Math.max(1, Math.round(r.height * d));
+  const ctx = c.getContext('2d'), k = c.width / base.canvas.width;
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  dateAt(ctx, base.canvas.width, base.canvas.height);
 }
 // 裁切的時候先不顯示邊框
 const curFrame = () => !cropState && P.frame ? frameById(P.frame) : null;
@@ -261,6 +285,7 @@ function render() {
     R.setLut(lut);
     draw();
     if (curFrame()?.live) paintFrame();
+    if (!$('#date').hidden !== !!P.date) paintDate();
   });
 }
 function draw() { syncTex(); R.render(P, base.faces ? faceWarps(base.faces, P) : [], effects()); }
@@ -329,6 +354,16 @@ function effects() {
     fx.light = { ...L, amt: P.lightAmt / 100, lights: L.lights.map(l => ({ col: l.col, dir: [l.dir[0] * c - l.dir[1] * s, l.dir[0] * s + l.dir[1] * c, l.dir[2]] })) };
   }
   if (P.flash >= 0) fx.flash = { ...FLASHES[P.flash], amt: P.flashAmt / 100 };
+  const cam = curCam();
+  if (cam) {
+    // 濾鏡強度同時控制顏色和質感
+    const k = P.filterAmt / 100, c = cam.fx, cf = {};
+    for (const key of ['grain', 'bloom', 'hal', 'soft', 'skin', 'warmHi', 'sharp', 'vig']) cf[key] = (c[key] || 0) * k;
+    Object.assign(cf, { gsize: c.gsize || 1, gcolor: c.gcolor || 0, bthr: c.bthr ?? 0.75 });
+    if (c.skinOnly) cf.skinOnly = { temp: (c.skinOnly.temp || 0) * k, tint: (c.skinOnly.tint || 0) * k };
+    fx.cam = cf;
+    if (c.flash && P.flash < 0) fx.flash = { ...CAM_FLASH[c.flash], amt: 0.65 * k };
+  }
   const e = fxById(P.fx);
   if (e) { fx.fxMode = e.mode; fx.fxAmt = P.fxAmt / 100; }
   if (P.ov) fx.over = P.ovAmt / 100;
@@ -337,7 +372,7 @@ function effects() {
   return fx;
 }
 function getLut(id) {
-  if (!lutCache.has(id)) lutCache.set(id, bakeLUT(FILTERS.find(f => f.id === id).fn));
+  if (!lutCache.has(id)) lutCache.set(id, bakeLUT(id.startsWith('c:') ? cameraById(id.slice(2)).fn : FILTERS.find(f => f.id === id).fn));
   return lutCache.get(id);
 }
 
@@ -403,6 +438,7 @@ function showTab(t) {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   const box = $('#items'); box.innerHTML = '';
   $('#note').textContent = ''; $('#textedit').hidden = true;
+  $('#pills').hidden = true; $('#pills').innerHTML = '';
   if (!base) return;
   ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText })[t](box);
   drawTexts(); drawStickers();
@@ -440,16 +476,41 @@ function paramItems(box, list, def, itemsOnly) {
 function tabAdjust(box) { paramItems(box, ADJUST, 'brightness'); }
 
 function tabFilter(box) {
-  base.thumbs ||= FILTERS.map(f => thumb(base.canvas, f.fn));
-  FILTERS.forEach((f, i) => box.append(item({
-    label: f.name, cls: 'ft', on: P.filter === f.id, style: `background-image:url(${base.thumbs[i]})`,
-    onclick: () => {
-      if (P.filter === f.id && f.id !== 'none') return;
-      P.filter = f.id; render(); commit(); showTab('filter');
-    },
-  })));
+  // 上面一排分組：相機濾鏡各組，最後是原本的「經典」濾鏡
+  const groups = [...CAMERA_GROUPS, '經典'], cam = curCam();
+  if (!groups.includes(fSec)) fSec = cam ? cam.group : P.filter !== 'none' ? '經典' : groups[0];
+  const pills = $('#pills'); pills.hidden = false;
+  groups.forEach(g => {
+    const b = document.createElement('button');
+    b.className = `pill ${fSec === g ? 'on' : ''}`; b.textContent = g;
+    b.onclick = () => { fSec = g; showTab('filter'); };
+    pills.append(b);
+  });
+  base.thumbs ||= {};
+  const th = (id, fn) => base.thumbs[id] ||= thumb(base.canvas, fn);
+  box.append(item({ label: '原圖', cls: 'ft', on: P.filter === 'none', style: `background-image:url(${th('none', FILTERS[0].fn)})`,
+    onclick: () => { P.filter = 'none'; P.date = false; render(); commit(); showTab('filter'); } }));
+  if (fSec === '經典') {
+    FILTERS.slice(1).forEach(f => box.append(item({
+      label: f.name, cls: 'ft', on: P.filter === f.id, style: `background-image:url(${th(f.id, f.fn)})`,
+      onclick: () => { if (P.filter === f.id) return; P.filter = f.id; P.date = false; render(); commit(); showTab('filter'); },
+    })));
+  } else {
+    CAMERAS.filter(c => c.group === fSec).forEach(c => box.append(item({
+      label: c.name, cls: 'ft', on: P.filter === 'c:' + c.id, style: `background-image:url(${th('c:' + c.id, c.fn)})`,
+      onclick: () => {
+        if (P.filter === 'c:' + c.id) return;
+        P.filter = 'c:' + c.id; P.filterAmt = 100; P.date = !!c.fx.date;
+        if (c.fx.flash) findPerson(true);
+        render(); commit(); showTab('filter');
+      },
+    })));
+  }
+  if (cam || P.date) box.append(item({ label: '日期', icon: '📅', cls: 'emo2', on: P.date, set: P.date,
+    onclick: () => { P.date = !P.date; render(); commit(); showTab('filter'); } }));
   if (P.filter === 'none') hideSlider();
   else setSlider('強度', 0, 100, P.filterAmt, v => { P.filterAmt = v; render(); });
+  $('#note').textContent = cam ? ({ CCD: 'CCD 數位相機的色調，附日期戳。', 閃光: '像開閃光燈拍的，人亮背景暗。', 氛圍: '', 底片: '底片色調和顆粒。', 富士: '富士相機的底片模擬。', GR: '理光 GR 的色調。' }[cam.group] || '') : '';
 }
 
 function tabBeauty(box) {
@@ -955,6 +1016,7 @@ async function save() {
     if (f) drawFrame(ctx, f, W, H, gl, (c, gg) => c.drawImage(gl, gg.x, gg.y, W, H));
     else ctx.drawImage(gl, 0, 0);
     ctx.save(); ctx.beginPath(); ctx.rect(g.x, g.y, W, H); ctx.clip(); ctx.translate(g.x, g.y);
+    if (P.date) dateAt(ctx, W, H);
     for (const s of stickers) {
       const w = s.size * W;
       ctx.save(); ctx.globalAlpha = s.op; ctx.translate(s.x * W, s.y * H); ctx.rotate(s.rot); if (s.flip) ctx.scale(-1, 1);
