@@ -55,6 +55,10 @@ footer a{color:var(--muted)}
 // App 清單放在 apps.json，新增 App 只要改那個檔案。
 // Netlify 上的這頁直接讀 GitHub Pages 上最新的 apps.json，所以 PR 合併後新 App 就會出現，不用重新部署 Netlify。
 const LIST = 'https://gop9632.github.io/open-apps/apps.json';
+// 在 Netlify 上把 app 連結換成同網域的 /apps/...（_redirects 會代理到 GitHub Pages），
+// 從主畫面的入口點進 app 才會維持全螢幕，不會跳成 Safari 視窗。
+const PAGES = 'https://gop9632.github.io/open-apps/apps/';
+const local = u => location.hostname.endsWith('netlify.app') && String(u).startsWith(PAGES) ? '/apps/' + String(u).slice(PAGES.length) : u;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 fetch(LIST, { cache: 'no-cache' }).then(r => r.ok ? r.json() : Promise.reject())
   .catch(() => fetch('apps.json').then(r => r.json()))
@@ -66,7 +70,7 @@ fetch(LIST, { cache: 'no-cache' }).then(r => r.ok ? r.json() : Promise.reject())
       a.like ? `<span class="tag">取代 ${esc(a.like)}</span>` : ''
     ].join('');
     const actions = web
-      ? `<a class="btn primary" href="${esc(a.url)}">打開</a>` + (a.guide ? `<a class="btn ghost" href="${esc(a.guide)}">使用說明</a>` : '')
+      ? `<a class="btn primary" href="${esc(local(a.url))}">打開</a>` + (a.guide ? `<a class="btn ghost" href="${esc(local(a.guide))}">使用說明</a>` : '')
       : (a.guide ? `<a class="btn ghost" href="${esc(a.guide)}">完整說明</a>` : '');
     const steps = !web && a.steps ? `<details><summary>怎麼裝</summary><ol>${a.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol></details>` : '';
     return `<section class="card"><div class="top"><div class="icon">${esc(a.icon || '📦')}</div><div>
