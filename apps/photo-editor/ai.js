@@ -25,12 +25,41 @@ function shrink(src, max) {
 }
 
 // 回傳每張臉的 478 個點（像素座標）
+//   模型會把輸入縮得很小再找臉，全身照、團體照裡的小臉整張丟進去會找不到。
+//   所以整張找完，再把照片切成 2×2、3×3 互相重疊的區塊放大各找一次，
+//   同一張臉被找到好幾次時，留臉在區塊裡佔比較大（比較準）的那次。
 export async function detectFaces(src) {
   faceP ||= create('FaceLandmarker', { baseOptions: { modelAssetPath: FACE_MODEL }, runningMode: 'IMAGE', numFaces: 5 });
   const fl = await faceP;
-  const img = shrink(src, 1280);
-  const res = fl.detect(img);
-  return (res.faceLandmarks || []).map(pts => pts.map(p => ({ x: p.x * src.width, y: p.y * src.height })));
+  const W = src.width, H = src.height, found = [];
+  const run = (x, y, w, h) => {
+    const k = Math.min(1, 1024 / Math.max(w, h));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+    c.getContext('2d').drawImage(src, x, y, w, h, 0, 0, c.width, c.height);
+    for (const lm of fl.detect(c).faceLandmarks || []) {
+      const pts = lm.map(p => ({ x: x + p.x * w, y: y + p.y * h }));
+      const fw = Math.hypot(pts[454].x - pts[234].x, pts[454].y - pts[234].y);
+      // 臉貼到區塊邊緣的不算，等相鄰區塊（重疊的地方）找完整的
+      const xs = pts.map(p => p.x), ys = pts.map(p => p.y), m = fw * 0.05;
+      const cut = (x > 0 && Math.min(...xs) < x + m) || (y > 0 && Math.min(...ys) < y + m)
+        || (x + w < W && Math.max(...xs) > x + w - m) || (y + h < H && Math.max(...ys) > y + h - m);
+      if (!cut) found.push({ pts, fw, rel: fw / Math.max(w, h) });
+    }
+  };
+  run(0, 0, W, H);
+  for (const n of [2, 3]) {
+    const tw = W / n * 1.5, th = H / n * 1.5;
+    if (Math.max(tw, th) < 400) break;
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++)
+      run(Math.round((W - tw) * i / (n - 1)), Math.round((H - th) * j / (n - 1)), Math.round(tw), Math.round(th));
+  }
+  // 合併同一張臉
+  const ctr = f => f.pts[1];
+  found.sort((a, b) => b.rel - a.rel);
+  const out = [];
+  for (const f of found) if (!out.some(g => Math.hypot(ctr(f).x - ctr(g).x, ctr(f).y - ctr(g).y) < Math.max(f.fw, g.fw) * 0.5)) out.push(f);
+  return out.sort((a, b) => b.fw - a.fw).slice(0, 5).map(f => f.pts);
 }
 
 // 人像分割（多類別模型）：回傳
