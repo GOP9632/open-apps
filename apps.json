@@ -9,6 +9,15 @@
     "guide": "https://gop9632.github.io/open-apps/apps/class-recorder/guide/"
   },
   {
+    "name": "美食收藏",
+    "icon": "🍜",
+    "like": "Yaay",
+    "desc": "貼上 IG Reels 連結就收藏店家，地圖依分類和地區整理；跟朋友建群組一起滑卡配對，不知道吃什麼就抽一間。",
+    "type": "web",
+    "url": "https://gop9632.github.io/open-apps/apps/food-map/",
+    "guide": "https://github.com/GOP9632/open-apps/tree/main/apps/food-map"
+  },
+  {
     "name": "Mop",
     "icon": "🧹",
     "like": "CleanMyMac、DaisyDisk",

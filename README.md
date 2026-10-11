@@ -5,6 +5,7 @@
 | App | 對標 | 狀態 | 連結 |
 |---|---|---|---|
 | [課堂錄音](apps/class-recorder/) | Otter、Notta、Plaud | 第一版原型 | https://gop9632.github.io/open-apps/apps/class-recorder/ |
+| [美食收藏](apps/food-map/) | Yaay | 第一版 | https://gop9632.github.io/open-apps/apps/food-map/ |
 | [Mop](apps/mac-cleaner/) | CleanMyMac、DaisyDisk | 第一版 | Mac App，見資料夾說明 |
 
 規劃文件放在 `docs/plans/`。
