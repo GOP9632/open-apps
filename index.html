@@ -10,10 +10,12 @@
 @media (prefers-color-scheme:dark){:root{--bg:#111418;--card:#1a1e24;--text:#e6e8eb;--muted:#9aa1ab;--line:#2a3038;--accent:#5b9dff;--tag:#1e2a40;--tag2:#252a31}}
 *{box-sizing:border-box}
 body{margin:0;font:16px/1.6 -apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC",sans-serif;color:var(--text);background:var(--bg)}
-main{max-width:680px;margin:0 auto;padding:48px 16px 64px}
+main{max-width:1080px;margin:0 auto;padding:48px 16px 64px}
 h1{font-size:28px;margin:0 0 6px}
 .lead{color:var(--muted);margin:0 0 28px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:14px 0}
+#list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;align-items:stretch}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;display:flex;flex-direction:column}
+.card .actions{margin-top:auto;padding-top:14px}
 .top{display:flex;gap:14px;align-items:flex-start}
 .icon{font-size:30px;line-height:1}
 .card h2{font-size:19px;margin:0}
