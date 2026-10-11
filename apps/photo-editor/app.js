@@ -7,6 +7,7 @@ import { matte } from './matte.js';
 import { HAIR, HAIR_P0, DYES, HairFx, prepHair, hairWarps, hairNeedsSeg, hairColorOn } from './hair.js';
 import { tabErase, eraseLeave } from './erase.js';
 import { makeupLayer, makeupTab } from './makeup.js';
+import { BODY, BODY_P0, bodyOn, detectBody, measureBody, bodyWarps, bodyNote } from './body.js';
 
 const $ = s => document.querySelector(s);
 const MAX_SIDE = 4096, MAX_AREA = 16e6;
@@ -23,6 +24,7 @@ const P0 = {
   blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'forest', bgImg: 'beach', bgBlur: 30, frame: '',
   ...HAIR_P0,
   mk: {}, mkLook: -1, mkLookAmt: 100,
+  ...BODY_P0,
 };
 
 const I = {
@@ -268,7 +270,23 @@ function render() {
     if (curFrame()?.live) paintFrame();
   });
 }
-function draw() { syncTex(); syncHair(); R.render(P, base.faces ? [...faceWarps(base.faces, P), ...hairWarps(base.faces, P, base.hair)] : [], effects()); }
+function draw() {
+  syncTex(); syncHair();
+  if (bodyOn(P) && !base.body) getBody(base);
+  // 身體的變形要排在最前面（長腿會改到整張照片的上下位置）
+  const warps = [...(base.body ? bodyWarps(base.body, base.faces, P) : []), ...(base.faces ? [...faceWarps(base.faces, P), ...hairWarps(base.faces, P, base.hair)] : [])];
+  R.render(P, warps, effects());
+}
+// 身體塑形：找人體關節，再用人像分割量身體寬度
+function getBody(b) {
+  b.bodyP ||= Promise.all([detectBody(b.canvas), getSeg(b), findFaces()]).then(([body, s]) => {
+    measureBody(body, s);
+    b.body = body;
+    if (b === base) { render(); if (tab === 'body') showTab('body'); }
+    return body;
+  }).catch(e => { console.warn(e); b.body = { ok: false }; if (b === base && tab === 'body') showTab('body'); return b.body; });
+  return b.bodyP;
+}
 // 頭髮：先把頭髮改好的照片交給主管線，參數沒變就不重算
 let hairFx = null, hairKey = '', hairFor = null;
 function syncHair() {
@@ -434,7 +452,7 @@ function showTab(t) {
   const box = $('#items'); box.innerHTML = '';
   $('#note').textContent = ''; $('#textedit').hidden = true;
   if (!base) return;
-  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, makeup: tabMakeup, hair: tabHair, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
+  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, makeup: tabMakeup, body: tabBody, hair: tabHair, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && P.light >= 0);
 }
@@ -462,7 +480,7 @@ function paramItems(box, list, def, itemsOnly) {
     })));
   }
   const key = sided && side !== 'both' ? cur + side : cur;
-  setSlider(it[1] + (sided && side !== 'both' ? (side === 'L' ? '左' : '右') : ''), it[3] ?? -100, 100, P[key], v => {
+  setSlider(it[1] + (sided && side !== 'both' ? (side === 'L' ? '左' : '右') : ''), it[3] ?? -100, it[5] ?? 100, P[key], v => {
     P[key] = v; if (list === BEAUTY) P.oneTap = -1; render();
     els[cur].classList.toggle('set', isSet(cur));
   });
@@ -510,6 +528,13 @@ function tabBeauty(box) {
       render();
     });
   } else paramItems(box, BEAUTY, 'smooth');
+}
+
+// ---------- 身體 ----------
+function tabBody(box) {
+  if (!base.body) getBody(base);
+  paramItems(box, BODY, 'bodyAuto');
+  $('#note').textContent = bodyNote(base.body, cur);
 }
 
 // ---------- 頭髮 ----------

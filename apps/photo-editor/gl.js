@@ -1,6 +1,6 @@
 // WebGL2 修圖管線：
 //   1. 縮小到短邊 360 做保邊磨皮（不管照片多大，磨皮質感都一樣）
-//   2. 主 shader：變形（瘦臉、大眼）→ 銳化 → 磨皮、美白、祛黑眼圈、法令紋、亮眼、白牙
+//   2. 主 shader：變形（瘦臉、大眼、身體塑形）→ 銳化 → 磨皮、美白、祛黑眼圈、法令紋、亮眼、白牙
 //      → 打光、閃光燈 → 調色 → 濾鏡 LUT → 創意特效、光效 → 暗角、顆粒 → 去背、換背景
 //   3. 背景虛化、素描用的模糊圖，換照片或人像遮罩好了時算一次
 export const MAX_WARPS = 64;
@@ -63,9 +63,9 @@ in vec2 vUV;
 uniform sampler2D uImg, uSmooth, uMask, uSeg, uLut, uMask2, uSegB, uBlurS, uBgA, uBgB, uOver, uEx, uBgImg, uBgMid, uBgFar, uMakeup;
 uniform vec2 uSize;
 uniform int uWn;
-uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）
-uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大)、放大強度、橢圓比
-uniform vec2 uW3[${MAX_WARPS}]; // 頭的傾斜 cos、sin
+uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）；骨架收窄是 A、B 兩端；拉長是 y0、y1、強度、照片高
+uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大 2 骨架收窄 3 往下拉長)、強度、橢圓比（收窄：只收一點的那側）
+uniform vec2 uW3[${MAX_WARPS}]; // 頭的傾斜 cos、sin（收窄：最強的位置、範圍）
 uniform float uExposure, uBright, uContrast, uSat, uTemp, uTint, uHigh, uShadow, uSharp, uVig, uGrain, uFade;
 uniform float uSmoothAmt, uWhite, uLutAmt, uHasLut;
 uniform float uDark, uFold, uEyeB, uTeeth;
@@ -104,6 +104,30 @@ void main(){
   vec2 p = vUV * uSize;
   for (int i = 0; i < ${MAX_WARPS}; i++) {
     if (i >= uWn) break;
+    float kind = uW2[i].y;
+    if (kind > 2.5) {
+      // 往下拉長：y0 以下慢慢拉開（剛開始不拉，接得順），y1 以下壓回照片裡
+      float y0 = uW1[i].x, y1 = uW1[i].y, s = uW1[i].z, H = uW1[i].w, y1o = y0 + (y1 - y0) * (1.0 + s);
+      if (p.y > y0) {
+        if (p.y < y1o) { float u = (p.y - y0) / (y1o - y0); p.y = y0 + (y1 - y0) * (u + s * u * (1.0 - u) * (1.0 - u)); }
+        else p.y = y1 + (p.y - y1o) * (H - y1) / max(H - y1o, 1.0);
+      }
+      continue;
+    }
+    if (kind > 1.5) {
+      // 骨架收窄：離骨架線越近、越接近最強的位置，往外取樣越多（看起來就是往中間收）
+      vec2 A = uW1[i].xy, ab = uW1[i].zw - A;
+      float t = clamp(dot(p - A, ab) / max(dot(ab, ab), 1.0), 0.0, 1.0);
+      vec2 foot = A + ab * t, d = p - foot;
+      float x = length(d) / uW2[i].x;
+      if (x < 1.0) {
+        float g = (t - uW3[i].x) / uW3[i].y, f = (1.0 - x * x) * (1.0 - x * x) * exp(-g * g);
+        float cr = ab.x * d.y - ab.y * d.x;
+        if (uW2[i].w != 0.0 && cr * uW2[i].w > 0.0) f *= 0.3;
+        p = foot + d * (1.0 + uW2[i].z * f);
+      }
+      continue;
+    }
     vec2 c = uW1[i].xy; float r = uW2[i].x;
     vec2 d0 = p - c, cs = uW3[i];
     vec2 dv = vec2(d0.x * cs.x + d0.y * cs.y, -d0.x * cs.y + d0.y * cs.x); dv.y *= uW2[i].w;
@@ -561,6 +585,8 @@ export class Renderer {
     const n = Math.min(warps.length, MAX_WARPS), w1 = new Float32Array(MAX_WARPS * 4), w2 = new Float32Array(MAX_WARPS * 4), w3 = new Float32Array(MAX_WARPS * 2);
     for (let i = 0; i < n; i++) {
       const w = warps[i];
+      if (w.type === 'stretch') { w1.set([w.y0, w.y1, w.s, w.H], i * 4); w2.set([1, 3, 0, 0], i * 4); continue; }
+      if (w.type === 'seg') { w1.set([w.ax, w.ay, w.bx, w.by], i * 4); w2.set([w.r, 2, w.k, w.inner || 0], i * 4); w3.set([w.tc, w.ts], i * 2); continue; }
       w1.set([w.cx, w.cy, w.dx || 0, w.dy || 0], i * 4);
       w2.set([w.r, w.type === 'scale' ? 1 : 0, w.s || 0, w.ey || 1], i * 4);
       w3.set([Math.cos(w.rot || 0), Math.sin(w.rot || 0)], i * 2);
