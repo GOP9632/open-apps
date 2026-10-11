@@ -11,6 +11,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
+/* 擋掉 iPhone 連點兩下放大（例如連按復原、返回），雙指縮放照常可用 */
+html{touch-action:manipulation}
 :root{
   --bg:#0e0e10;--panel:#17171a;--panel2:#222227;--line:#2c2c32;--text:#f4f4f5;--muted:#9a9aa3;
   --accent:#ff5c8a;--accent2:#ffb36b;--grad:linear-gradient(135deg,#ff8a6b,#ff5c8a);
