@@ -62,7 +62,7 @@ export function drawPop(ctx, W, H, P, photo, person, stroke, box) {
     // 路徑在旋轉的座標裡建立，之後填色、裁切都照建立時的形狀
     const card = path => { ctx.save(); ctx.translate(cx, cy); ctx.rotate(a); ctx.translate(-cx, -cy); path(); ctx.restore(); };
     ctx.save(); shadow(ctx, k); ctx.fillStyle = '#fff'; card(() => rr(ctx, R.x, R.y, R.w, R.h, k * 0.008)); ctx.fill(); ctx.restore();
-    ctx.save(); card(() => ctx.rect(win.x, win.y, win.w, win.h)); ctx.clip(); ctx.drawImage(photo, 0, 0, W, H); ctx.restore();
+    ctx.save(); card(() => { ctx.beginPath(); ctx.rect(win.x, win.y, win.w, win.h); }); ctx.clip(); ctx.drawImage(photo, 0, 0, W, H); ctx.restore();
   } else if (id === 'circle') {
     const r = Math.min(R.w, R.h) / 2, cx = box ? clamp(box.x + box.w / 2, r + R.x, W - R.x - r) : W / 2, cy = R.y + r;
     ctx.save(); shadow(ctx, k); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx, cy, r + bw, 0, 7); ctx.fill(); ctx.restore();

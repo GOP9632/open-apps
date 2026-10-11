@@ -1079,6 +1079,7 @@ function tabCut(box) {
 }
 
 // ---------- 出框 ----------
+const POP_CLASH = ['pop', 'mirror'];
 const popStroke = { key: '', v: null };
 // 畫出框圖：W×H 是要輸出的大小
 function popDraw(ctx, W, H) {
@@ -1176,7 +1177,7 @@ function tabPop(box) {
   }
   box.append(item({ label: '無', icon: I.off, on: !P.pop, onclick: () => { P.pop = ''; render(); commit(); showTab('fun'); } }));
   POPS.forEach(p => box.append(item({ label: p.name, cls: 'ft', on: P.pop === p.id, style: `background-image:url(${popThumb(p.id)})`,
-    onclick: () => { P.pop = p.id; render(); commit(); showTab('fun'); } })));
+    onclick: () => { P.pop = p.id; if (POP_CLASH.includes(P.fx)) P.fx = ''; render(); commit(); showTab('fun'); } })));
   if (!P.pop) return hideSlider();
   if (popK === 'm') setSlider('邊距', 0, 25, P.popM, v => { P.popM = v; ch(); });
   else setSlider(P.pop === 'behind' ? '位置' : '高度', 0, 100, P.popY, v => { P.popY = v; ch(); });
@@ -1228,6 +1229,7 @@ function tabFun(box) {
       label: e.name, icon: FX_ICON[e.id], cls: 'emo2', on: P.fx === e.id,
       onclick: async () => {
         if (P.fx !== e.id) { P.fx = e.id; P.fxAmt = e.def; }
+        if (POP_CLASH.includes(e.id)) P.pop = ''; // 四格、鏡像會改變人的位置，跟出框不能一起用
         showTab('fun'); render(); commit();
         if (e.seg && !base.seg) { await findPerson(); render(); }
       },
