@@ -112,58 +112,12 @@ export const OVERLAYS = [
   } },
 ];
 
-// ---------- 換背景 ----------
-export const BACKDROPS = [
-  { id: 'sky', name: '藍天', draw(ctx, w, h) {
-    const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#3d8bff'); g.addColorStop(1, '#bfe3ff');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-    const r = rng(2), m = Math.max(w, h);
-    for (let i = 0; i < 9; i++) {
-      const x = r() * w, y = r() * h * 0.7, s = m * (0.06 + r() * 0.08);
-      for (let j = 0; j < 6; j++) {
-        const gx = x + (r() - 0.5) * s * 1.6, gy = y + (r() - 0.5) * s * 0.4, gs = s * (0.4 + r() * 0.4);
-        const c = ctx.createRadialGradient(gx, gy, 0, gx, gy, gs);
-        c.addColorStop(0, 'rgba(255,255,255,.85)'); c.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.fillStyle = c; ctx.beginPath(); ctx.arc(gx, gy, gs, 0, 7); ctx.fill();
-      }
-    }
-  } },
-  { id: 'sunset', name: '夕陽', draw(ctx, w, h) {
-    const g = ctx.createLinearGradient(0, 0, 0, h);
-    g.addColorStop(0, '#2b2d6e'); g.addColorStop(0.45, '#d9578a'); g.addColorStop(0.75, '#ff9a5a'); g.addColorStop(1, '#ffd38a');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-    radial(ctx, w * 0.5, h * 0.78, Math.max(w, h) * 0.35, [[0, 'rgba(255,240,200,.9)'], [0.25, 'rgba(255,200,120,.4)'], [1, 'rgba(255,160,90,0)']]);
-  } },
-  { id: 'studio', name: '攝影棚', draw(ctx, w, h) {
-    ctx.fillStyle = '#5b5f66'; ctx.fillRect(0, 0, w, h);
-    radial(ctx, w * 0.5, h * 0.42, Math.max(w, h) * 0.7, [[0, '#c9ccd2'], [0.55, '#7d8189'], [1, '#3e4148']]);
-  } },
-  { id: 'pinkpurple', name: '粉紫', draw(ctx, w, h) {
-    const g = ctx.createLinearGradient(0, 0, w, h); g.addColorStop(0, '#ffc3dc'); g.addColorStop(1, '#b9a6ff');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-  } },
-  { id: 'mint', name: '薄荷', draw(ctx, w, h) {
-    const g = ctx.createLinearGradient(0, 0, w, h); g.addColorStop(0, '#d4fff0'); g.addColorStop(1, '#8fd8ff');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-  } },
-  { id: 'night', name: '夜景', draw(ctx, w, h) {
-    const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#0b1030'); g.addColorStop(1, '#2a1846');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-    const r = rng(13), m = Math.max(w, h);
-    for (let i = 0; i < 70; i++) {
-      const x = r() * w, y = h * (0.35 + r() * 0.65), s = m * (0.01 + r() * 0.04), hue = [40, 330, 200, 20][i % 4];
-      const c = ctx.createRadialGradient(x, y, 0, x, y, s);
-      c.addColorStop(0, `hsla(${hue},100%,70%,.55)`); c.addColorStop(0.75, `hsla(${hue},100%,60%,.35)`); c.addColorStop(1, 'hsla(0,0%,0%,0)');
-      ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y, s, 0, 7); ctx.fill();
-    }
-  } },
-  { id: 'paper', name: '米色', draw(ctx, w, h) {
-    ctx.fillStyle = '#f3ebdd'; ctx.fillRect(0, 0, w, h);
-    const r = rng(4), img = ctx.getImageData(0, 0, w, h), d = img.data;
-    for (let i = 0; i < d.length; i += 4) { const n = (r() - 0.5) * 14; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
-    ctx.putImageData(img, 0, 0);
-  } },
-];
+// ---------- 換背景：CC0 授權的實拍照片（來源見 README），放在 bg/ ----------
+export const BG_PHOTOS = [
+  ['beach', '海邊'], ['sunset', '夕陽海'], ['sakura', '櫻花道'], ['blossom', '櫻花'], ['lavender', '薰衣草'], ['meadow', '草原'],
+  ['lake', '湖光山色'], ['sky', '藍天'], ['snow', '雪林'], ['autumn', '秋天'], ['paris', '巴黎'], ['cafe', '咖啡廳'],
+  ['whitecafe', '白色咖啡廳'], ['tokyo', '東京夜街'], ['rain', '雨夜街頭'], ['citylights', '城市光斑'],
+].map(([id, name]) => ({ id, name, src: `bg/${id}.jpg` }));
 
 // ---------- 雙重曝光用的第二張圖（使用者也可以自己選照片） ----------
 export const EXPOSURES = [

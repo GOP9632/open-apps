@@ -60,7 +60,7 @@ void main(){
 const FS_MAIN = `#version 300 es
 precision highp float;
 in vec2 vUV;
-uniform sampler2D uImg, uSmooth, uMask, uSeg, uLut, uMask2, uSegB, uBlurS, uBgA, uBgB, uOver, uEx, uBgImg;
+uniform sampler2D uImg, uSmooth, uMask, uSeg, uLut, uMask2, uSegB, uBlurS, uBgA, uBgB, uOver, uEx, uBgImg, uBgMid, uBgFar;
 uniform vec2 uSize;
 uniform int uWn;
 uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）
@@ -84,6 +84,7 @@ uniform float uBgMode; uniform vec3 uBgColor;
 // 創意特效：1 漫畫 2 波普 3 素描 4 彩鉛 5 馬賽克 6 故障 7 鏡像 8 分身 9 雙重曝光
 uniform int uFx; uniform float uFxAmt; uniform vec2 uExFit;
 uniform float uOAmt, uBlur;
+uniform float uBgBlurAmt, uHarmAmt; uniform vec3 uHarm;
 out vec4 o;
 
 float luma(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
@@ -345,8 +346,28 @@ void main(){
   float a = 1.0;
   if (uBgMode > 0.5) {
     a = texture(uSeg, uv).r;
+    // 邊緣去色邊：半透明的地方（頭髮）扣掉原本背景的顏色，換背景後不會留一圈舊背景
+    if (a > 0.01 && a < 0.99) {
+      vec4 ob = texture(uBgA, uv); vec3 O = ob.rgb / max(ob.a, 1e-4);
+      vec3 I = texture(uImg, uv).rgb;
+      // 半透明區域裡顏色跟原背景幾乎一樣的，其實就是背景，不留（不然換背景後會有一圈舊背景的暈）
+      a *= mix(smoothstep(0.03, 0.14, length(I - O)), 1.0, a * a);
+      vec3 Fr = clamp((I - (1.0 - a) * O) / max(a, 0.12), 0.0, 1.0);
+      col = clamp(col + (Fr - I), 0.0, 1.0);
+    }
     if (uBgMode < 1.5) { o = vec4(col * a, a); return; }
-    col = mix(uBgMode < 2.5 ? uBgColor : texture(uBgImg, vUV).rgb, col, a); a = 1.0;
+    vec3 B = uBgColor;
+    if (uBgMode > 2.5) {
+      vec3 Bs = texture(uBgImg, vUV).rgb, Bm = texture(uBgMid, vUV).rgb, Bf = texture(uBgFar, vUV).rgb;
+      B = uBgBlurAmt < 0.5 ? mix(Bs, Bm, uBgBlurAmt * 2.0) : mix(Bm, Bf, uBgBlurAmt * 2.0 - 1.0);
+      // 人的色調和亮度往新背景靠，看起來像在同一個光線下拍的
+      col = clamp(col * mix(vec3(1.0), uHarm, uHarmAmt), 0.0, 1.0);
+      // 光線包邊：背景的光從人的輪廓滲進來一點
+      float ab = texture(uSegB, uv).r;
+      float wrap = clamp(1.0 - ab / 0.7, 0.0, 1.0) * a;
+      col = mix(col, 1.0 - (1.0 - col) * (1.0 - Bf), wrap * 0.35);
+    }
+    col = mix(B, col, a); a = 1.0;
   }
   o = vec4(col, a);
 }`;
@@ -389,6 +410,7 @@ export class Renderer {
     this.blank(this.tMask2, 0); this.blank(this.tSegB, 255);
     this.tOver = this.tex(); this.tEx = this.tex(); this.tBgImg = this.tex();
     this.blank(this.tOver, 0); this.blank(this.tEx, 255); this.blank(this.tBgImg, 255);
+    this.fbBm = [this.fbo(), this.fbo()]; this.fbBf = [this.fbo(), this.fbo()];
     this.fbA = this.fbo(); this.fbB = this.fbo();
     this.fbS = [this.fbo(), this.fbo()]; this.fbM = [this.fbo(), this.fbo()]; this.fbL = [this.fbo(), this.fbo()];
     this.hasLut = false;
@@ -461,9 +483,9 @@ export class Renderer {
       this.pass(this.pGauss, a, a.w, a.h, b.t); gl.uniform2f(this.pGauss.u.uDir, 0, 1 / a.h); gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
   }
-  size(pair, short) {
-    const k = Math.min(1, short / Math.min(this.w, this.h));
-    const w = Math.max(1, Math.round(this.w * k)), h = Math.max(1, Math.round(this.h * k));
+  size(pair, short, W = this.w, H = this.h) {
+    const k = Math.min(1, short / Math.min(W, H));
+    const w = Math.max(1, Math.round(W * k)), h = Math.max(1, Math.round(H * k));
     pair.forEach(f => this.sizeFbo(f, w, h));
   }
   // 素描用的小模糊；背景虛化用的中、大模糊（扣掉人像）
@@ -485,7 +507,18 @@ export class Renderer {
   setSeg(src) { src ? this.upload(this.tSeg, src) : this.blank(this.tSeg, 255); this.blurs(); }
   setOver(src) { src ? this.upload(this.tOver, src) : this.blank(this.tOver, 0); }
   setEx(src) { src ? this.upload(this.tEx, src) : this.blank(this.tEx, 255); this.exAr = src ? src.width / src.height : 1; }
-  setBgImg(src) { src ? this.upload(this.tBgImg, src) : this.blank(this.tBgImg, 255); }
+  // 換背景的照片，另外做一份輕微模糊、一份很糊（背景虛化和光線包邊用）
+  setBgImg(src) {
+    src ? this.upload(this.tBgImg, src) : this.blank(this.tBgImg, 255);
+    if (!src) return;
+    const gl = this.gl;
+    this.size(this.fbBm, 320, src.width, src.height);
+    this.pass(this.pCopy, this.fbBm[0], this.fbBm[0].w, this.fbBm[0].h, this.tBgImg); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    this.gauss(this.fbBm, 2);
+    this.size(this.fbBf, 64, src.width, src.height);
+    this.pass(this.pCopy, this.fbBf[0], this.fbBf[0].w, this.fbBf[0].h, this.fbBm[0].t); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    this.gauss(this.fbBf, 3);
+  }
   setMask2(src) { src ? this.upload(this.tMask2, src) : this.blank(this.tMask2, 0); }
   setSegB(src) { src ? this.upload(this.tSegB, src) : this.blank(this.tSegB, 255); }
   setLut(src) { this.hasLut = !!src; if (src) this.upload(this.tLut, src); }
@@ -496,7 +529,8 @@ export class Renderer {
     this.pass(this.pMain, null, this.w, this.h);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     const texs = [[this.tImg, 'uImg'], [this.tSmooth, 'uSmooth'], [this.tMask, 'uMask'], [this.tSeg, 'uSeg'], [this.tLut, 'uLut'], [this.tMask2, 'uMask2'], [this.tSegB, 'uSegB'],
-      [this.fbS[0].t, 'uBlurS'], [this.fbM[0].t, 'uBgA'], [this.fbL[0].t, 'uBgB'], [this.tOver, 'uOver'], [this.tEx, 'uEx'], [this.tBgImg, 'uBgImg']];
+      [this.fbS[0].t, 'uBlurS'], [this.fbM[0].t, 'uBgA'], [this.fbL[0].t, 'uBgB'], [this.tOver, 'uOver'], [this.tEx, 'uEx'], [this.tBgImg, 'uBgImg'],
+      [this.fbBm[0].t, 'uBgMid'], [this.fbBf[0].t, 'uBgFar']];
     texs.forEach(([t, name], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(u[name], i); });
     gl.uniform2f(u.uSize, this.w, this.h);
     const n = Math.min(warps.length, MAX_WARPS), w1 = new Float32Array(MAX_WARPS * 4), w2 = new Float32Array(MAX_WARPS * 4), w3 = new Float32Array(MAX_WARPS * 2);
@@ -543,6 +577,8 @@ export class Renderer {
     const ra = this.w / this.h, re = this.exAr || 1;
     gl.uniform2f(u.uExFit, re > ra ? ra / re : 1, re > ra ? 1 : re / ra);
     gl.uniform1f(u.uOAmt, fx.over || 0); gl.uniform1f(u.uBlur, fx.blur || 0);
+    gl.uniform1f(u.uBgBlurAmt, fx.bgBlur || 0); gl.uniform1f(u.uHarmAmt, fx.harm ? 1 : 0);
+    gl.uniform3fv(u.uHarm, fx.harm || [1, 1, 1]);
     const mode = { keep: 0, clear: 1, color: 2, img: 3 }[p.bg] || 0;
     gl.uniform1f(u.uBgMode, mode);
     const hex = p.bgColor || '#ffffff';

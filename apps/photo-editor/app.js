@@ -2,7 +2,8 @@ import { Renderer } from './gl.js';
 import { FILTERS, bakeLUT, thumb } from './filters.js';
 import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor } from './ai.js';
 import { STICKERS, EMOJIS, EMOJI_FONT, stickerById, stickerImage } from './stickers.js';
-import { FX, OVERLAYS, BACKDROPS, EXPOSURES, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
+import { FX, OVERLAYS, BG_PHOTOS, EXPOSURES, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
+import { matte } from './matte.js';
 
 const $ = s => document.querySelector(s);
 const MAX_SIDE = 4096, MAX_AREA = 16e6;
@@ -16,7 +17,7 @@ const P0 = {
   bg: 'keep', bgColor: '#ffffff',
   oneTap: -1, oneAmt: 100,
   light: -1, lightAmt: 60, lightRot: 0, flash: -1, flashAmt: 60,
-  blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'forest', bgImg: 'sky', frame: '',
+  blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'forest', bgImg: 'beach', bgBlur: 30, frame: '',
 };
 
 const I = {
@@ -163,22 +164,37 @@ function setBase(canvas, keep) {
 function applyBase() {
   R.setImage(base.canvas);
   R.setMask(base.mask); R.setMask2(base.mask2);
-  R.setSeg(base.seg?.person); R.setSegB(base.segB);
+  R.setSeg(base.matte || base.seg?.person); R.setSegB(base.segB);
   const o = $('#orig'); o.width = base.canvas.width; o.height = base.canvas.height;
   o.getContext('2d').drawImage(base.canvas, 0, 0);
   layout(); render();
   if (!base.faces) findFaces();
   if (needSeg() && !base.seg) findPerson(P.bg === 'keep');
+  if (needMatte()) getMatte(base);
 }
 
 const fxById = id => FX.find(f => f.id === id);
 const needSeg = () => P.bg !== 'keep' || P.light >= 0 || P.flash >= 0 || P.blur > 0 || !!fxById(P.fx)?.seg;
+// 換背景、去背、景深、分身要精細到頭髮絲，用摳圖模型
+const needMatte = () => P.bg !== 'keep' || P.blur > 0 || !!fxById(P.fx)?.seg;
+function getMatte(b) {
+  if (!b.matteP) {
+    const t = setTimeout(() => b === base && !b.matte && toast('正在精細摳圖（第一次要下載模型）…', 4000), 600);
+    b.matteP = matte(b.canvas).then(m => {
+      clearTimeout(t);
+      b.matte = m; b.segB = blurCanvas(m); b.harm = null;
+      if (b === base) { R.setSeg(m); R.setSegB(b.segB); render(); }
+      return m;
+    }).catch(e => { clearTimeout(t); console.warn(e); b.matteP = null; if (b === base) toast('精細摳圖載入失敗，先用一般去背'); return null; });
+  }
+  return b.matteP;
+}
 
 // 背景先找臉和皮膚，美顏打開時就準備好了
 function getSeg(b) {
   b.segP ||= segment(b.canvas).then(s => {
-    b.seg = s; b.segB = blurCanvas(s.person);
-    if (b === base) { R.setSeg(s.person); R.setSegB(b.segB); render(); }
+    b.seg = s;
+    if (!b.matte) { b.segB = blurCanvas(s.person); if (b === base) { R.setSeg(s.person); R.setSegB(b.segB); render(); } }
     return s;
   })
     .catch(e => { console.warn(e); b.segP = null; return null; });
@@ -200,6 +216,7 @@ function findFaces() {
 }
 async function findPerson(quiet) {
   const b = base;
+  if (needMatte()) getMatte(b);
   if (b.seg) return b.seg;
   if (!quiet) busy('找出人像…');
   const s = await getSeg(b);
@@ -237,6 +254,7 @@ new ResizeObserver(layout).observe($('#stage'));
 let raf = 0;
 function render() {
   if (!base || raf) return;
+  if (needMatte() && !base.matteP) getMatte(base);
   raf = requestAnimationFrame(() => {
     raf = 0;
     const lut = P.filter === 'none' ? null : getLut(P.filter);
@@ -248,11 +266,58 @@ function render() {
 function draw() { syncTex(); R.render(P, base.faces ? faceWarps(base.faces, P) : [], effects()); }
 // 光效、背景、雙重曝光的圖：要用的時候才畫，照片比例變了就重畫
 const texKey = {};
+let bgStat = null, bgOwn = null, bgN = 0;
+const imgCache = new Map();
+function loadImg(src) {
+  if (!imgCache.has(src)) imgCache.set(src, new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = src; }));
+  return imgCache.get(src);
+}
+// 背景照片裁成跟人像照一樣的比例（置中鋪滿），順便算平均顏色給融合用
+async function bgCanvas(W, H) {
+  const img = P.bgImg === 'own' ? bgOwn : await loadImg(BG_PHOTOS.find(b => b.id === P.bgImg).src).catch(() => null);
+  if (!img) return null;
+  const [w, h] = fitSize(W, H, 1600), c = newCanvas(w, h), ctx = c.getContext('2d');
+  const k = Math.max(w / img.width, h / img.height);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, (w - img.width * k) / 2, (h - img.height * k) / 2, img.width * k, img.height * k);
+  c.stat = meanColor(c);
+  return c;
+}
+function meanColor(src, wsrc) {
+  const n = 48, c = newCanvas(n, n), ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(src, 0, 0, n, n);
+  const d = ctx.getImageData(0, 0, n, n).data;
+  let wd = null;
+  if (wsrc) { const m = newCanvas(n, n), mc = m.getContext('2d', { willReadFrequently: true }); mc.drawImage(wsrc, 0, 0, n, n); wd = mc.getImageData(0, 0, n, n).data; }
+  const s = [0, 0, 0]; let ws = 0;
+  for (let i = 0; i < n * n; i++) {
+    const wt = wd ? wd[i * 4] / 255 : 1;
+    // 從 sRGB 換成線性再平均，比較接近眼睛看到的
+    for (let ch = 0; ch < 3; ch++) s[ch] += Math.pow(d[i * 4 + ch] / 255, 2.2) * wt;
+    ws += wt;
+  }
+  return s.map(v => v / Math.max(ws, 1e-6));
+}
+// 人要往背景的色調靠多少：色偏取一半，亮度只拉一點點
+function harmony() {
+  if (!bgStat || !base.matte) return null;
+  base.harm ||= meanColor(base.canvas, base.matte);
+  const f = base.harm, b = bgStat, lum = c => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  const lf = lum(f), lb = lum(b), L = Math.pow(lb / Math.max(lf, 1e-4), 0.12);
+  return [0, 1, 2].map(i => {
+    const r = Math.pow((b[i] / Math.max(lb, 1e-4)) / (f[i] / Math.max(lf, 1e-4)), 0.35) * L;
+    return Math.pow(Math.min(1.35, Math.max(0.75, r)), 1 / 2.2);
+  });
+}
 function syncTex() {
   const W = base.canvas.width, H = base.canvas.height, [w, h] = fitSize(W, H);
   const want = (slot, key, make, set) => { if (texKey[slot] !== key) { texKey[slot] = key; set(key ? make() : null); } };
   want('ov', P.ov ? `${P.ov}|${w}x${h}` : '', () => paint(OVERLAYS, P.ov, w, h), c => R.setOver(c));
-  want('bg', P.bg === 'img' ? `${P.bgImg}|${w}x${h}` : '', () => paint(BACKDROPS, P.bgImg, w, h), c => R.setBgImg(c));
+  const bk = P.bg === 'img' ? (P.bgImg === 'own' ? 'own' + bgN : P.bgImg) + `|${W}x${H}` : '';
+  if (texKey.bg !== bk) {
+    texKey.bg = bk;
+    if (bk) bgCanvas(W, H).then(c => { if (texKey.bg === bk && c) { R.setBgImg(c); bgStat = c.stat; render(); } });
+  }
   const own = P.ex === 'own' && exOwn;
   want('ex', P.fx === 'double' ? (own ? 'own' + exN : `${P.ex}|${w}x${h}`) : '', () => own ? exOwn : paint(EXPOSURES, P.ex === 'own' ? 'forest' : P.ex, ...fitSize(W, H, 1024)), c => R.setEx(c));
 }
@@ -268,6 +333,7 @@ function effects() {
   if (e) { fx.fxMode = e.mode; fx.fxAmt = P.fxAmt / 100; }
   if (P.ov) fx.over = P.ovAmt / 100;
   fx.blur = P.blur / 100;
+  if (P.bg === 'img') { fx.bgBlur = P.bgBlur / 100; fx.harm = harmony(); }
   return fx;
 }
 function getLut(id) {
@@ -618,6 +684,14 @@ function tabFun(box) {
   else hideSlider();
   $('#note').textContent = '漏光、光斑、星光這些光效，可以跟特效一起用。';
 }
+$('#file3').onchange = async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file) return;
+  try {
+    bgOwn = await createImageBitmap(file, { imageOrientation: 'from-image' }); bgN++;
+    P.bg = 'img'; P.bgImg = 'own'; render(); commit(); showTab('cutout');
+  } catch (err) { console.error(err); toast('這張照片打不開'); }
+};
 $('#file2').onchange = async e => {
   const file = e.target.files[0]; e.target.value = '';
   if (!file) return;
@@ -770,7 +844,7 @@ function tabCutout(box) {
   opts.forEach(([k, label, icon]) => box.append(item({
     label, icon, on: P.bg === k,
     style: k === 'clear' ? 'background:repeating-conic-gradient(#555 0 25%,#333 0 50%) 0 0/12px 12px' : k === 'color' ? `background:${P.bgColor}`
-      : k === 'img' ? `background:url(${listThumb(BACKDROPS, P.bgImg)}) center/cover` : '',
+      : k === 'img' ? `background:url(${P.bgImg === 'own' ? '' : BG_PHOTOS.find(b => b.id === P.bgImg).src}) center/cover` : '',
     onclick: async () => {
       P.bg = k; showTab('cutout');
       if (k !== 'keep') await findPerson();
@@ -789,10 +863,14 @@ function tabCutout(box) {
     pick.onclick = () => { const cp = $('#colorPick'); cp.value = P.bgColor; cp.oninput = () => { P.bgColor = cp.value; render(); }; cp.onchange = () => { commit(); showTab('cutout'); }; cp.click(); };
     box.append(pick);
   }
-  if (P.bg === 'img') BACKDROPS.forEach(b => box.append(item({
-    label: b.name, cls: 'ft', on: P.bgImg === b.id, style: `background-image:url(${listThumb(BACKDROPS, b.id)})`,
-    onclick: () => { P.bgImg = b.id; render(); commit(); showTab('cutout'); },
-  })));
+  if (P.bg === 'img') {
+    box.append(item({ label: '選照片', icon: I.plus, on: P.bgImg === 'own', onclick: () => $('#file3').click() }));
+    BG_PHOTOS.forEach(b => box.append(item({
+      label: b.name, cls: 'ft', on: P.bgImg === b.id, style: `background-image:url(${b.src})`,
+      onclick: () => { P.bgImg = b.id; render(); commit(); showTab('cutout'); },
+    })));
+    setSlider('背景虛化', 0, 100, P.bgBlur, v => { P.bgBlur = v; render(); });
+  } else hideSlider();
   $('#note').textContent = P.bg === 'clear' ? '透明背景會存成 PNG。' : '自動找出照片裡的人，換掉背景。';
 }
 
