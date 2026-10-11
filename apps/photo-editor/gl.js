@@ -60,7 +60,7 @@ void main(){
 const FS_MAIN = `#version 300 es
 precision highp float;
 in vec2 vUV;
-uniform sampler2D uImg, uSmooth, uMask, uSeg, uLut, uMask2, uSegB, uBlurS, uBgA, uBgB, uOver, uEx, uBgImg, uBgMid, uBgFar;
+uniform sampler2D uImg, uSmooth, uMask, uSeg, uLut, uMask2, uSegB, uBlurS, uBgA, uBgB, uOver, uEx, uBgImg, uBgMid, uBgFar, uMakeup;
 uniform vec2 uSize;
 uniform int uWn;
 uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）
@@ -196,6 +196,23 @@ void main(){
     col = mix(col, vec3(luma(col)), m * 0.65);
     col.b += 0.03 * m;
     col = 1.0 - (1.0 - col) * (1.0 - m * 0.3);
+  }
+
+  vec4 mu = texture(uMakeup, uv);
+  if (mu.a > 0.002) {
+    // 美妝（makeup.js 畫的彩妝層）：保留皮膚紋理上色，加一點相乘；很亮的白色（高光、眼神光）用濾色
+    vec3 sm = texture(uSmooth, uv).rgb;
+    vec3 det = clamp(col / max(sm, vec3(0.03)), 0.5, 1.6);
+    vec3 paint = clamp(mu.rgb * mix(vec3(1.0), det, 0.85), 0.0, 1.0);
+    float L = luma(col), Lm = luma(mu.rgb);
+    vec3 shade = clamp(mu.rgb * clamp(L / max(Lm, 0.05), 0.55, 1.25), 0.0, 1.0);
+    float chroma = max(max(mu.r, mu.g), mu.b) - min(min(mu.r, mu.g), mu.b);
+    float wl = smoothstep(0.8, 0.95, Lm) * (1.0 - smoothstep(0.08, 0.25, chroma));
+    vec3 tgt = mix(paint, shade, 0.25 * smoothstep(0.12, 0.3, Lm));
+    // 再混一點色彩相乘，修容、眼影這種跟膚色差不多亮的顏色才看得出來
+    tgt = mix(tgt, col * mu.rgb * 1.15, 0.4);
+    tgt = mix(tgt, 1.0 - (1.0 - col) * (1.0 - mu.rgb * 0.55), wl);
+    col = mix(col, tgt, mu.a);
   }
 
   // 臉和身體的立體方向：臉當成跟著頭轉的橢球，身體用人像輪廓推出邊緣朝外
@@ -413,6 +430,7 @@ export class Renderer {
     this.fbBm = [this.fbo(), this.fbo()]; this.fbBf = [this.fbo(), this.fbo()];
     this.fbA = this.fbo(); this.fbB = this.fbo();
     this.fbS = [this.fbo(), this.fbo()]; this.fbM = [this.fbo(), this.fbo()]; this.fbL = [this.fbo(), this.fbo()];
+    this.tMakeup = this.tex(); this.setMakeup(null);
     this.hasLut = false;
   }
   tex() {
@@ -521,6 +539,13 @@ export class Renderer {
   }
   setMask2(src) { src ? this.upload(this.tMask2, src) : this.blank(this.tMask2, 0); }
   setSegB(src) { src ? this.upload(this.tSegB, src) : this.blank(this.tSegB, 255); }
+  // 美妝層：沒有妝的時候放一個全透明的點
+  setMakeup(src) {
+    if (src) { this.upload(this.tMakeup, src); return; }
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.tMakeup);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
+  }
   setLut(src) { this.hasLut = !!src; if (src) this.upload(this.tLut, src); }
 
   // fx：{ faces: [faceGeom], light: { lights, amt, amb, bg, mode }, flash: { amt, lift, spec, bg, shadow, retro } }
@@ -530,7 +555,7 @@ export class Renderer {
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     const texs = [[this.tImg, 'uImg'], [this.tSmooth, 'uSmooth'], [this.tMask, 'uMask'], [this.tSeg, 'uSeg'], [this.tLut, 'uLut'], [this.tMask2, 'uMask2'], [this.tSegB, 'uSegB'],
       [this.fbS[0].t, 'uBlurS'], [this.fbM[0].t, 'uBgA'], [this.fbL[0].t, 'uBgB'], [this.tOver, 'uOver'], [this.tEx, 'uEx'], [this.tBgImg, 'uBgImg'],
-      [this.fbBm[0].t, 'uBgMid'], [this.fbBf[0].t, 'uBgFar']];
+      [this.fbBm[0].t, 'uBgMid'], [this.fbBf[0].t, 'uBgFar'], [this.tMakeup, 'uMakeup']];
     texs.forEach(([t, name], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(u[name], i); });
     gl.uniform2f(u.uSize, this.w, this.h);
     const n = Math.min(warps.length, MAX_WARPS), w1 = new Float32Array(MAX_WARPS * 4), w2 = new Float32Array(MAX_WARPS * 4), w3 = new Float32Array(MAX_WARPS * 2);
