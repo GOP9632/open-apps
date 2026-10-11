@@ -42,11 +42,11 @@ dd{margin:4px 0 0 0}
 <body>
 <div class="wrap">
 <header><h1>🎙️ 課堂錄音 使用說明</h1><a class="btn" href="../">打開 app</a></header>
-<p>上課、開會時錄音，自動變成逐字稿和 AI 筆記，還能直接問「老師說哪些會考？」。錄音和筆記都存在你自己的裝置上，不會上傳到我們的伺服器。</p>
+<p>上課、開會時錄音，自動變成逐字稿和 AI 筆記，還能直接問「老師說哪些會考？」。登入之後不用申請任何 API key 就能用，換手機或電腦登入同一個帳號，逐字稿和筆記都在。</p>
 <p>圖片上的紅色數字，對應圖片下面的說明。</p>
 
 <nav class="toc"><b>目錄</b><ol>
-<li><a href="#setup">第一次使用：填 API key</a></li>
+<li><a href="#setup">第一次使用：登入</a></li>
 <li><a href="#home">首頁與分類</a></li>
 <li><a href="#course">課程設定：專有名詞、老師聲音</a></li>
 <li><a href="#record">錄音</a></li>
@@ -60,8 +60,17 @@ dd{margin:4px 0 0 0}
 <li><a href="#faq">常見問題</a></li>
 </ol></nav>
 
-<section id="setup"><h2>1. 第一次使用：填 API key</h2>
-<p>轉寫和 AI 筆記要靠外面的 AI 服務。點左下角「⚙️ 設定」，填上你申請的 key。key 只存在這個瀏覽器。</p>
+<section id="setup"><h2>1. 第一次使用：登入</h2>
+<p>點左下角「🔑 登入」，第一次用按「還沒有帳號？建立一個」，填名字、Email 和密碼就好。和「美食收藏」是同一組帳號。</p>
+<figure class="phone"><img src="img/00-login.jpg" alt="登入頁"><figcaption>登入頁（手機）</figcaption></figure>
+<ul>
+<li><b>不用 API key</b>：登入後轉寫、AI 筆記和問答都直接能用。每個人每天有免費額度，用完隔天（台灣時間半夜）就恢復。點左下角自己的名字可以看今天用了多少。</li>
+<li><b>跨裝置同步</b>：分類、逐字稿、AI 筆記、問答、重點都會同步。錄音檔本身預設不上傳，要換裝置聽，在錄音頁按「⤓ 匯出」選「☁️ 上傳音檔」，或到設定勾「錄完自動上傳」。照片不同步。</li>
+<li>登入前錄的東西，登入後會自動放進你的帳號。</li>
+</ul>
+<figure><img src="img/00-mode.jpg" alt="設定裡的 AI 怎麼用"><figcaption>設定 → AI 怎麼用</figcaption></figure>
+<p>預設是「免費雲端」。額度不夠用、或想自己選引擎和模型，可以改成「用我自己的 API key」，下面是填法。</p>
+<h3>進階：用自己的 API key</h3>
 <figure><img src="img/03-settings-1.jpg" alt="設定頁上半部"><figcaption>設定頁（上半部）</figcaption></figure>
 <ol class="marks">
 <li><span class="n">1</span><div><b>轉寫引擎</b>：選誰把聲音變成文字。建議用 Google Gemini，分得出老師和學生。只要文字、不在乎誰講的，可以選 Groq（免費）。</div></li>
@@ -204,6 +213,8 @@ dd{margin:4px 0 0 0}
 
 <section id="faq"><h2>12. 常見問題</h2>
 <dl>
+<dt>出現「今天的免費額度用完了」</dt>
+<dd>每個人每天的免費雲端額度有上限，隔天就恢復。急著用的話，到設定改成「用我自己的 API key」。</dd>
 <dt>轉寫失敗，出現 402</dt>
 <dd>這把 Gemini key 所在的專案綁了預付帳單，但餘額是 0。到 Google AI Studio 儲值，或改用沒綁帳單的 key，也可以先把轉寫引擎換成 Groq。</dd>
 <dt>出現 429 或「免費額度用完了」</dt>
@@ -217,7 +228,7 @@ dd{margin:4px 0 0 0}
 <dt>出現簡體字</dt>
 <dd>設定裡勾「把簡體字轉成台灣繁體」（預設已勾）。</dd>
 <dt>錄音存在哪裡？換手機會不見嗎？</dt>
-<dd>存在這個瀏覽器裡。換裝置或清除瀏覽器資料就會不見，重要的錄音記得用「下載原始音檔」和「複製筆記」備份。左下角會顯示已用多少空間。</dd>
+<dd>有登入的話，逐字稿和筆記存在雲端，換手機登入就看得到；錄音檔要上傳過才會跟著走。沒登入的話只存在這個瀏覽器，清除瀏覽器資料就會不見。</dd>
 <dt>錄電腦聲音沒有聲音</dt>
 <dd>分享視窗要選「分頁」並勾選「分享分頁音訊」。Mac 上錄 Zoom 這類 app 的聲音，網頁版做不到，要等之後的 Mac 版。</dd>
 </dl>
