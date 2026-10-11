@@ -5,6 +5,10 @@
 // 照片格 slot：r=[x,y,w,h]、rot 角度、rad 圓角（短邊的比例，0.5 是圓形）、frame 外框、p 指定第幾張照片（預設依序）。
 // 文字 text：可以點兩下改字；slot 有給時座標是那一格的局部座標（中心是 0，-0.5~0.5），會跟著那格一起轉。
 
+import { FILTERS } from './filters.js';
+import { OVERLAYS, paint } from './creative.js';
+import { THEMES } from './themes.js';
+
 export const FONTS = {
   sans: '-apple-system,"PingFang TC","Noto Sans TC",sans-serif',
   serif: '"Songti TC","Noto Serif TC",serif',
@@ -17,7 +21,8 @@ export const FONTS = {
 };
 export const FONT_LIST = [['sans', '黑體'], ['serif', '明體'], ['display', '雜誌'], ['hand', '手寫'], ['round', '圓體'], ['impact', '粗體'], ['mono', '打字機'], ['kai', '楷書']];
 
-export const CATS = ['熱門', '經典', '創意', 'IG', '今日穿搭', '拍貼機', '拍立得', '海報', '雜誌', '底片', '復古', '旅行', '情侶', '生日', '簡約', '節日'];
+export const CATS = ['熱門', '經典', '創意', 'IG', '今日穿搭', '拍貼機', '拍立得', '海報', '雜誌', '底片', '復古', '旅行', '情侶', '生日', '簡約', '節日',
+  '自拍', '夏天', '80年代', '千禧', '動漫', '暗黑', '數位', '戶外', '食物', '寵物', '校園', '畢業', '桌布'];
 
 // 文字的簡寫：T('字', x, y, 字級, {其他})
 const T = (t, x, y, s, o = {}) => ({ t, x, y, s, f: 'sans', c: '#111111', ...o });
@@ -193,8 +198,85 @@ export const TEMPLATES = [
     slots: [{ r: [0.1, 0.19, 0.8, 0.58], frame: { kind: 'border', w: 0.012, c: '#ffd166', shadow: true } }],
     deco: [D('circle', { x: 0.06, y: 0.05, r: 0.1, c: 'none', st: '#ffd166', lw: 0.004 }), D('circle', { x: 0.94, y: 0.95, r: 0.12, c: 'none', st: '#ffd166', lw: 0.004 })],
     texts: [T('新年快樂', 0.5, 0.1, 0.13, { f: 'kai', c: '#ffd166', w: 700 }), T('萬事如意 · 平安喜樂', 0.5, 0.86, 0.045, { f: 'kai', c: '#ffe8a3' })] },
+  ...THEMES,
 ];
 export const tplById = id => TEMPLATES.find(t => t.id === id);
+
+// ---------- 整組風格（look） ----------
+// Hypic 的範本大多是「單張照片 + 濾鏡 + 調整 + 特效」的配方（看它快取的範本清單，feature_list 裡
+// 濾鏡、各項調整、特效最常見）。這裡的 look 是同一個概念：數值 -100~100，跟主畫面的調整分頁同方向，
+// 先調整再疊濾鏡，烘成一張查找表，所以每格照片只算一次。
+export function lookFn(L) {
+  const v = k => (L[k] || 0) / 100;
+  const flt = L.filter && L.filter !== 'none' ? FILTERS.find(f => f.id === L.filter)?.fn : null, fa = (L.filterAmt ?? 80) / 100;
+  const ex = Math.pow(2, v('exposure') * 1.2), con = 1 + v('contrast') * 0.55, sat = 1 + v('saturation'), fade = v('fade');
+  const sh = v('shadows'), hl = v('highlights'), tp = v('temp'), tn = v('tint');
+  const cl = x => Math.min(1, Math.max(0, x));
+  return (r, g, b) => {
+    r *= ex; g *= ex; b *= ex;
+    const Y = 0.2126 * r + 0.7152 * g + 0.0722 * b, ws = Math.max(0, 1 - Y * 2), wh = Math.max(0, Y * 2 - 1);
+    const lift = x => x + sh * 0.35 * ws * (sh > 0 ? 1 - x : x) + hl * 0.35 * wh * (hl > 0 ? 1 - x : x);
+    r = lift(r); g = lift(g); b = lift(b);
+    r = (r - 0.5) * con + 0.5; g = (g - 0.5) * con + 0.5; b = (b - 0.5) * con + 0.5;
+    r += tp * 0.07; b -= tp * 0.07; g -= tn * 0.05; r += tn * 0.02; b += tn * 0.02;
+    const Y2 = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    r = Y2 + (r - Y2) * sat; g = Y2 + (g - Y2) * sat; b = Y2 + (b - Y2) * sat;
+    // 褪色：黑色往上抬、白色往下壓一點，像底片
+    if (fade) { r = r * (1 - fade * 0.22) + fade * 0.12; g = g * (1 - fade * 0.22) + fade * 0.12; b = b * (1 - fade * 0.22) + fade * 0.12; }
+    r = cl(r); g = cl(g); b = cl(b);
+    if (flt) { const o = flt(r, g, b); r += (o[0] - r) * fa; g += (o[1] - g) * fa; b += (o[2] - b) * fa; }
+    return [r, g, b];
+  };
+}
+
+// ---------- 特效層（fx） ----------
+// 畫在照片和裝飾上面、文字底下：顆粒、暗角、光效（借用創意分頁的光效圖，濾色疊上）、掃描線、柔光、色差。
+// 每一項 { k, a }，a 是 0~1 的強度。
+export function paintFx(ctx, list, W, H) {
+  const r = rng(11);
+  for (const f of list || []) {
+    const a = f.a ?? 0.5;
+    ctx.save();
+    switch (f.k) {
+      case 'grain': {
+        const s = Math.max(1, Math.round(W / 700)), n = Math.round(W * H / (s * s) * 0.18);
+        for (let i = 0; i < n; i++) { const v = r() > 0.5 ? 255 : 0; ctx.fillStyle = `rgba(${v},${v},${v},${a * 0.22 * r()})`; ctx.fillRect(r() * W, r() * H, s, s); }
+        break;
+      }
+      case 'vignette': {
+        const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.hypot(W, H) / 2);
+        g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, f.c || `rgba(0,0,0,${a * 0.75})`);
+        ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); break;
+      }
+      case 'light': {
+        if (!OVERLAYS.some(o => o.id === f.id)) break;
+        ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = a;
+        ctx.drawImage(paint(OVERLAYS, f.id, Math.min(W, 1200), Math.min(W, 1200) * H / W), 0, 0, W, H); break;
+      }
+      case 'scan': {
+        ctx.fillStyle = `rgba(0,0,0,${a * 0.35})`; const step = Math.max(2, H / 260);
+        for (let y = 0; y < H; y += step * 2) ctx.fillRect(0, y, W, step); break;
+      }
+      case 'glow': {
+        // 柔焦光暈：把畫面糊掉再用濾色疊回去，亮的地方會發光
+        const c = document.createElement('canvas'), k = Math.min(1, 480 / W); c.width = Math.round(W * k); c.height = Math.round(H * k);
+        const cx = c.getContext('2d'); cx.filter = `blur(${Math.round(c.width * 0.02)}px)`; cx.drawImage(ctx.canvas, 0, 0, c.width, c.height);
+        ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = a * 0.6; ctx.drawImage(c, 0, 0, W, H); break;
+      }
+      case 'chroma': {
+        // 色差：紅色往左、青色往右錯開
+        const d = Math.max(1, Math.round(W * 0.006 * a * 2)), src = document.createElement('canvas'); src.width = W; src.height = H;
+        src.getContext('2d').drawImage(ctx.canvas, 0, 0);
+        const tint = col => { const t = document.createElement('canvas'); t.width = W; t.height = H; const tc = t.getContext('2d'); tc.drawImage(src, 0, 0); tc.globalCompositeOperation = 'multiply'; tc.fillStyle = col; tc.fillRect(0, 0, W, H); return t; };
+        const red = tint('#ff0000'), cyan = tint('#00ffff');
+        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+        ctx.globalCompositeOperation = 'lighter'; ctx.drawImage(red, -d, 0); ctx.drawImage(cyan, d, 0); break;
+      }
+      case 'tint': ctx.globalCompositeOperation = f.mode || 'soft-light'; ctx.globalAlpha = a; ctx.fillStyle = f.c; ctx.fillRect(0, 0, W, H); break;
+    }
+    ctx.restore();
+  }
+}
 
 // ---------- 日期 ----------
 export function dateText(kind) {
