@@ -326,7 +326,7 @@ void main(){
       float sh = uHasGeo > 0.5 ? shadow(Pw, Lp, uLPar[i].z) : 1.0;
       // 燈在人後面（輪廓光、逆光）只照人，不照背景；邊緣直接亮起來，暗的頭髮也看得到一圈光
       // 後面的燈只照到側面朝燈的地方，越邊緣越亮，所以是細細一圈
-      float back = uLPos[i].z < 0.0 ? smoothstep(0.2, 0.8, pw) : 1.0;
+      float back = uLPos[i].z < 0.0 ? smoothstep(0.45, 0.95, pw) : 1.0;
       if (uLPos[i].z < 0.0) diff = pow(diff, 3.0);
       vec3 li = uLCol[i] * diff * att * sh * back;
       light += li;
