@@ -42,10 +42,10 @@ struct JunkView: View {
                 ProgressView("正在找可以清的垃圾…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if !model.hasScanned {
                 ScanPrompt(
-                    icon: "sparkles",
+                    icon: "trash",
                     title: "系統垃圾",
                     detail: "找出 App 快取、記錄檔、開發工具暫存和下載的安裝檔。掃描只會看，不會動任何東西。",
-                    buttonTitle: "開始掃描",
+                    buttonTitle: "掃描",
                     action: model.scan
                 )
             } else {
@@ -57,10 +57,11 @@ struct JunkView: View {
                         CategorySection(category: $cat)
                     }
                 }
+                .scrollContentBackground(.hidden)
                 BottomBar(
                     selectedCount: model.selected.count,
                     selectedSize: model.selected.reduce(0) { $0 + $1.size },
-                    buttonTitle: "預覽並清理…",
+                    buttonTitle: "清理",
                     action: { confirming = true }
                 )
             }

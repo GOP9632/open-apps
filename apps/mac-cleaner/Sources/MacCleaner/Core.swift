@@ -31,6 +31,8 @@ enum DiskUsage {
 
     /// 檔案或資料夾實際佔用的空間。讀不到的檔案就略過。
     static func size(of url: URL) -> Int64 {
+        // 沒有完整磁碟取用權限時，進去別的 App 的容器會跳授權視窗
+        if FullDiskAccess.shouldSkipContents(url) { return 0 }
         guard let v = try? url.resourceValues(forKeys: keys) else { return 0 }
         if v.isSymbolicLink == true { return 0 }
         if v.isDirectory != true {

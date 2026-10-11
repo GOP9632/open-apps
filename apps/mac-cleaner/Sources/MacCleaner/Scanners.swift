@@ -260,7 +260,8 @@ enum AppScanner {
         for u in urls where !seen.contains(u.path) && Safety.reasonToRefuse(u) == nil {
             seen.insert(u.path)
             items.append(CleanItem(
-                url: u, name: kindLabel(for: u), size: DiskUsage.size(of: u), isSelected: true
+                url: u, name: kindLabel(for: u), size: DiskUsage.size(of: u), isSelected: true,
+                note: FullDiskAccess.shouldSkipContents(u) ? "沒有完整磁碟取用權限，算不出大小" : nil
             ))
         }
         return items

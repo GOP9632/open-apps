@@ -88,6 +88,7 @@ struct UninstallView: View {
                     }
                     .tag(app.id)
                 }
+                .scrollContentBackground(.hidden)
                 .overlay { if model.isLoadingApps { ProgressView() } }
             }
             .frame(width: 280)
@@ -127,11 +128,12 @@ struct UninstallView: View {
                     ProgressView("正在找殘留檔案…").frame(maxHeight: .infinity)
                 } else {
                     List($model.leftovers) { $item in ItemRow(item: $item) }
+                        .scrollContentBackground(.hidden)
                 }
                 BottomBar(
                     selectedCount: model.chosen.count,
                     selectedSize: model.chosen.reduce(0) { $0 + $1.size },
-                    buttonTitle: "預覽並移除…",
+                    buttonTitle: "移除",
                     action: { confirming = true }
                 )
                 .disabled(model.isRunning(app))

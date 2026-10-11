@@ -36,8 +36,22 @@ final class MonitorModel: ObservableObject {
     @Published var sortByCPU = false
     @Published var battery: BatteryInfo?
     @Published var hasBattery = true
+    @Published var power: Sensors.Power?
+    @Published var netDown: Double = 0      // 每秒位元組
+    @Published var netUp: Double = 0
+    @Published var netDownHistory: [HistoryPoint] = []
+    @Published var netUpHistory: [HistoryPoint] = []
+    @Published var coreUsage: [Double] = []
+    @Published var temperature: (average: Double, max: Double)?
+    @Published var temperatureHistory: [HistoryPoint] = []
+    @Published var bootTime: Date?
+    @Published var bluetooth: [Sensors.BluetoothDevice] = []
 
     private var lastTicks: SystemStats.CPUTicks?
+    private var lastCoreTicks: [Sensors.CoreTicks] = []
+    private var lastNet: (bytes: Sensors.NetworkBytes, time: Date)?
+    private var headphones: [Sensors.BluetoothDevice] = []
+    private var refreshCount = 0
     private var lastSamples: [String: SystemStats.ProcessSample] = [:]
     private var lastSampleTime = Date()
     private var tick = 0
@@ -75,6 +89,7 @@ final class MonitorModel: ObservableObject {
         volume = Self.readVolume()
         battery = BatteryInfo.read()
         hasBattery = battery != nil
+        refreshSensors()
 
         let samples = await Task.detached(priority: .utility) { SystemStats.sampleProcesses() }.value
         let now = Date()
@@ -95,6 +110,47 @@ final class MonitorModel: ObservableObject {
         lastSamples = samples
         lastSampleTime = now
         apps = list
+    }
+
+    private func refreshSensors() {
+        refreshCount += 1
+        let now = Date()
+
+        if let bytes = Sensors.networkBytes() {
+            if let last = lastNet, now > last.time,
+               bytes.received >= last.bytes.received, bytes.sent >= last.bytes.sent {
+                let seconds = now.timeIntervalSince(last.time)
+                netDown = Double(bytes.received - last.bytes.received) / seconds
+                netUp = Double(bytes.sent - last.bytes.sent) / seconds
+                append(&netDownHistory, netDown)
+                append(&netUpHistory, netUp)
+            }
+            lastNet = (bytes, now)
+        }
+
+        let cores = Sensors.perCoreTicks()
+        if cores.count == lastCoreTicks.count {
+            coreUsage = zip(lastCoreTicks, cores).map { old, new in
+                guard new.total > old.total, new.busy >= old.busy else { return 0 }
+                return Double(new.busy - old.busy) / Double(new.total - old.total) * 100
+            }
+        }
+        lastCoreTicks = cores
+
+        temperature = Sensors.cpuTemperature()
+        if let t = temperature { append(&temperatureHistory, t.average) }
+        if bootTime == nil { bootTime = Sensors.bootTime() }
+        if hasBattery { power = Sensors.power(battery: Sensors.batteryProperties()) }
+
+        // 耳機電量要跑 system_profiler，約一分鐘更新一次
+        if refreshCount % 30 == 1 {
+            Task.detached(priority: .background) {
+                let found = Sensors.profilerBatteries()
+                await MainActor.run { self.headphones = found }
+            }
+        }
+        let hid = Sensors.hidBatteries()
+        bluetooth = hid + headphones.filter { h in !hid.contains { $0.name == h.name } }
     }
 
     var topApps: [AppUsage] {
@@ -142,8 +198,16 @@ struct MonitorView: View {
                         memoryCard
                     }
                     GridRow {
+                        coresCard
+                        networkCard
+                    }
+                    GridRow {
                         diskCard
                         batteryCard
+                    }
+                    GridRow {
+                        temperatureCard
+                        bluetoothCard
                     }
                 }
                 .fixedSize(horizontal: false, vertical: true)
@@ -251,11 +315,143 @@ struct MonitorView: View {
                     if let t = b.temperature {
                         rowText("溫度", String(format: "%.1f°C", t))
                     }
+                    if let p = model.power {
+                        Divider().padding(.vertical, 2)
+                        rowText(p.isCharging ? "充滿還要" : "還能用", p.minutesLeft.map(formatMinutes) ?? (b.isPluggedIn && !p.isCharging ? "接著電源" : "估算中…"))
+                        if let w = p.batteryWatts, abs(w) >= 0.05 {
+                            rowText(w < 0 ? "正在充進電池" : "電池耗電", String(format: "%.1f W", abs(w)))
+                        }
+                        if b.isPluggedIn, let w = p.systemWatts {
+                            rowText("整台電腦耗電", String(format: "%.1f W", w))
+                        }
+                        if let w = p.adapterWatts {
+                            rowText("充電器", "\(w) W")
+                        }
+                    }
                 }
                 .font(.caption)
             } else {
                 Text("這台 Mac 沒有電池").foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private var coresCard: some View {
+        Card(title: "每顆核心", icon: "square.grid.3x3") {
+            let kinds = Sensors.coreKinds
+            Text(kinds.efficiency > 0 ? "\(kinds.performance) 顆效能核、\(kinds.efficiency) 顆節能核" : "\(kinds.performance) 顆核心")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack(alignment: .bottom, spacing: 6) {
+                ForEach(Array(model.coreUsage.enumerated()), id: \.offset) { i, usage in
+                    // Apple 晶片上節能核編號在前面
+                    let efficient = i < kinds.efficiency
+                    VStack(spacing: 4) {
+                        ZStack(alignment: .bottom) {
+                            Capsule().fill(Color.white.opacity(0.08))
+                            Capsule().fill(efficient ? Color.teal : Color.orange)
+                                .frame(height: max(4, 70 * usage / 100))
+                        }
+                        .frame(height: 70)
+                        .animation(.easeOut(duration: 0.4), value: usage)
+                        Text(efficient ? "E" : "P").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: 22)
+                    .help("\(efficient ? "節能核" : "效能核") \(i + 1)：\(Int(usage.rounded()))%")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if kinds.efficiency > 0 {
+                HStack(spacing: 12) {
+                    Label("效能核 P", systemImage: "circle.fill").foregroundStyle(.orange)
+                    Label("節能核 E", systemImage: "circle.fill").foregroundStyle(.teal)
+                }
+                .font(.caption2)
+            }
+        }
+    }
+
+    private var networkCard: some View {
+        Card(title: "網路", icon: "arrow.up.arrow.down") {
+            HStack(spacing: 20) {
+                speed("下載", model.netDown, "arrow.down", .cyan)
+                speed("上傳", model.netUp, "arrow.up", .pink)
+            }
+            NetworkSparkline(down: model.netDownHistory, up: model.netUpHistory)
+            Text("所有網路介面合計（Wi‑Fi、有線網路）").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func speed(_ label: String, _ bytesPerSecond: Double, _ icon: String, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Label(label, systemImage: icon).font(.caption).foregroundStyle(color)
+            Text(formatSpeed(bytesPerSecond)).font(.system(size: 26, weight: .semibold)).monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(0.5)
+        }
+    }
+
+    private var temperatureCard: some View {
+        Card(title: "晶片溫度", icon: "thermometer.medium") {
+            if let t = model.temperature {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(String(format: "%.0f°C", t.average)).font(.system(size: 34, weight: .semibold)).monospacedDigit()
+                        .lineLimit(1).minimumScaleFactor(0.5)
+                    Text("最高 \(Int(t.max.rounded()))°C").foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                }
+                Text("估計值：讀晶片內部感測器，跟專業工具可能差幾度").font(.caption).foregroundStyle(.secondary)
+                Sparkline(points: model.temperatureHistory, color: .red, domain: 20...110)
+            } else {
+                Text("無法取得").font(.system(size: 26, weight: .semibold)).foregroundStyle(.secondary)
+                Text("這台 Mac 的溫度感測器讀不到").font(.caption).foregroundStyle(.secondary)
+            }
+            if let boot = model.bootTime {
+                Divider().padding(.vertical, 2)
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    VStack(alignment: .leading, spacing: 2) {
+                        rowText("開機多久", formatUptime(context.date.timeIntervalSince(boot)))
+                        rowText("開機時間", boot.formatted(date: .abbreviated, time: .shortened))
+                    }
+                    .font(.caption)
+                }
+            }
+        }
+    }
+
+    private var bluetoothCard: some View {
+        Card(title: "藍牙裝置電量", icon: "dot.radiowaves.left.and.right") {
+            if model.bluetooth.isEmpty {
+                Text("沒有連線中、會回報電量的藍牙裝置").foregroundStyle(.secondary)
+                Text("AirPods、Apple 滑鼠、鍵盤、觸控板連上後會出現在這裡。耳機電量約一分鐘更新一次。")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(model.bluetooth) { device in
+                        HStack(spacing: 10) {
+                            Image(systemName: bluetoothIcon(device.kind)).frame(width: 22)
+                            Text(device.name).lineLimit(1)
+                            Spacer()
+                            ForEach(device.parts, id: \.self) { part in
+                                VStack(spacing: 1) {
+                                    Text("\(part.percent)%").monospacedDigit()
+                                        .foregroundStyle(part.percent <= 20 ? .red : .primary)
+                                    if !part.label.isEmpty {
+                                        Text(part.label).font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func bluetoothIcon(_ kind: String) -> String {
+        switch kind {
+        case "耳機": "airpodspro"
+        case "滑鼠": "magicmouse"
+        case "鍵盤": "keyboard"
+        case "觸控板": "rectangle.and.hand.point.up.left"
+        default: "dot.radiowaves.left.and.right"
         }
     }
 
@@ -296,7 +492,7 @@ struct MonitorView: View {
             }
         }
         .padding(16)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+        .glassCard()
     }
 
     private func row(_ label: String, _ value: UInt64) -> some View {
@@ -328,6 +524,26 @@ func formatMemory(_ bytes: UInt64) -> String {
     ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory)
 }
 
+private func formatSpeed(_ bytesPerSecond: Double) -> String {
+    switch bytesPerSecond {
+    case ..<1024: String(format: "%.0f B/s", bytesPerSecond)
+    case ..<(1024 * 1024): String(format: "%.0f KB/s", bytesPerSecond / 1024)
+    default: String(format: "%.1f MB/s", bytesPerSecond / 1024 / 1024)
+    }
+}
+
+private func formatMinutes(_ minutes: Int) -> String {
+    minutes >= 60 ? "\(minutes / 60) 小時 \(minutes % 60) 分" : "\(minutes) 分鐘"
+}
+
+private func formatUptime(_ seconds: TimeInterval) -> String {
+    let minutes = Int(seconds / 60)
+    let days = minutes / 1440, hours = (minutes % 1440) / 60, mins = minutes % 60
+    if days > 0 { return "\(days) 天 \(hours) 小時" }
+    if hours > 0 { return "\(hours) 小時 \(mins) 分" }
+    return "\(mins) 分鐘"
+}
+
 private struct Card<Content: View>: View {
     let title: String
     let icon: String
@@ -340,22 +556,47 @@ private struct Card<Content: View>: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(16)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+        .glassCard()
     }
 }
 
 private struct Sparkline: View {
     let points: [HistoryPoint]
     let color: Color
+    var domain: ClosedRange<Double> = 0...100
 
     var body: some View {
         Chart(points) { p in
-            AreaMark(x: .value("時間", p.id), y: .value("%", p.value))
+            AreaMark(x: .value("時間", p.id), yStart: .value("%", domain.lowerBound), yEnd: .value("%", p.value))
                 .foregroundStyle(color.opacity(0.15))
             LineMark(x: .value("時間", p.id), y: .value("%", p.value))
                 .foregroundStyle(color)
         }
-        .chartYScale(domain: 0...100)
+        .chartYScale(domain: domain)
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .frame(height: 50)
+    }
+}
+
+/// 下載、上傳兩條線，高度跟著最近的最大值自動調整
+private struct NetworkSparkline: View {
+    let down: [HistoryPoint]
+    let up: [HistoryPoint]
+
+    var body: some View {
+        let top = max((down + up).map(\.value).max() ?? 0, 10 * 1024)
+        Chart {
+            ForEach(down) { p in
+                LineMark(x: .value("時間", p.id), y: .value("速度", p.value), series: .value("方向", "下載"))
+                    .foregroundStyle(Color.cyan)
+            }
+            ForEach(up) { p in
+                LineMark(x: .value("時間", p.id), y: .value("速度", p.value), series: .value("方向", "上傳"))
+                    .foregroundStyle(Color.pink)
+            }
+        }
+        .chartYScale(domain: 0...top * 1.1)
         .chartXAxis(.hidden)
         .chartYAxis(.hidden)
         .frame(height: 50)
