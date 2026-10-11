@@ -38,3 +38,9 @@
 - `ai.js`：MediaPipe 臉部特徵點、皮膚遮罩、五官變形、人像分割、臉部貼紙位置
 - `stickers.js`：貼紙圖案（全部自己畫的 SVG）
 - `creative.js`：光效、換背景、雙重曝光的圖、邊框（全部用程式畫）
+
+## 背景照片來源
+
+`bg/` 裡的換背景照片都是 CC0（公眾領域）授權，來自 StockSnap 和 rawpixel（透過 Openverse 搜尋）：海邊 Sergei Gussev、夕陽海 Negative Space、櫻花道 Bonnie Moreland、櫻花 Mary、薰衣草 Travel Photographer、草原 U.S. Department of Agriculture、湖光山色 eberhard grossgasteiger、雪林 Mik Skuza、巴黎 James Frid、城市光斑 Thong Vo，其餘為 rawpixel 公眾領域圖庫。
+
+精細摳圖用 [MODNet](https://github.com/ZHKKKe/MODNet)（Apache-2.0），透過 onnxruntime-web 在瀏覽器裡跑。
