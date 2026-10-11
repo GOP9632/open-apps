@@ -1,6 +1,7 @@
 import { Renderer } from './gl.js';
 import { FILTERS, bakeLUT, thumb } from './filters.js';
-import { detectFaces, segment, skinMask, faceWarps } from './ai.js';
+import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor } from './ai.js';
+import { STICKERS, EMOJIS, EMOJI_FONT, stickerById, stickerImage } from './stickers.js';
 
 const $ = s => document.querySelector(s);
 const MAX_SIDE = 4096, MAX_AREA = 16e6;
@@ -10,8 +11,10 @@ const P0 = {
   sharpen: 0, vignette: 0, grain: 0, fade: 0,
   filter: 'none', filterAmt: 80,
   smooth: 0, white: 0, slim: 0, vface: 0, eyes: 0, nose: 0, mouth: 0,
+  chin: 0, dark: 0, fold: 0, eyeb: 0, teeth: 0, slimL: 0, slimR: 0, eyesL: 0, eyesR: 0,
   bg: 'keep', bgColor: '#ffffff',
   oneTap: -1, oneAmt: 100,
+  light: -1, lightAmt: 60, lightRot: 0, flash: -1, flashAmt: 60,
 };
 
 const I = {
@@ -45,6 +48,15 @@ const I = {
   trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
   stroke: '<svg viewBox="0 0 24 24"><path d="M6 19L12 5l6 14M8.5 14h7"/></svg>',
   font: '<svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13"/></svg>',
+  chin: '<svg viewBox="0 0 24 24"><path d="M6 4c0 7 2 13 6 13s6-6 6-13"/><path d="M12 17v4M10 19l2 2 2-2"/></svg>',
+  dark: '<svg viewBox="0 0 24 24"><path d="M3 10s4-5 9-5 9 5 9 5"/><path d="M6 15c3 2 9 2 12 0" opacity=".6"/></svg>',
+  fold: '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="7" ry="9"/><path d="M10 10c-2 3-2 5-1 7M14 10c2 3 2 5 1 7"/></svg>',
+  eyeb: '<svg viewBox="0 0 24 24"><path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path d="M13 10.5l1-1"/></svg>',
+  teeth: '<svg viewBox="0 0 24 24"><path d="M4 9c3-2 13-2 16 0-1 6-4 9-8 9s-7-3-8-9z"/><path d="M8 9.5v3M12 9.3v3.2M16 9.5v3"/></svg>',
+  bulb: '<svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/></svg>',
+  flash: '<svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>',
+  copy: '<svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>',
+  off: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>',
 };
 
 const ADJUST = [
@@ -53,8 +65,28 @@ const ADJUST = [
   ['sharpen', '銳化', I.sharp, 0], ['vignette', '暗角', I.vig], ['grain', '顆粒', I.grain, 0], ['fade', '褪色', I.fade, 0],
 ];
 const BEAUTY = [
-  ['smooth', '磨皮', I.skin, 0], ['white', '美白', I.white, 0], ['slim', '瘦臉', I.slim], ['vface', '小 V 臉', I.vface],
+  ['smooth', '磨皮', I.skin, 0], ['white', '美白', I.white, 0], ['dark', '黑眼圈', I.dark, 0], ['fold', '法令紋', I.fold, 0],
+  ['eyeb', '亮眼', I.eyeb, 0], ['teeth', '白牙', I.teeth, 0],
+  ['slim', '瘦臉', I.slim], ['vface', '小 V 臉', I.vface], ['chin', '下巴', I.chin],
   ['eyes', '大眼', I.eye], ['nose', '瘦鼻', I.nose], ['mouth', '嘴巴', I.mouth],
+];
+// 第一次點開時的起始強度，照醒圖點開滑桿時的預設值
+const BEAUTY_DEF = { white: 60 };
+// 可以左右分開調的項目
+const SIDED = ['slim', 'eyes'];
+// 打光：燈的方向用畫面座標（x 向右、y 向下、z 朝鏡頭）
+const n3 = (x, y, z) => { const l = Math.hypot(x, y, z); return [x / l, y / l, z / l]; };
+const LIGHTS = [
+  { name: '側光', lights: [{ dir: n3(-0.85, -0.25, 0.5), col: [1, 0.97, 0.92] }], amb: 0.55, bg: 0.35 },
+  { name: '頂光', lights: [{ dir: n3(0, -0.85, 0.5), col: [1, 1, 1] }], amb: 0.55, bg: 0.3 },
+  { name: '柔光', lights: [{ dir: n3(0, -0.3, 1), col: [1, 0.98, 0.95] }], amb: 0.85, bg: 0.1 },
+  { name: '輪廓光', lights: [{ dir: n3(-0.9, -0.2, -0.35), col: [1, 0.95, 0.85] }, { dir: n3(0.9, -0.2, -0.35), col: [1, 0.95, 0.85] }], amb: 1, bg: 0.35, mode: 1 },
+  { name: '霓虹', lights: [{ dir: n3(-0.85, -0.1, 0.45), col: [1, 0.35, 0.7] }, { dir: n3(0.85, -0.1, 0.45), col: [0.3, 0.55, 1] }], amb: 0.45, bg: 0.5 },
+];
+const FLASHES = [
+  { name: '直閃', lift: 1, spec: 1, bg: 0.55, shadow: 1, retro: 0 },
+  { name: '柔閃', lift: 0.7, spec: 0.5, bg: 0.25, shadow: 0, retro: 0 },
+  { name: '復古閃', lift: 1, spec: 0.8, bg: 0.6, shadow: 1, retro: 1 },
 ];
 // 兩種一鍵美顏
 //   美圖俊俊：照美圖「智能美化」，膚質加一點臉型
@@ -73,6 +105,9 @@ let R;               // Renderer
 let base = null;     // { canvas, faces, seg, mask, thumbs }
 let P = { ...P0 };
 let texts = [];
+let stickers = [];   // { kind: 'svg' | 'emoji', v, x, y, size, rot, flip, op }
+let side = 'both';
+let selSt = -1;
 let hist = [], hi = -1;
 let tab = 'adjust', cur = 'brightness', selText = -1;
 let cropState = null;
@@ -103,7 +138,7 @@ async function loadFile(file) {
     w = Math.round(w * k); h = Math.round(h * k);
     const c = document.createElement('canvas'); c.width = w; c.height = h;
     c.getContext('2d').drawImage(bmp, 0, 0, w, h);
-    P = { ...P0 }; texts = []; selText = -1;
+    P = { ...P0 }; texts = []; selText = -1; stickers = []; selSt = -1;
     hist = []; hi = -1;
     setBase(c);
     $('#empty').style.display = 'none';
@@ -117,23 +152,27 @@ async function loadFile(file) {
 }
 
 function setBase(canvas, keep) {
-  base = { canvas, faces: null, seg: null, mask: null, thumbs: null, facesP: null, ...keep };
+  base = { canvas, faces: null, geoms: [], seg: null, segB: null, mask: null, mask2: null, thumbs: null, facesP: null, ...keep };
   applyBase();
 }
 function applyBase() {
   R.setImage(base.canvas);
-  R.setMask(base.mask);
-  R.setSeg(base.seg?.person);
+  R.setMask(base.mask); R.setMask2(base.mask2);
+  R.setSeg(base.seg?.person); R.setSegB(base.segB);
   const o = $('#orig'); o.width = base.canvas.width; o.height = base.canvas.height;
   o.getContext('2d').drawImage(base.canvas, 0, 0);
   layout(); render();
   if (!base.faces) findFaces();
-  if (P.bg !== 'keep' && !base.seg) findPerson();
+  if ((P.bg !== 'keep' || P.light >= 0 || P.flash >= 0) && !base.seg) findPerson(P.bg === 'keep');
 }
 
 // 背景先找臉和皮膚，美顏打開時就準備好了
 function getSeg(b) {
-  b.segP ||= segment(b.canvas).then(s => { b.seg = s; if (b === base) { R.setSeg(s.person); render(); } return s; })
+  b.segP ||= segment(b.canvas).then(s => {
+    b.seg = s; b.segB = blurCanvas(s.person);
+    if (b === base) { R.setSeg(s.person); R.setSegB(b.segB); render(); }
+    return s;
+  })
     .catch(e => { console.warn(e); b.segP = null; return null; });
   return b.segP;
 }
@@ -141,21 +180,23 @@ function findFaces() {
   const b = base;
   if (b.facesP) return b.facesP;
   b.facesP = detectFaces(b.canvas).then(async f => {
-    b.faces = f;
+    b.faces = f; b.geoms = f.map(faceGeom);
+    b.mask2 = f.length ? featureMask(f, b.canvas.width, b.canvas.height) : null;
+    if (b === base) { R.setMask2(b.mask2); render(); }
     const seg = f.length ? await getSeg(b) : null;
     b.mask = f.length ? skinMask(f, b.canvas.width, b.canvas.height, seg) : null;
-    if (b === base) { R.setMask(b.mask); render(); if (tab === 'beauty') showTab('beauty'); }
+    if (b === base) { R.setMask(b.mask); render(); if (tab === 'beauty' || tab === 'sticker') showTab(tab); }
     return f;
   }).catch(e => { console.warn(e); b.faces = []; b.faceErr = true; if (b === base && tab === 'beauty') showTab('beauty'); return []; });
   return b.facesP;
 }
-async function findPerson() {
+async function findPerson(quiet) {
   const b = base;
   if (b.seg) return b.seg;
-  busy('找出人像…');
+  if (!quiet) busy('找出人像…');
   const s = await getSeg(b);
-  busy();
-  if (!s) toast('去背模型載入失敗，檢查一下網路');
+  if (!quiet) busy();
+  if (!s) toast('人像模型載入失敗，檢查一下網路');
   return s;
 }
 
@@ -167,7 +208,7 @@ function layout() {
   const k = Math.min((st.width - pad * 2) / w, (st.height - pad * 2) / h);
   const wr = $('#wrap');
   wr.style.width = Math.round(w * k) + 'px'; wr.style.height = Math.round(h * k) + 'px';
-  drawTexts(); if (cropState) drawCrop();
+  drawTexts(); drawStickers(); if (cropState) drawCrop();
 }
 new ResizeObserver(layout).observe($('#stage'));
 
@@ -178,8 +219,19 @@ function render() {
     raf = 0;
     const lut = P.filter === 'none' ? null : getLut(P.filter);
     R.setLut(lut);
-    R.render(P, base.faces ? faceWarps(base.faces, P) : []);
+    draw();
   });
+}
+function draw() { R.render(P, base.faces ? faceWarps(base.faces, P) : [], effects()); }
+// 打光、閃光燈的參數
+function effects() {
+  const fx = { faces: base.geoms };
+  if (P.light >= 0) {
+    const L = LIGHTS[P.light], a = P.lightRot * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    fx.light = { ...L, amt: P.lightAmt / 100, lights: L.lights.map(l => ({ col: l.col, dir: [l.dir[0] * c - l.dir[1] * s, l.dir[0] * s + l.dir[1] * c, l.dir[2]] })) };
+  }
+  if (P.flash >= 0) fx.flash = { ...FLASHES[P.flash], amt: P.flashAmt / 100 };
+  return fx;
 }
 function getLut(id) {
   if (!lutCache.has(id)) lutCache.set(id, bakeLUT(FILTERS.find(f => f.id === id).fn));
@@ -189,7 +241,7 @@ function getLut(id) {
 // ---------- 復原、重做 ----------
 function commit() {
   hist = hist.slice(0, hi + 1);
-  hist.push({ base, P: clone(P), texts: clone(texts) });
+  hist.push({ base, P: clone(P), texts: clone(texts), stickers: clone(stickers) });
   if (hist.length > 40) hist.shift();
   hi = hist.length - 1;
   syncHist();
@@ -198,9 +250,9 @@ function restore(i) {
   hi = i;
   const s = hist[i];
   const changed = s.base !== base;
-  P = clone(s.P); texts = clone(s.texts); selText = -1;
+  P = clone(s.P); texts = clone(s.texts); stickers = clone(s.stickers); selText = -1; selSt = -1;
   if (changed) { base = s.base; applyBase(); } else render();
-  showTab(tab); drawTexts(); syncHist();
+  showTab(tab); drawTexts(); drawStickers(); syncHist();
 }
 function syncHist() { $('#bUndo').disabled = hi <= 0; $('#bRedo').disabled = hi >= hist.length - 1; }
 $('#bUndo').onclick = () => hi > 0 && restore(hi - 1);
@@ -249,21 +301,36 @@ function showTab(t) {
   const box = $('#items'); box.innerHTML = '';
   $('#note').textContent = ''; $('#textedit').hidden = true;
   if (!base) return;
-  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, crop: tabCrop, cutout: tabCutout, text: tabText })[t](box);
-  drawTexts();
+  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, light: tabLight, sticker: tabSticker, crop: tabCrop, cutout: tabCutout, text: tabText })[t](box);
+  drawTexts(); drawStickers();
+  $('#wrap').classList.toggle('lightdrag', t === 'light' && P.light >= 0);
 }
 
+const isSet = k => P[k] !== 0 || (SIDED.includes(k) && (P[k + 'L'] !== 0 || P[k + 'R'] !== 0));
 function paramItems(box, list, def, itemsOnly) {
   if (!itemsOnly && !list.some(x => x[0] === cur)) cur = def;
   const els = {};
   for (const [k, label, icon] of list) {
-    box.append(els[k] = item({ label, icon, on: k === cur, set: P[k] !== 0, onclick: () => { cur = k; showTab(tab); } }));
+    box.append(els[k] = item({ label, icon, on: k === cur && !itemsOnly, set: isSet(k), onclick: () => {
+      cur = k;
+      if (list === BEAUTY && BEAUTY_DEF[k] && P[k] === 0) { P[k] = BEAUTY_DEF[k]; P.oneTap = -1; render(); commit(); }
+      showTab(tab);
+    } }));
   }
   if (itemsOnly) return;
   const it = list.find(x => x[0] === cur);
-  setSlider(it[1], it[3] ?? -100, 100, P[cur], v => {
-    P[cur] = v; if (list === BEAUTY) P.oneTap = -1; render();
-    els[cur].classList.toggle('set', v !== 0);
+  // 瘦臉、大眼可以只調一邊
+  const sided = list === BEAUTY && SIDED.includes(cur);
+  if (sided) {
+    $('#note').textContent += (($('#note').textContent ? '　' : '') + '可以只調左邊或右邊');
+    box.prepend(...[['both', '兩邊'], ['L', '左'], ['R', '右']].map(([sd, lb]) => item({
+      label: lb, icon: lb, cls: 'wide', on: side === sd, onclick: () => { side = sd; showTab(tab); },
+    })));
+  }
+  const key = sided && side !== 'both' ? cur + side : cur;
+  setSlider(it[1] + (sided && side !== 'both' ? (side === 'L' ? '左' : '右') : ''), it[3] ?? -100, 100, P[key], v => {
+    P[key] = v; if (list === BEAUTY) P.oneTap = -1; render();
+    els[cur].classList.toggle('set', isSet(cur));
   });
 }
 
@@ -305,6 +372,145 @@ function tabBeauty(box) {
       render();
     });
   } else paramItems(box, BEAUTY, 'smooth');
+}
+
+// ---------- 光影：打光、閃光燈 ----------
+function tabLight(box) {
+  if (!base.faces) findFaces();
+  const need = () => { if (!base.seg) findPerson(true); };
+  if (cur !== 'light' && cur !== 'flash') cur = P.flash >= 0 && P.light < 0 ? 'flash' : 'light';
+  box.append(item({ label: '不打光', icon: I.off, on: P.light < 0, onclick: () => { P.light = -1; cur = 'light'; render(); commit(); showTab('light'); } }));
+  LIGHTS.forEach((L, i) => box.append(item({
+    label: L.name, icon: I.bulb, on: P.light === i, set: P.light === i,
+    style: `color:rgb(${L.lights[0].col.map(c => Math.round(c * 255)).join(',')})`,
+    onclick: () => { if (P.light !== i) P.lightRot = 0; P.light = i; cur = 'light'; need(); render(); commit(); showTab('light'); },
+  })));
+  box.append(item({ label: '不閃光', icon: I.off, on: P.flash < 0, onclick: () => { P.flash = -1; cur = 'flash'; render(); commit(); showTab('light'); } }));
+  FLASHES.forEach((F, i) => box.append(item({
+    label: F.name, icon: I.flash, on: P.flash === i, set: P.flash === i,
+    onclick: () => { P.flash = i; cur = 'flash'; need(); render(); commit(); showTab('light'); },
+  })));
+  if (cur === 'light' && P.light >= 0) {
+    setSlider('打光', 0, 100, P.lightAmt, v => { P.lightAmt = v; render(); });
+    $('#note').textContent = '在照片上拖曳可以移動光源方向。';
+  } else if (cur === 'flash' && P.flash >= 0) {
+    setSlider('閃光', 0, 100, P.flashAmt, v => { P.flashAmt = v; render(); });
+    $('#note').textContent = '模擬手機開閃光燈拍照的感覺。';
+  } else { hideSlider(); $('#note').textContent = '打光和閃光燈可以一起用。'; }
+}
+// 拖曳照片轉動光源
+(() => {
+  let drag = null;
+  const ang = e => {
+    const r = $('#wrap').getBoundingClientRect(), g = base.geoms[0];
+    const cx = g ? r.left + g.cx / base.canvas.width * r.width : r.left + r.width / 2;
+    const cy = g ? r.top + g.cy / base.canvas.height * r.height : r.top + r.height / 2;
+    return Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI;
+  };
+  $('#wrap').addEventListener('pointerdown', e => {
+    if (tab !== 'light' || P.light < 0 || e.target.closest('.st,.tx')) return;
+    e.preventDefault(); $('#wrap').setPointerCapture(e.pointerId);
+    drag = { a: ang(e), r: P.lightRot };
+  });
+  $('#wrap').addEventListener('pointermove', e => {
+    if (!drag) return;
+    P.lightRot = drag.r + ang(e) - drag.a; render();
+  });
+  const up = () => { if (drag) { drag = null; commit(); } };
+  $('#wrap').addEventListener('pointerup', up); $('#wrap').addEventListener('pointercancel', up);
+})();
+
+// ---------- 貼紙 ----------
+function tabSticker(box) {
+  const faces = base.faces;
+  if (!faces) findFaces();
+  const st = stickers[selSt];
+  if (st) {
+    box.append(item({ label: '完成', icon: I.check, onclick: () => { selSt = -1; showTab('sticker'); } }));
+    box.append(item({ label: '翻轉', icon: I.flip, onclick: () => { st.flip = !st.flip; drawStickers(); commit(); } }));
+    box.append(item({ label: '複製', icon: I.copy, onclick: () => {
+      stickers.push({ ...st, x: Math.min(0.95, st.x + 0.05), y: Math.min(0.95, st.y + 0.05) }); selSt = stickers.length - 1;
+      drawStickers(); commit(); showTab('sticker');
+    } }));
+    box.append(item({ label: '刪除', icon: I.trash, onclick: () => { stickers.splice(selSt, 1); selSt = -1; drawStickers(); commit(); showTab('sticker'); } }));
+    const modes = [['size', '大小'], ['rot', '旋轉'], ['op', '透明度']];
+    if (!modes.some(m => m[0] === cur)) cur = 'size';
+    modes.forEach(([k, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: cur === k, onclick: () => { cur = k; showTab('sticker'); } })));
+    if (cur === 'size') setSlider('大小', 3, 100, Math.round(st.size * 100), v => { st.size = v / 100; drawStickers(); });
+    if (cur === 'rot') setSlider('旋轉', -180, 180, Math.round(st.rot * 180 / Math.PI), v => { st.rot = v * Math.PI / 180; drawStickers(); });
+    if (cur === 'op') setSlider('透明', 10, 100, Math.round(st.op * 100), v => { st.op = v / 100; drawStickers(); });
+    $('#note').textContent = '拖曳移動，兩指可以縮放和旋轉。';
+    return;
+  }
+  hideSlider();
+  $('#note').textContent = !faces ? '正在找臉…' : faces.length ? `臉部貼紙會自動貼到 ${faces.length} 張臉上` : '點一下加到照片上';
+  STICKERS.forEach(sk => box.append(item({
+    label: sk.name, cls: 'stk', icon: sk.svg, onclick: () => addSticker({ kind: 'svg', v: sk.id }, sk.face),
+  })));
+  EMOJIS.forEach(e => box.append(item({ label: '', cls: 'stk emo', icon: e, onclick: () => addSticker({ kind: 'emoji', v: e }) })));
+}
+function addSticker(s, face) {
+  const W = base.canvas.width, H = base.canvas.height;
+  const add = (x, y, size, rot) => stickers.push({ ...s, x: x / W, y: y / H, size: size / W, rot, flip: false, op: 1 });
+  if (face && base.faces?.length) {
+    base.faces.forEach(pts => faceAnchor(pts, face).forEach(a => add(a.x, a.y, a.size, a.rot)));
+    selSt = -1;
+  } else {
+    add(W / 2, H / 2, Math.min(W, H) * 0.3, 0);
+    selSt = stickers.length - 1; cur = 'size';
+  }
+  drawStickers(); commit(); showTab('sticker');
+}
+function stickerHTML(s, px) {
+  if (s.kind === 'emoji') return `<span style="font-size:${px * 0.82}px;line-height:1;font-family:${EMOJI_FONT}">${s.v}</span>`;
+  return stickerById(s.v).svg;
+}
+function drawStickers() {
+  const layer = $('#stickers'), wr = $('#wrap').getBoundingClientRect();
+  layer.innerHTML = '';
+  stickers.forEach((s, i) => {
+    const d = document.createElement('div'), px = s.size * wr.width;
+    const ar = s.kind === 'svg' ? stickerById(s.v).ar : 1;
+    d.className = 'st' + (i === selSt && tab === 'sticker' ? ' sel' : '');
+    d.innerHTML = stickerHTML(s, px);
+    Object.assign(d.style, {
+      left: s.x * 100 + '%', top: s.y * 100 + '%', width: px + 'px', height: px / ar + 'px', opacity: s.op,
+      transform: `translate(-50%,-50%) rotate(${s.rot}rad) scaleX(${s.flip ? -1 : 1})`,
+    });
+    const pts = new Map(); let g = null;
+    const start = () => {
+      const [a, b] = [...pts.values()];
+      g = { x: s.x, y: s.y, size: s.size, rot: s.rot, p: { ...a }, d: b ? Math.hypot(b.x - a.x, b.y - a.y) : 0, a: b ? Math.atan2(b.y - a.y, b.x - a.x) : 0, moved: false };
+    };
+    d.addEventListener('pointerdown', e => {
+      e.preventDefault(); e.stopPropagation(); d.setPointerCapture(e.pointerId);
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); start();
+      if (selSt !== i || tab !== 'sticker') { selSt = i; cur = 'size'; if (tab !== 'sticker') showTab('sticker'); else showTab('sticker'); }
+    });
+    d.addEventListener('pointermove', e => {
+      if (!g || !pts.has(e.pointerId)) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const r = $('#wrap').getBoundingClientRect(), [a, b] = [...pts.values()];
+      if (b && g.d) {
+        s.size = Math.max(0.02, g.size * Math.hypot(b.x - a.x, b.y - a.y) / g.d);
+        s.rot = g.rot + Math.atan2(b.y - a.y, b.x - a.x) - g.a;
+      } else {
+        s.x = g.x + (a.x - g.p.x) / r.width; s.y = g.y + (a.y - g.p.y) / r.height;
+      }
+      g.moved = true;
+      const px2 = s.size * r.width;
+      Object.assign(d.style, { left: s.x * 100 + '%', top: s.y * 100 + '%', width: px2 + 'px', height: px2 / ar + 'px',
+        transform: `translate(-50%,-50%) rotate(${s.rot}rad) scaleX(${s.flip ? -1 : 1})` });
+      if (s.kind === 'emoji') d.firstChild.style.fontSize = px2 * 0.82 + 'px';
+    });
+    const up = e => {
+      pts.delete(e.pointerId);
+      if (g?.moved && !pts.size) { commit(); if (tab === 'sticker') showTab('sticker'); }
+      if (pts.size) start(); else g = null;
+    };
+    d.addEventListener('pointerup', up); d.addEventListener('pointercancel', up);
+    layer.append(d);
+  });
 }
 
 // ---------- 裁切、旋轉 ----------
@@ -393,7 +599,7 @@ function applyCrop() {
   const out = newCanvas(sw, sh);
   out.getContext('2d').drawImage(base.canvas, sx, sy, sw, sh, 0, 0, sw, sh);
   // 文字跟著新的範圍移動
-  texts.forEach(t => { t.x = (t.x - c.x) / c.w; t.y = (t.y - c.y) / c.h; t.size = t.size / c.w; });
+  [...texts, ...stickers].forEach(t => { t.x = (t.x - c.x) / c.w; t.y = (t.y - c.y) / c.h; t.size = t.size / c.w; });
   setBase(out);
   cropState = { x: 0, y: 0, w: 1, h: 1, ratio: c.ratio };
   drawCrop(); commit();
@@ -405,10 +611,15 @@ function transform(kind) {
   if (kind === 'flipH') { ctx.translate(W, 0); ctx.scale(-1, 1); }
   if (kind === 'flipV') { ctx.translate(0, H); ctx.scale(1, -1); }
   ctx.drawImage(base.canvas, 0, 0);
-  texts.forEach(t => {
+  [...texts, ...stickers].forEach(t => {
     if (kind === 'rot') { const x = t.x; t.x = 1 - t.y; t.y = x; t.size *= W / H; }
     if (kind === 'flipH') t.x = 1 - t.x;
     if (kind === 'flipV') t.y = 1 - t.y;
+  });
+  stickers.forEach(s => {
+    if (kind === 'rot') s.rot += Math.PI / 2;
+    if (kind === 'flipH') { s.rot = -s.rot; s.flip = !s.flip; }
+    if (kind === 'flipV') { s.rot = Math.PI - s.rot; s.flip = !s.flip; }
   });
   setBase(out);
   if (cropState) { cropState = { x: 0, y: 0, w: 1, h: 1, ratio: cropState.ratio }; if (cropState.ratio !== 'free') setRatio(cropState.ratio); drawCrop(); }
@@ -506,6 +717,7 @@ function strokeShadow(c, w) {
 }
 $('#stage').addEventListener('pointerdown', e => {
   if (tab === 'text' && !e.target.closest('.tx') && selText >= 0) { selText = -1; drawTexts(); showTab('text'); }
+  if (tab === 'sticker' && !e.target.closest('.st') && selSt >= 0) { selSt = -1; drawStickers(); showTab('sticker'); }
 });
 
 // ---------- 儲存 ----------
@@ -513,9 +725,20 @@ async function save() {
   if (!base) return;
   busy('輸出中…');
   try {
-    R.render(P, base.faces ? faceWarps(base.faces, P) : []);
+    draw();
     const W = base.canvas.width, H = base.canvas.height, out = newCanvas(W, H), ctx = out.getContext('2d');
     ctx.drawImage($('#gl'), 0, 0);
+    for (const s of stickers) {
+      const w = s.size * W;
+      ctx.save(); ctx.globalAlpha = s.op; ctx.translate(s.x * W, s.y * H); ctx.rotate(s.rot); if (s.flip) ctx.scale(-1, 1);
+      if (s.kind === 'emoji') {
+        ctx.font = `${w * 0.82}px ${EMOJI_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(s.v, 0, 0);
+      } else {
+        const h = w / stickerById(s.v).ar;
+        ctx.drawImage(await stickerImage(s.v), -w / 2, -h / 2, w, h);
+      }
+      ctx.restore();
+    }
     for (const t of texts) {
       const fs = t.size * W;
       ctx.font = `700 ${fs}px ${FONTS[t.font][0]}`;
@@ -552,4 +775,4 @@ addEventListener('drop', e => { e.preventDefault(); const f = [...e.dataTransfer
 addEventListener('paste', e => { const f = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith('image/')); if (f) loadFile(f); });
 
 // 給自動測試用
-window.__editor = { loadFile, get P() { return P; }, get base() { return base; }, showTab, save };
+window.__editor = { loadFile, get P() { return P; }, get base() { return base; }, get stickers() { return stickers; }, showTab, save, render };

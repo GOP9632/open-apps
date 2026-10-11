@@ -56,6 +56,17 @@ button{background:none;border:0;padding:0;cursor:pointer}
 .tx{position:absolute;transform:translate(-50%,-50%);white-space:pre;line-height:1.2;font-weight:700;pointer-events:auto;cursor:move;touch-action:none;padding:2px 6px;border:1.5px dashed transparent;border-radius:6px}
 .tx.sel{border-color:rgba(255,255,255,.8)}
 
+/* 貼紙 */
+#stickers{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.st{position:absolute;pointer-events:auto;touch-action:none;cursor:move;display:grid;place-items:center;outline:1.5px dashed transparent;outline-offset:2px;border-radius:4px}
+.st svg{width:100%;height:100%;display:block}
+.st.sel{outline-color:rgba(255,255,255,.85)}
+#wrap.lightdrag{cursor:grab}
+.it.stk .ic svg{width:38px;height:30px;stroke:none;fill:initial;stroke-width:initial}
+.it.stk .ic svg *{stroke-linecap:initial}
+.it.emo{width:52px}
+.it.emo .ic{font-size:26px;font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif}
+
 /* 裁切框 */
 #crop{position:absolute;inset:0;display:none;touch-action:none}
 #crop.on{display:block}
@@ -100,8 +111,9 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .sw{width:30px;height:30px;border-radius:50%;flex:none;border:2px solid rgba(255,255,255,.25)}
 .sw.on{border-color:#fff;box-shadow:0 0 0 2px var(--accent)}
 
-.tabs{display:flex;justify-content:space-around;border-top:1px solid var(--line);padding-top:6px}
-.tab{flex:1;height:40px;color:var(--muted);font-size:14px}
+.tabs{display:flex;justify-content:space-around;border-top:1px solid var(--line);padding-top:6px;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{flex:1 0 auto;min-width:44px;height:40px;padding:0 4px;color:var(--muted);font-size:14px}
 .tab.on{color:var(--text);font-weight:600}
 
 .note{color:var(--muted);font-size:13px;padding:0 18px 8px;min-height:18px}
@@ -142,6 +154,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
       <canvas id="gl"></canvas>
       <canvas id="orig"></canvas>
       <div class="badge">原圖</div>
+      <div id="stickers"></div>
       <div id="texts"></div>
       <div id="crop"><div class="shade s1"></div><div class="shade s2"></div><div class="shade s3"></div><div class="shade s4"></div>
         <div class="box"><span class="h tl" data-h="tl"></span><span class="h tr" data-h="tr"></span><span class="h bl" data-h="bl"></span><span class="h br" data-h="br"></span></div></div>
@@ -164,9 +177,11 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
       <button class="tab on" data-tab="adjust">調整</button>
       <button class="tab" data-tab="filter">濾鏡</button>
       <button class="tab" data-tab="beauty">美顏</button>
-      <button class="tab" data-tab="crop">裁切</button>
-      <button class="tab" data-tab="cutout">去背</button>
+      <button class="tab" data-tab="light">光影</button>
+      <button class="tab" data-tab="sticker">貼紙</button>
       <button class="tab" data-tab="text">文字</button>
+      <button class="tab" data-tab="cutout">去背</button>
+      <button class="tab" data-tab="crop">裁切</button>
     </nav>
   </section>
 </div>
