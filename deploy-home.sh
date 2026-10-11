@@ -3,6 +3,6 @@
 set -e
 cd "$(dirname "$0")"
 tmp=$(mktemp -d)
-cp index.html apps.json site.webmanifest icon.svg apple-touch-icon.png icon-192.png icon-512.png "$tmp"/
+cp index.html apps.json _redirects site.webmanifest icon.svg apple-touch-icon.png icon-192.png icon-512.png "$tmp"/
 netlify deploy --prod --dir "$tmp" --site 44664c1f-accc-4176-b28e-bd110b2ff437
 rm -rf "$tmp"
