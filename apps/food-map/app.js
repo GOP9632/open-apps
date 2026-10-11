@@ -70,7 +70,7 @@ const nameOf = id => S.profiles[id]?.name || '朋友';
 const DB = {
   async init() {
     if (!S.cfg.supabaseUrl || !S.cfg.supabaseKey || !window.supabase) return;
-    S.sb = window.supabase.createClient(S.cfg.supabaseUrl, S.cfg.supabaseKey);
+    S.sb = window.supabase.createClient(S.cfg.supabaseUrl, S.cfg.supabaseKey, { db: { schema: 'food' } });
     const { data } = await S.sb.auth.getSession();
     S.user = data.session?.user || null;
     S.sb.auth.onAuthStateChange((ev, session) => {
@@ -94,6 +94,11 @@ const DB = {
     const ids = [...new Set([S.user.id, ...S.members.map(m => m.user_id), ...S.places.map(p => p.owner)])];
     const pr = await sb.from('profiles').select('*').in('id', ids);
     S.profiles = Object.fromEntries((pr.data || []).map(p => [p.id, p]));
+    if (!S.profiles[S.user.id]) {
+      // 這個帳號在跑 schema.sql 之前就存在（和其他 app 共用的 Supabase）
+      const me = { id: S.user.id, name: S.user.user_metadata?.name || (S.user.email || '').split('@')[0] };
+      await sb.from('profiles').upsert(me); S.profiles[me.id] = me;
+    }
     S.me = S.profiles[S.user.id];
     const rids = S.rounds.map(r => r.id);
     S.swipes = rids.length ? ((await sb.from('swipes').select('*').in('round_id', rids)).data || []) : [];
@@ -952,9 +957,9 @@ const App = {
     if (App._ch) S.sb.removeChannel(App._ch);
     let t;
     const refresh = () => { clearTimeout(t); t = setTimeout(async () => { const before = new Set(S.rounds.flatMap(r => Swipe.matches(r).filter(x => x.all).map(x => r.id + x.p.id))); await DB.loadAll(); S.keepScroll = true; if (!$('.sheet-bg') && !$('#scard')?.style.transform) App.render(); for (const r of S.rounds) for (const x of Swipe.matches(r)) if (x.all && !before.has(r.id + x.p.id)) toast(`💘 配對成功：${x.p.name}！`, 4000); }, 600); };
-    App._ch = S.sb.channel('food').on('postgres_changes', { event: '*', schema: 'public', table: 'swipes' }, refresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'group_places' }, refresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'swipe_rounds' }, refresh).subscribe();
+    App._ch = S.sb.channel('food').on('postgres_changes', { event: '*', schema: 'food', table: 'swipes' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'food', table: 'group_places' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'food', table: 'swipe_rounds' }, refresh).subscribe();
   },
 
   // ----- 備份 -----

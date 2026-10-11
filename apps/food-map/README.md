@@ -18,17 +18,20 @@
 
 ## 接上雲端
 
-多人登入、群組、滑卡要一個共用資料庫。用 [Supabase](https://supabase.com) 免費方案，設定一次就好，大約 10 分鐘。
+多人登入、群組、滑卡要一個共用資料庫，用 [Supabase](https://supabase.com) 免費方案。設定一次就好，大約 10 分鐘。
 
-1. **建專案**：到 supabase.com 用 GitHub 登入 → New project。名稱隨意（例如 food-map），資料庫密碼按 Generate 後存起來，Region 選 Northeast Asia (Tokyo) 或 Singapore → Create。
-2. **建資料表**：左邊 SQL Editor → New query → 把 [`supabase/schema.sql`](supabase/schema.sql) 整份貼上 → Run。看到 Success 就好（重跑也沒關係）。
-3. **讓註冊不用收信**：左邊 Authentication → Sign In / Providers → Email，把 **Confirm email** 關掉 → Save。（免費方案一小時只能寄幾封信，朋友註冊會卡住。）
-4. **部署「抓店家」功能**：
+所有資料表都放在獨立的 `food` schema，所以**可以直接用你現有的 Supabase 專案**。免費方案同時只能有 2 個專案在運作，不用另外開新的。不會動到原本 `public` 裡的資料表和觸發器。要注意的是登入帳號會和那個專案的其他 app 共用。
+
+1. **選專案**：用現有的專案就好。如果想要獨立一個，到 supabase.com → New project，Region 選 Northeast Asia (Tokyo) 或 Singapore。
+2. **建資料表**：左邊 SQL Editor → New query → 把 [`supabase/schema.sql`](supabase/schema.sql) 整份貼上 → Run，看到 Success 就好。重跑也沒關係。
+3. **開放 food schema**：Project Settings → Data API → Exposed schemas，加上 `food` → Save。
+4. **讓註冊不用收信**：Authentication → Sign In / Providers → Email，把 **Confirm email** 關掉 → Save。免費方案一小時只能寄幾封信，朋友註冊會卡住。如果現有的專案還需要收信確認，這步可以跳過，朋友註冊後去信箱點確認信就好。
+5. **部署「抓店家」功能**：
    - 左邊 Edge Functions → Deploy a new function → Via Editor。
    - 函式名稱填 `extract`，把 [`supabase/functions/extract/index.ts`](supabase/functions/extract/index.ts) 整份貼上，取代原本的範例 → Deploy function。
    - 到 [console.groq.com/keys](https://console.groq.com/keys) 建一把免費 key（gsk_ 開頭）。
    - 回 Supabase：Edge Functions → Secrets → 新增 `GROQ_API_KEY`，值貼剛剛那把 key → Save。
-5. **把網址和 key 填進 app**：Project Settings → API Keys，複製 **Publishable key**（sb_publishable_ 開頭）；Project URL 在專案首頁或 Data API（https://xxxx.supabase.co）。填進 [`config.js`](config.js) 後推上 GitHub。
+6. **把網址和 key 填進 app**：Project Settings → API Keys，複製 **Publishable key**（sb_publishable_ 開頭）；Project URL 在專案首頁或 Data API（https://xxxx.supabase.co）。填進 [`config.js`](config.js) 後推上 GitHub。
    - 想先試試看：打開 app →「我的」→「進階：雲端設定」貼上這兩個值，只對那台裝置有效。
 
 做完之後，打開網址會先要求登入，建帳號、建群組、按「邀請好友」把連結傳到 LINE 就可以了。
@@ -38,7 +41,7 @@
 - `index.html`：版面與樣式
 - `app.js`：全部程式（資料層、導入、地圖、群組、滑卡、抽籤）
 - `config.js`：雲端設定
-- `supabase/schema.sql`：資料表、權限（RLS）、加入群組、即時同步
+- `supabase/schema.sql`：food schema 的資料表、權限（RLS）、加入群組、即時同步
 - `supabase/functions/extract/index.ts`：讀 IG／TikTok／Google 地圖／一般網頁，交給 Groq 找店家
 
 ## 技術
