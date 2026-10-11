@@ -2,7 +2,7 @@ import { Renderer } from './gl.js';
 import { FILTERS, bakeLUT, thumb } from './filters.js';
 import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor } from './ai.js';
 import { STICKERS, EMOJIS, EMOJI_FONT, stickerById, stickerImage } from './stickers.js';
-import { FX, OVERLAYS, BG_PHOTOS, EXPOSURES, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
+import { FX, OVERLAYS, BG_PHOTOS, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
 import { matte } from './matte.js';
 import { GRADE_P0, gradeOn, gradeFn, gradeKey, tabGrade, gradeHide } from './grade.js';
 import { HAIR, HAIR_P0, DYES, HairFx, prepHair, hairWarps, hairNeedsSeg, hairColorOn } from './hair.js';
@@ -14,6 +14,9 @@ import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } fr
 import { WarpField } from './warpfield.js';
 import { initCollage, openCollage } from './collage.js';
 import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightAnchor } from './relight.js';
+import { STROKES, STROKE_COLORS, STROKE0, strokeLayer, alphaFromMatte, alphaBox } from './outline.js';
+import { SHAPES, MASK0, LAYER_LIMIT, shapePath, photoLayer, cutLayer, layerInfo, cloneAlpha, compose as composeLayer, brush } from './layers.js';
+import { POPS, POP_BGS, POP_P0, drawPop } from './popout.js';
 
 const $ = s => document.querySelector(s);
 const MAX_SIDE = 4096, MAX_AREA = 16e6;
@@ -27,13 +30,14 @@ const P0 = {
   bg: 'keep', bgColor: '#ffffff',
   oneTap: -1, oneAmt: 100,
   light: '', lightAmt: 70, lightBri: 0, lightCol: 0, lightDist: 50, lightX: null, lightY: null, flash: '', flashAmt: 60,
-  blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'forest', bgImg: 'beach', bgBlur: 30, frame: '',
+  blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'lake', bgImg: 'beach', bgBlur: 30, frame: '',
   ...HAIR_P0,
   bgProtect: 1, // 背景保護：變形時背景不跟著彎
   mk: {}, mkLook: -1, mkLookAmt: 100,
   ...BODY_P0,
   ...GRADE_P0,
   ...SKIN_P0,
+  ...POP_P0,
 };
 
 const I = {
@@ -117,7 +121,7 @@ let selSt = -1;
 let hist = [], hi = -1;
 let tab = 'adjust', cur = 'brightness', selText = -1;
 let cropState = null;
-let cSec = 'fx';          // 創意分頁目前在哪一區：景深、特效、光效
+let cSec = 'pop';         // 創意分頁目前在哪一區：出框、景深、特效、光效
 let exOwn = null, exN = 0; // 雙重曝光自己選的第二張照片
 let frameK = 1;
 const lutCache = new Map();
@@ -180,14 +184,14 @@ function applyBase() {
 const fxById = id => FX.find(f => f.id === id);
 const needSeg = () => P.bg !== 'keep' || !!P.light || !!P.flash || P.blur > 0 || !!fxById(P.fx)?.seg;
 // 換背景、去背、景深、分身要精細到頭髮絲，用摳圖模型
-const needMatte = () => P.bg !== 'keep' || P.blur > 0 || !!fxById(P.fx)?.seg;
+const needMatte = () => P.bg !== 'keep' || P.blur > 0 || !!fxById(P.fx)?.seg || !!P.pop;
 function getMatte(b) {
   if (!b.matteP) {
     const t = setTimeout(() => b === base && !b.matte && toast('正在精細摳圖（第一次要下載模型）…', 4000), 600);
     b.matteP = matte(b.canvas).then(m => {
       clearTimeout(t);
       b.matte = m; b.segB = blurCanvas(m); b.harm = null;
-      if (b === base) { R.setSeg(m); R.setSegB(b.segB); render(); }
+      if (b === base) { R.setSeg(m); R.setSegB(b.segB); render(); if (tab === 'fun' && cSec === 'pop') showTab('fun'); }
       return m;
     }).catch(e => { clearTimeout(t); console.warn(e); b.matteP = null; if (b === base) toast('精細摳圖載入失敗，先用一般去背'); return null; });
   }
@@ -264,6 +268,7 @@ function render() {
     const lut = gradeOn(P) ? getGradeLut() : P.filter === 'none' ? null : getLut(P.filter);
     R.setLut(lut);
     draw();
+    paintPop();
     if (curFrame()?.live) paintFrame();
   });
 }
@@ -385,7 +390,18 @@ function syncTex() {
   const mk = makeupLayer(base, P.mk);
   if (texKey.mk !== mk.key) { texKey.mk = mk.key; R.setMakeup(mk.canvas); }
   const own = P.ex === 'own' && exOwn;
-  want('ex', P.fx === 'double' ? (own ? 'own' + exN : `${P.ex}|${w}x${h}`) : '', () => own ? exOwn : paint(EXPOSURES, P.ex === 'own' ? 'forest' : P.ex, ...fitSize(W, H, 1024)), c => R.setEx(c));
+  // 雙重曝光的第二張圖：用內建的風景照（或自己選的照片）
+  const ek = P.fx === 'double' ? (own ? 'own' + exN : P.ex) : '';
+  if (texKey.ex !== ek) {
+    texKey.ex = ek;
+    if (!ek) R.setEx(null);
+    else if (own) R.setEx(exOwn);
+    else loadImg((BG_PHOTOS.find(b => b.id === P.ex) || BG_PHOTOS.find(b => b.id === 'lake')).src).then(img => {
+      if (texKey.ex !== ek) return;
+      const c = newCanvas(...fitSize(img.width, img.height, 1024)); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      R.setEx(c); render();
+    }).catch(e => console.warn(e));
+  }
 }
 // 打光、閃光燈的參數
 function effects() {
@@ -475,7 +491,7 @@ function showTab(t) {
   $('#note').textContent = ''; $('#textedit').hidden = true; $('#cats').hidden = true;
   gradeHide();
   if (!base) return;
-  ({ grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, hair: tabHair, skin: tabSkin, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
+  ({ grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, hair: tabHair, skin: tabSkin, light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
   lightDot();
@@ -759,7 +775,7 @@ function lightDot() {
 function tabSticker(box) {
   const faces = base.faces;
   if (!faces) findFaces();
-  const st = stickers[selSt];
+  const st = stickers[selSt]?.kind === 'cut' ? null : stickers[selSt];
   if (st) {
     box.append(item({ label: '完成', icon: I.check, onclick: () => { selSt = -1; showTab('sticker'); } }));
     box.append(item({ label: '翻轉', icon: I.flip, onclick: () => { st.flip = !st.flip; drawStickers(); commit(); } }));
@@ -800,29 +816,72 @@ function stickerHTML(s, px) {
   if (s.kind === 'emoji') return `<span style="font-size:${px * 0.82}px;line-height:1;font-family:${EMOJI_FONT}">${s.v}</span>`;
   return stickerById(s.v).svg;
 }
+// 貼紙外框的寬高（px：貼紙「本體」的寬度）。摳圖圖層加了描邊會變大，本體大小不變
+function stBox(s, px) {
+  if (s.kind === 'cut') { const c = composeLayer(s); return c ? [px * c.canvas.width / c.w, px * c.canvas.height / c.w] : [px, px]; }
+  return [px, px / (s.kind === 'svg' ? stickerById(s.v).ar : 1)];
+}
+const stTab = s => s?.kind === 'cut' ? 'cut' : 'sticker';
+// 摳圖圖層畫成螢幕大小的小圖放進去（原圖可能很大）
+function cutView(s, w, h, plain) {
+  const c = composeLayer(plain ? { ...s, st: null } : s), cv = document.createElement('canvas');
+  const k = Math.min(2, devicePixelRatio || 1);
+  cv.width = Math.max(1, Math.min(c.canvas.width, Math.round(w * k))); cv.height = Math.max(1, Math.round(cv.width * h / w));
+  const ctx = cv.getContext('2d'); ctx.imageSmoothingQuality = 'high';
+  if (plain) { // 擦除時先不算描邊，比較快；本體放在描邊留白的位置
+    const full = composeLayer(s), sc = cv.width / full.canvas.width;
+    ctx.drawImage(c.canvas, full.pad * sc, full.pad * sc, c.w * sc, c.h * sc);
+  } else ctx.drawImage(c.canvas, 0, 0, cv.width, cv.height);
+  return cv;
+}
+let brushR = 30;
 function drawStickers() {
   const layer = $('#stickers'), wr = $('#wrap').getBoundingClientRect();
   layer.innerHTML = '';
   stickers.forEach((s, i) => {
     const d = document.createElement('div'), px = s.size * wr.width;
-    const ar = s.kind === 'svg' ? stickerById(s.v).ar : 1;
-    d.className = 'st' + (i === selSt && tab === 'sticker' ? ' sel' : '');
-    d.innerHTML = stickerHTML(s, px);
+    if (s.kind === 'cut' && !composeLayer(s)) return;
+    const [bw, bh] = stBox(s, px), T = stTab(s);
+    d.className = 'st' + (i === selSt && tab === T ? ' sel' : '');
+    if (s.kind === 'cut') d.append(cutView(s, bw, bh)); else d.innerHTML = stickerHTML(s, px);
     Object.assign(d.style, {
-      left: s.x * 100 + '%', top: s.y * 100 + '%', width: px + 'px', height: px / ar + 'px', opacity: s.op,
+      left: s.x * 100 + '%', top: s.y * 100 + '%', width: bw + 'px', height: bh + 'px', opacity: s.op,
       transform: `translate(-50%,-50%) rotate(${s.rot}rad) scaleX(${s.flip ? -1 : 1})`,
     });
-    const pts = new Map(); let g = null;
+    const pts = new Map(); let g = null, paint = null;
     const start = () => {
       const [a, b] = [...pts.values()];
       g = { x: s.x, y: s.y, size: s.size, rot: s.rot, p: { ...a }, d: b ? Math.hypot(b.x - a.x, b.y - a.y) : 0, a: b ? Math.atan2(b.y - a.y, b.x - a.x) : 0, moved: false };
     };
+    // 螢幕上的點 → 圖層裡的像素座標
+    const local = (cx, cy) => {
+      const r = $('#wrap').getBoundingClientRect(), c = composeLayer(s), sc = s.size * r.width / c.w;
+      const dx = cx - (r.left + s.x * r.width), dy = cy - (r.top + s.y * r.height), co = Math.cos(s.rot), si = Math.sin(s.rot);
+      let lx = dx * co + dy * si; const ly = -dx * si + dy * co;
+      if (s.flip) lx = -lx;
+      return { x: lx / sc + c.w / 2, y: ly / sc + c.h / 2, sc };
+    };
+    const painting = () => tab === 'cut' && selSt === i && (cur === 'erase' || cur === 'restore');
     d.addEventListener('pointerdown', e => {
       e.preventDefault(); e.stopPropagation(); d.setPointerCapture(e.pointerId);
+      if (painting()) {
+        s.v = cloneAlpha(s.v); // 每一筆存成新的一份，才能復原
+        const p = local(e.clientX, e.clientY);
+        paint = { pts: [p], r: brushR / p.sc };
+        brush(s.v, paint.pts, paint.r, cur === 'restore');
+        d.replaceChildren(cutView(s, bw, bh, true));
+        return;
+      }
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); start();
-      if (selSt !== i || tab !== 'sticker') { selSt = i; cur = 'size'; if (tab !== 'sticker') showTab('sticker'); else showTab('sticker'); }
+      if (selSt !== i || tab !== T) { selSt = i; cur = 'size'; showTab(T); }
     });
     d.addEventListener('pointermove', e => {
+      if (paint) {
+        const p = local(e.clientX, e.clientY);
+        brush(s.v, [paint.pts[paint.pts.length - 1], p], paint.r, cur === 'restore'); paint.pts.push(p);
+        d.replaceChildren(cutView(s, bw, bh, true));
+        return;
+      }
       if (!g || !pts.has(e.pointerId)) return;
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       const r = $('#wrap').getBoundingClientRect(), [a, b] = [...pts.values()];
@@ -833,19 +892,295 @@ function drawStickers() {
         s.x = g.x + (a.x - g.p.x) / r.width; s.y = g.y + (a.y - g.p.y) / r.height;
       }
       g.moved = true;
-      const px2 = s.size * r.width;
-      Object.assign(d.style, { left: s.x * 100 + '%', top: s.y * 100 + '%', width: px2 + 'px', height: px2 / ar + 'px',
+      const [w2, h2] = stBox(s, s.size * r.width);
+      Object.assign(d.style, { left: s.x * 100 + '%', top: s.y * 100 + '%', width: w2 + 'px', height: h2 + 'px',
         transform: `translate(-50%,-50%) rotate(${s.rot}rad) scaleX(${s.flip ? -1 : 1})` });
-      if (s.kind === 'emoji') d.firstChild.style.fontSize = px2 * 0.82 + 'px';
+      if (s.kind === 'emoji') d.firstChild.style.fontSize = s.size * r.width * 0.82 + 'px';
     });
     const up = e => {
+      if (paint) { paint = null; drawStickers(); commit(); return; }
       pts.delete(e.pointerId);
-      if (g?.moved && !pts.size) { commit(); if (tab === 'sticker') showTab('sticker'); }
+      if (g?.moved && !pts.size) { commit(); if (tab === T) showTab(T); }
       if (pts.size) start(); else g = null;
     };
     d.addEventListener('pointerup', up); d.addEventListener('pointercancel', up);
     layer.append(d);
   });
+}
+let dsRaf = 0;
+const drawStickersSoon = () => { dsRaf ||= requestAnimationFrame(() => { dsRaf = 0; drawStickers(); }); };
+
+// ---------- 摳圖圖層 ----------
+let stGroup = 'basic', stK = 'w', mkK = 'size', popK = 'y', addCut = false;
+const CUT_MODES = [['size', '大小'], ['rot', '旋轉'], ['op', '透明度'], ['stroke', '描邊'], ['mask', '形狀'], ['erase', '擦除'], ['restore', '補回']];
+const cutCount = () => stickers.filter(s => s.kind === 'cut').length;
+function newCut(id, x, y, size) {
+  if (cutCount() >= LAYER_LIMIT) { toast(`最多只能新增 ${LAYER_LIMIT} 個`); return; }
+  stickers.push({ kind: 'cut', v: id, x, y, size, rot: 0, flip: false, op: 1, st: { ...STROKE0 }, mk: { ...MASK0 } });
+  selSt = stickers.length - 1; cur = 'stroke';
+  drawStickers(); commit(); showTab('cut');
+}
+// 從目前的照片（含調整、美顏）摳出人像，放在原本的位置上
+async function cutPerson() {
+  busy('摳出人像…');
+  try {
+    const m = await getMatte(base);
+    if (!m) return;
+    base.matteA ||= alphaFromMatte(m);
+    draw();
+    const r = cutLayer($('#gl'), base.matteA);
+    if (!r) return toast('照片裡找不到人像');
+    const W = base.canvas.width, H = base.canvas.height;
+    newCut(r.id, (r.box.x + r.box.w / 2) / W, (r.box.y + r.box.h / 2) / H, r.box.w / W);
+    toast('已摳出人像，可以拖曳移動、加描邊');
+  } finally { busy(); }
+}
+$('#file4').onchange = async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file) return;
+  try {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const W = base.canvas.width, H = base.canvas.height;
+    const c = newCanvas(...fitSize(bmp.width, bmp.height, 2048)); c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    if (addCut) {
+      busy('摳圖中…');
+      try {
+        const r = cutLayer(c, alphaFromMatte(await matte(c)));
+        if (!r) return toast('這張照片找不到人像');
+        const size = Math.min(0.6, 0.6 * (H / W) * r.box.w / r.box.h);
+        newCut(r.id, 0.5, 0.55, size);
+      } finally { busy(); }
+    } else newCut(photoLayer(c), 0.5, 0.5, 0.5);
+  } catch (err) { console.error(err); toast('這張照片打不開'); }
+};
+// 照片圖層按「摳圖」：只留下人，範圍縮到人，位置不跳
+async function cutSelected(s) {
+  const L = layerInfo(s.v);
+  busy('摳圖中…');
+  try {
+    const src = newCanvas(L.rgb.width, L.rgb.height), ctx = src.getContext('2d');
+    ctx.drawImage(L.rgb, 0, 0);
+    const A = alphaFromMatte(await matte(src)), ac = A.getContext('2d');
+    ac.globalCompositeOperation = 'destination-in'; ac.drawImage(L.alpha, 0, 0);
+    const r = cutLayer(src, A);
+    if (!r) return toast('這張照片找不到人像');
+    // 新的中心在圖層裡偏了多少，照圖層的翻轉、旋轉換回照片座標
+    const k = s.size / L.rgb.width, ar = base.canvas.width / base.canvas.height;
+    let ox = r.box.x + r.box.w / 2 - L.rgb.width / 2; const oy = r.box.y + r.box.h / 2 - L.rgb.height / 2;
+    if (s.flip) ox = -ox;
+    const co = Math.cos(s.rot), si = Math.sin(s.rot);
+    s.x += (ox * co - oy * si) * k; s.y += (ox * si + oy * co) * k * ar;
+    s.size = r.box.w * k; s.v = r.id;
+    drawStickers(); commit(); showTab('cut');
+  } finally { busy(); }
+}
+// 描邊縮圖：小人形套上描邊
+const strokeThumbs = new Map();
+function strokeThumb(t, c) {
+  const k = t + c;
+  if (!strokeThumbs.has(k)) {
+    const g = newCanvas(64, 64), x = g.getContext('2d');
+    x.fillStyle = '#c9c9d1'; x.beginPath(); x.arc(32, 23, 9, 0, 7); x.fill();
+    x.beginPath(); x.ellipse(32, 52, 14, 13, 0, Math.PI, 0); x.fill(); x.fillRect(18, 52, 28, 12);
+    const o = newCanvas(64, 64), ox = o.getContext('2d');
+    if (t) { const sl = strokeLayer(g, { t, c, w: 100, o: 100 }); ox.drawImage(sl.canvas, -sl.pad, -sl.pad); }
+    ox.drawImage(g, 0, 0);
+    strokeThumbs.set(k, o.toDataURL());
+  }
+  return strokeThumbs.get(k);
+}
+// 描邊面板：摳圖圖層和出框的人共用。st 直接改，change 要畫面更新，done 要存一筆歷史
+function strokePanel(box, st, change, done) {
+  [['basic', '基本'], ['fx', '進階']].forEach(([g, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: stGroup === g, onclick: () => { stGroup = g; showTab(tab); } })));
+  box.append(item({ label: '無', icon: I.off, on: !st.t, onclick: () => { st.t = ''; change(); done(); showTab(tab); } }));
+  STROKES.filter(x => x.g === stGroup).forEach(x => box.append(item({
+    label: x.name, cls: 'ft', on: st.t === x.id, style: `background:#2a2a2e url(${strokeThumb(x.id, st.c)}) center/contain no-repeat`,
+    onclick: () => { st.t = x.id; change(); done(); showTab(tab); },
+  })));
+  if (!st.t || st.t === 'rainbow') return hideSlider();
+  STROKE_COLORS.forEach(c => {
+    const b = document.createElement('button');
+    b.className = 'sw' + (st.c === c ? ' on' : ''); b.style.background = c; b.style.alignSelf = 'center';
+    b.onclick = () => { st.c = c; change(); done(); showTab(tab); };
+    box.append(b);
+  });
+  const pick = document.createElement('button');
+  pick.className = 'sw'; pick.style.cssText = 'align-self:center;background:conic-gradient(red,yellow,lime,cyan,blue,magenta,red)';
+  pick.onclick = () => { const cp = $('#colorPick'); cp.value = st.c; cp.oninput = () => { st.c = cp.value; change(); }; cp.onchange = () => { done(); showTab(tab); }; cp.click(); };
+  box.append(pick);
+}
+function strokeSlider(st, change) {
+  if (!st.t) return;
+  if (stK === 'o') setSlider('不透明', 0, 100, st.o, v => { st.o = v; change(); });
+  else setSlider('粗細', 1, 100, st.w, v => { st.w = v; change(); });
+}
+function strokeKChips(box) {
+  [['w', '粗細'], ['o', '不透明度']].forEach(([k, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: stK === k, onclick: () => { stK = k; showTab(tab); } })));
+}
+const shapeIcon = id => { const c = newCanvas(44, 44), x = c.getContext('2d'); x.translate(22, 22); x.fillStyle = '#fff'; shapePath(x, id, 34, 34, 30); x.fill(); return c.toDataURL(); };
+const SHAPE_ICONS = {};
+function tabCut(box) {
+  const s = stickers[selSt]?.kind === 'cut' ? stickers[selSt] : null;
+  const cats = $('#cats'); cats.innerHTML = '';
+  if (!s) {
+    selSt = -1; hideSlider();
+    box.append(item({ label: '摳出人像', icon: I.person, onclick: cutPerson }));
+    box.append(item({ label: '加照片摳圖', icon: I.plus, onclick: () => { addCut = true; $('#file4').click(); } }));
+    box.append(item({ label: '加照片', icon: I.plus, onclick: () => { addCut = false; $('#file4').click(); } }));
+    $('#note').textContent = cutCount() ? '點一下照片上的圖層來編輯。' : '把人摳出來變成圖層，可以描邊、套形狀、複製成好幾個。照片只在你的裝置上處理。';
+    return;
+  }
+  const L = layerInfo(s.v);
+  cats.hidden = false;
+  cats.append(item({ label: '完成', icon: '完成', cls: 'wide', onclick: () => { selSt = -1; showTab('cut'); } }));
+  CUT_MODES.forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: cur === k,
+    set: k === 'stroke' ? !!s.st.t : k === 'mask' ? !!s.mk.s : false, onclick: () => { cur = k; showTab('cut'); } })));
+  if (!CUT_MODES.some(m => m[0] === cur)) cur = 'size';
+  const ch = () => drawStickersSoon(), done = () => { drawStickers(); commit(); };
+  if (cur === 'stroke') {
+    strokePanel(box, s.st, ch, done);
+    if (s.st.t) { strokeKChips(box); strokeSlider(s.st, ch); }
+    $('#note').textContent = '';
+    return;
+  }
+  if (cur === 'mask') {
+    box.append(item({ label: '無', icon: I.off, on: !s.mk.s, onclick: () => { s.mk.s = ''; done(); showTab('cut'); } }));
+    SHAPES.forEach(x => box.append(item({ label: x.name, icon: `<img src="${SHAPE_ICONS[x.id] ||= shapeIcon(x.id)}" width="24" height="24">`, on: s.mk.s === x.id,
+      onclick: () => { s.mk.s = x.id; done(); showTab('cut'); } })));
+    if (!s.mk.s) { hideSlider(); $('#note').textContent = '套上形狀，只留下形狀裡面的部分。'; return; }
+    const ks = [['size', '大小', 10, 150], ['feather', '羽化', 0, 100], ['angle', '旋轉', -180, 180], ...(s.mk.s === 'rect' ? [['radius', '圓角', 0, 100]] : []),
+      ['cx', '左右', 0, 100], ['cy', '上下', 0, 100]];
+    if (!ks.some(k => k[0] === mkK)) mkK = 'size';
+    ks.forEach(([k, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: mkK === k, onclick: () => { mkK = k; showTab('cut'); } })));
+    const [k, lb, a, b] = ks.find(x => x[0] === mkK), pct = k === 'cx' || k === 'cy';
+    setSlider(lb, a, b, Math.round(pct ? s.mk[k] * 100 : s.mk[k]), v => { s.mk[k] = pct ? v / 100 : v; ch(); });
+    $('#note').textContent = '';
+    return;
+  }
+  if (cur === 'erase' || cur === 'restore') {
+    setSlider('筆刷', 4, 80, brushR, v => { brushR = v; });
+    $('#note').textContent = cur === 'erase' ? '在圖層上塗抹，擦掉不要的地方。' : '塗抹把擦掉的地方補回來。';
+    return;
+  }
+  if (!L.cut) box.append(item({ label: '摳圖', icon: I.person, onclick: () => cutSelected(s) }));
+  box.append(item({ label: '翻轉', icon: I.flip, onclick: () => { s.flip = !s.flip; done(); } }));
+  box.append(item({ label: '複製', icon: I.copy, onclick: () => {
+    if (cutCount() >= LAYER_LIMIT) return toast(`最多只能新增 ${LAYER_LIMIT} 個`);
+    stickers.push(clone({ ...s, x: Math.min(0.95, s.x + 0.06), y: Math.min(0.95, s.y + 0.04) })); selSt = stickers.length - 1;
+    done(); showTab('cut');
+  } }));
+  box.append(item({ label: '上移', icon: '▲', onclick: () => { if (selSt < stickers.length - 1) { [stickers[selSt], stickers[selSt + 1]] = [stickers[selSt + 1], stickers[selSt]]; selSt++; done(); } } }));
+  box.append(item({ label: '下移', icon: '▼', onclick: () => { if (selSt > 0) { [stickers[selSt], stickers[selSt - 1]] = [stickers[selSt - 1], stickers[selSt]]; selSt--; done(); } } }));
+  box.append(item({ label: '刪除', icon: I.trash, onclick: () => { stickers.splice(selSt, 1); selSt = -1; done(); showTab('cut'); } }));
+  if (cur === 'size') setSlider('大小', 3, 150, Math.round(s.size * 100), v => { s.size = v / 100; ch(); });
+  if (cur === 'rot') setSlider('旋轉', -180, 180, Math.round(s.rot * 180 / Math.PI), v => { s.rot = v * Math.PI / 180; ch(); });
+  if (cur === 'op') setSlider('透明', 10, 100, Math.round(s.op * 100), v => { s.op = v / 100; ch(); });
+  $('#note').textContent = '拖曳移動，兩指可以縮放和旋轉。';
+}
+
+// ---------- 出框 ----------
+const POP_CLASH = ['pop', 'mirror'];
+const popStroke = { key: '', v: null };
+// 畫出框圖：W×H 是要輸出的大小
+function popDraw(ctx, W, H) {
+  const gl = $('#gl');
+  let person = null, stroke = null, box = null;
+  if (base.matte) {
+    base.matteA ||= alphaFromMatte(base.matte);
+    base.mBox ||= alphaBox(base.matteA);
+    const BW = base.canvas.width, k = W / BW;
+    person = newCanvas(W, H);
+    const pc = person.getContext('2d'); pc.imageSmoothingQuality = 'high';
+    pc.drawImage(gl, 0, 0, W, H); pc.globalCompositeOperation = 'destination-in'; pc.drawImage(base.matteA, 0, 0, W, H);
+    if (base.mBox) box = { x: base.mBox.x * k, y: base.mBox.y * k, w: base.mBox.w * k, h: base.mBox.h * k };
+    if (P.popSt.t) {
+      const key = [W, H, JSON.stringify(P.popSt)].join('|');
+      if (popStroke.key !== key || popStroke.base !== base) {
+        const a = newCanvas(W, H); a.getContext('2d').drawImage(base.matteA, 0, 0, W, H);
+        Object.assign(popStroke, { key, base, v: strokeLayer(a, P.popSt) });
+      }
+      stroke = popStroke.v;
+    }
+  }
+  drawPop(ctx, W, H, P, gl, person, stroke, box);
+}
+function paintPop() {
+  const on = !!P.pop && !cropState, pc = $('#pop');
+  $('#wrap').classList.toggle('popon', on);
+  if (!on) return;
+  const r = $('#wrap').getBoundingClientRect(), k = Math.min(2, devicePixelRatio || 1);
+  const W = Math.max(1, Math.round(Math.min(base.canvas.width, r.width * k))), H = Math.max(1, Math.round(W * base.canvas.height / base.canvas.width));
+  if (pc.width !== W || pc.height !== H) { pc.width = W; pc.height = H; }
+  const ctx = pc.getContext('2d'); ctx.clearRect(0, 0, W, H);
+  popDraw(ctx, W, H);
+}
+function popThumb(id) {
+  return thumbOf('pop' + id + (base.matte ? 'm' : ''), () => {
+    const s = small(), c = newCanvas(s.width, s.height), keep = P.pop;
+    P.pop = id;
+    try { popDrawSmall(c.getContext('2d'), s); } finally { P.pop = keep; }
+    return squareFit(c);
+  });
+}
+function popDrawSmall(ctx, s) {
+  const W = s.width, H = s.height;
+  let person = null, box = null;
+  if (base.matte) {
+    base.matteA ||= alphaFromMatte(base.matte); base.mBox ||= alphaBox(base.matteA);
+    const k = W / base.canvas.width;
+    person = newCanvas(W, H); const pc = person.getContext('2d');
+    pc.drawImage(s, 0, 0); pc.globalCompositeOperation = 'destination-in'; pc.drawImage(base.matteA, 0, 0, W, H);
+    if (base.mBox) box = { x: base.mBox.x * k, y: base.mBox.y * k, w: base.mBox.w * k, h: base.mBox.h * k };
+  }
+  drawPop(ctx, W, H, { ...P, popBg: P.popBg }, s, person, null, box);
+}
+function squareFit(c) {
+  const o = newCanvas(124, 124), x = o.getContext('2d'), k = Math.max(124 / c.width, 124 / c.height);
+  x.drawImage(c, (124 - c.width * k) / 2, (124 - c.height * k) / 2, c.width * k, c.height * k);
+  return o.toDataURL('image/jpeg', 0.8);
+}
+function tabPop(box) {
+  const cats = $('#cats'), ch = () => render(), done = () => commit();
+  const ks = !P.pop ? [] : P.pop === 'behind' ? [['y', '文字位置'], ['text', '文字'], ['st', '人像描邊']] : [['y', '框高度'], ['m', '邊距'], ['bg', '背景'], ['st', '人像描邊']];
+  if (!ks.some(k => k[0] === popK)) popK = 'y';
+  if (ks.length) {
+    const sep = document.createElement('span'); sep.style.cssText = 'flex:none;width:1px;background:var(--line);margin:6px 4px';
+    cats.append(sep);
+    ks.forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: popK === k, onclick: () => { popK = k; showTab('fun'); } })));
+  }
+  $('#note').textContent = !P.pop ? '照片放進相框或九宮格，人像衝出框外。全部在你的裝置上處理。' : base.matte ? '' : '正在摳出人像（第一次要下載模型）…';
+  // 背景、文字、描邊：選項取代範本列表
+  if (popK === 'bg') {
+    hideSlider();
+    POP_BGS.forEach(([v, lb]) => box.append(item({ label: lb, on: P.popBg === v, style: v === 'blur' ? 'background:linear-gradient(135deg,#888,#333)' : `background:${v}`,
+      onclick: () => { P.popBg = v; render(); commit(); showTab('fun'); } })));
+    return;
+  }
+  if (popK === 'text') {
+    hideSlider();
+    $('#textedit').hidden = false;
+    const ti = $('#textInput'); ti.value = P.popText;
+    ti.oninput = () => { P.popText = ti.value; ch(); }; ti.onchange = () => commit();
+    TEXT_COLORS.forEach(c => {
+      const b = document.createElement('button');
+      b.className = 'sw' + (P.popTC === c ? ' on' : ''); b.style.background = c; b.style.alignSelf = 'center';
+      b.onclick = () => { P.popTC = c; render(); commit(); showTab('fun'); };
+      box.append(b);
+    });
+    return;
+  }
+  if (popK === 'st') {
+    hideSlider();
+    strokePanel(box, P.popSt, ch, done);
+    if (P.popSt.t) { strokeKChips(box); strokeSlider(P.popSt, ch); }
+    return;
+  }
+  box.append(item({ label: '無', icon: I.off, on: !P.pop, onclick: () => { P.pop = ''; render(); commit(); showTab('fun'); } }));
+  POPS.forEach(p => box.append(item({ label: p.name, cls: 'ft', on: P.pop === p.id, style: `background-image:url(${popThumb(p.id)})`,
+    onclick: () => { P.pop = p.id; if (POP_CLASH.includes(P.fx)) P.fx = ''; render(); commit(); showTab('fun'); } })));
+  if (!P.pop) return hideSlider();
+  if (popK === 'm') setSlider('邊距', 0, 25, P.popM, v => { P.popM = v; ch(); });
+  else setSlider(P.pop === 'behind' ? '位置' : '高度', 0, 100, P.popY, v => { P.popY = v; ch(); });
 }
 
 // ---------- 創意玩法 ----------
@@ -875,10 +1210,12 @@ const ovThumb = o => thumbOf('ov' + o.id, () => squareThumb(ctx => { ctx.globalC
 const listThumb = (list, id) => thumbOf('p' + id, () => paint(list, id, 124, 124).toDataURL('image/jpeg', 0.8));
 
 function tabFun(box) {
-  [['blur', '景深'], ['fx', '特效'], ['ov', '光效']].forEach(([k, lb]) => box.append(item({
-    label: lb, icon: lb, cls: 'wide', on: cSec === k, set: k === 'blur' ? P.blur > 0 : k === 'fx' ? !!P.fx : !!P.ov,
+  const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
+  [['pop', '出框'], ['blur', '景深'], ['fx', '特效'], ['ov', '光效']].forEach(([k, lb]) => cats.append(item({
+    label: lb, icon: lb, cls: 'wide', on: cSec === k, set: k === 'pop' ? !!P.pop : k === 'blur' ? P.blur > 0 : k === 'fx' ? !!P.fx : !!P.ov,
     onclick: () => { cSec = k; if (k === 'blur' && !P.blur) { P.blur = 60; findPerson(true); render(); commit(); } showTab('fun'); },
   })));
+  if (cSec === 'pop') return tabPop(box);
   if (cSec === 'blur') {
     box.append(item({ label: '關閉', icon: I.off, on: !P.blur, onclick: () => { P.blur = 0; render(); commit(); showTab('fun'); } }));
     setSlider('虛化', 0, 100, P.blur, v => { P.blur = v; if (v) findPerson(true); render(); });
@@ -892,6 +1229,7 @@ function tabFun(box) {
       label: e.name, icon: FX_ICON[e.id], cls: 'emo2', on: P.fx === e.id,
       onclick: async () => {
         if (P.fx !== e.id) { P.fx = e.id; P.fxAmt = e.def; }
+        if (POP_CLASH.includes(e.id)) P.pop = ''; // 四格、鏡像會改變人的位置，跟出框不能一起用
         showTab('fun'); render(); commit();
         if (e.seg && !base.seg) { await findPerson(); render(); }
       },
@@ -901,7 +1239,7 @@ function tabFun(box) {
     setSlider('強度', 0, 100, P.fxAmt, v => { P.fxAmt = v; render(); });
     $('#note').textContent = { ghost: '自動找出人像，往旁邊複製出殘影。', double: '人的輪廓裡透出第二張圖，可以換成自己的照片。', mirror: '左半邊鏡射到右邊。' }[e.id] || '';
     if (e.id === 'double') {
-      EXPOSURES.forEach(x => box.append(item({ label: x.name, cls: 'ft', on: P.ex === x.id, style: `background-image:url(${listThumb(EXPOSURES, x.id)})`,
+      BG_PHOTOS.forEach(x => box.append(item({ label: x.name, cls: 'ft', on: P.ex === x.id, style: `background-image:url(${x.src})`,
         onclick: () => { P.ex = x.id; render(); commit(); showTab('fun'); } })));
       box.append(item({ label: '選照片', icon: I.plus, on: P.ex === 'own', onclick: () => $('#file2').click() }));
     }
@@ -1173,7 +1511,7 @@ function strokeShadow(c, w) {
 }
 $('#stage').addEventListener('pointerdown', e => {
   if (tab === 'text' && !e.target.closest('.tx') && selText >= 0) { selText = -1; drawTexts(); showTab('text'); }
-  if (tab === 'sticker' && !e.target.closest('.st') && selSt >= 0) { selSt = -1; drawStickers(); showTab('sticker'); }
+  if ((tab === 'sticker' || tab === 'cut') && !e.target.closest('.st') && selSt >= 0) { selSt = -1; drawStickers(); showTab(tab); }
 });
 
 // ---------- 儲存 ----------
@@ -1186,13 +1524,19 @@ async function compose() {
   const sc = Math.min(1, Math.sqrt(16e6 / (g.W * g.H)));
   const out = newCanvas(g.W * sc, g.H * sc), ctx = out.getContext('2d');
   ctx.scale(sc, sc);
-  if (f) drawFrame(ctx, f, W, H, gl, (c, gg) => c.drawImage(gl, gg.x, gg.y, W, H));
-  else ctx.drawImage(gl, 0, 0);
+  // 出框要用原尺寸重畫一次（畫面上的是螢幕大小）
+  let photo = gl;
+  if (P.pop) { if (!base.matte) await getMatte(base); photo = newCanvas(W, H); popDraw(photo.getContext('2d'), W, H); }
+  if (f) drawFrame(ctx, f, W, H, gl, (c, gg) => c.drawImage(photo, gg.x, gg.y, W, H));
+  else ctx.drawImage(photo, 0, 0);
   ctx.save(); ctx.beginPath(); ctx.rect(g.x, g.y, W, H); ctx.clip(); ctx.translate(g.x, g.y);
   for (const s of stickers) {
     const w = s.size * W;
     ctx.save(); ctx.globalAlpha = s.op; ctx.translate(s.x * W, s.y * H); ctx.rotate(s.rot); if (s.flip) ctx.scale(-1, 1);
-    if (s.kind === 'emoji') {
+    if (s.kind === 'cut') {
+      const c = composeLayer(s);
+      if (c) { const k = w / c.w; ctx.drawImage(c.canvas, -c.canvas.width * k / 2, -c.canvas.height * k / 2, c.canvas.width * k, c.canvas.height * k); }
+    } else if (s.kind === 'emoji') {
       ctx.font = `${w * 0.82}px ${EMOJI_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(s.v, 0, 0);
     } else {
       const h = w / stickerById(s.v).ar;

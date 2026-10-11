@@ -44,6 +44,9 @@ button{background:none;border:0;padding:0;cursor:pointer}
 #wrap{position:absolute;left:0;top:0;display:none}
 #wrap.on{display:block}
 #gl{display:block;width:100%;height:100%;background:repeating-conic-gradient(#2a2a2e 0 25%,#1f1f23 0 50%) 0 0/20px 20px}
+#pop{position:absolute;inset:0;width:100%;height:100%;display:none}
+#wrap.popon #pop{display:block}
+.st canvas{width:100%;height:100%;display:block}
 #orig{position:absolute;inset:0;width:100%;height:100%;display:none}
 #wrap.cmp #orig{display:block}
 .badge{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:rgba(0,0,0,.55);padding:4px 10px;border-radius:10px;font-size:13px;display:none}
@@ -189,6 +192,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div id="fbox"><canvas id="frame" hidden></canvas>
     <div id="wrap">
       <canvas id="gl"></canvas>
+      <canvas id="pop"></canvas>
       <canvas id="orig"></canvas>
       <div class="badge">原圖</div>
       <div id="stickers"></div>
@@ -225,6 +229,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
       <button class="tab" data-tab="hair">頭髮</button>
       <button class="tab" data-tab="light">光影</button>
       <button class="tab" data-tab="sticker">貼紙</button>
+      <button class="tab" data-tab="cut">摳圖</button>
       <button class="tab" data-tab="fun">創意</button>
       <button class="tab" data-tab="frame">邊框</button>
       <button class="tab" data-tab="text">文字</button>
@@ -240,6 +245,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 <input type="file" id="file2" accept="image/*" hidden>
 <input type="file" id="fileMulti" accept="image/*" multiple hidden>
 <input type="file" id="file3" accept="image/*" hidden>
+<input type="file" id="file4" accept="image/*" hidden>
 <div id="toast"></div>
 <div id="busy"><div id="busyText">處理中…</div></div>
 <script type="module" src="app.js"></script>

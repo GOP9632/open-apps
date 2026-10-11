@@ -185,6 +185,8 @@ void main(){
     }
   }
   vec2 uv = p / uSize;
+  vec2 popT = floor(clamp(uv, 0.0, 0.999) * 2.0); // 波普四格：在哪一格
+  if (uFx == 2) uv = fract(uv * 2.0);
   if (uFx == 7) uv.x = uv.x > 0.5 ? 1.0 - uv.x : uv.x;
   if (uFx == 5) {
     float n = mix(140.0, 14.0, uFxAmt) / max(uSize.x, uSize.y);
@@ -224,11 +226,12 @@ void main(){
     col = mix(bg, col, smoothstep(0.3, 0.7, pw0));
   }
   if (uFx == 8) {
-    // 分身：人往旁邊複製幾份，越遠越淡，疊在背景上
-    for (int k = 3; k >= 1; k--) {
-      vec2 q = uv - vec2(0.075 * float(k) * uSize.y / uSize.x * 0.75, 0.0);
-      float pk = smoothstep(0.3, 0.7, texture(uSeg, q).r) * (1.0 - smoothstep(0.3, 0.7, pw0));
-      col = mix(col, texture(uImg, q).rgb, pk * uFxAmt * (0.95 - 0.2 * float(k)));
+    // 分身：人複製兩份放在左右兩邊，清楚、不透明，站在本人後面（強度 = 拉開的距離）
+    float dx = mix(0.14, 0.34, uFxAmt);
+    for (int k = 0; k < 2; k++) {
+      vec2 q = uv - vec2(k == 0 ? dx : -dx, 0.0);
+      float pk = smoothstep(0.25, 0.75, texture(uSeg, q).r) * (1.0 - smoothstep(0.25, 0.75, pw0));
+      if (q.x > 0.0 && q.x < 1.0) col = mix(col, texture(uImg, q).rgb * 0.95, pk);
     }
   }
 
@@ -406,14 +409,18 @@ void main(){
       q = clamp(mix(vec3(luma(q)), q, 1.3), 0.0, 1.0);
       c1 = mix(q, vec3(0.07), edge);
     } else if (uFx == 2) {
-      // 波普：網點，暗的地方點大
-      float cs = max(uSize.x, uSize.y) / 110.0;
-      vec2 r = mat2(0.7071, -0.7071, 0.7071, 0.7071) * (vUV * uSize) / cs;
-      float rad = sqrt(1.0 - luma(col)) * 0.62;
-      float d = 1.0 - smoothstep(rad - 0.08, rad + 0.08, length(fract(r) - 0.5));
-      vec3 ink = clamp(mix(vec3(luma(col)), floor(col * 3.0 + 0.5) / 3.0, 1.6), 0.0, 1.0) * 0.85;
-      c1 = mix(mix(vec3(1.0, 0.97, 0.88), ink, 0.35), ink, d);
-      c1 = mix(c1, vec3(0.05), edge);
+      // 波普四格：同一張照片切成四格，每格一組撞色，亮度只分三階，背景整片換色
+      int ti = int(popT.x) + int(popT.y) * 2;
+      vec3 bgc = ti == 0 ? vec3(1.0, 0.83, 0.0) : ti == 1 ? vec3(0.0, 0.72, 1.0) : ti == 2 ? vec3(1.0, 0.23, 0.42) : vec3(0.48, 0.24, 1.0);
+      vec3 d0 = ti == 0 ? vec3(0.11, 0.08, 0.39) : ti == 1 ? vec3(0.16, 0.04, 0.0) : ti == 2 ? vec3(0.04, 0.24, 0.18) : vec3(0.02);
+      vec3 m0 = ti == 0 ? vec3(1.0, 0.18, 0.53) : ti == 1 ? vec3(1.0, 0.42, 0.0) : ti == 2 ? vec3(0.13, 0.79, 0.59) : vec3(1.0, 0.8, 0.0);
+      vec3 l0 = ti == 0 ? vec3(1.0, 0.82, 0.89) : ti == 1 ? vec3(1.0, 0.91, 0.64) : ti == 2 ? vec3(0.9, 1.0, 0.96) : vec3(1.0);
+      float L = luma(mix(col, texture(uSmooth, uv).rgb, 0.6));
+      vec3 pc = mix(mix(d0, m0, smoothstep(0.26, 0.32, L)), l0, smoothstep(0.58, 0.64, L));
+      float pm = smoothstep(0.3, 0.7, pw0);
+      c1 = mix(bgc, mix(pc, d0, edge * 0.85), pm);
+      vec2 gb = min(uv, 1.0 - uv) * uSize * 0.5 / min(uSize.x, uSize.y);
+      c1 = mix(vec3(1.0), c1, smoothstep(0.004, 0.006, min(gb.x, gb.y)));
     } else {
       // 素描：原圖除以模糊圖，平的地方變白，邊緣和紋理留下筆觸
       float L = luma(texture(uImg, uv).rgb), Lb = luma(texture(uBlurS, uv).rgb);
@@ -435,8 +442,11 @@ void main(){
     vec3 e = texture(uEx, (uv - 0.5) * uExFit + 0.5).rgb;
     float pm = smoothstep(0.25, 0.75, texture(uSeg, uv).r);
     float L = luma(col);
-    vec3 inside = 1.0 - (1.0 - e) * (1.0 - smoothstep(0.15, 0.85, L) * vec3(1.0));
-    vec3 outside = mix(vec3(0.97, 0.96, 0.94), e, 0.18);
+    // 人轉成高對比黑白，再用「濾色」疊風景：頭髮、衣服這些暗的地方透出風景，臉留著
+    float Lp = pow(smoothstep(0.3, 0.95, L), 1.6);
+    vec3 inside = 1.0 - (1.0 - e) * (1.0 - vec3(Lp));
+    inside = mix(inside, inside * (0.8 + 0.4 * col), 0.15);
+    vec3 outside = mix(vec3(0.97, 0.96, 0.94), e, 0.12);
     col = mix(col, mix(outside, inside, pm), uFxAmt);
   }
   if (uOAmt > 0.0) col = 1.0 - (1.0 - col) * (1.0 - texture(uOver, vUV).rgb * uOAmt);
