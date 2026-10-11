@@ -6,6 +6,7 @@ import { FX, OVERLAYS, BG_PHOTOS, EXPOSURES, FRAMES, frameById, drawFrame, paint
 import { matte } from './matte.js';
 import { HAIR, HAIR_P0, DYES, HairFx, prepHair, hairWarps, hairNeedsSeg, hairColorOn } from './hair.js';
 import { tabErase, eraseLeave } from './erase.js';
+import { makeupLayer, makeupTab } from './makeup.js';
 
 const $ = s => document.querySelector(s);
 const MAX_SIDE = 4096, MAX_AREA = 16e6;
@@ -21,6 +22,7 @@ const P0 = {
   light: -1, lightAmt: 60, lightRot: 0, flash: -1, flashAmt: 60,
   blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'forest', bgImg: 'beach', bgBlur: 30, frame: '',
   ...HAIR_P0,
+  mk: {}, mkLook: -1, mkLookAmt: 100,
 };
 
 const I = {
@@ -212,9 +214,9 @@ function findFaces() {
     if (b === base) { R.setMask2(b.mask2); render(); }
     const seg = f.length ? await getSeg(b) : null;
     b.mask = f.length ? skinMask(f, b.canvas.width, b.canvas.height, seg) : null;
-    if (b === base) { R.setMask(b.mask); render(); if (tab === 'beauty' || tab === 'sticker') showTab(tab); }
+    if (b === base) { R.setMask(b.mask); render(); if (tab === 'beauty' || tab === 'sticker' || tab === 'makeup') showTab(tab); }
     return f;
-  }).catch(e => { console.warn(e); b.faces = []; b.faceErr = true; if (b === base && tab === 'beauty') showTab('beauty'); return []; });
+  }).catch(e => { console.warn(e); b.faces = []; b.faceErr = true; if (b === base && (tab === 'beauty' || tab === 'makeup')) showTab(tab); return []; });
   return b.facesP;
 }
 async function findPerson(quiet) {
@@ -343,6 +345,8 @@ function syncTex() {
     texKey.bg = bk;
     if (bk) bgCanvas(W, H).then(c => { if (texKey.bg === bk && c) { R.setBgImg(c); bgStat = c.stat; render(); } });
   }
+  const mk = makeupLayer(base, P.mk);
+  if (texKey.mk !== mk.key) { texKey.mk = mk.key; R.setMakeup(mk.canvas); }
   const own = P.ex === 'own' && exOwn;
   want('ex', P.fx === 'double' ? (own ? 'own' + exN : `${P.ex}|${w}x${h}`) : '', () => own ? exOwn : paint(EXPOSURES, P.ex === 'own' ? 'forest' : P.ex, ...fitSize(W, H, 1024)), c => R.setEx(c));
 }
@@ -430,7 +434,7 @@ function showTab(t) {
   const box = $('#items'); box.innerHTML = '';
   $('#note').textContent = ''; $('#textedit').hidden = true;
   if (!base) return;
-  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, hair: tabHair, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
+  ({ adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, makeup: tabMakeup, hair: tabHair, light: tabLight, sticker: tabSticker, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && P.light >= 0);
 }
@@ -529,6 +533,14 @@ function tabHair(box) {
   }
   box.append(item({ label: '染髮', icon: '<svg viewBox="0 0 24 24"><path d="M5 20c0-9 3-15 7-15s7 6 7 15"/><path d="M15 3l4 4-6 6-2-2z" fill="currentColor" opacity=".4"/></svg>', set: !!P.hairDye, onclick: () => { cur = 'hairDye'; showTab('hair'); } }));
   paramItems(box, HAIR, 'hairUni');
+}
+
+// ---------- 美妝（makeup.js） ----------
+function tabMakeup(box) {
+  makeupTab(box, {
+    P: () => P, base: () => base, item, setSlider, hideSlider, render, commit, findFaces,
+    refresh: () => showTab('makeup'), note: t => { $('#note').textContent = t; },
+  });
 }
 
 // ---------- 光影：打光、閃光燈 ----------
