@@ -220,10 +220,12 @@ export function faceGeom(pts) {
 }
 
 // 人像遮罩模糊一份，打光算身體輪廓、閃光燈算影子用
+// 模糊得很開，所以縮到長邊 512 再算（全尺寸的照片在手機上要多吃 200MB 記憶體）；用的時候當貼圖放大
 export function blurCanvas(src, r) {
-  const c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
-  const ctx = c.getContext('2d'); ctx.drawImage(src, 0, 0);
-  boxBlur(ctx, c.width, c.height, r ?? Math.max(2, Math.round(Math.max(c.width, c.height) / 40)));
+  const k = Math.min(1, 512 / Math.max(src.width, src.height));
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(src.width * k)); c.height = Math.max(1, Math.round(src.height * k));
+  const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(src, 0, 0, c.width, c.height);
+  boxBlur(ctx, c.width, c.height, Math.max(1, Math.round(r != null ? r * k : Math.max(2, Math.max(c.width, c.height) / 40))));
   return c;
 }
 
