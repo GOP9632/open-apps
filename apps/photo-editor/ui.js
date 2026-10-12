@@ -95,9 +95,12 @@ export function nudge(dir, big) {
 
 // ---------- 畫布縮放、拖曳 ----------
 // box 用 CSS transform 放大移動，原本的座標換算都用 getBoundingClientRect，所以不用改
-export function canvasZoom({ stage, box, onChange, canPan }) {
+// unit()：z=1 時照片實際顯示的倍率（照片一個像素佔幾個螢幕像素），
+// 照醒圖：實際倍率 5%～1200%，按鈕一格一格跳 STEPS
+const STEPS = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.2, 1.4, 1.6, 1.8, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 12];
+export function canvasZoom({ stage, box, onChange, canPan, unit = () => 1 }) {
   let z = 1, x = 0, y = 0;
-  const MAX = 16;
+  const lim = nz => { const k = unit() || 1; return Math.max(Math.min(1, STEPS[0] / k), Math.min(Math.max(1, STEPS.at(-1) / k), nz)); };
   const apply = () => {
     // 不讓照片整張跑出畫面外
     const sw = stage.clientWidth, sh = stage.clientHeight, bw = box.offsetWidth * z, bh = box.offsetHeight * z;
@@ -110,7 +113,7 @@ export function canvasZoom({ stage, box, onChange, canPan }) {
   };
   // 以畫面上某一點為中心縮放（滑鼠位置、雙指中心）
   const zoomAt = (nz, px, py) => {
-    nz = Math.max(1, Math.min(MAX, nz));
+    nz = lim(nz);
     const r = stage.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     if (px === undefined) { px = cx; py = cy; }
     const qx = (px - cx - x) / z, qy = (py - cy - y) / z;
@@ -159,7 +162,7 @@ export function canvasZoom({ stage, box, onChange, canPan }) {
       // 兩指一開始中心點底下的那個位置，要一直跟著兩指中心走
       const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
       const r = stage.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-      const nz = Math.max(1, Math.min(MAX, g.z * Math.hypot(b.x - a.x, b.y - a.y) / g.d));
+      const nz = lim(g.z * Math.hypot(b.x - a.x, b.y - a.y) / g.d);
       const qx = (g.m.x - cx - g.x) / g.z, qy = (g.m.y - cy - g.y) / g.z;
       z = nz; x = m.x - cx - nz * qx; y = m.y - cy - nz * qy;
       apply();
@@ -178,6 +181,12 @@ export function canvasZoom({ stage, box, onChange, canPan }) {
     get z() { return z; },
     pinching: () => pts.size >= 2,
     zoomBy: f => zoomAt(z * f),
+    // 跳到下一格（dir=1 放大、-1 縮小），以實際倍率算
+    zoomStep: dir => {
+      const k = unit() || 1, a = z * k;
+      const s = dir > 0 ? STEPS.find(v => v > a * 1.001) : [...STEPS].reverse().find(v => v < a * 0.999);
+      if (s) zoomAt(s / k);
+    },
     reset: () => { z = 1; x = 0; y = 0; apply(); },
     apply,
   };

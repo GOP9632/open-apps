@@ -296,10 +296,11 @@ const view = canvasZoom({
   stage: $('#stage'), box: $('#fbox'),
   canPan: (e, touch) => !!base && !e.target.closest('.st,.tx') && (!touch || !(tab === 'erase' || tab === 'crop' || tab === 'reshape' || tab === 'doodle' || tab === 'bbrush' || (tab === 'light' && P.light))),
   // 手機上平常不顯示縮放按鈕，放大了才出現（點百分比回到全覽）
-  onChange: z => { $('#zPct').textContent = Math.round(frameK * z * 100) + '%'; $('#zoom').classList.toggle('zoomed', z > 1); },
+  unit: () => frameK,
+  onChange: z => { $('#zPct').textContent = Math.round(frameK * z * 100) + '%'; $('#zoom').classList.toggle('zoomed', z !== 1); },
 });
-$('#zIn').onclick = () => view.zoomBy(1.25);
-$('#zOut').onclick = () => view.zoomBy(0.8);
+$('#zIn').onclick = () => view.zoomStep(1);
+$('#zOut').onclick = () => view.zoomStep(-1);
 $('#zPct').onclick = () => view.reset();
 new ResizeObserver(layout).observe($('#stage'));
 
@@ -493,7 +494,7 @@ function getLut(id) {
 function commit() {
   hist = hist.slice(0, hi + 1);
   hist.push({ base, P: clone(P), texts: clone(texts), stickers: clone(stickers) });
-  if (hist.length > 40) hist.shift();
+  if (hist.length > 50) hist.shift();  // 醒圖：最多復原 50 步
   // 塗鴉、消除每一步都是一張新的整張照片，手機記憶體有限：最多留 8 張不同的照片
   while (new Set(hist.map(h => h.base)).size > 8) hist.shift();
   hi = hist.length - 1;
@@ -2299,8 +2300,8 @@ addEventListener('keydown', e => {
   if (!base) return;
   if (mod && (k === 'z' || k === 'Z')) { e.preventDefault(); e.shiftKey ? $('#bRedo').click() : $('#bUndo').click(); return; }
   if (mod && (k === 'y' || k === 'Y')) { e.preventDefault(); $('#bRedo').click(); return; }
-  if (mod && (k === '=' || k === '+')) { e.preventDefault(); view.zoomBy(1.25); return; }
-  if (mod && (k === '-' || k === '_')) { e.preventDefault(); view.zoomBy(0.8); return; }
+  if (mod && (k === '=' || k === '+')) { e.preventDefault(); view.zoomStep(1); return; }
+  if (mod && (k === '-' || k === '_')) { e.preventDefault(); view.zoomStep(-1); return; }
   if (mod && k === '0') { e.preventDefault(); view.reset(); return; }
   if (mod && e.altKey && (k === 'ArrowUp' || k === 'ArrowDown')) {
     e.preventDefault();
