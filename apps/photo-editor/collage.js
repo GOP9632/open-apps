@@ -24,7 +24,7 @@ export function initCollage(hooks) {
 
 // ---------- 開啟 ----------
 // what：'grid'（一般拼貼）、'tpl'（範本）、'poster'（海報）
-export async function openCollage(what, sources) {
+export async function openCollage(what, sources, cat) {
   H.busy('讀取照片…');
   try {
     const photos = [];
@@ -36,8 +36,9 @@ export async function openCollage(what, sources) {
       tpl: null, cells: [], texts: [], sel: null, ver: 1,
     };
     thumbs = {};
-    if (what !== 'grid') S.tpl = pickTpl(what === 'poster' ? '海報' : S.tplCat).id;
     if (what === 'poster') S.tplCat = '海報';
+    if (cat && CATS.includes(cat)) S.tplCat = cat;
+    if (what !== 'grid') S.tpl = pickTpl(S.tplCat).id;
     resetCells();
     $('#cg').classList.add('on');
     requestAnimationFrame(() => { fit(); refresh(); });
