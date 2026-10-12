@@ -162,6 +162,66 @@ function frame(pts) {
   return { pts, W, up, right, roll, eyes, sideOf: p => Math.sign((p.x - pts[1].x) * right.x + (p.y - pts[1].y) * right.y) || 1 };
 }
 
+// ---------- 塑臉（立體光影） ----------
+// 照 Hypic 修飾 › 塑臉：「強度」12 條（6 個區域各有亮、影），「顏色」4 條（區域提色，在 skin.js 做），
+// 都是 0~100 預設 0。每一區用臉部特徵點畫一塊柔邊的亮或暗，交給彩妝層去疊（形狀自己畫，沒用 Hypic 的遮罩）
+const icS = d => `<svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="7" ry="9"/>${d}</svg>`;
+const HL = 'fill="currentColor" opacity=".55" stroke="none"', SH = 'stroke-width="2" opacity=".45"';
+export const SCULPT = [
+  ['sc_nose', '鼻子', icS(`<rect x="11.3" y="8" width="1.4" height="6" rx=".7" ${HL}/>`), 0, 0],
+  ['sc_fore', '額頭', icS(`<ellipse cx="12" cy="6.5" rx="3" ry="1.6" ${HL}/>`), 0, 0],
+  ['sc_cheek', '臉頰', icS(`<ellipse cx="8" cy="12" rx="1.8" ry="1" ${HL}/><ellipse cx="16" cy="12" rx="1.8" ry="1" ${HL}/>`), 0, 0],
+  ['sc_brow', '眉毛', icS(`<ellipse cx="8.5" cy="9" rx="1.6" ry=".7" ${HL}/><ellipse cx="15.5" cy="9" rx="1.6" ry=".7" ${HL}/>`), 0, 0],
+  ['sc_chin', '下巴', icS(`<ellipse cx="12" cy="18.5" rx="1.6" ry="1" ${HL}/>`), 0, 0],
+  ['sc_lip', '嘴唇', icS(`<ellipse cx="12" cy="15" rx="1.2" ry=".5" ${HL}/>`), 0, 0],
+  ['sc_noseS', '鼻子陰影', icS(`<path d="M10.6 8v6M13.4 8v6" ${SH}/>`), 0, 0],
+  ['sc_foreS', '額頭陰影', icS(`<path d="M6 7c3-3 9-3 12 0" ${SH}/>`), 0, 0],
+  ['sc_cheekS', '臉頰陰影', icS(`<path d="M5.5 13.5l3.5 1.5M18.5 13.5L15 15" ${SH}/>`), 0, 0],
+  ['sc_browS', '眉毛陰影', icS(`<path d="M9.5 9.5l1 1.5M14.5 9.5l-1 1.5" ${SH}/>`), 0, 0],
+  ['sc_chinS', '下巴陰影', icS(`<path d="M5.5 15c1 3 3 5 6.5 6M18.5 15c-1 3-3 5-6.5 6" ${SH}/>`), 0, 0],
+  ['sc_lipS', '嘴巴陰影', icS(`<path d="M10 17.2h4" ${SH}/>`), 0, 0],
+];
+export const SC_COLOR = [
+  ['sc_eye', '亮眼', '<svg viewBox="0 0 24 24"><path d="M2 12s4-5 10-5 10 5 10 5-4 5-10 5S2 12 2 12z"/><circle cx="12" cy="12" r="2.5"/><path d="M13 10.8h.01"/></svg>', 0, 0],
+  ['sc_eyeCol', '眼睛顏色', '<svg viewBox="0 0 24 24"><path d="M3 13s4-4 9-4 9 4 9 4"/><path d="M5 10c2-3 12-3 14 0" opacity=".5" stroke-width="2.5"/></svg>', 0, 0],
+  ['sc_lipCol', '嘴巴顏色', '<svg viewBox="0 0 24 24"><path d="M4 12c3-3 5-3 8-1 3-2 5-2 8 1-3 4-13 4-16 0z" fill="currentColor" opacity=".45"/></svg>', 0, 0],
+  ['sc_cheekCol', '臉頰', icS(`<ellipse cx="8" cy="13.5" rx="2" ry="1.3" ${HL}/><ellipse cx="16" cy="13.5" rx="2" ry="1.3" ${HL}/>`), 0, 0],
+];
+export const SC_P0 = Object.fromEntries([...SCULPT, ...SC_COLOR].map(x => [x[0], 0]));
+const scOn = P => SCULPT.some(x => P[x[0]] > 0);
+const SC_HI = 'fff6ec', SC_SH = '7e5a48';
+function sculpt(ctx, f, P) {
+  const p = f.pts, W = f.W, hi = SC_HI, sh = SC_SH;
+  const ax = Math.atan2(p[4].y - p[6].y, p[4].x - p[6].x);
+  const a = k => Math.min(1, (P[k] || 0) / 100) * 0.7;
+  const B = (k, c, rx, ry, rot, hex, w = 1) => { if (P[k] > 0) blob(ctx, c, W * rx, W * ry, rot, hex, a(k) * w); };
+  // 亮
+  B('sc_nose', lerp(p[6], p[4], 0.45), 0.16, 0.026, ax, hi);
+  B('sc_nose', p[4], 0.035, 0.028, ax, hi, 0.7);
+  B('sc_fore', add(p[151], f.up, W * 0.02), 0.15, 0.08, f.roll, hi);
+  B('sc_chin', lerp(p[152], p[17], 0.4), 0.065, 0.04, f.roll, hi);
+  B('sc_lip', add(p[0], f.up, W * 0.02), 0.035, 0.012, f.roll, hi, 0.8);
+  B('sc_lip', lerp(p[17], p[14], 0.45), 0.06, 0.018, f.roll, hi, 0.5);
+  // 影
+  B('sc_foreS', add(p[10], f.up, W * 0.01), 0.24, 0.05, f.roll, sh, 0.8);
+  B('sc_lipS', add(p[17], f.up, -W * 0.035), 0.07, 0.022, f.roll, sh, 0.8);
+  B('sc_chinS', add(p[152], f.up, -W * 0.07), 0.2, 0.06, f.roll, sh);
+  for (const [i, sd] of [[0, -1], [1, 1]]) {
+    const e = f.eyes[i];
+    B('sc_brow', lerp(e.browLo[10], e.up[10], 0.3), 0.07, 0.022, f.roll, hi, 0.9);
+    const [ue, apx] = i ? [p[346], p[280]] : [p[117], p[50]];
+    B('sc_cheek', lerp(lerp(ue, apx, 0.4), p[195], 0.15), 0.09, 0.045, f.roll, hi);
+    B('sc_noseS', add(lerp(p[6], p[4], 0.45), f.right, sd * W * 0.055), 0.17, 0.022, ax, sh, 0.8);
+    const ear = i ? p[454] : p[234], mouth = i ? p[291] : p[61];
+    B('sc_cheekS', add(lerp(ear, mouth, 0.3), f.up, -W * 0.04), 0.2, 0.05, Math.atan2(mouth.y - ear.y, mouth.x - ear.x), sh);
+    const j1 = i ? p[397] : p[172], j2 = i ? p[365] : p[136];
+    B('sc_chinS', j1, 0.15, 0.06, Math.atan2(j2.y - j1.y, j2.x - j1.x), sh, 0.8);
+    B('sc_chinS', j2, 0.12, 0.05, Math.atan2(p[152].y - j2.y, p[152].x - j2.x), sh, 0.7);
+    B('sc_browS', lerp(i ? p[336] : p[107], i ? p[362] : p[133], 0.5), 0.05, 0.035, f.roll, sh, 0.8);
+    B('sc_foreS', i ? p[284] : p[54], 0.1, 0.08, f.roll, sh, 0.5);
+  }
+}
+
 // 眼睛範圍（剪裁或挖掉用）
 const eyePath = (e, grow = 1) => ctx => smooth(ctx, e.poly.map(p => lerp(e.ctr, p, grow)), true);
 function clearEye(ctx, d, e, grow = 1, blur = 0.02) {
@@ -473,14 +533,17 @@ let serial = 0;
 const MAX = 1600;
 
 export const hasMakeup = mk => !!mk && Object.values(mk).some(v => v && v.a > 0);
+// 塑臉的值直接放在 P（sc_ 開頭），跟彩妝畫在同一層
 
 // 回傳 { key, canvas }；key 沒變代表不用重新上傳
-export function makeupLayer(base, mk) {
-  if (!base?.faces?.length || !hasMakeup(mk)) return { key: '', canvas: null };
+export function makeupLayer(base, mk, P = {}) {
+  const sc = scOn(P);
+  if (!base?.faces?.length || (!hasMakeup(mk) && !sc)) return { key: '', canvas: null };
+  mk ||= {};
   let c = cache.get(base);
   if (!c) { c = { id: ++serial, layers: new Map(), faces: null }; cache.set(base, c); }
   if (c.faces !== base.faces) { c.faces = base.faces; c.layers.clear(); c.frames = base.faces.map(frame); }
-  const key = c.id + '|' + JSON.stringify(ORDER.map(k => mk[k] && mk[k].a > 0 ? [k, mk[k].s, mk[k].c, mk[k].a] : 0));
+  const key = c.id + '|' + JSON.stringify(ORDER.map(k => mk[k] && mk[k].a > 0 ? [k, mk[k].s, mk[k].c, mk[k].a] : 0)) + (sc ? '|' + SCULPT.map(x => P[x[0]] || 0).join(',') : '');
   if (c.key === key) return { key, canvas: c.out };
   const W = base.canvas.width, H = base.canvas.height, k = Math.min(1, MAX / Math.max(W, H));
   const w = Math.max(1, Math.round(W * k)), h = Math.max(1, Math.round(H * k));
@@ -507,6 +570,7 @@ export function makeupLayer(base, mk) {
     octx.drawImage(layer, 0, 0);
   }
   octx.globalAlpha = 1;
+  if (sc) { octx.save(); octx.scale(k, k); for (const f of c.frames) sculpt(octx, f, P); octx.restore(); }
   for (const lk of c.layers.keys()) if (!used.has(lk)) c.layers.delete(lk); // 沒在用的圖層丟掉，省記憶體
   c.out = out; c.key = key;
   return { key, canvas: out };
