@@ -926,6 +926,14 @@ const App = {
       const code = load('food.pendingJoin', '');
       if (code) { save('food.pendingJoin', ''); await App.join(code); }
       App.realtime();
+      // 分享捷徑在背景收藏的店：切回這個 app 時重新讀一次
+      App._sig = sig; App._loadedAt = Date.now();
+      if (!App._onShow) document.addEventListener('visibilitychange', App._onShow = async () => {
+        if (document.hidden || !S.user || Date.now() - App._loadedAt < 10000) return;
+        App._loadedAt = Date.now();
+        const now = await DB.loadAll().catch(() => null);
+        if (now && now !== App._sig) { App._sig = now; App.refresh(); }
+      });
     }
     if (cached && S.user?.id === cached.uid) {
       // 已經用上次的資料畫好了：資料有變才安靜地更新，不重播動畫、不打斷正在打字或開著的抽屜
@@ -1653,20 +1661,22 @@ const App = {
   shareSetup() {
     const base = `${location.origin}${location.pathname}?add=`;
     const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    // 捷徑放在 iCloud（簽好章的檔案在 shortcut/，直接下載的話 iPhone 只會當文字預覽）
-    const scLink = 'https://www.icloud.com/shortcuts/7529bc9f7a3f4c839c7ab03bcde31cbf';
-    const iosSteps = `<a class="btn primary big block" href="${scLink}" target="_blank" rel="noopener">${ic('down')} 加入分享捷徑</a>
-      <ol class="howto" style="margin-top:14px">
-        <li>點上面的按鈕，會打開捷徑 App，按「<b>加入捷徑</b>」。</li>
-        <li>之後在 IG 按 <b>分享</b> → <b>分享到…</b> → 選「<b>收進美食收藏-portal</b>」，就會打開美食收藏自動找店家，按收藏就好。</li>
-      </ol>
-      <p class="muted">捷徑會用 Safari 打開，第一次要在 Safari 登入一次。想讓它排在分享選單前面，可以在分享選單最右邊「編輯動作」把它加到最愛。</p>
-      <details class="muted"><summary>想自己做捷徑</summary><ol class="howto" style="margin-top:8px">
+    // 背景收藏捷徑放在 iCloud：分享進來的連結連同收藏碼送到 quick-add，直接存好，不用打開這裡
+    const scLink = 'https://www.icloud.com/shortcuts/c1a1d8be9af44862bff79bb2c6bd2891';
+    const manual = `<ol class="howto" style="margin-top:8px">
         <li>打開「捷徑」App，按右上角 <b>＋</b>，名稱改成「收進美食收藏」，在設定裡打開「在分享表單中顯示」。</li>
         <li>加入「<b>URL</b>」動作，貼上下面這串，最後面接上變數「捷徑輸入」。
           <div class="copy-row"><code>${esc(base)}</code><button class="btn sm" onclick="App.copy(${esc(JSON.stringify(base))})">${ic('copy')} 複製</button></div></li>
-        <li>再加入「<b>打開 URL</b>」動作，按完成。</li>
-      </ol></details>`;
+        <li>再加入「<b>打開 URL</b>」動作，按完成。之後分享會打開這裡找店家。</li>
+      </ol>`;
+    const iosSteps = cloud() ? `<a class="btn primary big block" href="${scLink}" target="_blank" rel="noopener" onclick="App.copyQuickKey()">${ic('down')} 加入分享捷徑</a>
+      <ol class="howto" style="margin-top:14px">
+        <li>點上面的按鈕，你的收藏碼會自動拷貝好，捷徑 App 打開後按「<b>加入捷徑</b>」。</li>
+        <li>它問「收藏碼」時，長按輸入框選「<b>貼上</b>」，按完成。</li>
+        <li>之後在 IG 按 <b>分享</b> → 選「<b>收進美食收藏</b>」，上方會跳通知「已收藏：店名」，不用打開這裡。第一次會問能不能連線，選「<b>永遠允許</b>」。</li>
+      </ol>
+      <div class="copy-row"><span class="muted grow" style="font-size:13px">收藏碼：等於你的收藏權限，不要給別人</span><button class="btn sm" onclick="App.copyQuickKey(true)">${ic('copy')} 複製</button><button class="btn sm ghost" onclick="App.resetQuickKey()">換一組</button></div>
+      <p class="muted">想讓它排在分享選單前面，可以在分享選單最右邊「編輯動作」把它加到最愛（可做可不做）。</p>` : `<p class="muted">先登入，就能用捷徑在背景直接收藏。沒登入的話可以自己做一個會打開這裡的捷徑：</p>${manual}`;
     const androidSteps = `<ol class="howto">
         <li>用 Chrome 打開這個網頁，選單裡按「<b>加到主畫面</b>」（安裝應用程式）。</li>
         <li>之後在 IG 按 <b>分享</b> → <b>分享到…</b>，選「<b>美食收藏</b>」就會自動找店家。</li>
@@ -1676,6 +1686,22 @@ const App = {
       <div class="seg" style="margin:6px 0 12px"><button class="${ios ? 'on' : ''}" onclick="this.parentNode.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b===this));$('#ss-body').innerHTML=App._ssIos">iPhone</button><button class="${ios ? '' : 'on'}" onclick="this.parentNode.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b===this));$('#ss-body').innerHTML=App._ssAnd">Android</button></div>
       <div id="ss-body">${ios ? iosSteps : androidSteps}</div>`);
     App._ssIos = iosSteps; App._ssAnd = androidSteps;
+    if (cloud() && S.user) App.quickKey().catch(() => {});
+  },
+
+  // 分享捷徑的收藏碼（先抓好，按按鈕時才能馬上拷貝）
+  async quickKey(reset = false) {
+    if (!reset && S.quickKey) return S.quickKey;
+    S.quickKey = await DB.rpc('quick_key', { reset });
+    return S.quickKey;
+  },
+  copyQuickKey(show) {
+    if (!S.quickKey) { toast('收藏碼還沒準備好，請再按一次'); return; }
+    navigator.clipboard?.writeText(S.quickKey).then(() => show && toast('已複製收藏碼'), () => toast('複製失敗，請按下面的「複製」'));
+  },
+  async resetQuickKey() {
+    if (!confirm('換一組收藏碼後，舊的捷徑就不能用了，要重新加入。確定要換嗎？')) return;
+    try { await App.quickKey(true); toast('已換新的收藏碼，請重新加入分享捷徑'); } catch (e) { toast('換收藏碼失敗：' + e.message, 4000); }
   },
 
   // ----- 外部分享進來（Android 把 IG 分享到這個 app）、邀請連結 -----

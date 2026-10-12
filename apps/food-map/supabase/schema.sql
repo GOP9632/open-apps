@@ -235,3 +235,32 @@ create policy "food 上傳自己的照片" on storage.objects for insert to auth
 drop policy if exists "food 刪自己的照片" on storage.objects;
 create policy "food 刪自己的照片" on storage.objects for delete to authenticated
   using (bucket_id = 'food-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- 分享捷徑用的收藏碼：iPhone 捷徑帶著它呼叫 quick-add 函式，在背景直接收藏
+create table if not exists food.quick_keys (
+  user_id uuid primary key references food.profiles on delete cascade,
+  key text not null unique,
+  created_at timestamptz not null default now()
+);
+alter table food.quick_keys enable row level security;
+drop policy if exists "看自己的收藏碼" on food.quick_keys;
+create policy "看自己的收藏碼" on food.quick_keys for select using (user_id = auth.uid());
+grant select on food.quick_keys to authenticated;
+grant select, insert, update on food.quick_keys to service_role;
+-- 拿自己的收藏碼（沒有就產生；reset = true 換新的，舊捷徑就失效）
+create or replace function food.quick_key(reset boolean default false) returns text
+language plpgsql security definer set search_path = '' as $$
+declare k text;
+begin
+  if auth.uid() is null then raise exception '請先登入'; end if;
+  if not reset then
+    select q.key into k from food.quick_keys q where q.user_id = auth.uid();
+    if k is not null then return k; end if;
+  end if;
+  k := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+  insert into food.quick_keys (user_id, key) values (auth.uid(), k)
+  on conflict (user_id) do update set key = excluded.key, created_at = now();
+  return k;
+end $$;
+revoke execute on function food.quick_key(boolean) from public, anon;
+grant execute on function food.quick_key(boolean) to authenticated;
