@@ -10,7 +10,7 @@ import { GRADE_P0, gradeOn, gradeFn, gradeKey, tabGrade, gradeHide } from './gra
 import { HAIR, HAIR_P0, DYES, HairFx, prepHair, hairWarps, hairNeedsSeg, hairColorOn } from './hair.js';
 import { tabErase, eraseLeave } from './erase.js';
 import { makeupLayer, makeupTab, SCULPT, SC_COLOR, SC_P0 } from './makeup.js';
-import { SKIN, WRINKLE, AI_FACE, AI_BODY, SKIN_P0, skinOn, skinKey, prepSkin, SkinFx, skinNote } from './skin.js';
+import { SKIN, TONE, WRINKLE, AI_FACE, AI_BODY, SKIN_P0, skinOn, skinKey, prepSkin, SkinFx, skinNote } from './skin.js';
 import { BODY, BODY_P0, BODY_MAN, REG_OF, bodyOn, detectBody, measureBody, bodyWarps, manualWarps, manualRegion, bodyNote } from './body.js';
 import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } from './faceshape.js';
 import { WarpField } from './warpfield.js';
@@ -604,7 +604,7 @@ const keysOf = list => list.flatMap(x => SIDED.includes(x[0]) ? [x[0], x[0] + 'L
 const toP0 = keys => keys.forEach(k => { P[k] = clone(P0[k]); });
 const keysOn = keys => () => keys.some(k => JSON.stringify(P[k]) !== JSON.stringify(P0[k]));
 const tabKeys = {
-  adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...WRINKLE]), aiskin: keysOf([...AI_FACE, ...AI_BODY]), sculpt: Object.keys(SC_P0), reshape: ['liq'],
+  adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...TONE, ...WRINKLE]), aiskin: keysOf([...AI_FACE, ...AI_BODY]), sculpt: Object.keys(SC_P0), reshape: ['liq'],
   body: Object.keys(BODY_P0), hair: Object.keys(HAIR_P0), makeup: ['mk', 'mkLook', 'mkLookAmt'], filter: ['filter', 'filterAmt'],
   light: ['light', 'lightAmt', 'lightBri', 'lightCol', 'lightDist', 'lightSpec', 'lightBlur', 'lightFg', 'lightBg', 'lightX', 'lightY', 'lightSeed', 'flash', 'flashAmt'],
   fun: ['blur', 'blurStyle', 'blurSize', 'fx', 'fxAmt', 'ov', 'ovAmt', 'ex', ...Object.keys(POP_P0)], frame: ['frame'], cutout: ['bg', 'bgColor', 'bgImg', 'bgBlur'],
@@ -800,10 +800,10 @@ let skSec = 'skin';
 function tabSkin(box) {
   if (!base.faces) findFaces();
   if (!base.skin) getSkin(base);
-  const list = skSec === 'skin' ? SKIN : WRINKLE;
-  // 上面一排：膚質、祛皺兩類（跟醒圖美顏面板的分類一樣）
+  const list = skSec === 'skin' ? SKIN : skSec === 'tone' ? TONE : WRINKLE;
+  // 上面一排：膚質、膚色、祛皺（跟醒圖美顏面板的分類一樣）
   const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
-  [['skin', '膚質', SKIN], ['wrinkle', '祛皺', WRINKLE]].forEach(([s, lb, l]) => cats.append(item({
+  [['skin', '膚質', SKIN], ['tone', '膚色', TONE], ['wrinkle', '祛皺', WRINKLE]].forEach(([s, lb, l]) => cats.append(item({
     label: lb, icon: lb, cls: 'wide', on: skSec === s, set: l.some(x => isSet(x[0])),
     onclick: () => { skSec = s; cur = l[0][0]; showTab('skin'); },
   })));

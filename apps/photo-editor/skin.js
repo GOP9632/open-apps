@@ -25,8 +25,14 @@ export const SKIN = [
   ['skDewy', '水光肌', ic(FACE + '<path d="M10 8c1-1 3-1 4 0M8 12.5c.5-.8 1.5-1 2-.8M16 12.5c-.5-.8-1.5-1-2-.8"/>'), 0, 75],
   ['skMatte', '啞光肌', ic(FACE + '<path d="M8 10h8M8 13h8" opacity=".5"/>'), 0, 90],
   ['skBlush', '腮紅肌', ic(FACE + '<ellipse cx="8.3" cy="13.5" rx="2" ry="1.3" fill="currentColor" opacity=".45"/><ellipse cx="15.7" cy="13.5" rx="2" ry="1.3" fill="currentColor" opacity=".45"/>'), 0, 60],
-  ['skUnify', '膚色統一', ic('<ellipse cx="9" cy="12" rx="5" ry="7"/><ellipse cx="15" cy="12" rx="5" ry="7" fill="currentColor" opacity=".3"/>'), 0, 60],
   ['skTan', '美黑肌', ic('<circle cx="12" cy="12" r="4" fill="currentColor" opacity=".45"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/>'), 0, 70],
+];
+// 膚色（照 Hypic 修飾 › 膚色）：膚色統一，加上紅潤、冷白、仿曬三種整體膚色，只作用在皮膚上
+export const TONE = [
+  ['skUnify', '膚色統一', ic('<ellipse cx="9" cy="12" rx="5" ry="7"/><ellipse cx="15" cy="12" rx="5" ry="7" fill="currentColor" opacity=".3"/>'), 0, 60],
+  ['skRosy', '紅潤', ic(FACE + '<ellipse cx="8.5" cy="13.5" rx="2" ry="1.3" fill="currentColor" opacity=".35"/><ellipse cx="15.5" cy="13.5" rx="2" ry="1.3" fill="currentColor" opacity=".35"/>'), 0, 60],
+  ['skCool', '冷白', ic(FACE + '<path d="M12 9v6M9.5 10.5l5 3M14.5 10.5l-5 3"/>'), 0, 60],
+  ['skSun', '仿曬', ic('<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/>'), 0, 60],
 ];
 export const WRINKLE = [
   ['wkHead', '抬頭紋', ic(FACE + '<path d="M8.5 6.5h7M8 8.5h8"/>'), 0, 90],
@@ -63,7 +69,7 @@ const AI = [...AI_FACE, ...AI_BODY].map(x => x[0]);
 const FILL = { uFFore: 'fs_fill_fore', uFCheek: 'fs_fill_cheek', uFFold: 'fs_fill_fold', uFBag: 'fs_fill_bag', uLFore: 'fs_lift_fore', uLEye: 'fs_lift_eye' };
 // 塑臉的「顏色」4 條（值存在 sc_ 鍵，預設值在 makeup.js）
 const SCCOL = { uScEye: 'sc_eye', uScEyeC: 'sc_eyeCol', uScLip: 'sc_lipCol', uScCheek: 'sc_cheekCol' };
-const KEYS = [...[...SKIN, ...WRINKLE, ...AI_FACE, ...AI_BODY].map(x => x[0]).filter(k => k !== 'smooth'), ...Object.values(FILL), ...Object.values(SCCOL)];
+const KEYS = [...[...SKIN, ...TONE, ...WRINKLE, ...AI_FACE, ...AI_BODY].map(x => x[0]).filter(k => k !== 'smooth'), ...Object.values(FILL), ...Object.values(SCCOL)];
 export const SKIN_P0 = Object.fromEntries(KEYS.filter(k => !k.startsWith('fs_') && !k.startsWith('sc_')).map(k => [k, 0]));
 export const skinOn = p => KEYS.some(k => p[k]);
 export const skinKey = p => KEYS.map(k => p[k] || 0).join('|');
@@ -251,7 +257,7 @@ in vec2 vUV; out vec4 o;
 uniform sampler2D uImg, uA, uB, uC, uT1, uT2, uT3;
 uniform vec2 uPx;
 uniform vec3 uMean;
-uniform float uNative, uGirl, uCream, uBaby, uFrost, uTex, uOil, uBare, uBody, uDewy, uMatte, uBlush, uTan, uUnify;
+uniform float uNative, uGirl, uCream, uBaby, uFrost, uTex, uOil, uBare, uBody, uDewy, uMatte, uBlush, uTan, uUnify, uRosy, uCool, uSun;
 uniform float uHead, uFold, uNeck, uEye, uLip;
 uniform float uFFore, uFCheek, uFFold, uFBag, uLFore, uLEye;
 uniform float uAi[16];
@@ -385,6 +391,25 @@ void main(){
     vec3 c = max(col, vec3(0.0));
     vec3 tan = vec3(pow(c.r, 1.18) * 0.97, pow(c.g, 1.32) * 0.88, pow(c.b, 1.5) * 0.76);
     col = mix(col, sat(tan, 1.05), uTan * sk * 0.85);
+  }
+  // ---- 膚色 ----
+  // 紅潤：中間調帶一點粉紅血色，暗部不動
+  if (uRosy > 0.0) {
+    float m = smoothstep(0.15, 0.55, luma(col)) * uRosy * sk;
+    col = mix(col, col * vec3(1.06, 0.97, 1.0) + vec3(0.02, 0.0, 0.012), m * 0.8);
+  }
+  // 冷白：退黃、提亮，顏色往偏粉的冷白走
+  if (uCool > 0.0) {
+    float m = uCool * sk;
+    vec3 c = mix(col, vec3(luma(col)), 0.15);
+    c = c * vec3(0.98, 1.0, 1.04) + (1.0 - c) * 0.13;
+    col = mix(col, c, m * 0.85);
+  }
+  // 仿曬：小麥色，比美黑肌淡、偏暖金
+  if (uSun > 0.0) {
+    vec3 c = max(col, vec3(0.0));
+    vec3 sun = vec3(pow(c.r, 1.08), pow(c.g, 1.16) * 0.97, pow(c.b, 1.3) * 0.88);
+    col = mix(col, sat(sun, 1.04), uSun * sk * 0.8);
   }
   // ---- AI 美肌 ----
   // 臉部：face 是臉上的皮膚，t3.g 是蘋果肌，t3.r 是臉的高點（額頭、鼻樑、顴骨）
@@ -576,7 +601,7 @@ export class SkinFx {
       const f = k => (p[k] || 0) / 100;
       gl.uniform2f(u('uPx'), 1 / W, 1 / H);
       gl.uniform3fv(u('uMean'), data.mean);
-      const map = { uNative: 'skNative', uGirl: 'skGirl', uCream: 'skCream', uBaby: 'skBaby', uFrost: 'skFrost', uTex: 'skTex', uOil: 'skOil', uBare: 'skBare', uBody: 'skBody', uDewy: 'skDewy', uMatte: 'skMatte', uBlush: 'skBlush', uTan: 'skTan', uUnify: 'skUnify', uHead: 'wkHead', uFold: 'wkFold', uNeck: 'wkNeck', uEye: 'wkEye', uLip: 'wkLip' };
+      const map = { uNative: 'skNative', uGirl: 'skGirl', uCream: 'skCream', uBaby: 'skBaby', uFrost: 'skFrost', uTex: 'skTex', uOil: 'skOil', uBare: 'skBare', uBody: 'skBody', uDewy: 'skDewy', uMatte: 'skMatte', uBlush: 'skBlush', uTan: 'skTan', uUnify: 'skUnify', uRosy: 'skRosy', uCool: 'skCool', uSun: 'skSun', uHead: 'wkHead', uFold: 'wkFold', uNeck: 'wkNeck', uEye: 'wkEye', uLip: 'wkLip' };
       for (const [n, k] of Object.entries({ ...map, ...FILL, ...SCCOL })) gl.uniform1f(u(n), f(k));
       gl.uniform1fv(u('uAi'), AI.map(f));
     });
