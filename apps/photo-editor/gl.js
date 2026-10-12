@@ -113,15 +113,15 @@ uniform float uExposure, uBright, uContrast, uSat, uTemp, uTint, uHigh, uShadow,
 uniform float uVib, uStruct, uTexture, uLSense, uBack, uFlashA;
 uniform float uSmoothAmt, uWhite, uLutAmt, uHasLut, uLutSkin;
 uniform float uDark, uFold, uEyeB, uTeeth;
-// 打光、閃光燈：最多三盞點光源（閃光燈也算一盞）
+// 打光、閃光燈：最多 8 盞燈（閃光燈也算一盞）
 //   uLPos：位置 xy（照片 0~1）、高度 z（深度圖像素，負的是在人後面）、燈到臉中間的距離 w
 //   uLCol：顏色 × 強度；uLPar：包覆（光繞到暗面）、反光、影子柔和度、衰減次方
 uniform int uLn;
-uniform vec4 uLPos[6], uLPar[6], uLExt[6], uLDir[6];
+uniform vec4 uLPos[8], uLPar[8], uLExt[8], uLDir[8];
 // 打光樣式（uLExt.w > 0.5）的燈換一套意思（relight.js 照 Hypic 成品擬合的數字）：
 //   uLPos：位置 xy（照片 0~1）、高度 z、範圍 w（都是深度圖像素）；uLPar：乘的強度（人、背景）、加的強度（人、背景）
-//   uLDir：方向性（0 整片一樣亮、1 只照朝燈的面）、高光；uLCol：顏色
-uniform vec3 uLCol[6];
+//   uLDir：方向性（0 整片一樣亮、1 只照朝燈的面）、高光、長寬比、角度；uLCol：顏色
+uniform vec3 uLCol[8];
 uniform float uLAmbS, uLAmbB, uBgDepth, uThick, uHasGeo, uGeoMax;
 uniform vec2 uGeoTex;
 uniform vec4 uHaze; uniform vec3 uHazeCol;
@@ -366,12 +366,15 @@ void main(){
     }
     vec3 Pw = vec3(uv / gt, h0 * pw - (1.0 - pw) * uBgDepth);
     vec3 light = vec3(0.0), spec = vec3(0.0), rim = vec3(0.0), mul = vec3(0.0), add = vec3(0.0), orb = vec3(0.0);
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 8; i++) {
       if (i >= uLn) break;
       if (uLExt[i].w > 0.5) {
         // Hypic 的打光：先整張壓暗，每盞燈是一團有範圍的光（高斯），照在人身上時朝燈的面亮、背對的面暗；
         // 乘的部分照亮原本的顏色，加的部分讓藍光、綠光在偏紅的皮膚上也看得到
+        // 光的形狀是橢圓：uLDir.z 長寬比、uLDir.w 角度
         vec2 dg = (uv - uLPos[i].xy) / gt;
+        float ca = cos(uLDir[i].w), sa = sin(uLDir[i].w);
+        dg = vec2(dg.x * ca + dg.y * sa, (-dg.x * sa + dg.y * ca) / max(uLDir[i].z, 0.05));
         float G = exp(-dot(dg, dg) / (2.0 * uLPos[i].w * uLPos[i].w));
         vec3 Pf = vec3(uv / gt, h0 * pw), Lf = vec3(uLPos[i].xy / gt, uLPos[i].z), Lf2 = normalize(Lf - Pf);
         float kd = 1.0 - uLDir[i].x + uLDir[i].x * clamp(dot(N, Lf2), 0.0, 1.0);
@@ -794,8 +797,8 @@ export class Renderer {
     }
     gl.uniform1i(u.uWn, n);
     gl.uniform4fv(u.uW1, w1); gl.uniform4fv(u.uW2, w2); gl.uniform2fv(u.uW3, w3);
-    const L = fx.lit, ls = (L?.lights || []).slice(0, 6);
-    const lp = new Float32Array(24), lr = new Float32Array(24), le = new Float32Array(24), ld = new Float32Array(24), lc = new Float32Array(18);
+    const L = fx.lit, ls = (L?.lights || []).slice(0, 8);
+    const lp = new Float32Array(32), lr = new Float32Array(32), le = new Float32Array(32), ld = new Float32Array(32), lc = new Float32Array(24);
     ls.forEach((l, i) => { lp.set(l.pos, i * 4); lr.set(l.par, i * 4); le.set(l.ext || [36, 1, 0, 0], i * 4); ld.set(l.dir || [0, 0, 0, 0], i * 4); lc.set(l.col, i * 3); });
     gl.uniform1i(u.uLn, ls.length); gl.uniform4fv(u.uLPos, lp); gl.uniform4fv(u.uLPar, lr); gl.uniform4fv(u.uLExt, le); gl.uniform4fv(u.uLDir, ld); gl.uniform3fv(u.uLCol, lc);
     gl.uniform1f(u.uLAmbS, L?.ambS ?? 1); gl.uniform1f(u.uLAmbB, L?.ambB ?? 1); gl.uniform1f(u.uBgDepth, L?.bgDepth ?? 0); gl.uniform1f(u.uThick, L?.thick ?? 1e4);
