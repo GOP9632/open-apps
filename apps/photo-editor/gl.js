@@ -110,7 +110,7 @@ uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）；骨架收
 uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大 2 骨架收窄 3 往下拉長 4 整段拉長)、強度、橢圓比（收窄：只收一點的那側）
 uniform vec2 uW3[${MAX_WARPS}]; // 頭的傾斜 cos、sin（收窄：最強的位置、範圍）
 uniform float uExposure, uBright, uContrast, uSat, uTemp, uTint, uHigh, uShadow, uSharp, uVig, uGrain, uFade;
-uniform float uVib, uStruct, uTexture, uLSense, uBack, uFlashA;
+uniform float uVib, uStruct, uTexture, uLSense, uBack, uLProt;
 uniform float uSmoothAmt, uWhite, uLutAmt, uHasLut, uLutSkin;
 uniform float uDark, uFold, uEyeB, uTeeth;
 // 打光、閃光燈：最多 8 盞燈（閃光燈也算一盞）
@@ -425,6 +425,8 @@ void main(){
     float Ll = luma(lit);
     float kn = max(0.72, L0);
     if (Ll > kn) { float e = Ll - kn; lit *= (kn + e / (1.0 + e * 3.0)) / Ll; }
+    // 調整 › 閃光燈：人身上本來就亮的地方（受光面、亮皮膚）不再補光，只補暗的地方，臉才會變平而不是過曝
+    if (uLProt > 0.0) lit = mix(lit, col, smoothstep(0.72, 0.95, L0) * uLProt * pw);
     col = clamp(lit, 0.0, 1.0);
   }
 
@@ -452,16 +454,6 @@ void main(){
     float Lb = luma(texture(uBlurS, uv).rgb);
     float g = 1.0 + uBack * 1.6 * pow(1.0 - smoothstep(0.05, 0.65, Lb), 1.5);
     col = 1.0 - pow(max(1.0 - col, 0.0), vec3(g));
-  }
-  if (uFlashA != 0.0) {
-    // 閃光燈（Hypic 調整第一項，−100~100）：像正面補一下閃光，人比背景亮得多、暗部補得多、
-    // 顏色偏一點冷白；往左是反過來把人壓暗
-    float pw = texture(uSeg, uv).r, k = uFlashA * mix(0.25, 1.0, pw);
-    if (k > 0.0) {
-      col = 1.0 - pow(max(1.0 - col, 0.0), vec3(1.0 + k * 0.9));
-      col = mix(col, col * vec3(0.985, 1.0, 1.03), k * 0.6);
-    } else col = pow(max(col, 0.0), vec3(1.0 - k * 0.6));
-    col = clamp(col, 0.0, 1.0);
   }
   col *= exp2(uExposure);
   col = pow(max(col, 0.0), vec3(1.0 - uBright * 0.45));
@@ -802,7 +794,7 @@ export class Renderer {
     const lp = new Float32Array(32), lr = new Float32Array(32), le = new Float32Array(32), ld = new Float32Array(32), lc = new Float32Array(24);
     ls.forEach((l, i) => { lp.set(l.pos, i * 4); lr.set(l.par, i * 4); le.set(l.ext || [36, 1, 0, 0], i * 4); ld.set(l.dir || [0, 0, 0, 0], i * 4); lc.set(l.col, i * 3); });
     gl.uniform1i(u.uLn, ls.length); gl.uniform4fv(u.uLPos, lp); gl.uniform4fv(u.uLPar, lr); gl.uniform4fv(u.uLExt, le); gl.uniform4fv(u.uLDir, ld); gl.uniform3fv(u.uLCol, lc);
-    gl.uniform1f(u.uLAmbS, L?.ambS ?? 1); gl.uniform1f(u.uLAmbB, L?.ambB ?? 1); gl.uniform1f(u.uBgDepth, L?.bgDepth ?? 0); gl.uniform1f(u.uThick, L?.thick ?? 1e4);
+    gl.uniform1f(u.uLAmbS, L?.ambS ?? 1); gl.uniform1f(u.uLAmbB, L?.ambB ?? 1); gl.uniform1f(u.uBgDepth, L?.bgDepth ?? 0); gl.uniform1f(u.uThick, L?.thick ?? 1e4); gl.uniform1f(u.uLProt, L?.protect ?? 0);
     const g = this.geo;
     gl.uniform1f(u.uHasGeo, g ? 1 : 0); gl.uniform1f(u.uGeoMax, g ? g.max : 0); gl.uniform2f(u.uGeoTex, 1 / (g?.w || 1), 1 / (g?.h || 1));
     gl.uniform4fv(u.uHaze, L?.haze || [0, 0, 1, 0]); gl.uniform3fv(u.uHazeCol, L?.hazeCol || [1, 1, 1]);
@@ -822,7 +814,7 @@ export class Renderer {
     gl.uniform1f(u.uVig, f(p.vignette));
     gl.uniform1f(u.uGrain, f(p.grain));
     gl.uniform1f(u.uFade, f(p.fade));
-    gl.uniform1f(u.uVib, f(p.vibrance || 0)); gl.uniform1f(u.uStruct, f(p.structure || 0)); gl.uniform1f(u.uTexture, f(p.texture || 0)); gl.uniform1f(u.uLSense, f(p.lightSense || 0)); gl.uniform1f(u.uBack, f(p.backlight || 0)); gl.uniform1f(u.uFlashA, f(p.flashFill || 0));
+    gl.uniform1f(u.uVib, f(p.vibrance || 0)); gl.uniform1f(u.uStruct, f(p.structure || 0)); gl.uniform1f(u.uTexture, f(p.texture || 0)); gl.uniform1f(u.uLSense, f(p.lightSense || 0)); gl.uniform1f(u.uBack, f(p.backlight || 0));
     gl.uniform1f(u.uSmoothAmt, f(p.smooth));
     gl.uniform1f(u.uWhite, f(p.white));
     gl.uniform1f(u.uDark, f(p.dark)); gl.uniform1f(u.uFold, f(p.fold));

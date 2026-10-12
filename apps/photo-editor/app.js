@@ -101,7 +101,7 @@ const I = {
 };
 
 const ADJUST = [
-  ['flashFill', '閃光燈', I.flashA], ['brightness', '亮度', I.sun], ['lightSense', '光感', I.lsense], ['exposure', '曝光', I.exposure], ['contrast', '對比', I.contrast], ['saturation', '飽和', I.drop],
+  ['flashFill', '閃光燈', I.flashA, 0, 60, 100], ['brightness', '亮度', I.sun], ['lightSense', '光感', I.lsense], ['exposure', '曝光', I.exposure], ['contrast', '對比', I.contrast], ['saturation', '飽和', I.drop],
   ['vibrance', '自然飽和', I.vib], ['texture', '質感', I.texture, 0], ['sharpen', '銳化', I.sharp, 0], ['structure', '結構', I.struct],
   ['highlights', '高光', I.high], ['shadows', '陰影', I.shadow], ['backlight', '背光校正', I.backlit, 0], ['temp', '色溫', I.temp], ['tint', '色調', I.tint],
   ['grain', '顆粒', I.grain, 0], ['fade', '褪色', I.fade, 0], ['vignette', '暗角', I.vig],
@@ -456,7 +456,8 @@ function syncTex() {
 // 打光、閃光燈的參數
 function effects() {
   const fx = { faces: base.geoms };
-  if (P.light || P.flash) Object.assign(fx, litParams(P, base, ensureGeo()));
+  if (P.flashFill > 0 && !base.segP) getSeg(base);
+  if (P.light || P.flash || P.flashFill > 0) Object.assign(fx, litParams(P, base, ensureGeo()));
   const e = fxById(P.fx);
   if (e) { fx.fxMode = e.mode; fx.fxAmt = P.fxAmt / 100; }
   if (P.ov) fx.over = P.ovAmt / 100;
