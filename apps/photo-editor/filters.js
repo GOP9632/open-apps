@@ -65,6 +65,8 @@ export const FILTERS = [
 
 // 濾鏡 id → 顏色函式；醒圖風格濾鏡（xt 開頭）在 xt.js，還沒載入時回傳 null
 export const filterFn = id => !id || id === 'none' ? null : FILTERS.find(f => f.id === id)?.fn ?? xtFn(id);
+// 皮膚另外那套顏色（只有部分醒圖風格濾鏡有）
+export const skinFilterFn = id => xtFn(id, true);
 
 export function bakeLUT(fn) {
   const c = document.createElement('canvas');

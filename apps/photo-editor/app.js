@@ -1,5 +1,5 @@
 import { Renderer } from './gl.js';
-import { FILTERS, bakeLUT, thumb, filterFn } from './filters.js';
+import { FILTERS, bakeLUT, thumb, filterFn, skinFilterFn } from './filters.js';
 import { loadXT, xtData, xtItem } from './xt.js';
 import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor } from './ai.js';
 import { STICKERS, STICKER_CATS, EMOJIS, EMOJI_FONT, BLENDS, blendById, stickerAR, stickerURL, svgURL, renderSticker, putCanvas, getCanvas, canvasURL, touchCanvas, ownImages } from './stickers.js';
@@ -291,7 +291,9 @@ function render() {
   raf = requestAnimationFrame(() => {
     raf = 0;
     const lut = gradeOn(P) ? getGradeLut() : P.filter === 'none' ? null : getLut(P.filter);
-    R.setLut(lut);
+    // 皮膚另外一套顏色要用皮膚遮罩，還沒找過臉就先找
+    if (lut?.skin && !base.facesP) findFaces();
+    R.setLut(lut?.c, lut?.skin);
     draw();
     paintPop();
     if (curFrame()?.live) paintFrame();
@@ -443,11 +445,24 @@ function effects() {
 let gradeLut = null, gradeLutKey = '';
 function getGradeLut() {
   const k = gradeKey(P) + '|' + P.filter + '|' + P.filterAmt;
-  if (k !== gradeLutKey) { gradeLutKey = k; gradeLut = bakeLUT(gradeFn(P, filterFn(P.filter))); }
+  if (k !== gradeLutKey) {
+    gradeLutKey = k; const sk = skinFilterFn(P.filter);
+    gradeLut = lutPair(bakeLUT(gradeFn(P, filterFn(P.filter))), sk && bakeLUT(gradeFn(P, sk)));
+  }
   return gradeLut;
 }
+// 一般顏色和皮膚那套拼成一張 1024×512（沒有皮膚那套就兩邊一樣）
+function lutPair(a, b) {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 512;
+  const x = c.getContext('2d'); x.drawImage(a, 0, 0); x.drawImage(b || a, 512, 0);
+  return { c, skin: !!b };
+}
 function getLut(id) {
-  if (!lutCache.has(id)) { const fn = filterFn(id); if (!fn) return null; lutCache.set(id, bakeLUT(fn)); }
+  if (!lutCache.has(id)) {
+    const fn = filterFn(id); if (!fn) return null;
+    const sk = skinFilterFn(id);
+    lutCache.set(id, lutPair(bakeLUT(fn), sk && bakeLUT(sk)));
+  }
   return lutCache.get(id);
 }
 
