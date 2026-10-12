@@ -375,7 +375,8 @@ void main(){
         vec2 dg = (uv - uLPos[i].xy) / gt;
         float ca = cos(uLDir[i].w), sa = sin(uLDir[i].w);
         dg = vec2(dg.x * ca + dg.y * sa, (-dg.x * sa + dg.y * ca) / max(uLDir[i].z, 0.05));
-        float G = exp(-dot(dg, dg) / (2.0 * uLPos[i].w * uLPos[i].w));
+        // uLExt.y：光斑邊緣硬度（1 是高斯，越大中間越平、邊越清楚）
+        float G = exp(-pow(dot(dg, dg) / (2.0 * uLPos[i].w * uLPos[i].w), max(uLExt[i].y, 1.0)));
         vec3 Pf = vec3(uv / gt, h0 * pw), Lf = vec3(uLPos[i].xy / gt, uLPos[i].z), Lf2 = normalize(Lf - Pf);
         float kd = 1.0 - uLDir[i].x + uLDir[i].x * clamp(dot(N, Lf2), 0.0, 1.0);
         vec3 c = uLCol[i];

@@ -135,7 +135,8 @@ export function buildDepth(segB, person, faces, W, H) {
       Hm[i] = inHead[i] || Wf[i] ? v : Math.max(Hm[i], v);
     }
   }
-  blur(Hm, w, h, Math.max(1, Math.round(Math.max(w, h) / 300)));
+  // 臉的網格是一片片三角形，法線會一格一格跳，打光時額頭會出現方塊狀的亮斑；抹平到臉寬的 4%
+  blur(Hm, w, h, Math.max(1, Math.round(fw ? fw * 0.04 : Math.max(w, h) / 300)));
 
   let max = 1e-3;
   for (let i = 0; i < w * h; i++) max = Math.max(max, Hm[i]);
@@ -159,7 +160,7 @@ export function buildDepth(segB, person, faces, W, H) {
 const NOT_USE = [[0, 7], [1, 4], [1, 5], [1, 8], [2, 4], [2, 9], [2, 10], [3, 7], [3, 10], [4, 8], [4, 9], [5, 8], [6, 7], [7, 10], [8, 9], [9, 10], [0, 1], [0, 3], [0, 6], [0, 10], [1, 6], [1, 9], [2, 3], [2, 7], [3, 6], [4, 5], [5, 6], [6, 10]];
 const PAL = [[255, 0, 0, 8], [0, 255, 0, 9], [0, 0, 255, 13], [255, 0, 255, 8], [0, 255, 255, 11], [255, 255, 0, 10], [255, 120, 0, 10], [255, 0, 120, 8], [0, 255, 150, 9], [0, 120, 255, 13], [120, 0, 255, 13]];
 // 每個樣式擬合出來的燈（對照 Hypic 同一張照片的成品，用最小平方法算出來的數字，不是 Hypic 的檔案）
-//   amb：人、背景先壓暗到多少；l：每盞燈 [x, y（以臉中心、臉寬為單位）, 高度, 範圍, 乘（人、背景）, 加（人、背景）, 方向性, 高光, (長寬比, 角度,) R, G, B]
+//   amb：人、背景先壓暗到多少；l：每盞燈 [x, y（以臉中心、臉寬為單位）, 高度, 範圍, 乘（人、背景）, 加（人、背景）, 方向性, 高光, (長寬比, 角度, (邊緣硬度,)) R, G, B]
 const LIGHT_FIT = {
   soft: { amb: [0.364, 0.999], l: [[-0.03,0.182,1.886,2.961,0.81,0.0,0.0,0.001,0.125,0.0,0.964,0.953,0.968]] }, // 臉部柔光
   warm: { amb: [0.929, 0.943], l: [[0.303,0.821,1.73,0.694,0.178,0.159,0.0,0.0,0.509,0.03,0.707,0.443,0.072],[2.072,3.0,4.412,3.776,0.171,0.152,0.0,0.0,1.0,0.0,1.263,0.807,0.0]] }, // 氣氛暖光
@@ -327,7 +328,7 @@ export function litParams(P, base, geo) {
       // 雙色寶盒「換一組」：換成挑到的顏色，亮度照原本那盞
       if (picks && L.id === 'duo' && picks[i]) { const pc = picks[i].slice(3, 6).map(v => v / 255), pm = (pc[0] + pc[1] + pc[2]) / 3 || 1; col = pc.map(v => v / pm * m); }
       const q = fitXY(A, base, f), g = k * lum / s;
-      lights.push({ pos: [q.x + ox, q.y + oy, z * A.F, sig * A.F * s * bl], col, par: [Ip * g, Ib * g, Jp * g, Jb * g], dir: [dr / bl, Sp * sp * k, f.length > 13 ? f[10] : 1, f.length > 13 ? f[11] : 0], ext: [36, 0, 0, 1] });
+      lights.push({ pos: [q.x + ox, q.y + oy, z * A.F, sig * A.F * s * bl], col, par: [Ip * g, Ib * g, Jp * g, Jb * g], dir: [dr / bl, Sp * sp * k, f.length > 13 ? f[10] : 1, f.length > 13 ? f[11] : 0], ext: [36, f.length > 15 ? 1 + (f[12] - 1) / bl : 1, 0, 1] });
     });
     // 彩虹光點：背景上的彩色發光小球（照片座標）
     if (L.id === 'rainbow') lightList(L, seed).slice(2).forEach(r => lights.push({ pos: [r[0] + ox, r[1] + oy, 0, 1], col: r.slice(3, 6).map(v => v / 255 * k), par: [0, 0, 0, 0], dir: [0, 0, 0, 0], ext: [36, 0, 2, 1] }));
