@@ -364,7 +364,7 @@ void main(){
       N = normalize(mix(vec3(0.0, 0.0, 1.0), normalize(vec3(-hx, -hy, 2.0)), smoothstep(0.1, 0.6, pw)));
     }
     vec3 Pw = vec3(uv / gt, h0 * pw - (1.0 - pw) * uBgDepth);
-    vec3 light = vec3(0.0), spec = vec3(0.0), rim = vec3(0.0);
+    vec3 light = vec3(0.0), spec = vec3(0.0), rim = vec3(0.0), tint = vec3(0.0), orb = vec3(0.0);
     // 陽光碎片：樹葉縫隙透下來的一塊一塊光斑（柔焦越大邊越軟）
     vec2 dq = vUV * vec2(uSize.x / uSize.y, 1.0) * 16.0;
     float dn = vnoise(dq + vnoise(dq * 0.7) * 1.5) * 0.65 + vnoise(dq * 2.3 + 7.1) * 0.35;
@@ -377,9 +377,31 @@ void main(){
       // 衰減：在臉中間是 1，離燈越近越亮、越遠越暗（燈越近，明暗差越大）
       float att = min(pow(uLPos[i].w * uLPos[i].w / (dist * dist), uLPar[i].w), 1.6);
       float sh = uHasGeo > 0.5 && uLExt[i].y > 0.5 ? shadow(Pw, Lp, uLPar[i].z) : 1.0;
-      // 背景離人近的樣式（彩色光）影子只留在人身上，背景上的大片影子邊很硬、不自然
-      if (uLExt[i].w > 0.5) sh = mix(1.0, sh, pw);
-      float dap = uLExt[i].z > 0.5 ? mix(0.3, 1.5, smoothstep(0.56, 0.6 + 0.02 * uLPar[i].z, dn)) : 1.0;
+      float pch = uLExt[i].z > 0.5 && uLExt[i].z < 1.5 ? smoothstep(0.56, 0.6 + 0.02 * uLPar[i].z, dn) : 0.0;
+      float dap = uLExt[i].z > 0.5 && uLExt[i].z < 1.5 ? mix(0.3, 1.5, pch) : 1.0;
+      if (uLExt[i].w > 0.5) {
+        // Hypic 的打光：先整張壓暗，再照燈的顏色整體調色（不是只在人身上打一盞燈）。
+        // 對照 Hypic 成品量出來：偏離平均的顏色乘 0.25、整體亮度加 0.13，朝燈的地方多、背對的地方少
+        vec3 c = uLCol[i]; float m = (c.r + c.g + c.b) / 3.0;
+        float shade = mix(0.75, 1.1, clamp(diff * att * mix(1.0, sh, pw), 0.0, 1.4));
+        if (uLExt[i].w > 2.5) shade *= 1.0 - smoothstep(0.2, 0.7, pw);   // 多色雙燈：只染背景，人只壓暗
+        else if (uLExt[i].w > 1.5) shade *= smoothstep(0.2, 0.7, pw);    // 臉部柔光、彩虹光點：只照人
+        tint += ((c - m) * 0.25 + m * 0.13) * shade;
+        // 光斑（夕陽餘輝、陽光碎片）：人身上一塊一塊的亮光
+        if (uLExt[i].z > 0.5 && uLExt[i].z < 1.5) {
+          vec2 q2 = vUV * vec2(uSize.x / uSize.y, 1.0) * 7.0;
+          float big = vnoise(q2 + vnoise(q2 * 0.6) * 1.2);
+          tint += c * 0.45 * smoothstep(0.58, 0.8, big) * pw * pow(shade, 3.0);
+        }
+        // 光點（彩虹光點、雙色寶盒）：背景上看得到的發光小球
+        if (uLExt[i].z > 1.5) {
+          vec2 dv = (vUV - uLPos[i].xy) * vec2(uSize.x / uSize.y, 1.0);
+          orb += normalize(c + 1e-4) * exp(-dot(dv, dv) / 0.0012) * (1.0 - pw);
+        }
+        vec3 Hv = normalize(Ld + vec3(0.0, 0.0, 1.0));
+        spec += c * pow(max(dot(N, Hv), 0.0), uLExt[i].x) * uLPar[i].y * att * sh * max(skin, 0.5 * pw);
+        continue;
+      }
       // 燈在人後面（輪廓光、逆光）只照人，不照背景；邊緣直接亮起來，暗的頭髮也看得到一圈光
       // 後面的燈只照到側面朝燈的地方，越邊緣越亮，所以是細細一圈
       float back = uLPos[i].z < 0.0 ? smoothstep(0.45, 0.95, pw) : 1.0;
@@ -389,13 +411,13 @@ void main(){
       if (uLPos[i].z < 0.0) rim += li * 0.45;
       // 彩色的燈：皮膚的紅色很多，只用乘的話藍光、綠光幾乎看不到，所以再直接加一點燈的顏色
       float cs = max(uLCol[i].r, max(uLCol[i].g, uLCol[i].b)) - min(uLCol[i].r, min(uLCol[i].g, uLCol[i].b));
-      // 背景離人近（Hypic 的 apart 小）的樣式，背景也染上燈的顏色
-      rim += li * cs * 0.22 * (pw + (1.0 - pw) * uLExt[i].w * 1.6);
+      rim += li * cs * 0.22 * pw;
       vec3 Hv = normalize(Ld + vec3(0.0, 0.0, 1.0));
       spec += uLCol[i] * pow(max(dot(N, Hv), 0.0), uLExt[i].x) * uLPar[i].y * att * sh * dap * max(skin, 0.5 * pw);
     }
     float L0 = luma(col);
-    vec3 lit = col * (mix(uLAmbB, uLAmbS, pw) + light) + spec * smoothstep(0.1, 0.45, L0) + rim;
+    vec3 lit = col * (mix(uLAmbB, uLAmbS, pw) * (1.0 + tint) + light) + spec * smoothstep(0.1, 0.45, L0) + rim;
+    lit = 1.0 - (1.0 - lit) * (1.0 - min(orb, vec3(1.0)) * 0.9);
     // 逆光光暈：燈後面一團暖光，人的輪廓邊緣透光
     if (uHaze.w > 0.0) {
       vec2 dh = (vUV - uHaze.xy) * vec2(uSize.x / uSize.y, 1.0);
@@ -405,7 +427,8 @@ void main(){
     }
     // 亮部柔和壓縮（照亮度壓，顏色不會變白變灰）
     float Ll = luma(lit);
-    if (Ll > 0.72) { float e = Ll - 0.72; lit *= (0.72 + e / (1.0 + e * 3.0)) / Ll; }
+    float kn = max(0.72, L0);
+    if (Ll > kn) { float e = Ll - kn; lit *= (kn + e / (1.0 + e * 3.0)) / Ll; }
     col = clamp(lit, 0.0, 1.0);
   }
 
