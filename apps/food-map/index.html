@@ -7,13 +7,13 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://ptocokzxpwwautnbbuup.supabase.co" crossorigin>
 <meta name="theme-color" content="#fbf7f2" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#121110" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="美食收藏">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.0/dist/maplibre-gl.css">
 <style>
 /* 擋掉 iPhone 連點兩下放大（例如連按復原、返回），雙指縮放照常可用 */
 html{touch-action:manipulation}
@@ -128,7 +128,9 @@ nav.tabbar .add:active{transform:translateY(-14px) scale(.9)}
 /* 照片卡片 */
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 12px}
 @media (min-width:640px){.grid{grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:18px}}
-.pcard{cursor:pointer;animation:pop .45s var(--ease) both;animation-delay:calc(min(var(--i,0),14) * 35ms);transition:transform .2s var(--ease)}
+/* 卡片只在切換分頁、第一次打開時彈出；改篩選、按想去／去過這類重畫不重播，不然每次都閃一下 */
+.pcard{cursor:pointer;transition:transform .2s var(--ease)}
+main.enter .pcard{animation:pop .45s var(--ease) both;animation-delay:calc(min(var(--i,0),14) * 35ms)}
 .pcard:active{transform:scale(.97)}
 .ph{position:relative;aspect-ratio:4/5;border-radius:var(--r2);overflow:hidden;box-shadow:var(--sh2);background:var(--bg2)}
 .ph img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .5s var(--ease),opacity .4s}
@@ -193,14 +195,17 @@ body.no-cards .map-side{bottom:calc(var(--tabbar-h) + 30px + var(--safe-b))}
 .mcard .m{font-size:12.5px;color:var(--muted);margin-top:3px}
 .mcard .acts{margin-top:auto;display:flex;gap:6px}
 .mcard .acts .btn{height:34px;padding:0 12px;font-size:13px;border-radius:11px}
-.pin{width:40px;height:40px;cursor:pointer;transition:transform .3s var(--spring);transform-origin:50% 100%;filter:drop-shadow(0 4px 6px rgba(0,0,0,.25))}
+/* 標籤外層交給 MapLibre 定位（它每一格都改 transform），動畫只能放在內層，不然拖地圖時標籤會慢半拍才跟上 */
+.pin{width:40px;height:40px;cursor:pointer}
+.pin .pi{width:40px;height:40px;transition:transform .3s var(--spring);transform-origin:50% 100%;filter:drop-shadow(0 4px 6px rgba(0,0,0,.25))}
 .pin .b{width:40px;height:40px;border-radius:50% 50% 50% 6px;transform:rotate(-45deg);background:var(--c,#ff6a2b);border:3px solid #fff;display:flex;align-items:center;justify-content:center;overflow:hidden}
 .pin .b span{transform:rotate(45deg);font-size:19px;line-height:1}
 .pin .b img{transform:rotate(45deg) scale(1.45);width:100%;height:100%;object-fit:cover}
 .pin.been .b{border-color:#d3f9d8}
-.pin.sel{transform:scale(1.35);z-index:5}
-.zoomed-out .pin{transform:scale(.55)}
-.zoomed-out .pin.sel{transform:scale(1.1)}
+.pin.sel{z-index:5}
+.pin.sel .pi{transform:scale(1.35)}
+.zoomed-out .pin .pi{transform:scale(.55)}
+.zoomed-out .pin.sel .pi{transform:scale(1.1)}
 .me-dot{width:22px;height:22px;border-radius:50%;background:#1c7ed6;border:3.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.3);position:relative}
 .me-dot::after{content:"";position:absolute;inset:-14px;border-radius:50%;background:rgba(28,126,214,.25);animation:pulse 2s ease-out infinite}
 @keyframes pulse{0%{transform:scale(.4);opacity:1}100%{transform:scale(1.6);opacity:0}}
@@ -208,6 +213,7 @@ body.no-cards .map-side{bottom:calc(var(--tabbar-h) + 30px + var(--safe-b))}
 .maplibregl-ctrl-bottom-left,.maplibregl-ctrl-bottom-right{bottom:calc(var(--tabbar-h) + 150px + var(--safe-b))!important;transition:bottom .35s}
 body.no-cards .maplibregl-ctrl-bottom-left,body.no-cards .maplibregl-ctrl-bottom-right{bottom:calc(var(--tabbar-h) + 14px + var(--safe-b))!important}
 .minimap{height:190px;border-radius:var(--r2);overflow:hidden;box-shadow:inset 0 0 0 1px var(--line);margin-top:12px;position:relative}
+.minimap canvas{animation:fade .35s both}
 .minimap .maplibregl-ctrl-bottom-left,.minimap .maplibregl-ctrl-bottom-right{bottom:0!important}
 
 /* 抽屜 */
@@ -461,7 +467,6 @@ details.list .inner{display:block;padding:4px 16px 16px;font-weight:400}
 <div id="overlay"></div>
 <div id="toast"></div>
 <script src="config.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.109.0/dist/umd/supabase.js"></script>
 <script src="app.js"></script>
 </body>
