@@ -2,6 +2,8 @@
 // 每畫完一筆就畫進照片（跟消除一樣），可以用上一步復原
 
 export const DD_COLORS = ['ffffff', '000000', 'ff3b30', 'ff9500', 'ffcc00', '34c759', '30b0c7', '007aff', 'af52de', 'ff2d92'];
+import { blurred } from './cblur.js';
+
 const st = { tool: 'pen', color: 'ff3b30', size: 20, op: 100, feather: 0, param: 'size', mosaic: 'square' };
 export const MOSAICS = [['square', '方格'], ['blur', '模糊'], ['glass', '毛玻璃']];
 
@@ -13,24 +15,22 @@ const radius = (W, H) => Math.min(W, H) * (0.004 + 0.076 * st.size / 100);
 function strokeMask(pts, W, H) {
   const c = newCanvas(W, H), ctx = c.getContext('2d'), r = radius(W, H);
   const f = st.feather / 100 * r;
-  if (f > 0.5) ctx.filter = `blur(${f}px)`;
   ctx.strokeStyle = ctx.fillStyle = '#fff'; ctx.lineWidth = r * 2 * (1 - 0.4 * st.feather / 100); ctx.lineCap = ctx.lineJoin = 'round';
   ctx.beginPath();
   pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
   if (pts.length === 1) ctx.lineTo(pts[0].x + 0.01, pts[0].y);
   ctx.stroke();
-  return c;
+  return f > 0.5 ? blurred(c, f) : c;
 }
 // 馬賽克的底圖：方格（縮小再放大）、模糊、毛玻璃（亂數挪動像素）
 function mosaicOf(src) {
   const W = src.width, H = src.height, cell = Math.max(4, Math.min(W, H) * (0.008 + 0.03 * st.size / 100));
   const out = newCanvas(W, H), ctx = out.getContext('2d');
-  if (st.mosaic === 'blur') { ctx.filter = `blur(${cell * 0.8}px)`; ctx.drawImage(src, 0, 0); return out; }
+  if (st.mosaic === 'blur') return blurred(src, cell * 0.8);
   if (st.mosaic === 'glass') {
-    ctx.filter = `blur(${cell * 0.25}px)`;
     const n = 6;
     for (let i = 0; i < n; i++) { ctx.globalAlpha = 1 / (i + 1); ctx.drawImage(src, (Math.sin(i * 2.4) * cell) * 0.6, (Math.cos(i * 2.4) * cell) * 0.6); }
-    return out;
+    return blurred(out, cell * 0.25);
   }
   const s = newCanvas(W / cell, H / cell), sx = s.getContext('2d');
   sx.drawImage(src, 0, 0, s.width, s.height);

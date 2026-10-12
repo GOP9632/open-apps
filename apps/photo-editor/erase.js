@@ -1,6 +1,7 @@
 // 消除筆：塗抹、框選、橡皮擦選出要消除的地方，或自動圈出路人，再用 MI-GAN 修補模型補上背景
 // MI-GAN（Picsart，MIT 授權）在瀏覽器裡跑，照片不會上傳。模型第一次用時下載約 28MB，之後瀏覽器會快取
 import { segment } from './ai.js';
+import { blurred } from './cblur.js';
 
 const ORT = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
 const MODEL = 'https://huggingface.co/andraniksargsyan/migan/resolve/main/migan_pipeline_v2.onnx';
@@ -33,14 +34,13 @@ function maskBox(mask) {
 // 把選區描邊變粗再暈開：補的範圍稍微蓋過物體邊緣，接縫也看不出來
 function grow(mask, w, h, px, blur) {
   const c = newCanvas(w, h), ctx = c.getContext('2d');
-  if (blur) ctx.filter = `blur(${blur}px)`;
   const steps = 12;
   for (let i = 0; i < steps; i++) {
     const a = i / steps * Math.PI * 2;
     ctx.drawImage(mask, Math.cos(a) * px, Math.sin(a) * px, w, h);
   }
   ctx.drawImage(mask, 0, 0, w, h);
-  return c;
+  return blur ? blurred(c, blur) : c;
 }
 
 // src：照片 canvas；mask：任意大小、跟照片同比例的選區（alpha > 0 的地方要消除）

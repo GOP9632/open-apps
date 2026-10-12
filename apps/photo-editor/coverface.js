@@ -2,6 +2,7 @@
 //   Hypic 是在手機上找臉、把素材貼到臉上，支援多張臉，沒有滑桿。
 //   這裡的圖案全部自己畫（SVG）；高斯模糊、模糊、敏感內容、馬賽克是把那張臉的位置模糊或打格子。
 //   點一下會貼到每一張臉上，之後跟一般貼紙一樣可以拖曳、縮放、旋轉、刪除。
+import { blurred } from './cblur.js';
 const sv = (w, h, body) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">${body}</svg>`;
 const TXT = 'font-family="-apple-system,PingFang TC,Noto Sans TC,Arial Black,sans-serif" font-weight="900" text-anchor="middle"';
 // 蓋住整張臉的圖：100×120；蓋眼睛的：寬 300
@@ -67,9 +68,8 @@ export function coverPixels(src, kind, cx, cy, w, rot) {
     t.getContext('2d').drawImage(crop, 0, 0, t.width, t.height);
     o.imageSmoothingEnabled = false; o.drawImage(t, 0, 0, cw, ch);
   } else {
-    o.filter = `blur(${Math.round(cw * (kind === 'gauss' ? 0.06 : 0.1))}px)`;
-    o.drawImage(crop, 0, 0); o.drawImage(crop, 0, 0);
-    o.filter = 'none';
+    const bl = blurred(crop, Math.round(cw * (kind === 'gauss' ? 0.06 : 0.1)));
+    o.drawImage(bl, 0, 0); o.drawImage(bl, 0, 0);
     if (kind === 'blur') { // 模糊：再加一層雜訊，比高斯模糊更看不出來
       const img = o.getImageData(0, 0, cw, ch), d = img.data;
       for (let i = 0; i < d.length; i += 4) { const n = (Math.random() - 0.5) * 40; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
