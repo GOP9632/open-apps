@@ -166,9 +166,9 @@ export const LIGHT_CATS = [
     { id: 'warm', name: '氣氛暖光', mode: 3, fg: 0.95, bg: 0.95, blur: 1, apart: 5, lum: 1, seg: [[0, 0.8, 1, 46.8, 0.8, 1, 1]], cdef: 0.798, l: [[0.5, 0.5, 0.7, 255, 178, 51, 8, 0, 200]] },
     { id: 'dawn', name: '清晨陽光', mode: 2, fg: 0.95, bg: 0.95, blur: 1, apart: 5, lum: 1,
       seg: [[0, 0.255, 1, 36, 0.255, 1, 45], [36, 0.255, 1, 106.2, 0, 1, 5], [106.2, 0, 1, 176.4, 0.255, 1, 5], [176.4, 0.255, 1, 242.1, 0.255, 1, 45]], cdef: 0.764, l: [[0.2, 0.2, 0.6, 190, 225, 255, 7, 0, 200]] },
-    { id: 'sunset', name: '夕陽餘輝', mode: 4, fg: 0.8, bg: 0.8, blur: 7, apart: 0.55, lum: 1, spec: 35, seg: [[7.2, 1, 1, 36, 1, 1, 1]], cdef: 0.5, l: [[0.8, 0.2, 0.5, 255, 92, 0, 6, 7, 36]] },
+    { id: 'sunset', name: '夕陽餘輝', mode: 4, dapple: 1, fg: 0.8, bg: 0.8, blur: 7, apart: 0.55, lum: 1, spec: 35, seg: [[7.2, 1, 1, 36, 1, 1, 1]], cdef: 0.5, l: [[0.8, 0.2, 0.5, 255, 92, 0, 6, 7, 36]] },
     { id: 'shards', name: '陽光碎片', mode: 4, fg: 1, bg: 1, blur: 13, apart: 5, spec: 35, dapple: 1,
-      seg: [[0, 0.255, 1, 36, 0.255, 1, 45], [36, 0.255, 1, 111.6, 0.255, 1, 5], [111.6, 0.255, 1, 187.2, 0.255, 1, 5], [187.2, 0.255, 1, 206, 0.255, 1, 45]], cdef: 0.55, l: [[1, 0.25, 0.5, 255, 255, 255, 7, 7, 36]] },
+      seg: [[0, 0.255, 1, 36, 0.255, 1, 45], [36, 0.255, 1, 111.6, 0.255, 1, 5], [111.6, 0.255, 1, 187.2, 0.255, 1, 5], [187.2, 0.255, 1, 206, 0.255, 1, 45]], cdef: 0.55, l: [[1, 0.25, 0.5, 255, 255, 255, 1, 7, 36]] },
   ] },
   { id: 'mono', name: '單色光', items: [
     { id: 'pink', name: '暗夜粉', mode: 4, fg: 0.85, bg: 0.85, blur: 1, apart: 5, lum: 1, seg: [[288, 1, 1, 324, 1, 1, 1]], cdef: 0.693, l: [[0.1, 0.5, 0.6, 255, 0, 200, 7, 1, 200]] },
@@ -239,8 +239,10 @@ function pickLights(L, seed) {
 export function lightList(L, seed) {
   if (!L.pick) return L.l;
   if (seed) return pickLights(L, seed);
-  // 預設那組：彩虹光點照 Hypic 前 6 顆（2 白藍 + 紅、綠、藍、洋紅），位置散開
-  if (L.id === 'rainbow') return [...L.l, ...[[0.15, 0.6], [0.85, 0.65], [0.3, 0.85], [0.7, 0.88]].map(([x, y], i) => [x, y, 0.5, ...PAL[[0, 1, 2, 3][i]], 1, 200])];
+  // 預設那組：彩虹光點 2 顆白藍光 + 紫、綠、藍、青 4 個光點（對照 Hypic 成品挑的），光點放在人旁邊的背景上
+  if (L.id === 'rainbow') return [...L.l, ...[[0.1, 0.3], [0.9, 0.12], [0.06, 0.75], [0.94, 0.7]].map(([x, y], i) => [x, y, 0.5, ...PAL[[10, 1, 2, 4][i]], 1, 200])];
+  // 雙色寶盒：Hypic 每次隨機挑兩色，預設用它成品裡出現的玫瑰紅、紫
+  if (L.id === 'duo') return [[0.2, 0.8, 0.6, ...PAL[7], 0, 200], [0.8, 0.2, 0.6, ...PAL[10], 0, 200]];
   return L.l;
 }
 
@@ -306,23 +308,27 @@ export function litParams(P, base, geo) {
     const pw = (m === 1 ? 0.3 : m < 4 ? 0.35 : m === 4 ? 0.9 : 1.3) / s;
     const soft = (1 + L.blur * 0.35) * s * s * bl;
     const home = lightHome(L, base, seed), ox = (P.lightX ?? home.x) - home.x, oy = (P.lightY ?? home.y) - home.y;
-    const ls = lightList(L, seed), many = ls.length > 1 ? 0.8 : 1;
+    // 多色：彩虹光點的燈都照在人身上；雙色的兩盞燈只染背景（Hypic 成品裡人只有壓暗）
+    const ls = lightList(L, seed), many = L.id === 'rainbow' ? 0.8 : ls.length > 1 ? 0.65 : 1, only = m === 1 || L.id === 'rainbow' ? 2 : ls.length > 1 ? 3 : 1;
     ls.forEach((r, i) => {
       let [x, y, z, R, G, B, I, spk, shine] = r;
-      ({ x, y } = i === 0 && m === 1 ? home : toPhoto(A, base, x, y));
+      // 光點是畫在照片上的發光小球，直接用 Hypic 的畫面座標
+      const orbXY = L.pick && i >= (L.id === 'rainbow' ? 2 : 0);
+      ({ x, y } = i === 0 && m === 1 ? home : orbXY ? { x, y } : toPhoto(A, base, x, y));
       x += ox; y += oy;
       const zz = A.F * (z * 4 - 1.2) * s;
       const col = col0 || [R / 255, G / 255, B / 255];
       // 彩虹光點的彩色小光點只照附近：參考距離縮短
       const spot = L.pick && L.id === 'rainbow' && i >= 2;
       // 陽光碎片是太陽光：很遠，不衰減
-      put(x, y, zz, col, I / 8 * (m < 4 ? 0.55 : 0.8) * lum * k * many, [wrap, spk / 10 * sp * k, soft, L.dapple ? 0 : pw * (spot ? 1.6 : 1)],
-        [shine, L.flat || i > 2 ? 0 : 1, L.dapple ? 1 : 0, L.apart < 1 ? 1 : 0], spot ? A.F * 1.4 : 0);
+      // ext：[光澤硬度, 要不要投影, 1 光斑／2 光點, 1 整體調色／2 只照人]
+      const fx = L.dapple ? 1 : L.pick && i >= (L.id === 'rainbow' ? 2 : 0) ? 2 : 0;
+      put(x, y, zz, col, I / 8 * lum * k * many, [wrap, spk / 10 * sp * k, soft, L.dapple ? 0 : pw * (spot ? 1.6 : 1)],
+        [shine, L.flat || i > 2 ? 0 : 1, fx, only], spot ? A.F * 1.4 : 0);
     });
-    // 先壓暗：方向光、彩色光比柔光壓得多，明暗才出得來
-    const dk = m === 1 ? 1 : m < 4 ? 0.88 : 0.78;
-    ambS = (1 + (L.fg * dk - 1) * k) * (1 - 0.6 * (P.lightFg || 0) / 100);
-    ambB = (1 + (L.bg * dk - 1) * k) * (1 - 0.7 * (P.lightBg || 0) / 100);
+    // 先壓暗：照 Hypic 的 fgDarkLow、bgDarkLow，人和背景一起壓
+    ambS = (1 + (L.fg - 1) * k) * (1 - 0.6 * (P.lightFg || 0) / 100);
+    ambB = (1 + (L.bg - 1) * k) * (1 - 0.7 * (P.lightBg || 0) / 100);
     bgDepth = A.F * Math.min(4, 0.2 + L.apart * 0.8);
   }
   let flash = null;
