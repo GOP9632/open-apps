@@ -8,6 +8,7 @@
 import { filterFn } from './filters.js';
 import { OVERLAYS, paint } from './creative.js';
 import { THEMES } from './themes.js';
+import { blurred } from './cblur.js';
 
 export const FONTS = {
   sans: '-apple-system,"PingFang TC","Noto Sans TC",sans-serif',
@@ -260,8 +261,8 @@ export function paintFx(ctx, list, W, H) {
       case 'glow': {
         // 柔焦光暈：把畫面糊掉再用濾色疊回去，亮的地方會發光
         const c = document.createElement('canvas'), k = Math.min(1, 480 / W); c.width = Math.round(W * k); c.height = Math.round(H * k);
-        const cx = c.getContext('2d'); cx.filter = `blur(${Math.round(c.width * 0.02)}px)`; cx.drawImage(ctx.canvas, 0, 0, c.width, c.height);
-        ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = a * 0.6; ctx.drawImage(c, 0, 0, W, H); break;
+        c.getContext('2d').drawImage(ctx.canvas, 0, 0, c.width, c.height);
+        ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = a * 0.6; ctx.drawImage(blurred(c, Math.round(c.width * 0.02)), 0, 0, W, H); break;
       }
       case 'chroma': {
         // 色差：紅色往左、青色往右錯開
@@ -342,9 +343,8 @@ export function paintBg(ctx, bg, W, H, blurSrc) {
     case 'blur': {
       if (!blurSrc) { ctx.fillStyle = '#ddd'; ctx.fillRect(0, 0, W, H); break; }
       const k = Math.max(W / blurSrc.width, H / blurSrc.height);
-      ctx.save(); ctx.filter = `blur(${Math.round(u * 0.04)}px) brightness(.9)`;
-      ctx.drawImage(blurSrc, (W - blurSrc.width * k) / 2 - u * 0.05, (H - blurSrc.height * k) / 2 - u * 0.05, blurSrc.width * k + u * 0.1, blurSrc.height * k + u * 0.1);
-      ctx.restore(); break;
+      ctx.drawImage(blurred(blurSrc, u * 0.04 / k), (W - blurSrc.width * k) / 2 - u * 0.05, (H - blurSrc.height * k) / 2 - u * 0.05, blurSrc.width * k + u * 0.1, blurSrc.height * k + u * 0.1);
+      ctx.fillStyle = 'rgba(0,0,0,.1)'; ctx.fillRect(0, 0, W, H); break;
     }
     default: ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
   }
