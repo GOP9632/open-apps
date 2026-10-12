@@ -114,6 +114,7 @@ uniform float uVib, uStruct, uTexture, uLSense, uBack;
 uniform vec4 uFlashF;
 uniform vec2 uFlashR, uLCap, uFlashG;
 uniform vec4 uFlashC;
+uniform vec3 uFlashT;
 uniform float uSmoothAmt, uWhite, uLutAmt, uHasLut, uLutSkin;
 uniform float uDark, uFold, uEyeB, uTeeth;
 // 打光、閃光燈：最多 8 盞燈（閃光燈也算一盞）
@@ -445,15 +446,19 @@ void main(){
         float w = texture(uMask, q).r + 0.01;
         sl += luma(texture(uBlurS, q).rgb) * w; sw += w;
       }
-      // 皮膚的亮度改成「原本 × g」，燈只決定顏色
-      float g = clamp(1.0 + uFlashF.y * (uFlashF.z / max(sl / sw, 0.02) - 1.0), 0.6, uFlashG.y);
-      // 本身就很亮的像素（受光面的亮點）不再加亮
-      g = mix(g, min(g, 1.0), smoothstep(0.5, 0.75, L0));
+      // 臉：照附近皮膚的平均亮度決定補多少（暗的那側補多、亮的那側幾乎不補），
+      // 用「加」一層中性偏冷的白光（uFlashT），不是把整塊乘亮，所以鬍子、毛孔的紋理和原本的顏色都留著
       vec2 fc = (uv - uFlashC.xy) / uFlashC.zw;
-      float face = 1.0 - smoothstep(0.7, 1.0, length(fc));   // 只在臉上（肩膀、身體照燈的結果）
-      lit = mix(lit, lit * (L0 * g / max(luma(lit), 0.01)), skin * pw * face);
-      // 亮的地方保留原本的顏色，不洗成奶油白
+      // 亮度主要看附近皮膚的平均（八成），這一點周圍佔兩成，鼻子的立體感才留得住；嘴巴以下這一點周圍佔六成，鬍子暗的那側補得到。補的量有上限（uFlashG.y），最暗的地方也補得到；像素比附近亮（皮膚）多補一點、比附近暗（鬍子、毛孔）少補一點
+      float Ls = max(mix(sl / sw, luma(texture(uBlurS, uv).rgb), mix(0.2, 0.6, smoothstep(0.1, 0.3, fc.y))), 0.02), dl = min(uFlashF.y * (uFlashF.z - Ls), uFlashG.y);
+      // 跟 Hypic 一樣，鼻子以下補得比額頭、臉頰少一點
+      vec3 fill = dl > 0.0 ? col + uFlashT * dl * (1.0 - 0.22 * smoothstep(0.0, 0.5, fc.y)) * mix(1.0, clamp(L0 / Ls, 0.0, 2.0), 0.5) : col * (1.0 + max(dl, -0.03) / Ls);   // 本來就亮的地方最多暗一點點
+      // 臉的範圍：上半臉只補皮膚（瀏海、頭髮不補），鼻子到下巴連鬍子一起補，脖子補少一點；邊緣拉長，看不出一圈
+      float face = (1.0 - smoothstep(0.75, 1.2, length(fc))) * mix(texture(uMask, uv).g, 1.0, smoothstep(-0.05, 0.15, fc.y)) * (1.0 - 0.6 * smoothstep(0.6, 1.0, fc.y));
+      // 臉以外：露出的皮膚（脖子、肩膀）照燈的結果；衣服、頭髮只會跟著變暗，不加光、不褪色
       lit = mix(lit, col * (luma(lit) / max(L0, 0.02)), smoothstep(0.5, 0.8, L0) * uFlashF.w * pw);
+      vec3 body = mix(col * min(1.0, luma(lit) / max(L0, 0.02)), lit, texture(uMask, uv).g);
+      lit = mix(lit, mix(body, fill, face), pw);
       // 超過 214 的部分慢慢收到 237 以下（存 JPEG 時顏色還會再往外衝一點），紅色通道不會被推到 255（本來就比較亮的不動）
       { vec3 e = max(lit - 0.84, 0.0), sc = 0.84 + 0.09 * (1.0 - exp(-e / 0.09));
         lit = mix(lit, min(lit, max(sc, col)), pw); }
@@ -829,7 +834,7 @@ export class Renderer {
     const lp = new Float32Array(32), lr = new Float32Array(32), le = new Float32Array(32), ld = new Float32Array(32), lc = new Float32Array(24);
     ls.forEach((l, i) => { lp.set(l.pos, i * 4); lr.set(l.par, i * 4); le.set(l.ext || [36, 1, 0, 0], i * 4); ld.set(l.dir || [0, 0, 0, 0], i * 4); lc.set(l.col, i * 3); });
     gl.uniform1i(u.uLn, ls.length); gl.uniform4fv(u.uLPos, lp); gl.uniform4fv(u.uLPar, lr); gl.uniform4fv(u.uLExt, le); gl.uniform4fv(u.uLDir, ld); gl.uniform3fv(u.uLCol, lc);
-    gl.uniform1f(u.uLAmbS, L?.ambS ?? 1); gl.uniform1f(u.uLAmbB, L?.ambB ?? 1); gl.uniform1f(u.uBgDepth, L?.bgDepth ?? 0); gl.uniform1f(u.uThick, L?.thick ?? 1e4); gl.uniform4fv(u.uFlashF, L?.flashF || [0, 0, 0, 0]); gl.uniform2fv(u.uFlashR, L?.flashR || [0, 0]); gl.uniform2fv(u.uFlashG, L?.flashG || [0, 1]); gl.uniform4fv(u.uFlashC, L?.flashC || [0, 0, 1, 1]); gl.uniform2fv(u.uLCap, L?.cap || [0, 0]);
+    gl.uniform1f(u.uLAmbS, L?.ambS ?? 1); gl.uniform1f(u.uLAmbB, L?.ambB ?? 1); gl.uniform1f(u.uBgDepth, L?.bgDepth ?? 0); gl.uniform1f(u.uThick, L?.thick ?? 1e4); gl.uniform4fv(u.uFlashF, L?.flashF || [0, 0, 0, 0]); gl.uniform2fv(u.uFlashR, L?.flashR || [0, 0]); gl.uniform2fv(u.uFlashG, L?.flashG || [0, 1]); gl.uniform4fv(u.uFlashC, L?.flashC || [0, 0, 1, 1]); gl.uniform3fv(u.uFlashT, L?.flashT || [1, 1, 1]); gl.uniform2fv(u.uLCap, L?.cap || [0, 0]);
     const g = this.geo;
     gl.uniform1f(u.uHasGeo, g ? 1 : 0); gl.uniform1f(u.uGeoMax, g ? g.max : 0); gl.uniform2f(u.uGeoTex, 1 / (g?.w || 1), 1 / (g?.h || 1));
     gl.uniform4fv(u.uHaze, L?.haze || [0, 0, 1, 0]); gl.uniform3fv(u.uHazeCol, L?.hazeCol || [1, 1, 1]);
