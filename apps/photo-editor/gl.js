@@ -117,8 +117,8 @@ uniform float uDark, uFold, uEyeB, uTeeth;
 //   uLPos：位置 xy（照片 0~1）、高度 z（深度圖像素，負的是在人後面）、燈到臉中間的距離 w
 //   uLCol：顏色 × 強度；uLPar：包覆（光繞到暗面）、反光、影子柔和度、衰減次方
 uniform int uLn;
-uniform vec4 uLPos[3], uLPar[3];
-uniform vec3 uLCol[3];
+uniform vec4 uLPos[6], uLPar[6], uLExt[6];
+uniform vec3 uLCol[6];
 uniform float uLAmbS, uLAmbB, uBgDepth, uThick, uHasGeo, uGeoMax;
 uniform vec2 uGeoTex;
 uniform vec4 uHaze; uniform vec3 uHazeCol;
@@ -133,6 +133,8 @@ out vec4 o;
 
 float luma(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y); }
 
 // 深度圖（uSegB 的 G、B 是 16 位元高度）
 float geoH(vec2 q){ vec3 g = texture(uSegB, q).rgb; return (g.g * 65280.0 + g.b * 255.0) / 65535.0 * uGeoMax; }
@@ -363,7 +365,10 @@ void main(){
     }
     vec3 Pw = vec3(uv / gt, h0 * pw - (1.0 - pw) * uBgDepth);
     vec3 light = vec3(0.0), spec = vec3(0.0), rim = vec3(0.0);
-    for (int i = 0; i < 3; i++) {
+    // 陽光碎片：樹葉縫隙透下來的一塊一塊光斑（柔焦越大邊越軟）
+    vec2 dq = vUV * vec2(uSize.x / uSize.y, 1.0) * 16.0;
+    float dn = vnoise(dq + vnoise(dq * 0.7) * 1.5) * 0.65 + vnoise(dq * 2.3 + 7.1) * 0.35;
+    for (int i = 0; i < 6; i++) {
       if (i >= uLn) break;
       vec3 Lp = vec3(uLPos[i].xy / gt, uLPos[i].z);
       vec3 Lv = Lp - Pw; float dist = max(length(Lv), 1.0); vec3 Ld = Lv / dist;
@@ -371,19 +376,23 @@ void main(){
       float diff = max((dot(N, Ld) + wr) / (1.0 + wr), 0.0);
       // 衰減：在臉中間是 1，離燈越近越亮、越遠越暗（燈越近，明暗差越大）
       float att = min(pow(uLPos[i].w * uLPos[i].w / (dist * dist), uLPar[i].w), 1.6);
-      float sh = uHasGeo > 0.5 ? shadow(Pw, Lp, uLPar[i].z) : 1.0;
+      float sh = uHasGeo > 0.5 && uLExt[i].y > 0.5 ? shadow(Pw, Lp, uLPar[i].z) : 1.0;
+      // 背景離人近的樣式（彩色光）影子只留在人身上，背景上的大片影子邊很硬、不自然
+      if (uLExt[i].w > 0.5) sh = mix(1.0, sh, pw);
+      float dap = uLExt[i].z > 0.5 ? mix(0.3, 1.5, smoothstep(0.56, 0.6 + 0.02 * uLPar[i].z, dn)) : 1.0;
       // 燈在人後面（輪廓光、逆光）只照人，不照背景；邊緣直接亮起來，暗的頭髮也看得到一圈光
       // 後面的燈只照到側面朝燈的地方，越邊緣越亮，所以是細細一圈
       float back = uLPos[i].z < 0.0 ? smoothstep(0.45, 0.95, pw) : 1.0;
       if (uLPos[i].z < 0.0) diff = pow(diff, 3.0);
-      vec3 li = uLCol[i] * diff * att * sh * back;
+      vec3 li = uLCol[i] * diff * att * sh * back * dap;
       light += li;
       if (uLPos[i].z < 0.0) rim += li * 0.45;
       // 彩色的燈：皮膚的紅色很多，只用乘的話藍光、綠光幾乎看不到，所以再直接加一點燈的顏色
       float cs = max(uLCol[i].r, max(uLCol[i].g, uLCol[i].b)) - min(uLCol[i].r, min(uLCol[i].g, uLCol[i].b));
-      rim += li * cs * 0.22 * pw;
+      // 背景離人近（Hypic 的 apart 小）的樣式，背景也染上燈的顏色
+      rim += li * cs * 0.22 * (pw + (1.0 - pw) * uLExt[i].w * 1.6);
       vec3 Hv = normalize(Ld + vec3(0.0, 0.0, 1.0));
-      spec += uLCol[i] * pow(max(dot(N, Hv), 0.0), 36.0) * uLPar[i].y * att * sh * skin;
+      spec += uLCol[i] * pow(max(dot(N, Hv), 0.0), uLExt[i].x) * uLPar[i].y * att * sh * dap * max(skin, 0.5 * pw);
     }
     float L0 = luma(col);
     vec3 lit = col * (mix(uLAmbB, uLAmbS, pw) + light) + spec * smoothstep(0.1, 0.45, L0) + rim;
@@ -770,10 +779,10 @@ export class Renderer {
     }
     gl.uniform1i(u.uWn, n);
     gl.uniform4fv(u.uW1, w1); gl.uniform4fv(u.uW2, w2); gl.uniform2fv(u.uW3, w3);
-    const L = fx.lit, ls = (L?.lights || []).slice(0, 3);
-    const lp = new Float32Array(12), lr = new Float32Array(12), lc = new Float32Array(9);
-    ls.forEach((l, i) => { lp.set(l.pos, i * 4); lr.set(l.par, i * 4); lc.set(l.col, i * 3); });
-    gl.uniform1i(u.uLn, ls.length); gl.uniform4fv(u.uLPos, lp); gl.uniform4fv(u.uLPar, lr); gl.uniform3fv(u.uLCol, lc);
+    const L = fx.lit, ls = (L?.lights || []).slice(0, 6);
+    const lp = new Float32Array(24), lr = new Float32Array(24), le = new Float32Array(24), lc = new Float32Array(18);
+    ls.forEach((l, i) => { lp.set(l.pos, i * 4); lr.set(l.par, i * 4); le.set(l.ext || [36, 1, 0, 0], i * 4); lc.set(l.col, i * 3); });
+    gl.uniform1i(u.uLn, ls.length); gl.uniform4fv(u.uLPos, lp); gl.uniform4fv(u.uLPar, lr); gl.uniform4fv(u.uLExt, le); gl.uniform3fv(u.uLCol, lc);
     gl.uniform1f(u.uLAmbS, L?.ambS ?? 1); gl.uniform1f(u.uLAmbB, L?.ambB ?? 1); gl.uniform1f(u.uBgDepth, L?.bgDepth ?? 0); gl.uniform1f(u.uThick, L?.thick ?? 1e4);
     const g = this.geo;
     gl.uniform1f(u.uHasGeo, g ? 1 : 0); gl.uniform1f(u.uGeoMax, g ? g.max : 0); gl.uniform2f(u.uGeoTex, 1 / (g?.w || 1), 1 / (g?.h || 1));

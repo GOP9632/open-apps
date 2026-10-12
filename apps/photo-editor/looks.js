@@ -85,7 +85,7 @@ export function applyLook(P, P0, L, amt, base) {
   if (!L) return;
   const s = amt / 100;
   for (const [k, v] of Object.entries(fullSet(L, base))) P[k] = typeof v === 'number' ? Math.round(v * s) : v;
-  if (L.set?.light) { P.lightX = P.lightY = null; P.lightCol = 0; }
+  if (L.set?.light) Object.assign(P, { lightX: null, lightY: null, lightCol: null, lightSpec: null, lightSeed: 0 });
   if (L.mk) {
     const i = mkIdx(L.mk[0]), a = L.mk[1] * s;
     P.mk = Object.fromEntries(Object.entries(MK_LOOKS[i].set).map(([k, [st, c, v]]) => [k, { s: st, c, a: Math.round(v * a / 100) }]));

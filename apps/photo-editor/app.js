@@ -16,7 +16,7 @@ import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } fr
 import { WarpField } from './warpfield.js';
 import { FONTS, T0, TEXT_COLORS, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
 import { initCollage, openCollage } from './collage.js';
-import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightAnchor } from './relight.js';
+import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightPosOf, lightGrad } from './relight.js';
 import { enhanceRanges, paintRange, setGrad, nudge, canvasZoom } from './ui.js';
 import { tabLooks } from './looks.js';
 import { STROKES, STROKE_COLORS, STROKE0, strokeLayer, alphaFromMatte, alphaBox } from './outline.js';
@@ -34,7 +34,7 @@ const P0 = {
   chin: 0, dark: 0, fold: 0, eyeb: 0, teeth: 0, slimL: 0, slimR: 0, eyesL: 0, eyesR: 0,
   bg: 'keep', bgColor: '#ffffff',
   oneTap: -1, oneAmt: 100,
-  light: '', lightAmt: 70, lightBri: 50, lightCol: 0, lightDist: 50, lightSpec: 50, lightBlur: 0, lightFg: 0, lightBg: 0, lightX: null, lightY: null, flash: '', flashAmt: 60,
+  light: '', lightAmt: 100, lightBri: 50, lightCol: null, lightDist: 50, lightSpec: null, lightBlur: 0, lightFg: 0, lightBg: 0, lightX: null, lightY: null, lightSeed: 0, flash: '', flashAmt: 60,
   blur: 0, blurStyle: 'classic', blurSize: 55, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'lake', bgImg: 'beach', bgBlur: 30, frame: '',
   ...HAIR_P0,
   bgProtect: 1, // 背景保護：變形時背景不跟著彎
@@ -599,7 +599,7 @@ const keysOn = keys => () => keys.some(k => JSON.stringify(P[k]) !== JSON.string
 const tabKeys = {
   adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...WRINKLE]),
   body: Object.keys(BODY_P0), hair: Object.keys(HAIR_P0), makeup: ['mk', 'mkLook', 'mkLookAmt'], filter: ['filter', 'filterAmt'],
-  light: ['light', 'lightAmt', 'lightBri', 'lightCol', 'lightDist', 'lightSpec', 'lightBlur', 'lightFg', 'lightBg', 'lightX', 'lightY', 'flash', 'flashAmt'],
+  light: ['light', 'lightAmt', 'lightBri', 'lightCol', 'lightDist', 'lightSpec', 'lightBlur', 'lightFg', 'lightBg', 'lightX', 'lightY', 'lightSeed', 'flash', 'flashAmt'],
   fun: ['blur', 'blurStyle', 'blurSize', 'fx', 'fxAmt', 'ov', 'ovAmt', 'ex', ...Object.keys(POP_P0)], frame: ['frame'], cutout: ['bg', 'bgColor', 'bgImg', 'bgBlur'],
 };
 const TAB_RESET = Object.fromEntries(Object.entries(tabKeys).map(([t, keys]) => [t, { on: keysOn(keys), reset: () => toP0(keys) }]));
@@ -965,11 +965,14 @@ function tabShape(box) {
 }
 
 // ---------- 光影：打光、閃光燈（relight.js） ----------
-// 照醒圖（Hypic）的打光面板：上面一排分類（自然、單色、多彩），燈可以在照片上拖，
-// 滑桿有強度、亮度、顏色、距離、高光、模糊、前景暗、背景暗八個；閃光燈另外一類
-let lightSec = 'nat', lightParam = 'lightAmt';
-const LIGHT_SLIDERS = [['lightAmt', '強度', 0, 100], ['lightBri', '亮度', 0, 100], ['lightCol', '顏色', -50, 50], ['lightDist', '距離', 0, 100],
-  ['lightSpec', '高光', 0, 100], ['lightBlur', '模糊', 0, 100], ['lightFg', '前景暗', 0, 100], ['lightBg', '背景暗', 0, 100]];
+// 照 Hypic 的打光面板：上面一排分類（自然光、單色光、多色），13 個樣式；燈可以在照片上拖。
+// 每個樣式只出現它有的滑桿（亮度、距離、顏色、高光），柔焦、前景暗、背景暗每個樣式都有
+let lightSec = 'nat', lightParam = 'lightBri';
+const lightSliders = L => [
+  L.lum && ['lightBri', '亮度', 0, 100, 50], ['lightDist', '距離', 0, 100, 50],
+  L.seg && ['lightCol', '顏色', 0, 100, Math.round(L.cdef * 100)], L.spec && ['lightSpec', '高光', 0, 100, L.spec],
+  ['lightBlur', '柔焦', 0, 100, 0], ['lightFg', '前景暗', 0, 100, 0], ['lightBg', '背景暗', 0, 100, 0],
+].filter(Boolean);
 // 立體深度圖：人像遮罩或臉換了才重算
 function ensureGeo() {
   const b = base, mask = b.matte || b.seg?.person;
@@ -1003,31 +1006,34 @@ function tabLight(box) {
   box.append(item({ label: '不打光', icon: I.off, on: !P.light, onclick: () => { P.light = ''; render(); commit(); showTab('light'); } }));
   cat.items.forEach(L => box.append(item({
     label: L.name, icon: I.bulb, on: P.light === L.id, set: P.light === L.id,
-    style: `color:rgb(${L.l[0].col.map(c => Math.round(c * 255)).join(',')})`,
+    style: `color:rgb(${(L.l[0].slice(3, 6)).join(',')})`,
     onclick: () => {
-      if (P.light !== L.id) { P.lightX = P.lightY = null; P.lightCol = 0; }
+      if (P.light !== L.id) Object.assign(P, { lightX: null, lightY: null, lightCol: null, lightSpec: null, lightSeed: 0 });
       P.light = L.id; need(); render(); commit(); showTab('light');
     },
   })));
-  if (!cat.items.some(x => x.id === P.light)) {
+  const L = LIGHTS.find(x => x.id === P.light);
+  if (!L || L.cat !== lightSec) {
     hideSlider();
     $('#note').textContent = '打光和閃光燈可以一起用。';
     return;
   }
-  box.append(...LIGHT_SLIDERS.map(([k, name]) => item({
+  // 多色樣式照 Hypic 會隨機換顏色組合，這裡用「換一組」
+  if (L.pick) box.append(item({ label: '換一組', icon: '換一組', cls: 'wide', onclick: () => { P.lightSeed = (P.lightSeed || 0) + 1; P.lightX = P.lightY = null; render(); commit(); lightDot(); } }));
+  const SL = lightSliders(L);
+  if (!SL.some(x => x[0] === lightParam)) lightParam = SL[0][0];
+  box.append(...SL.map(([k, name]) => item({
     label: name, icon: name, cls: 'wide', on: lightParam === k, onclick: () => { lightParam = k; showTab('light'); },
   })));
-  const [k, name, min, max] = LIGHT_SLIDERS.find(x => x[0] === lightParam);
-  setSlider(name, min, max, P[k], v => { P[k] = v; render(); lightDot(); }, k === 'lightBri' || k === 'lightSpec' ? P0[k] : undefined);
+  const [k, name, min, max, def] = SL.find(x => x[0] === lightParam);
+  setSlider(name, min, max, P[k] ?? def, v => { P[k] = v; render(); lightDot(); }, def);
+  if (k === 'lightCol') { slider.classList.add('grad'); slider.style.setProperty('--trk', lightGrad(L)); }
   $('#note').textContent = (base.faces && !base.faces.length ? '沒找到臉，燈以照片中間為準。' : '') + '在照片上拖曳移動燈的位置。';
 }
 // 燈的位置：照片上的一個小圓圈
 function lightPos() {
   const L = LIGHTS.find(x => x.id === P.light);
-  if (!L) return null;
-  const A = lightAnchor(base, null), s = 0.4 + P.lightDist / 50 * 0.6;
-  const W = base.canvas.width, H = base.canvas.height;
-  return { x: (A.x * W + (P.lightX ?? L.l[0].dx) * s * A.Fpx) / W, y: (A.y * H + (P.lightY ?? L.l[0].dy) * s * A.Fpx) / H };
+  return L ? lightPosOf(L, P, base) : null;
 }
 function lightDot() {
   let d = $('#lightdot');
@@ -1041,9 +1047,8 @@ function lightDot() {
   let drag = false;
   const move = e => {
     const r = $('#wrap').getBoundingClientRect(), W = base.canvas.width, H = base.canvas.height;
-    const A = lightAnchor(base, null), s = 0.4 + P.lightDist / 50 * 0.6;
-    P.lightX = ((e.clientX - r.left) / r.width * W - A.x * W) / A.Fpx / s;
-    P.lightY = ((e.clientY - r.top) / r.height * H - A.y * H) / A.Fpx / s;
+    P.lightX = (e.clientX - r.left) / r.width;
+    P.lightY = (e.clientY - r.top) / r.height;
     render(); lightDot();
   };
   $('#wrap').addEventListener('pointerdown', e => {
