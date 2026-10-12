@@ -9,7 +9,7 @@ import { matte } from './matte.js';
 import { GRADE_P0, gradeOn, gradeFn, gradeKey, tabGrade, gradeHide } from './grade.js';
 import { HAIR, HAIR_P0, DYES, HairFx, prepHair, hairWarps, hairNeedsSeg, hairColorOn } from './hair.js';
 import { tabErase, eraseLeave } from './erase.js';
-import { makeupLayer, makeupTab } from './makeup.js';
+import { makeupLayer, makeupTab, SCULPT, SC_COLOR, SC_P0 } from './makeup.js';
 import { SKIN, WRINKLE, AI_FACE, AI_BODY, SKIN_P0, skinOn, skinKey, prepSkin, SkinFx, skinNote } from './skin.js';
 import { BODY, BODY_P0, BODY_MAN, REG_OF, bodyOn, detectBody, measureBody, bodyWarps, manualWarps, manualRegion, bodyNote } from './body.js';
 import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } from './faceshape.js';
@@ -42,7 +42,7 @@ const P0 = {
   look: '', lookAmt: 100, // 一鍵出片
   ...BODY_P0,
   ...GRADE_P0,
-  ...SKIN_P0,
+  ...SKIN_P0, ...SC_P0,
   ...POP_P0,
 };
 
@@ -430,7 +430,7 @@ function syncTex() {
     texKey.bg = bk;
     if (bk) bgCanvas(W, H).then(c => { if (texKey.bg === bk && c) { R.setBgImg(c); bgStat = c.stat; render(); } });
   }
-  const mk = makeupLayer(base, P.mk);
+  const mk = makeupLayer(base, P.mk, P);
   if (texKey.mk !== mk.key) { texKey.mk = mk.key; R.setMakeup(mk.canvas); }
   const own = P.ex === 'own' && exOwn;
   // 雙重曝光的第二張圖：用內建的風景照（或自己選的照片）
@@ -543,7 +543,7 @@ const GI = {
 // 順序照 Hypic 編輯頁第一層：修飾、濾鏡、調整、清除、特效、貼圖、文字……重新塑形；
 // 人像底下照 Hypic「修飾」第二層：臉部、彩妝、皮膚、打光、頭髮、塑身
 const GROUPS = [
-  ['portrait', '人像', 'P', ['beauty', 'shape', 'makeup', 'skin', 'aiskin', 'light', 'hair', 'body', 'cover']],
+  ['portrait', '人像', 'P', ['beauty', 'shape', 'sculpt', 'makeup', 'skin', 'aiskin', 'light', 'hair', 'body', 'cover']],
   ['filter', '濾鏡', 'F', ['looks', 'filter']],
   ['adjust', '調節', 'A', ['adjust', 'grade']],
   ['erase', '消除', 'E', ['erase', 'cutout']],
@@ -597,7 +597,7 @@ const keysOf = list => list.flatMap(x => SIDED.includes(x[0]) ? [x[0], x[0] + 'L
 const toP0 = keys => keys.forEach(k => { P[k] = clone(P0[k]); });
 const keysOn = keys => () => keys.some(k => JSON.stringify(P[k]) !== JSON.stringify(P0[k]));
 const tabKeys = {
-  adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...WRINKLE]), aiskin: keysOf([...AI_FACE, ...AI_BODY]),
+  adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...WRINKLE]), aiskin: keysOf([...AI_FACE, ...AI_BODY]), sculpt: Object.keys(SC_P0),
   body: Object.keys(BODY_P0), hair: Object.keys(HAIR_P0), makeup: ['mk', 'mkLook', 'mkLookAmt'], filter: ['filter', 'filterAmt'],
   light: ['light', 'lightAmt', 'lightBri', 'lightCol', 'lightDist', 'lightSpec', 'lightBlur', 'lightFg', 'lightBg', 'lightX', 'lightY', 'lightSeed', 'flash', 'flashAmt'],
   fun: ['blur', 'blurStyle', 'blurSize', 'fx', 'fxAmt', 'ov', 'ovAmt', 'ex', ...Object.keys(POP_P0)], frame: ['frame'], cutout: ['bg', 'bgColor', 'bgImg', 'bgBlur'],
@@ -653,7 +653,7 @@ function showTab(t) {
   $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true;
   gradeHide();
   if (!base) return;
-  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, aiskin: tabAiSkin, light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
+  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, aiskin: tabAiSkin, sculpt: tabSculpt, light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
   lightDot(); bmBox();
@@ -800,6 +800,22 @@ function tabSkin(box) {
   })));
   paramItems(box, list, list[0][0]);
   $('#note').textContent = skinNote(base, cur);
+}
+
+// ---------- 塑臉（立體光影） ----------
+// 照 Hypic 修飾 › 塑臉：上面一排「強度」（6 區各有亮、影，共 12 條）、「顏色」（4 區提色），都是 0~100
+let scSec = 'str';
+function tabSculpt(box) {
+  if (!base.faces) findFaces();
+  if (!base.skin) getSkin(base);
+  const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
+  [['str', '強度', SCULPT], ['col', '顏色', SC_COLOR]].forEach(([s, lb, l]) => cats.append(item({
+    label: lb, icon: lb, cls: 'wide', on: scSec === s, set: l.some(x => isSet(x[0])),
+    onclick: () => { scSec = s; cur = l[0][0]; showTab('sculpt'); },
+  })));
+  const list = scSec === 'str' ? SCULPT : SC_COLOR;
+  paramItems(box, list, list[0][0]);
+  $('#note').textContent = base.faces && !base.faces.length ? '這張照片沒找到臉。' : scSec === 'str' ? '亮的地方往前、陰影往後，臉看起來更立體。' : '在眼睛、眼周、嘴唇、臉頰提一點顏色。';
 }
 
 // ---------- AI 美肌 ----------

@@ -61,8 +61,10 @@ export const AI_BODY = [
 const AI = [...AI_FACE, ...AI_BODY].map(x => x[0]);
 // 臉型分頁的豐臉、拉皮額頭也要在這裡補亮、淡化細紋（值存在臉型的 fs_ 鍵）
 const FILL = { uFFore: 'fs_fill_fore', uFCheek: 'fs_fill_cheek', uFFold: 'fs_fill_fold', uFBag: 'fs_fill_bag', uLFore: 'fs_lift_fore', uLEye: 'fs_lift_eye' };
-const KEYS = [...[...SKIN, ...WRINKLE, ...AI_FACE, ...AI_BODY].map(x => x[0]).filter(k => k !== 'smooth'), ...Object.values(FILL)];
-export const SKIN_P0 = Object.fromEntries(KEYS.filter(k => !k.startsWith('fs_')).map(k => [k, 0]));
+// 塑臉的「顏色」4 條（值存在 sc_ 鍵，預設值在 makeup.js）
+const SCCOL = { uScEye: 'sc_eye', uScEyeC: 'sc_eyeCol', uScLip: 'sc_lipCol', uScCheek: 'sc_cheekCol' };
+const KEYS = [...[...SKIN, ...WRINKLE, ...AI_FACE, ...AI_BODY].map(x => x[0]).filter(k => k !== 'smooth'), ...Object.values(FILL), ...Object.values(SCCOL)];
+export const SKIN_P0 = Object.fromEntries(KEYS.filter(k => !k.startsWith('fs_') && !k.startsWith('sc_')).map(k => [k, 0]));
 export const skinOn = p => KEYS.some(k => p[k]);
 export const skinKey = p => KEYS.map(k => p[k] || 0).join('|');
 
@@ -109,7 +111,7 @@ function boxBlur(a, w, h, r, n = 2) {
 // 準備膚質資料，同一張照片只算一次
 //   T1：R = 全部皮膚（扣掉眼、眉、嘴、鼻孔）、G = 臉部皮膚、B = 身體皮膚、A = 嘴唇和嘴唇周圍（唇紋）
 //   T2：R = 額頭（抬頭紋）、G = 法令紋、B = 眼周（眼紋）、A = 脖子（頸紋）
-//   T3：R = 臉的高點（水光肌）、G = 蘋果肌（腮紅肌）
+//   T3：R = 臉的高點（水光肌）、G = 蘋果肌（腮紅肌）、B = 眼睛裡面（亮眼）、A = 眼皮到眉毛（眼睛顏色）
 export function prepSkin(canvas, seg, faces) {
   const w = seg.w, h = seg.h, n = w * h, kx = w / canvas.width, ky = h / canvas.height;
   const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -188,6 +190,17 @@ export function prepSkin(canvas, seg, faces) {
     blob(avg(pts, [280, 425, 411]), W * 0.13, W * 0.09, rt);
   }, r0 * 4);
 
+  const eyeIn = layer(pts => { poly(pts, L_EYE, 1.0); poly(pts, R_EYE, 1.0); }, r0);
+  const lid = layer((pts, W) => {
+    for (const [ids, brow] of [[L_EYE, L_BROW], [R_EYE, R_BROW]]) {
+      const e = avg(pts, ids), b = avg(pts, brow), ew = dist(pts[ids[0]], pts[ids[8]]);
+      blob({ x: (e.x + b.x) / 2, y: e.y * 0.6 + b.y * 0.4 }, ew * 0.75 * kx, ew * 0.38 * kx, roll(pts));
+    }
+    ctx.globalCompositeOperation = 'destination-out';
+    poly(pts, L_EYE, 1.05); poly(pts, R_EYE, 1.05); poly(pts, L_BROW, 1.1); poly(pts, R_BROW, 1.1);
+    ctx.globalCompositeOperation = 'source-over';
+  }, r0 * 2);
+
   // 皮膚：有臉時臉框內一定算皮膚（分割偶爾會把臉的亮部判成別的）
   const T1 = new Uint8Array(n * 4), T2 = new Uint8Array(n * 4), T3 = new Uint8Array(n * 4);
   for (let i = 0; i < n; i++) {
@@ -195,7 +208,7 @@ export function prepSkin(canvas, seg, faces) {
     const face = sk * oval[i], body = sk * (1 - oval[i]);
     T1[i * 4] = sk * holes[i] * 255; T1[i * 4 + 1] = face * holes[i] * 255; T1[i * 4 + 2] = body * 255; T1[i * 4 + 3] = lip[i] * 255;
     T2[i * 4] = fore[i] * sk * 255; T2[i * 4 + 1] = fold[i] * sk * 255; T2[i * 4 + 2] = eye[i] * sk * 255; T2[i * 4 + 3] = neck[i] * seg.skin[i] * (1 - oval[i] * 0.7) * 255;
-    T3[i * 4] = glow[i] * face * holes[i] * 255; T3[i * 4 + 1] = cheek[i] * face * 255; T3[i * 4 + 3] = 255;
+    T3[i * 4] = glow[i] * face * holes[i] * 255; T3[i * 4 + 1] = cheek[i] * face * 255; T3[i * 4 + 2] = eyeIn[i] * 255; T3[i * 4 + 3] = lid[i] * 255;
   }
   // 皮膚平均色（線性空間平均後轉回 sRGB），原生感、素顏肌的膚色統一用
   const s = document.createElement('canvas'); s.width = w; s.height = h;
@@ -242,6 +255,7 @@ uniform float uNative, uGirl, uCream, uBaby, uFrost, uTex, uOil, uBare, uBody, u
 uniform float uHead, uFold, uNeck, uEye, uLip;
 uniform float uFFore, uFCheek, uFFold, uFBag, uLFore, uLEye;
 uniform float uAi[16];
+uniform float uScEye, uScEyeC, uScLip, uScCheek;
 float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float noise(vec2 p){
@@ -461,6 +475,17 @@ void main(){
     vec3 c = max(col, vec3(0.0));
     col = mix(col, sat(vec3(pow(c.r, 1.25) * 0.96, pow(c.g, 1.42) * 0.86, pow(c.b, 1.65) * 0.72), 1.08), uAi[15] * body * 0.9);
   }
+  // ---- 塑臉的顏色：區域提色（Hypic 是飽和度調整，不是上色） ----
+  if (uScEye > 0.0) {
+    // 亮眼：眼白提亮、虹膜顏色更清楚
+    float m = t3.b * uScEye, L = luma(col);
+    col = mix(col, sat(col, 1.5), m);
+    col += (1.0 - col) * smoothstep(0.35, 0.75, L) * 0.18 * m;
+    col += (col - A) * 0.6 * m;
+  }
+  if (uScEyeC > 0.0) col = mix(col, sat(col, 1.6), t3.a * uScEyeC);
+  if (uScLip > 0.0) col = mix(col, sat(col, 1.7) * vec3(1.02, 0.98, 0.99), smoothstep(0.55, 0.9, t1.a) * uScLip);
+  if (uScCheek > 0.0) col = mix(col, sat(col, 1.45) * vec3(1.02, 0.98, 0.98), t3.g * uScCheek);
   // 皮膚紋理：細紋理加強，再補一點像毛孔的細顆粒，磨皮後才不會像塑膠
   if (uTex > 0.0) {
     col += fineD * 0.9 * uTex * sk;
@@ -552,7 +577,7 @@ export class SkinFx {
       gl.uniform2f(u('uPx'), 1 / W, 1 / H);
       gl.uniform3fv(u('uMean'), data.mean);
       const map = { uNative: 'skNative', uGirl: 'skGirl', uCream: 'skCream', uBaby: 'skBaby', uFrost: 'skFrost', uTex: 'skTex', uOil: 'skOil', uBare: 'skBare', uBody: 'skBody', uDewy: 'skDewy', uMatte: 'skMatte', uBlush: 'skBlush', uTan: 'skTan', uUnify: 'skUnify', uHead: 'wkHead', uFold: 'wkFold', uNeck: 'wkNeck', uEye: 'wkEye', uLip: 'wkLip' };
-      for (const [n, k] of Object.entries({ ...map, ...FILL })) gl.uniform1f(u(n), f(k));
+      for (const [n, k] of Object.entries({ ...map, ...FILL, ...SCCOL })) gl.uniform1f(u(n), f(k));
       gl.uniform1fv(u('uAi'), AI.map(f));
     });
     return this.canvas;
