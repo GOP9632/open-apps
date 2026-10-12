@@ -43,6 +43,7 @@ export const SHAPE_CATS = [
     ['smile_mgr', '笑容管理', -100], ['mouth_tilt', '傾斜', -100], ['smile', '微笑', 0],
     ['lip_m', 'M 唇', 0, 80], ['lip_upper', '豐上唇', -100], ['lip_lower', '豐下唇', -100], ['lip_3d', '立體唇', 0, 40],
     ['lip_petal', '花瓣唇', 0, 30, 0, 'lipp'], ['lip_pout', '嘟嘟唇', 0, 30, 0, 'lipp'], ['lip_west', '歐美唇', 0, 30, 0, 'lipp'],
+    ['lip_full', '豐唇', 0, 40], ['lip_pillow', '枕頭唇', 0, 80, 0, 'lipp'],
   ] },
   { id: 'd3', name: '3D 塑顏', items: [
     ['d3_roll', '旋轉', -100], ['d3_yaw', '左右', -100], ['d3_pitch', '上下', -100],
@@ -189,6 +190,9 @@ function faceMoves(pts, F, B, g, pins) {
     lip_pout: { mouth_width: -0.3, lip_upper: 0.5, lip_lower: 0.6 },
     lip_west: { lip_upper: 0.7, lip_lower: 0.6, mouth_width: 0.15 },
     lip_3d: { lip_upper: 0.3, lip_lower: 0.4 },
+    // 豐唇：上下唇一起變厚；枕頭唇：下唇比上唇厚、嘴角往內收，中間嘟起來像小枕頭
+    lip_full: { lip_upper: 0.5, lip_lower: 0.5, mouth_width: 0.05 },
+    lip_pillow: { lip_upper: 0.35, lip_lower: 0.6, mouth_width: -0.15, lip_m: -0.2 },
     brow_euro: { brow_peak: 0.6, brow_tilt: 0.3, brow_len: 0.1 },
     brow_willow: { brow_thick: -0.4, brow_len: 0.3, brow_peak: 0.2 },
     brow_std: { brow_thick: 0.1, brow_tilt: 0.1, brow_peak: 0.1 },
