@@ -45,6 +45,14 @@ export const SHAPE_CATS = [
     ['lip_petal', '花瓣唇', 0, 30, 0, 'lipp'], ['lip_pout', '嘟嘟唇', 0, 30, 0, 'lipp'], ['lip_west', '歐美唇', 0, 30, 0, 'lipp'],
     ['lip_full', '豐唇', 0, 40], ['lip_pillow', '枕頭唇', 0, 80, 0, 'lipp'],
   ] },
+  // 豐臉、拉皮照 Hypic 修飾第二層：都是 0~100，點開的預設照 Hypic 的資源資料
+  { id: 'fill', name: '豐臉', items: [
+    ['fill_fore', '額頭', 0, 60], ['fill_cheek', '臉頰', 0, 70], ['fill_fold', '法令紋', 0, 80], ['fill_chin', '下巴', 0, 70],
+    ['fill_bag', '眼袋', 0, 70], ['fill_mouth', '嘴角', 0, 50], ['fill_nose', '鼻子', 0, 40],
+  ] },
+  { id: 'lift', name: '拉皮', items: [
+    ['lift_fore', '額頭', 0, 100], ['lift_mouth', '嘴角', 0, 70], ['lift_contour', '輪廓', 0, 70], ['lift_cheek', '臉頰', 0, 70], ['lift_eye', '眼周', 0, 70],
+  ] },
   { id: 'd3', name: '3D 塑顏', items: [
     ['d3_roll', '旋轉', -100], ['d3_yaw', '左右', -100], ['d3_pitch', '上下', -100],
   ] },
@@ -190,6 +198,17 @@ function faceMoves(pts, F, B, g, pins) {
     lip_pout: { mouth_width: -0.3, lip_upper: 0.5, lip_lower: 0.6 },
     lip_west: { lip_upper: 0.7, lip_lower: 0.6, mouth_width: 0.15 },
     lip_3d: { lip_upper: 0.3, lip_lower: 0.4 },
+    // 豐臉：凹下去的地方補亮在 skin.js；這裡是形狀的部分（下巴往前長一點、嘴角微微上揚、鼻梁變挺）
+    fill_chin: { jaw_len: 0.12, pointy_chin: 0.08 },
+    fill_mouth: { smile: 0.12 },
+    fill_nose: { nose_bridge: -0.2, nose_root: 0.3, nose_lift: 0.08 },
+    fill_cheek: { cheekbone: -0.06 },
+    // 拉皮：往上提（額頭的細紋在 skin.js 一起淡化）
+    lift_fore: { brow_pos: 0.12, hairline: 0.04 },
+    lift_mouth: { smile_mgr: 0.25, smile: 0.08 },
+    lift_contour: { jawline: 0.5, double_chin: 0.35, underjaw: -0.12 },
+    lift_cheek: { face_thin: 0.1 },
+    lift_eye: { eye_tail: 0.18, brow_pos: 0.05 },
     // 豐唇：上下唇一起變厚；枕頭唇：下唇比上唇厚、嘴角往內收，中間嘟起來像小枕頭
     lip_full: { lip_upper: 0.5, lip_lower: 0.5, mouth_width: 0.05 },
     lip_pillow: { lip_upper: 0.35, lip_lower: 0.6, mouth_width: -0.15, lip_m: -0.2 },
@@ -232,6 +251,9 @@ function faceMoves(pts, F, B, g, pins) {
     const pc = A('pointy_chin', s);
     if (pc) { CONTOUR.chin[s].forEach(i => push(i, -o * 0.028 * pc, 0.008 * pc, 0.12)); push(152, 0, 0.008 * pc, 0.1); }
   }
+  // 拉皮・臉頰：兩頰往上提（法令紋附近的肉往顴骨收）
+  const lc = A('lift_cheek');
+  if (lc) for (const s of sides) [...CONTOUR.cheek[s], ...CONTOUR.jaw[s].slice(0, 1)].forEach(i => push(i, 0, -0.022 * lc, 0.2));
   // 下巴長短
   const jl = A('jaw_len');
   if (jl) [[152, 1], [148, 0.75], [377, 0.75], [176, 0.45], [400, 0.45]].forEach(([i, w]) => push(i, 0, 0.045 * jl * w, 0.2));
