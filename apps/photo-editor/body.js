@@ -26,7 +26,55 @@ export const BODY = [
   ['bodyShoulder', '寬肩', '<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"/><path d="M4 12c1-3 4-4 8-4s7 1 8 4"/><path d="M2 9l2 2M22 9l-2 2"/></svg>', -50, 20, 50],
   ['bodySquare', '直角肩', '<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"/><path d="M10 9H4v6M14 9h6v6"/></svg>', 0, 40, 100],
 ];
-export const BODY_P0 = Object.fromEntries(BODY.map(b => [b[0], 0]));
+// 手動塑身（照 Hypic）：在照片上框一塊，增高（拉長那一段）、瘦身（往中間收）、放大，都是 −100~100
+export const BODY_MAN = [
+  ['bmHeight', '增高', '<svg viewBox="0 0 24 24"><path d="M3 7h18M3 17h18" stroke-dasharray="2 2"/><path d="M12 9v6M10 11l2-2 2 2M10 13l2 2 2-2"/></svg>', -100, 0, 100],
+  ['bmSlim', '瘦身', '<svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="1" stroke-dasharray="2 2"/><path d="M8 12h3M16 12h-3M9.5 10.5L11 12l-1.5 1.5M14.5 10.5L13 12l1.5 1.5"/></svg>', -100, 0, 100],
+  ['bmZoom', '放大', '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" stroke-dasharray="2 2"/><path d="M12 8v8M8 12h8"/></svg>', -100, 0, 100],
+];
+// 框的位置（0~1，照片的比例）；null 是還沒動過，用預設的位置
+const MAN_REG = { bmRegH: null, bmRegS: null, bmRegZ: null };
+export const BODY_P0 = { ...Object.fromEntries([...BODY, ...BODY_MAN].map(b => [b[0], 0])), ...MAN_REG };
+export const REG_OF = { bmHeight: 'bmRegH', bmSlim: 'bmRegS', bmZoom: 'bmRegZ' };
+// 預設的框：找得到人就框腿（增高）、軀幹（瘦身）、胸口（放大），找不到就框照片中間
+export function manualRegion(key, body, p) {
+  const r = p[REG_OF[key]];
+  if (r) return r;
+  const ok = body?.ok && body.vis[LS] && body.vis[RS] && body.vis[LH] && body.vis[RH];
+  const W = body?.W || 1, H = body?.H || 1, n = q => ({ x: q.x / W, y: q.y / H });
+  if (key === 'bmHeight') {
+    if (!ok) return { x0: 0, x1: 1, y0: 0.55, y1: 0.85 };
+    const hy = n(mid(body.pts[LH], body.pts[RH])).y, ay = [LA, RA].filter(i => body.vis[i]).map(i => n(body.pts[i]).y);
+    return { x0: 0, x1: 1, y0: Math.min(0.9, hy), y1: Math.min(0.97, ay.length ? Math.max(...ay) : hy + 0.3) };
+  }
+  if (!ok) return key === 'bmSlim' ? { x0: 0.3, x1: 0.7, y0: 0.3, y1: 0.75 } : { x0: 0.35, x1: 0.65, y0: 0.35, y1: 0.35 + 0.3 * W / H };
+  const S = n(mid(body.pts[LS], body.pts[RS])), Hm = n(mid(body.pts[LH], body.pts[RH])), hw = body.sh / W * 0.75;
+  if (key === 'bmSlim') return { x0: (S.x + Hm.x) / 2 - hw, x1: (S.x + Hm.x) / 2 + hw, y0: S.y, y1: Hm.y };
+  const c = lerp(S, Hm, 0.3), rx = body.sh / W * 0.45;
+  return { x0: c.x - rx, x1: c.x + rx, y0: c.y - rx * W / H, y1: c.y + rx * W / H };
+}
+// 手動塑身的變形（W、H 是照片的像素大小）
+export function manualWarps(body, p, W, H) {
+  const out = [];
+  const h = (p.bmHeight || 0) / 100, sl = (p.bmSlim || 0) / 100, z = (p.bmZoom || 0) / 100;
+  if (h) {
+    // 框裡那一段上下拉長（往左縮短），框下面的壓回照片裡，所以照片大小不變
+    const r = manualRegion('bmHeight', body, p), y0 = r.y0 * H, y1 = r.y1 * H;
+    let s = 0.3 * h;
+    s = Math.min(s, (H - 4 - y1) / Math.max(y1 - y0, 1) * 0.8);
+    if (y1 - y0 > 4 && Math.abs(s) > 0.002) out.push({ type: 'band', y0, y1, s, H });
+  }
+  if (sl) {
+    // 框的中線當骨架，左右往中間收（往左是變寬）
+    const r = manualRegion('bmSlim', body, p), cx = (r.x0 + r.x1) / 2 * W, hw = (r.x1 - r.x0) / 2 * W;
+    out.push({ type: 'seg', ax: cx, ay: r.y0 * H, bx: cx, by: r.y1 * H, r: hw * 1.25, k: 0.3 * sl, tc: 0.5, ts: 0.75, inner: 0 });
+  }
+  if (z) {
+    const r = manualRegion('bmZoom', body, p), rx = (r.x1 - r.x0) / 2 * W, ry = (r.y1 - r.y0) / 2 * H;
+    out.push({ type: 'scale', cx: (r.x0 + r.x1) / 2 * W, cy: (r.y0 + r.y1) / 2 * H, r: rx * 1.3, ey: rx / Math.max(ry, 1), s: 0.35 * z, rot: 0 });
+  }
+  return out;
+}
 export const bodyOn = p => BODY.some(b => p[b[0]]);
 
 // MediaPipe 人體 33 點裡會用到的

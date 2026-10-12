@@ -10,7 +10,7 @@ import { HAIR, HAIR_P0, DYES, HairFx, prepHair, hairWarps, hairNeedsSeg, hairCol
 import { tabErase, eraseLeave } from './erase.js';
 import { makeupLayer, makeupTab } from './makeup.js';
 import { SKIN, WRINKLE, SKIN_P0, skinOn, skinKey, prepSkin, SkinFx, skinNote } from './skin.js';
-import { BODY, BODY_P0, bodyOn, detectBody, measureBody, bodyWarps, bodyNote } from './body.js';
+import { BODY, BODY_P0, BODY_MAN, REG_OF, bodyOn, detectBody, measureBody, bodyWarps, manualWarps, manualRegion, bodyNote } from './body.js';
 import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } from './faceshape.js';
 import { WarpField } from './warpfield.js';
 import { FONTS, T0, TEXT_COLORS, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
@@ -304,7 +304,8 @@ function draw() {
   syncTex(); syncHair(); syncShape();
   if (bodyOn(P) && !base.body) getBody(base);
   // 身體的變形要排在最前面（長腿會改到整張照片的上下位置）
-  const warps = [...(base.body ? bodyWarps(base.body, base.faces, P) : []), ...(base.faces ? [...faceWarps(base.faces, P), ...hairWarps(base.faces, P, base.hair)] : [])];
+  // 手動增高也會改整張照片的上下位置，排第一個
+  const warps = [...manualWarps(base.body, P, base.canvas.width, base.canvas.height), ...(base.body ? bodyWarps(base.body, base.faces, P) : []), ...(base.faces ? [...faceWarps(base.faces, P), ...hairWarps(base.faces, P, base.hair)] : [])];
   R.render(gradeOn(P) ? { ...P, filterAmt: 100 } : P, warps, effects());
 }
 // 身體塑形：找人體關節，再用人像分割量身體寬度
@@ -639,7 +640,7 @@ function showTab(t) {
   ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, hair: tabHair, skin: tabSkin, light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
-  lightDot();
+  lightDot(); bmBox();
   syncNav();
 }
 
@@ -689,7 +690,7 @@ function paramRows(box, list) {
     const sfx = key !== k ? (side === 'L' ? '（左）' : '（右）') : '';
     rows.append(sliderRow({
       label: label + sfx, min: min ?? -100, max: max ?? 100, val: P[key],
-      onInput: v => { P[key] = v; cur = k; if (list === BEAUTY) P.oneTap = -1; render(); },
+      onInput: v => { P[key] = v; cur = k; if (list === BEAUTY) P.oneTap = -1; render(); bmBox(); },
     }));
   }
 }
@@ -786,11 +787,73 @@ function tabSkin(box) {
 }
 
 // ---------- 身體 ----------
+// 上面一排照 Hypic：自動塑身（找關節）、手動塑身（自己框範圍）
+let bodySec = 'auto';
 function tabBody(box) {
   if (!base.body) getBody(base);
+  const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
+  [['auto', '自動塑身', BODY], ['man', '手動塑身', BODY_MAN]].forEach(([s, lb, l]) => cats.append(item({
+    label: lb, icon: lb, cls: 'wide', on: bodySec === s, set: l.some(x => isSet(x[0])),
+    onclick: () => { bodySec = s; cur = l[0][0]; showTab('body'); },
+  })));
+  if (bodySec === 'man') {
+    paramItems(box, BODY_MAN, 'bmHeight');
+    $('#note').textContent = '在照片上拖曳框線調整範圍，拖框的中間可以移動。';
+    return;
+  }
   paramItems(box, BODY, 'bodyHead');
   $('#note').textContent = bodyNote(base.body, cur);
 }
+// 手動塑身的框：增高是兩條橫線，瘦身是長方形，放大是橢圓
+const manKey = () => base && tab === 'body' && bodySec === 'man' ? (BODY_MAN.some(x => x[0] === cur) ? cur : 'bmHeight') : null;
+function bmBox() {
+  let d = $('#bmbox');
+  if (!d) { d = document.createElement('div'); d.id = 'bmbox'; $('#wrap').append(d); }
+  const k = manKey();
+  d.hidden = !k;
+  if (!k) return;
+  const r = manualRegion(k, base.body, P);
+  d.className = k === 'bmHeight' ? 'band' : k === 'bmZoom' ? 'oval' : 'rect';
+  Object.assign(d.style, { left: r.x0 * 100 + '%', top: r.y0 * 100 + '%', width: (r.x1 - r.x0) * 100 + '%', height: (r.y1 - r.y0) * 100 + '%' });
+}
+(() => {
+  let drag = null;
+  const pos = e => { const r = $('#wrap').getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height, w: r.width, h: r.height }; };
+  $('#wrap').addEventListener('pointerdown', e => {
+    const k = manKey();
+    if (!k || e.target.closest('.st,.tx')) return;
+    const q = pos(e), r = { ...manualRegion(k, base.body, P) }, tx = 22 / q.w, ty = 22 / q.h;
+    const inX = q.x > r.x0 - tx && q.x < r.x1 + tx, inY = q.y > r.y0 - ty && q.y < r.y1 + ty;
+    // 靠近哪條邊就拖那條邊，在框裡面就整個移動
+    const edge = {
+      x0: k !== 'bmHeight' && inY && Math.abs(q.x - r.x0) < tx, x1: k !== 'bmHeight' && inY && Math.abs(q.x - r.x1) < tx,
+      y0: (k === 'bmHeight' || inX) && Math.abs(q.y - r.y0) < ty, y1: (k === 'bmHeight' || inX) && Math.abs(q.y - r.y1) < ty,
+    };
+    if (edge.y0 && edge.y1) edge[Math.abs(q.y - r.y0) < Math.abs(q.y - r.y1) ? 'y1' : 'y0'] = false;
+    if (edge.x0 && edge.x1) edge[Math.abs(q.x - r.x0) < Math.abs(q.x - r.x1) ? 'x1' : 'x0'] = false;
+    const move = !Object.values(edge).some(Boolean);
+    if (move && !(q.x > r.x0 && q.x < r.x1 && q.y > r.y0 && q.y < r.y1)) return;
+    e.preventDefault(); $('#wrap').setPointerCapture(e.pointerId);
+    drag = { k, q, r, edge, move };
+  });
+  $('#wrap').addEventListener('pointermove', e => {
+    if (!drag) return;
+    const q = pos(e), dx = q.x - drag.q.x, dy = q.y - drag.q.y, r0 = drag.r, r = { ...r0 }, m = 0.03;
+    const cl = v => Math.max(0, Math.min(1, v));
+    if (drag.move) {
+      const ex = drag.k === 'bmHeight' ? 0 : Math.max(-r0.x0, Math.min(1 - r0.x1, dx)), ey = Math.max(-r0.y0, Math.min(1 - r0.y1, dy));
+      r.x0 += ex; r.x1 += ex; r.y0 += ey; r.y1 += ey;
+    } else {
+      if (drag.edge.x0) r.x0 = Math.min(cl(r0.x0 + dx), r.x1 - m);
+      if (drag.edge.x1) r.x1 = Math.max(cl(r0.x1 + dx), r.x0 + m);
+      if (drag.edge.y0) r.y0 = Math.min(cl(r0.y0 + dy), r.y1 - m);
+      if (drag.edge.y1) r.y1 = Math.max(cl(r0.y1 + dy), r.y0 + m);
+    }
+    P[REG_OF[drag.k]] = r; render(); bmBox();
+  });
+  const up = () => { if (drag) { drag = null; commit(); } };
+  $('#wrap').addEventListener('pointerup', up); $('#wrap').addEventListener('pointercancel', up);
+})();
 
 // ---------- 頭髮 ----------
 function tabHair(box) {
