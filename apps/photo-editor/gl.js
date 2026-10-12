@@ -454,14 +454,18 @@ void main(){
       // 補光的顏色：亮的臉照 Hypic 偏冷一點（少一點紅）；暗的地方跟著膚色走，不會被稀釋成灰綠色
       vec3 sc0 = texture(uBlurS, uv).rgb, skinT = mix(vec3(1.0), sc0 / max(luma(sc0), 0.02), 0.3);
       vec3 tint = mix(skinT, uFlashT, smoothstep(0.34, 0.44, Ls));
-      // 嘴唇（美白遮罩 0.4、磨皮遮罩 0）少補，高光才不會爆白
+      // 嘴唇（美白遮罩 0.4、磨皮遮罩 0）：補的量跟皮膚一樣，一半用乘的，保留唇色
       vec2 mk = texture(uMask, uv).rg;
-      float lip = 1.0 - 0.7 * smoothstep(0.2, 0.35, mk.y) * (1.0 - smoothstep(0.05, 0.2, mk.x)) * step(0.0, fc.y);
+      float lipM = smoothstep(0.2, 0.35, mk.y) * (1.0 - smoothstep(0.05, 0.2, mk.x)) * step(0.0, fc.y);
       // 眼睛（亮眼遮罩：眼眶裡的眼白、虹膜、瞳孔）完全不補，眼珠不會變灰；眼皮照常補，不會多一圈黑眼圈
       float eye = 1.0 - smoothstep(0.2, 0.6, texture(uMask2, uv).b);
       // 額頭上半、下巴補得比臉中間少一點（Hypic 也是）
-      float k = nz * lip * eye * (1.0 - 0.3 * smoothstep(0.3, 0.65, fc.y) - 0.3 * (1.0 - smoothstep(-0.65, -0.35, fc.y)));
-      vec3 fill = dl > 0.0 ? col + tint * dl * k : col * (1.0 + max(dl, -0.03) * k / Ls);   // 本來就亮的地方最多暗一點點
+      float k = nz * eye * (1.0 - 0.3 * smoothstep(0.3, 0.65, fc.y) - 0.3 * (1.0 - smoothstep(-0.65, -0.35, fc.y)));
+      // 眼睛以上比附近皮膚暗很多的地方（眉毛、瀏海；看這一點周圍一小塊）是本來的顏色深，不是陰影：加的白光跟著變少，只用乘的稍微提亮，不會變灰。眼睛以下（暗側臉頰、鬍渣）照常補，補光才平均
+      float wa = mix(1.0, smoothstep(0.6, 0.95, mix(L0, luma(texture(uBlurS, uv).rgb), 0.7) / Ls), 1.0 - smoothstep(-0.3, -0.22, fc.y)) * (1.0 - 0.5 * lipM);
+      float wm = mix(0.3, 1.0, lipM) * (1.0 - wa) * (1.0 - smoothstep(0.75, 0.92, max(col.r, max(col.g, col.b))));   // 唇上的高光不再乘亮，不會爆白
+      vec3 fill = dl > 0.0 ? col * (1.0 + dl * k * wm / Ls) + tint * dl * k * wa : col * (1.0 + max(dl, -0.03) * k / Ls);   // 本來就亮的地方最多暗一點點
+      fill = mix(fill, col, lipM * smoothstep(0.78, 0.9, max(col.r, max(col.g, col.b))));   // 唇上本來就很亮的反光不補，不會到 255
       // 臉的範圍：上半臉只補皮膚（瀏海、頭髮不補；用附近的平均，額頭不會補得一塊一塊），鼻子到下巴連鬍子一起補，脖子補少一點；邊緣拉長，看不出一圈
       float face = (1.0 - smoothstep(0.75, 1.2, length(fc))) * mix(smoothstep(0.25, 0.7, sg / 17.0), 1.0, smoothstep(-0.05, 0.15, fc.y)) * (1.0 - 0.6 * smoothstep(0.6, 1.0, fc.y));
       // 臉以外：露出的皮膚（脖子、肩膀）照燈的結果；衣服、頭髮只會跟著變暗，不加光、不褪色
