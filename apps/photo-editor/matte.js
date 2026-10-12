@@ -20,7 +20,7 @@ function session() {
 
 // 回傳跟照片一樣大的 canvas，R 通道（也複製到 G、B）是前景透明度
 export async function matte(src) {
-  if (LOW_MEM || window.__lowMem) {
+  if (LOW_MEM) {
     const { segment } = await import('./ai.js');
     return refine(src, (await segment(src)).person);
   }
