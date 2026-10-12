@@ -288,7 +288,7 @@ export function lightAnchor(base, geo) {
 }
 
 // 閃光燈補平：取樣半徑（臉寬）、最多亮幾倍
-const FLASH_R = 0.2, FLASH_DMAX = 0.18;
+const FLASH_R = 0.2, FLASH_DMAX = 0.2;
 // 臉上補的光的顏色（亮度 1）：Hypic 強度 100 額頭多出來的 +34,+49,+45，中性偏冷，所以會少一點紅
 const FLASH_T = [0.73, 1.08, 0.99];
 

@@ -446,21 +446,21 @@ void main(){
         float w = texture(uMask, q).r + 0.15;
         sl += luma(texture(uBlurS, q).rgb) * w; sw += w; sg += texture(uMask, q).g;
       }
-      // 臉：照附近皮膚的平均亮度決定補多少（暗的那側補多、亮的那側幾乎不補），有上限（uFlashG.y）
+      // 臉：照附近皮膚的平均亮度（七成）和這一點周圍的亮度（三成）決定補多少（暗的那側補多、亮的那側幾乎不補），有上限（uFlashG.y）
       vec2 fc = (uv - uFlashC.xy) / uFlashC.zw;
-      float Ls = max(sl / sw, 0.02), dl = min(uFlashF.y * (uFlashF.z - Ls), uFlashG.y);
+      float Ls = max(mix(sl / sw, luma(texture(uBlurS, uv).rgb), 0.3), 0.02), dl = min(uFlashF.y * (uFlashF.z - Ls), uFlashG.y);
       // 閃光燈從鏡頭打過來：正對鏡頭的面補滿，下顎、臉頰外側、鼻翼這些斜的面補少，輪廓的陰影留著
-      float nz = mix(0.4, 1.0, smoothstep(0.3, 0.8, N.z));
+      float nz = mix(0.55, 1.0, smoothstep(0.3, 0.8, N.z));
       // 補光的顏色：亮的臉照 Hypic 偏冷一點（少一點紅）；暗的地方跟著膚色走，不會被稀釋成灰綠色
       vec3 sc0 = texture(uBlurS, uv).rgb, skinT = mix(vec3(1.0), sc0 / max(luma(sc0), 0.02), 0.3);
       vec3 tint = mix(skinT, uFlashT, smoothstep(0.34, 0.44, Ls));
       // 嘴唇（美白遮罩 0.4、磨皮遮罩 0）少補，高光才不會爆白
       vec2 mk = texture(uMask, uv).rg;
       float lip = 1.0 - 0.7 * smoothstep(0.2, 0.35, mk.y) * (1.0 - smoothstep(0.05, 0.2, mk.x)) * step(0.0, fc.y);
-      // 眼睛（美白遮罩 0.2）也少補，眼珠不會變灰
-      float eye = 1.0 - 0.6 * (1.0 - smoothstep(0.15, 0.45, mk.y)) * smoothstep(-0.6, -0.45, fc.y) * (1.0 - smoothstep(-0.15, 0.0, fc.y));
-      // 鼻子以下補得比額頭、臉頰少一點（Hypic 也是）
-      float k = nz * lip * eye * (1.0 - 0.22 * smoothstep(0.0, 0.5, fc.y));
+      // 眼睛（亮眼遮罩：眼眶裡的眼白、虹膜、瞳孔）完全不補，眼珠不會變灰；眼皮照常補，不會多一圈黑眼圈
+      float eye = 1.0 - smoothstep(0.2, 0.6, texture(uMask2, uv).b);
+      // 額頭上半、下巴補得比臉中間少一點（Hypic 也是）
+      float k = nz * lip * eye * (1.0 - 0.3 * smoothstep(0.3, 0.65, fc.y) - 0.3 * (1.0 - smoothstep(-0.65, -0.35, fc.y)));
       vec3 fill = dl > 0.0 ? col + tint * dl * k : col * (1.0 + max(dl, -0.03) * k / Ls);   // 本來就亮的地方最多暗一點點
       // 臉的範圍：上半臉只補皮膚（瀏海、頭髮不補；用附近的平均，額頭不會補得一塊一塊），鼻子到下巴連鬍子一起補，脖子補少一點；邊緣拉長，看不出一圈
       float face = (1.0 - smoothstep(0.75, 1.2, length(fc))) * mix(smoothstep(0.25, 0.7, sg / 17.0), 1.0, smoothstep(-0.05, 0.15, fc.y)) * (1.0 - 0.6 * smoothstep(0.6, 1.0, fc.y));
