@@ -2,6 +2,7 @@ import { Renderer } from './gl.js';
 import { FILTERS, bakeLUT, thumb, filterFn, skinFilterFn } from './filters.js';
 import { loadXT, xtData, xtItem } from './xt.js';
 import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor } from './ai.js';
+import { COVERS, COVER_CATS, coverPixels } from './coverface.js';
 import { STICKERS, STICKER_CATS, EMOJIS, EMOJI_FONT, BLENDS, blendById, stickerAR, stickerURL, svgURL, renderSticker, putCanvas, getCanvas, canvasURL, touchCanvas, ownImages } from './stickers.js';
 import { FX, OVERLAYS, BG_PHOTOS, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
 import { matte } from './matte.js';
@@ -542,7 +543,7 @@ const GI = {
 // 順序照 Hypic 編輯頁第一層：修飾、濾鏡、調整、清除、特效、貼圖、文字……重新塑形；
 // 人像底下照 Hypic「修飾」第二層：臉部、彩妝、皮膚、打光、頭髮、塑身
 const GROUPS = [
-  ['portrait', '人像', 'P', ['beauty', 'shape', 'makeup', 'skin', 'light', 'hair', 'body']],
+  ['portrait', '人像', 'P', ['beauty', 'shape', 'makeup', 'skin', 'light', 'hair', 'body', 'cover']],
   ['filter', '濾鏡', 'F', ['looks', 'filter']],
   ['adjust', '調節', 'A', ['adjust', 'grade']],
   ['erase', '消除', 'E', ['erase', 'cutout']],
@@ -652,7 +653,7 @@ function showTab(t) {
   $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true;
   gradeHide();
   if (!base) return;
-  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, hair: tabHair, skin: tabSkin, light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
+  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
   lightDot(); bmBox();
@@ -1132,6 +1133,30 @@ function tabSticker(box) {
     box.append(item({ label: '匯入圖片', icon: I.plus, onclick: () => $('#file5').click() }));
     ownImages().forEach(id => box.append(item({ label: '', cls: 'stk', icon: `<img src="${canvasURL(id)}" alt="">`, onclick: () => addSticker({ kind: 'img', v: id }) })));
   }
+}
+// ---------- 遮臉 ----------
+// 遮臉的圖案也放進貼紙庫，貼上去以後就是一般的貼紙
+STICKERS.push(...COVERS.filter(c => c.svg));
+let cvCat = 'daily';
+function tabCover(box) {
+  const faces = base.faces;
+  if (!faces) findFaces().then(() => tab === 'cover' && showTab('cover'));
+  const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
+  COVER_CATS.forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: cvCat === k, onclick: () => { cvCat = k; showTab('cover'); } })));
+  COVERS.filter(c => c.cat === cvCat).forEach(c => box.append(item({
+    label: c.name, cls: 'stk', icon: c.svg ? `<img src="${svgURL(c.id)}" alt="">` : c.name.slice(0, 2), onclick: () => addCover(c),
+  })));
+  hideSlider();
+  $('#note').textContent = !faces ? '正在找臉…' : !faces.length ? '這張照片沒找到臉。' : `點一下貼到 ${faces.length} 張臉上，貼上後可以到「貼紙」移動或刪除。`;
+}
+function addCover(c) {
+  if (!base.faces?.length) return toast('這張照片沒找到臉');
+  const W = base.canvas.width, H = base.canvas.height;
+  for (const pts of base.faces) for (const a of faceAnchor(pts, c.at)) {
+    const s = c.pix ? { kind: 'img', v: putCanvas(coverPixels(base.canvas, c.pix, a.x, a.y, a.size, a.rot), 'cov') } : { kind: 'svg', v: c.id };
+    stickers.push({ ...s, x: a.x / W, y: a.y / H, size: a.size / W, rot: a.rot, flip: false, flipv: false, op: 1, blend: 'normal', mask: null });
+  }
+  selSt = -1; drawStickers(); commit(); toast(`已遮住 ${base.faces.length} 張臉`);
 }
 function addSticker(s, face) {
   const W = base.canvas.width, H = base.canvas.height;
