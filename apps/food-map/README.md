@@ -30,8 +30,7 @@
 3. **開放 food schema**：Project Settings → Data API → Exposed schemas，加上 `food` → Save。
 4. **讓註冊不用收信**：Authentication → Sign In / Providers → Email，把 **Confirm email** 關掉 → Save。免費方案一小時只能寄幾封信，朋友註冊會卡住。如果現有的專案還需要收信確認，這步可以跳過，朋友註冊後去信箱點確認信就好。
 5. **部署「抓店家」功能**：
-   - 左邊 Edge Functions → Deploy a new function → Via Editor。
-   - 函式名稱填 `extract`，把 [`supabase/functions/extract/index.ts`](supabase/functions/extract/index.ts) 整份貼上，取代原本的範例 → Deploy function。
+   - 在這個資料夾跑 `npx supabase functions deploy extract --project-ref <專案 id>` 和 `npx supabase functions deploy quick-add --no-verify-jwt --project-ref <專案 id>`（兩個函式共用 `supabase/functions/_shared/extract.ts`，所以要用 CLI 部署，不能在後台貼上）。
    - 到 [console.groq.com/keys](https://console.groq.com/keys) 建一把免費 key（gsk_ 開頭）。
    - 回 Supabase：Edge Functions → Secrets → 新增 `GROQ_API_KEY`，值貼剛剛那把 key → Save。
 6. **把網址和 key 填進 app**：Project Settings → API Keys，複製 **Publishable key**（sb_publishable_ 開頭）；Project URL 在專案首頁或 Data API（https://xxxx.supabase.co）。填進 [`config.js`](config.js) 後推上 GitHub。
@@ -45,7 +44,10 @@
 - `app.js`：全部程式（資料層、導入、地圖、群組、滑卡、抽籤）
 - `config.js`：雲端設定
 - `supabase/schema.sql`：food schema 的資料表、權限（RLS）、加入群組、即時同步、店家照片的 Storage bucket（food-photos）
-- `supabase/functions/extract/index.ts`：讀 IG／TikTok／Google 地圖／一般網頁，交給 Groq 找店家
+- `supabase/functions/_shared/extract.ts`：讀 IG／TikTok／Google 地圖／一般網頁，交給 Groq 找店家
+- `supabase/functions/extract/index.ts`：app 新增店家時呼叫（要登入）
+- `supabase/functions/quick-add/index.ts`：iPhone 分享捷徑帶收藏碼呼叫，在背景找店家、補座標、存照片、直接收藏，回一行字給捷徑當通知
+- `shortcut/`：分享捷徑的產生程式 `make.py` 和未簽章檔。改了要在 Mac 上 `shortcuts sign --mode anyone` 簽章，匯入捷徑 App 後「拷貝 iCloud 連結」，換掉 `app.js` 的 `scLink`（拷貝連結時捷徑會把收藏碼清掉，不會外流）
 
 ## 技術
 
