@@ -6,6 +6,8 @@
 //   3. 依亮度（9 點）的色度變化
 // 權重存在 xt/filters.bin（int16，每個濾鏡一個縮放值），名稱、分類、預設強度在 xt/filters.json。
 // 醒圖很多濾鏡對皮膚另外調一套顏色，那套的權重在 xt/skin.bin（同樣的模型）。
+// 少數像熱感應、只留膚色那種顏色會突然跳的濾鏡（像素黃、數字彩虹、鎏金…），上面的模型跟不上，
+// 另外加一張「色相 × 亮度 × 鮮豔度」的格子（12×9×5，格子之間線性內插），權重在 xt/special.bin。
 
 const K = 9, H = 8, NF = 150;
 const LR = 0.2126, LG = 0.7152, LB = 0.0722;
@@ -16,13 +18,21 @@ export function loadXT() {
     fetch(new URL('xt/filters.json', import.meta.url)).then(r => r.json()),
     fetch(new URL('xt/filters.bin', import.meta.url)).then(r => r.arrayBuffer()),
     fetch(new URL('xt/skin.bin', import.meta.url)).then(r => r.arrayBuffer()),
-  ]).then(([meta, buf, sbuf]) => {
-    const deq = (buf, scale) => {
+    fetch(new URL('xt/special.bin', import.meta.url)).then(r => r.arrayBuffer()),
+  ]).then(([meta, buf, sbuf, xbuf]) => {
+    const deq = (buf, scale, nf = NF) => {
       const q = new Int16Array(buf), w = new Float32Array(q.length);
-      scale.forEach((s, f) => { const o = f * NF * 3; for (let k = 0; k < NF * 3; k++) w[o + k] = q[o + k] * s; });
+      scale.forEach((s, f) => { const o = f * nf * 3; for (let k = 0; k < nf * 3; k++) w[o + k] = q[o + k] * s; });
       return w;
     };
-    data = { cats: meta.cats, items: meta.items.map(([name, cat, p, def, skin], i) => ({ id: 'xt' + i, name, cat, p, def, skin })), w: deq(buf, meta.scale), ws: deq(sbuf, meta.skinScale) };
+    const sp = meta.sp, n = meta.items.length;
+    data = {
+      cats: meta.cats,
+      items: [...meta.items.map(([name, cat, p, def, skin], i) => ({ id: 'xt' + i, name, cat, p, def, skin })),
+        ...(sp?.items || []).map(([name, cat, p, def, skin], i) => ({ id: 'xt' + (n + i), name, cat, p, def, skin, sp: true }))],
+      w: deq(buf, meta.scale), ws: deq(sbuf, meta.skinScale),
+      wx: sp ? deq(xbuf, sp.scale, sp.feat) : null, nfx: sp?.feat, grid: sp?.grid,
+    };
     return data;
   }).catch(e => { console.warn(e); loading = null; return null; });
   return loading;
@@ -33,7 +43,8 @@ export const xtItem = id => data && id?.startsWith('xt') ? data.items[+id.slice(
 // 一個濾鏡的顏色函式 (r,g,b) → [r,g,b]，數值 0～1；skin 為 true 時是皮膚那套（沒有就回傳 null）
 export function xtFn(id, skin) {
   const it = xtItem(id); if (!it || (skin && !(it.skin >= 0))) return null;
-  const W = skin ? data.ws : data.w, base = (skin ? it.skin : it.p) * NF * 3;
+  const W = it.sp ? data.wx : skin ? data.ws : data.w, base = (skin ? it.skin : it.p) * (it.sp ? data.nfx : NF) * 3;
+  const [NH, NL, NC] = data.grid || [0, 0, 0];
   const out = [0, 0, 0];
   return (r, g, b) => {
     out[0] = out[1] = out[2] = 0;
@@ -63,6 +74,15 @@ export function xtFn(id, skin) {
       add(o + i, c0 * (1 - f)); add(o + i + 1, c0 * f);
       add(o + K + i, c1 * (1 - f)); add(o + K + i + 1, c1 * f);
       add(o + 2 * K + i, c2 * (1 - f)); add(o + 2 * K + i + 1, c2 * f);
+    }
+    if (it.sp) {
+      // 色相（繞一圈）× 亮度 × 鮮豔度的格子，八個角線性內插
+      const lin = (z, N) => { z = (z < 0 ? 0 : z > 1 ? 1 : z) * (N - 1); const i = Math.min(Math.floor(z), N - 2); return [i, z - i]; };
+      const th = a * NH, g0 = Math.floor(th) % NH, gf = th - Math.floor(th), g1 = (g0 + 1) % NH;
+      const [li, lf] = lin(L, NL), [ci, cf] = lin(m / 0.5, NC);
+      for (const [hh, hw] of [[g0, 1 - gf], [g1, gf]])
+        for (const [dl, lw] of [[0, 1 - lf], [1, lf]])
+          for (const [dc, cw] of [[0, 1 - cf], [1, cf]]) add(NF + (hh * NL + li + dl) * NC + ci + dc, hw * lw * cw);
     }
     return [out[0] < 0 ? 0 : out[0] > 1 ? 1 : out[0], out[1] < 0 ? 0 : out[1] > 1 ? 1 : out[1], out[2] < 0 ? 0 : out[2] > 1 ? 1 : out[2]];
   };
