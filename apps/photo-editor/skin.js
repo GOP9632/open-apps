@@ -35,9 +35,33 @@ export const WRINKLE = [
   ['wkEye', '眼紋', ic('<path d="M2 12s4-5 9-5 9 5 9 5-4 5-9 5-9-5-9-5z"/><circle cx="11" cy="12" r="2.5"/><path d="M20.5 9l1.5-1M21 12h1.5M20.5 15l1.5 1"/>'), 0, 60],
   ['wkLip', '唇紋', ic('<path d="M4 12c3-3 5-3 8-1 3-2 5-2 8 1-3 4-13 4-16 0z"/><path d="M9 11.5v2M12 11.5v2.5M15 11.5v2"/>'), 0, 60],
 ];
+// AI 美肌（照 Hypic 的 AI 美肌面板：臉部 8 項、身體 8 項，名稱和第一次點開的強度照 Hypic）
+//   Hypic 是上傳到雲端用圖生圖模型重畫，這裡全部在手機上用膚質遮罩和三層模糊做出類似的樣子
+const BODYI = '<circle cx="12" cy="6" r="3"/><path d="M6 21c0-6 2-10 6-10s6 4 6 10"/>';
+export const AI_FACE = [
+  ['aiFreckle', '雀斑', ic(FACE + '<path d="M9 13h.01M10.5 14h.01M8 14.5h.01M15 13h.01M13.5 14h.01M16 14.5h.01M12 12.5h.01"/>'), 0, 95],
+  ['aiRosy', '水光紅潤', ic(FACE + '<ellipse cx="8.5" cy="13.5" rx="1.8" ry="1.2" fill="currentColor" opacity=".4"/><ellipse cx="15.5" cy="13.5" rx="1.8" ry="1.2" fill="currentColor" opacity=".4"/><path d="M10 8c1-1 3-1 4 0"/>'), 0, 90],
+  ['aiClear', '清透素顏', ic(FACE + '<path d="M9 15c1.5 1 4.5 1 6 0"/>'), 0, 90],
+  ['aiMatte', '霧面感', ic(FACE + '<path d="M8 10h8M8 13h8" opacity=".5"/>'), 0, 90],
+  ['aiGloss', '光澤感', ic(FACE + '<path d="M12 6l.8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8z"/>'), 0, 75],
+  ['aiGlass', '玻璃肌', ic(FACE + '<path d="M9 9l3-2M10 12l4-3" opacity=".7"/>'), 0, 75],
+  ['aiSunkiss', '仿曬妝', ic(FACE + '<path d="M7.5 13c1.5-1 7.5-1 9 0" stroke-width="2.4" opacity=".35"/>'), 0, 70],
+  ['aiBronze', '古銅色', ic('<ellipse cx="12" cy="12" rx="7" ry="9" fill="currentColor" opacity=".35"/>'), 0, 45],
+];
+export const AI_BODY = [
+  ['aiVelvet', '絲絨嫩膚', ic(BODYI), 0, 95],
+  ['aiBDewy', '水光肌', ic(BODYI + '<path d="M10 15c1-1 3-1 4 0"/>'), 0, 75],
+  ['aiTanLine', '曬痕', ic(BODYI + '<path d="M9 11l1 6M15 11l-1 6" opacity=".6"/>'), 0, 100],
+  ['aiBGlass', '玻璃肌', ic(BODYI + '<path d="M10 16l3-2" opacity=".7"/>'), 0, 90],
+  ['aiBGloss', '光澤感', ic(BODYI + '<path d="M12 13l.6 1.3 1.3.6-1.3.6-.6 1.3-.6-1.3-1.3-.6 1.3-.6z"/>'), 0, 90],
+  ['aiRose', '玫瑰金', ic(BODYI + '<circle cx="12" cy="16" r="2" fill="currentColor" opacity=".4"/>'), 0, 90],
+  ['aiChamp', '香檳金', ic(BODYI + '<circle cx="12" cy="16" r="2" fill="currentColor" opacity=".25"/>'), 0, 90],
+  ['aiBBronze', '古銅色', ic('<circle cx="12" cy="6" r="3" fill="currentColor" opacity=".35"/><path d="M6 21c0-6 2-10 6-10s6 4 6 10z" fill="currentColor" opacity=".35"/>'), 0, 85],
+];
+const AI = [...AI_FACE, ...AI_BODY].map(x => x[0]);
 // 臉型分頁的豐臉、拉皮額頭也要在這裡補亮、淡化細紋（值存在臉型的 fs_ 鍵）
 const FILL = { uFFore: 'fs_fill_fore', uFCheek: 'fs_fill_cheek', uFFold: 'fs_fill_fold', uFBag: 'fs_fill_bag', uLFore: 'fs_lift_fore', uLEye: 'fs_lift_eye' };
-const KEYS = [...[...SKIN, ...WRINKLE].map(x => x[0]).filter(k => k !== 'smooth'), ...Object.values(FILL)];
+const KEYS = [...[...SKIN, ...WRINKLE, ...AI_FACE, ...AI_BODY].map(x => x[0]).filter(k => k !== 'smooth'), ...Object.values(FILL)];
 export const SKIN_P0 = Object.fromEntries(KEYS.filter(k => !k.startsWith('fs_')).map(k => [k, 0]));
 export const skinOn = p => KEYS.some(k => p[k]);
 export const skinKey = p => KEYS.map(k => p[k] || 0).join('|');
@@ -217,6 +241,7 @@ uniform vec3 uMean;
 uniform float uNative, uGirl, uCream, uBaby, uFrost, uTex, uOil, uBare, uBody, uDewy, uMatte, uBlush, uTan, uUnify;
 uniform float uHead, uFold, uNeck, uEye, uLip;
 uniform float uFFore, uFCheek, uFFold, uFBag, uLFore, uLEye;
+uniform float uAi[16];
 float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float noise(vec2 p){
@@ -347,6 +372,95 @@ void main(){
     vec3 tan = vec3(pow(c.r, 1.18) * 0.97, pow(c.g, 1.32) * 0.88, pow(c.b, 1.5) * 0.76);
     col = mix(col, sat(tan, 1.05), uTan * sk * 0.85);
   }
+  // ---- AI 美肌 ----
+  // 臉部：face 是臉上的皮膚，t3.g 是蘋果肌，t3.r 是臉的高點（額頭、鼻樑、顴骨）
+  float hiF = max(0.0, luma(B) - luma(C));
+  if (uAi[0] > 0.0) {
+    // 雀斑：臉頰和鼻樑上一顆顆淺褐色小點，大小跟著照片大小走
+    vec2 q = vUV * vec2(uPx.y / uPx.x, 1.0) * 260.0;
+    float n = noise(q * 0.9) * 0.7 + noise(q * 2.1 + 5.3) * 0.3;
+    float dot1 = smoothstep(0.68, 0.76, n) * (0.6 + 0.4 * noise(q * 0.3));
+    float zone = clamp(t3.g * 1.6 + t3.r * 0.6, 0.0, 1.0) * face;
+    col = mix(col, col * vec3(0.78, 0.65, 0.55), dot1 * zone * uAi[0] * 0.9);
+  }
+  if (uAi[1] > 0.0) {
+    // 水光紅潤：蘋果肌透紅、高點濕潤反光
+    SMOOTH(uAi[1] * 0.3 * face, 0.9);
+    col = mix(col, col * vec3(1.0, 0.84, 0.86) + vec3(0.04, 0.0, 0.015), t3.g * uAi[1] * 0.6);
+    col += (1.0 - col) * (t3.r * t3.r * 0.15 + min(hiF * 1.5, 0.1) * face) * uAi[1];
+  }
+  if (uAi[2] > 0.0) {
+    // 清透素顏：膚色均勻、退紅、透亮一點
+    vec3 un = B + (uMean * (luma(B) / max(luma(uMean), 0.05)) - B) * 0.5;
+    col += (un - B) * uAi[2] * face;
+    float red = max(0.0, (col.r - col.g) - (uMean.r - uMean.g));
+    col.r -= red * 0.6 * uAi[2] * face;
+    SMOOTH(uAi[2] * 0.4 * face, 0.85);
+    col = mix(col, col + (1.0 - col) * 0.07, uAi[2] * face);
+  }
+  if (uAi[3] > 0.0) {
+    // 霧面感：油光壓掉、對比降、像上了霧面粉底
+    float ex = max(0.0, luma(A) - luma(C) - 0.01);
+    col -= vec3(ex) * 1.2 * uAi[3] * face;
+    SMOOTH(uAi[3] * 0.5 * face, 0.7);
+    col = mix(col, sat(mix(col, C, 0.15), 0.92) + 0.02, uAi[3] * face);
+  }
+  if (uAi[4] > 0.0) {
+    // 光澤感：高點帶一層柔亮的光
+    col += (1.0 - col) * (t3.r * 0.16 + min(hiF * 1.6, 0.12) * face) * uAi[4];
+  }
+  if (uAi[5] > 0.0) {
+    // 玻璃肌：磨得很平、透亮，高點有清楚的反光
+    SMOOTH(uAi[5] * 0.7 * face, 0.5);
+    col = mix(col, col + (1.0 - col) * 0.06, uAi[5] * face);
+    float sh = smoothstep(0.01, 0.06, hiF) * face;
+    col += (1.0 - col) * (sh * 0.22 + t3.r * t3.r * 0.14) * uAi[5];
+  }
+  if (uAi[6] > 0.0) {
+    // 仿曬妝：鼻樑和兩頰一條曬紅、整張臉帶一點小麥色
+    vec3 c = max(col, vec3(0.0));
+    col = mix(col, vec3(pow(c.r, 1.08), pow(c.g, 1.16), pow(c.b, 1.26)), uAi[6] * face * 0.6);
+    float band = clamp(t3.g * 1.4 + t3.r * 0.5, 0.0, 1.0) * face;
+    col = mix(col, col * vec3(1.0, 0.8, 0.74) + vec3(0.05, 0.0, 0.0), band * uAi[6] * 0.6);
+  }
+  if (uAi[7] > 0.0) {
+    vec3 c = max(col, vec3(0.0));
+    col = mix(col, sat(vec3(pow(c.r, 1.25) * 0.96, pow(c.g, 1.42) * 0.86, pow(c.b, 1.65) * 0.72), 1.08), uAi[7] * face * 0.9);
+  }
+  // 身體：body 是臉以外的皮膚
+  if (uAi[8] > 0.0) {
+    col = mix(col, B + (col - A) * 0.35, clamp(uAi[8] * 0.85 * body, 0.0, 1.0));
+    col = mix(col, sat(col + (1.0 - col) * 0.06, 0.95), uAi[8] * body);
+  }
+  if (uAi[9] > 0.0) {
+    SMOOTH(uAi[9] * 0.35 * body, 0.9);
+    col += (1.0 - col) * hiF * 2.4 * body * uAi[9];
+  }
+  if (uAi[10] > 0.0) {
+    // 曬痕：皮膚曬成小麥色，比較凸出的地方（肩、手臂上緣）微微曬紅
+    vec3 c = max(col, vec3(0.0));
+    col = mix(col, vec3(pow(c.r, 1.15) * 0.98, pow(c.g, 1.3) * 0.9, pow(c.b, 1.45) * 0.8), uAi[10] * body * 0.8);
+    col = mix(col, col * vec3(1.0, 0.85, 0.8) + vec3(0.03, 0.0, 0.0), smoothstep(0.0, 0.03, hiF) * body * uAi[10] * 0.6);
+  }
+  if (uAi[11] > 0.0) {
+    SMOOTH(uAi[11] * 0.65 * body, 0.5);
+    col += (1.0 - col) * (smoothstep(0.004, 0.04, hiF) * 0.45 + 0.06) * body * uAi[11];
+  }
+  if (uAi[12] > 0.0) {
+    col += (1.0 - col) * hiF * 3.0 * body * uAi[12];
+  }
+  if (uAi[13] > 0.0 || uAi[14] > 0.0) {
+    // 玫瑰金、香檳金：亮部帶金屬色的光澤，暗部微微染色
+    vec3 tint = uAi[13] > 0.0 ? vec3(1.0, 0.76, 0.72) : vec3(1.0, 0.88, 0.62);
+    float k = max(uAi[13], uAi[14]);
+    float hl = smoothstep(0.35, 0.85, luma(col));
+    col = mix(col, col * mix(vec3(1.0), tint, 0.35), k * body);
+    col += (1.0 - col) * tint * (hl * 0.18 + hiF * 2.5) * k * body;
+  }
+  if (uAi[15] > 0.0) {
+    vec3 c = max(col, vec3(0.0));
+    col = mix(col, sat(vec3(pow(c.r, 1.25) * 0.96, pow(c.g, 1.42) * 0.86, pow(c.b, 1.65) * 0.72), 1.08), uAi[15] * body * 0.9);
+  }
   // 皮膚紋理：細紋理加強，再補一點像毛孔的細顆粒，磨皮後才不會像塑膠
   if (uTex > 0.0) {
     col += fineD * 0.9 * uTex * sk;
@@ -439,6 +553,7 @@ export class SkinFx {
       gl.uniform3fv(u('uMean'), data.mean);
       const map = { uNative: 'skNative', uGirl: 'skGirl', uCream: 'skCream', uBaby: 'skBaby', uFrost: 'skFrost', uTex: 'skTex', uOil: 'skOil', uBare: 'skBare', uBody: 'skBody', uDewy: 'skDewy', uMatte: 'skMatte', uBlush: 'skBlush', uTan: 'skTan', uUnify: 'skUnify', uHead: 'wkHead', uFold: 'wkFold', uNeck: 'wkNeck', uEye: 'wkEye', uLip: 'wkLip' };
       for (const [n, k] of Object.entries({ ...map, ...FILL })) gl.uniform1f(u(n), f(k));
+      gl.uniform1fv(u('uAi'), AI.map(f));
     });
     return this.canvas;
   }
@@ -448,7 +563,7 @@ export class SkinFx {
 export function skinNote(base, cur) {
   const d = base.skin;
   if (!d) return '正在找皮膚…';
-  if (!d.faces && (cur.startsWith('wk') || ['skDewy', 'skBlush'].includes(cur))) return '這張照片沒找到臉，這一項需要看得到臉。';
+  if (!d.faces && (cur.startsWith('wk') || ['skDewy', 'skBlush'].includes(cur) || AI_FACE.some(x => x[0] === cur))) return '這張照片沒找到臉，這一項需要看得到臉。';
   if (d.area < 0.003) return '這張照片裡露出的皮膚很少，效果會不明顯。';
   return '';
 }
