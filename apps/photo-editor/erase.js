@@ -138,7 +138,7 @@ function state(b) {
   if (st?.b === b) return st;
   const W = b.canvas.width, H = b.canvas.height, k = Math.min(1, MASK_SIDE / Math.max(W, H));
   // 換照片或消除完，工具和畫筆大小沿用
-  st = { b, mask: newCanvas(W * k, H * k), ppl: null, pplOn: false, pplP: null, tool: st?.tool || 'brush', size: st?.size ?? 30 };
+  st = { b, mask: newCanvas(W * k, H * k), ppl: null, pplOn: false, pplP: null, tool: st?.tool || 'brush', size: st?.size ?? 20 };
   return st;
 }
 const hasMask = () => !!(st && maskBox(st.mask));

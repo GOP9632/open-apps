@@ -27,7 +27,7 @@ const MAX_SIDE = 4096, MAX_AREA = 16e6;
 const P0 = {
   exposure: 0, brightness: 0, contrast: 0, saturation: 0, temp: 0, tint: 0, highlights: 0, shadows: 0,
   sharpen: 0, vignette: 0, grain: 0, fade: 0,
-  filter: 'none', filterAmt: 80,
+  filter: 'none', filterAmt: 60, // 照 Hypic：濾鏡強度預設 60
   smooth: 0, white: 0, slim: 0, vface: 0, eyes: 0, nose: 0, mouth: 0,
   chin: 0, dark: 0, fold: 0, eyeb: 0, teeth: 0, slimL: 0, slimR: 0, eyesL: 0, eyesR: 0,
   bg: 'keep', bgColor: '#ffffff',
@@ -88,14 +88,14 @@ const I = {
 };
 
 const ADJUST = [
-  ['brightness', '亮度', I.sun], ['contrast', '對比', I.contrast], ['exposure', '曝光', I.exposure], ['saturation', '飽和', I.drop],
-  ['temp', '色溫', I.temp], ['tint', '色調', I.tint], ['highlights', '高光', I.high], ['shadows', '陰影', I.shadow],
-  ['sharpen', '銳化', I.sharp, 0], ['vignette', '暗角', I.vig], ['grain', '顆粒', I.grain, 0], ['fade', '褪色', I.fade, 0],
+  ['brightness', '亮度', I.sun], ['exposure', '曝光', I.exposure], ['contrast', '對比', I.contrast], ['saturation', '飽和', I.drop],
+  ['highlights', '高光', I.high], ['shadows', '陰影', I.shadow], ['temp', '色溫', I.temp], ['tint', '色調', I.tint],
+  ['sharpen', '銳化', I.sharp, 0], ['grain', '顆粒', I.grain, 0], ['fade', '褪色', I.fade, 0], ['vignette', '暗角', I.vig],
 ];
 const BEAUTY = [
   ['smooth', '磨皮', I.skin, 0], ['white', '美白', I.white, 0], ['dark', '黑眼圈', I.dark, 0], ['fold', '法令紋', I.fold, 0],
   ['eyeb', '亮眼', I.eyeb, 0], ['teeth', '白牙', I.teeth, 0],
-  ['slim', '瘦臉', I.slim], ['vface', '小 V 臉', I.vface], ['chin', '下巴', I.chin],
+  ['slim', '瘦臉', I.slim], ['vface', '小 V 臉', I.vface, 0], ['chin', '下巴', I.chin],
   ['eyes', '大眼', I.eye], ['nose', '瘦鼻', I.nose], ['mouth', '嘴巴', I.mouth],
 ];
 // 第一次點開時的起始強度，照醒圖點開滑桿時的預設值
@@ -121,8 +121,9 @@ let stickers = [];   // { kind: 'svg' | 'emoji' | 'img', v, x, y, size, rot, fli
 let side = 'both';
 let selSt = -1;
 let hist = [], hi = -1;
-let tab = 'looks', cur = 'brightness', selText = -1;
+let tab = 'beauty', cur = 'brightness', selText = -1;
 let cropState = null;
+let landing = false;  // 剛開照片、使用者還沒自己換分頁
 let cSec = 'pop';         // 創意分頁目前在哪一區：出框、景深、特效、光效
 let exOwn = null, exN = 0; // 雙重曝光自己選的第二張照片
 let frameK = 1;
@@ -162,7 +163,8 @@ async function loadFile(file) {
     ['#bSave', '#bCmp', '#bResetAll'].forEach(s => $(s).disabled = false);
     view.reset(); $('#zoom').classList.add('on');
     commit();
-    showTab('looks');
+    // 照 Hypic：人像照進來先停在「人像」；找不到臉就改停在濾鏡
+    landing = true; showTab('beauty');
   } catch (e) {
     console.error(e); toast('這張照片打不開');
   } finally { busy(); }
@@ -218,6 +220,7 @@ function findFaces() {
     b.faces = f; b.geoms = f.map(faceGeom);
     b.mask2 = f.length ? featureMask(f, b.canvas.width, b.canvas.height) : null;
     if (b === base) { R.setMask2(b.mask2); render(); }
+    if (b === base && !f.length && landing && tab === 'beauty') { landing = false; showTab('filter'); }
     const seg = f.length ? await getSeg(b) : null;
     b.mask = f.length ? skinMask(f, b.canvas.width, b.canvas.height, seg) : null;
     if (b === base) { R.setMask(b.mask); render(); if (tab === 'beauty' || tab === 'sticker' || tab === 'makeup' || tab === 'looks') showTab(tab); }
@@ -483,7 +486,7 @@ slider.addEventListener('input', () => { paintSlider(); slider._on?.(+slider.val
 slider.addEventListener('change', () => { commit(); syncNav(); });
 $('#sVal').onclick = () => { if (!slider._on) return; slider.value = Math.max(+slider.min, 0); paintSlider(); slider._on(+slider.value); commit(); };
 
-$('#tabs').onclick = e => { const b = e.target.closest('.tab'); if (b) showTab(b.dataset.tab); };
+$('#tabs').onclick = e => { const b = e.target.closest('.tab'); if (b) { landing = false; showTab(b.dataset.tab); } };
 
 // ---------- 主選單（照醒圖電腦版：少數幾個大類，底下再分段） ----------
 const GI = {
@@ -496,14 +499,16 @@ const GI = {
   fun: I.magic,
 };
 // [id, 名稱, 快捷鍵, 底下的分頁]；不在這裡的分頁（之後新增的）放到最後一組
+// 順序照 Hypic 編輯頁第一層：修飾、濾鏡、調整、清除、特效、貼圖、文字……重新塑形；
+// 人像底下照 Hypic「修飾」第二層：臉部、彩妝、皮膚、打光、頭髮、塑身
 const GROUPS = [
-  ['adjust', '調節', 'A', ['adjust', 'grade', 'light']],
-  ['portrait', '人像', 'P', ['beauty', 'shape', 'skin', 'makeup', 'body', 'hair']],
+  ['portrait', '人像', 'P', ['beauty', 'shape', 'makeup', 'skin', 'light', 'hair', 'body']],
   ['filter', '濾鏡', 'F', ['looks', 'filter']],
-  ['compose', '構圖', 'C', ['crop', 'frame']],
+  ['adjust', '調節', 'A', ['adjust', 'grade']],
   ['erase', '消除', 'E', ['erase', 'cutout']],
-  ['text', '文字', 'T', ['text', 'sticker']],
   ['fun', '創意', 'X', ['fun', 'cut']],
+  ['text', '文字', 'T', ['text', 'sticker']],
+  ['compose', '構圖', 'C', ['crop', 'frame']],
 ];
 const groupOf = t => GROUPS.find(g => g[3].includes(t)) || GROUPS[GROUPS.length - 1];
 const lastTab = {};
@@ -519,6 +524,7 @@ GROUPS.forEach(([id, name, key]) => {
 });
 function openGroup(id) {
   if (!base) return;
+  landing = false;
   const g = GROUPS.find(x => x[0] === id);
   const tabs = [...document.querySelectorAll('#tabs .tab')].map(b => b.dataset.tab).filter(t => groupOf(t) === g);
   showTab(tabs.includes(lastTab[id]) ? lastTab[id] : tabs[0]);
@@ -679,7 +685,7 @@ function tabFilter(box) {
     label: f.name, cls: 'ft', on: P.filter === f.id, style: `background-image:url(${base.thumbs[i]})`,
     onclick: () => {
       if (P.filter === f.id && f.id !== 'none') return;
-      P.filter = f.id; render(); commit(); showTab('filter');
+      P.filter = f.id; P.filterAmt = P0.filterAmt; render(); commit(); showTab('filter');
     },
   })));
   if (P.filter === 'none') hideSlider();
@@ -922,7 +928,7 @@ function lightDot() {
 // 選項照醒圖貼圖面板：大小、旋轉、不透明度、暈染（10 種混合模式）、擦除和復原筆、
 // 順序（置頂、上移、下移、置底）、橫向和直向翻轉、複製、刪除，加上分類貼紙庫、搜尋、匯入圖片
 let stCat = 'face', stSec = 'adjust', stQ = '';
-let stBrush = 30, stHard = 100, stPen = 'erase', stEsub = 'size';
+let stBrush = 20, stHard = 100, stPen = 'erase', stEsub = 'size';
 const ST_SECS = [['adjust', '調整'], ['blend', '混合'], ['erase', '擦除'], ['layer', '圖層']];
 function tabSticker(box) {
   const faces = base.faces;
@@ -1113,7 +1119,7 @@ function cutView(s, w, h, plain) {
   } else ctx.drawImage(c.canvas, 0, 0, cv.width, cv.height);
   return cv;
 }
-let brushR = 30;
+let brushR = 20; // 1~100，照 Hypic 預設 20；半徑 = 值 × 1.5 像素
 function drawStickers() {
   const layer = $('#stickers'), wr = { width: $('#wrap').offsetWidth };
   layer.innerHTML = '';
@@ -1144,7 +1150,7 @@ function drawStickers() {
       if (painting()) {
         s.v = cloneAlpha(s.v); // 每一筆存成新的一份，才能復原
         const p = local(e.clientX, e.clientY);
-        paint = { pts: [p], r: brushR / p.sc };
+        paint = { pts: [p], r: brushR * 1.5 / p.sc };
         brush(s.v, paint.pts, paint.r, cur === 'restore');
         d.replaceChildren(cutView(s, bw, bh, true));
         return;
@@ -1348,7 +1354,7 @@ function tabCut(box) {
     return;
   }
   if (cur === 'erase' || cur === 'restore') {
-    setSlider('筆刷', 4, 80, brushR, v => { brushR = v; });
+    setSlider('筆刷', 1, 100, brushR, v => { brushR = v; });
     $('#note').textContent = cur === 'erase' ? '在圖層上塗抹，擦掉不要的地方。' : '塗抹把擦掉的地方補回來。';
     return;
   }
