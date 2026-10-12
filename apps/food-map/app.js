@@ -49,8 +49,8 @@ const ICONS = {
   spark: 'M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z',
   pin: 'M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z M12 7a3 3 0 1 0 0 6 3 3 0 1 0 0-6z',
   clock: 'M12 2a10 10 0 1 0 0 20 10 10 0 1 0 0-20z M12 6v6l4 2',
-  home: 'M3 11l9-7 9 7 M5 10v10h5v-6h4v6h5V10',
   user: 'M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2 M12 3a4 4 0 1 0 0 8 4 4 0 1 0 0-8z',
+  layers: 'M12 2 2 7l10 5 10-5-10-5z M2 17l10 5 10-5 M2 12l10 5 10-5',
   trash: 'M3 6h18 M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6 M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2',
   out: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4 M16 17l5-5-5-5 M21 12H9',
   down: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3',
@@ -80,8 +80,11 @@ const canStore = (() => { try { localStorage.setItem('food.t', '1'); localStorag
 const hash = s => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7) >>> 0;
 const buzz = p => { try { navigator.vibrate?.(p); } catch { /* 不支援 */ } };
 let toastTimer;
-function toast(msg, ms = 2600) {
-  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+function toast(msg, ms = 2600, act) {
+  const t = $('#toast'); t.textContent = msg;
+  // 帶一個按鈕（例如「復原」）
+  if (act) { const b = document.createElement('button'); b.className = 't-act'; b.textContent = act.label; b.onclick = () => { clearTimeout(toastTimer); t.classList.remove('show'); act.run(); }; t.append(b); }
+  t.classList.toggle('has-act', !!act); t.classList.add('show');
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
 }
 function parseAddr(addr) {
@@ -97,6 +100,46 @@ function distKm(a, b) {
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
 }
+// ---------- 重複店家 ----------
+// 店名去掉空白、標點、「本店／總店」之類再比
+const nkMemo = new Map();
+const nk = s => nkMemo.get(s) ?? (nkMemo.size > 5000 && nkMemo.clear(), nkMemo.set(s, nk0(s)).get(s));
+const nk0 = s => String(s || '').toLowerCase().normalize('NFKC').replace(/[\s\-_.,，。、・·'’"「」『』()（）【】\[\]|｜/&＆!！?？~～:：#＃@]+/g, '').replace(/(本店|總店|旗艦店)$/, '');
+const bigrams = s => { const a = []; for (let i = 0; i < s.length - 1; i++) a.push(s.slice(i, i + 2)); return a; };
+function nameSim(a, b) {
+  const x = bigrams(a), y = bigrams(b); if (!x.length || !y.length) return a === b ? 1 : 0;
+  let hit = 0; const pool = [...y]; for (const g of x) { const i = pool.indexOf(g); if (i >= 0) { hit++; pool.splice(i, 1); } }
+  return 2 * hit / (x.length + y.length);
+}
+// 判斷兩筆是不是同一間：同名同地區、或名字很像而且位置很近；連鎖店不同分店不算
+function sameShop(a, b) {
+  const na = nk(a.name), nb = nk(b.name); if (!na || !nb) return false;
+  const ba = nk(a.branch), bb = nk(b.branch);
+  if (ba && bb && ba !== bb) return false;
+  const d = a.lat != null && b.lat != null ? distKm(a, b) : null;
+  const sameName = na === nb || nk(a.name + (a.branch || '')) === nk(b.name + (b.branch || ''));
+  if (sameName) return d != null ? d < 0.5 : (!a.city || !b.city || normCity(a.city) === normCity(b.city));
+  if (d == null) return false;
+  const contain = Math.min(na.length, nb.length) >= 2 && (na.includes(nb) || nb.includes(na));
+  return (contain && d < 0.25) || (d < 0.06 && nameSim(na, nb) >= 0.5);
+}
+const pairKey = (a, b) => [a, b].sort().join('|');
+// 我的收藏裡可能重複的各組（按「不是重複」的會記住，不再提醒）
+function dupGroups() {
+  const mine = S.places.filter(isMine), ok = new Set(load('food.notDup', []));
+  const parent = new Map(mine.map(p => [p.id, p.id]));
+  const root = id => { while (parent.get(id) !== id) id = parent.get(id); return id; };
+  for (let i = 0; i < mine.length; i++) for (let j = i + 1; j < mine.length; j++) {
+    const a = mine[i], b = mine[j];
+    if (!ok.has(pairKey(a.id, b.id)) && sameShop(a, b)) parent.set(root(a.id), root(b.id));
+  }
+  const g = new Map(); for (const p of mine) { const r = root(p.id); g.set(r, [...(g.get(r) || []), p]); }
+  return [...g.values()].filter(x => x.length > 1);
+}
+// 資料比較完整的那筆排前面，建議保留它
+const richness = p => (p.photo ? 3 : 0) + (p.lat != null && !p.approx ? 2 : p.lat != null ? 1 : 0) + (p.dishes || []).length + (p.address ? 1 : 0) + (p.source_url ? 1 : 0) + (p.note ? 1 : 0) + (p.status === 'been' ? 1 : 0) + (p.rating ? 1 : 0);
+const findDup = c => S.places.find(p => isMine(p) && p.id !== c.id && sameShop(p, c));
+
 const fmtKm = d => d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(d < 10 ? 1 : 0)} km`;
 const mapsUrl = p => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([p.name, p.branch, p.address || normCity(p.city)].filter(Boolean).join(' '))}`;
 const initial = n => (n || '?').trim().slice(0, 1).toUpperCase();
@@ -213,10 +256,21 @@ const DB = {
     DB.snap();
     return data;
   },
-  async deletePlace(id) {
-    if (cloud()) { const { error } = await S.sb.from('places').delete().eq('id', id); if (error) throw error; }
-    S.places = S.places.filter(p => p.id !== id);
-    S.groupPlaces = S.groupPlaces.filter(g => g.place_id !== id);
+  async deletePlace(id) { return DB.deletePlaces([id]); },
+  async deletePlaces(ids) {
+    if (cloud()) { const { error } = await S.sb.from('places').delete().in('id', ids); if (error) throw error; }
+    S.places = S.places.filter(p => !ids.includes(p.id));
+    S.groupPlaces = S.groupPlaces.filter(g => !ids.includes(g.place_id));
+    if (!cloud()) save('food.places', S.places); else DB.snap();
+  },
+  // 復原刪除：原樣放回（同一個 id），群組分享也一起放回
+  async restore(rows, shares) {
+    if (cloud()) {
+      const back = await DB.q(S.sb.from('places').insert(rows).select());
+      if (shares.length) S.groupPlaces.push(...await DB.q(S.sb.from('group_places').insert(shares.map(({ group_id, place_id }) => ({ group_id, place_id }))).select()));
+      S.places.push(...back);
+    } else S.places.push(...rows);
+    S.places.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
     if (!cloud()) save('food.places', S.places); else DB.snap();
   },
   async rpc(fn, args) { const { data, error } = await S.sb.rpc(fn, args); if (error) throw error; return data; },
@@ -424,8 +478,9 @@ function filterChips({ map = false } = {}) {
 function placeCard(p, i = 0) {
   const d = S.pos && p.lat != null ? fmtKm(distKm(S.pos, p)) : '';
   const [t, e] = cat(p);
-  return `<div class="pcard" style="--i:${i}" onclick="App.openPlace('${p.id}')">
-    <div class="ph">${photo(p)}
+  const pick = S.sel && S.tab === 'list';
+  return `<div class="pcard ${pick ? (isMine(p) ? S.sel.has(p.id) ? 'picked' : '' : 'nopick') : ''}" style="--i:${i}" data-id="${p.id}" onclick="App.cardTap('${p.id}')">
+    <div class="ph">${photo(p)}${pick && isMine(p) ? `<span class="pick-dot">${ic('check')}</span>` : ''}
       <span class="badge ${p.status}">${p.status === 'been' ? `去過${p.rating ? ' ★' + p.rating : ''}` : '想去'}</span>
       ${d ? `<span class="dist">${d}</span>` : ''}
       ${!isMine(p) ? `<span class="who">${avatar(p.owner, 26)}</span>` : ''}
@@ -449,7 +504,6 @@ const Views = {
     const title = { list: ['美食收藏', n ? `${n} 間收藏・${S.places.filter(p => isMine(p) && p.status === 'been').length} 間去過` : '把想吃的店都存在這裡'], draw: ['今天吃什麼？', '選條件，交給運氣'], groups: ['美食群組', '跟朋友一起收藏、一起決定'], me: ['我的', ''] }[t] || ['', ''];
     if (t === 'groups' && S.group) return '';
     return `<div class="grow"><h1>${title[0]}</h1>${title[1] ? `<div class="sub">${title[1]}</div>` : ''}</div>
-      <a class="icon-btn portal-home" href="https://anthony-apps.netlify.app/" aria-label="回入口">${ic('home')}</a>
       ${t === 'me' ? '' : `<button class="me-btn" onclick="App.tab('me')" aria-label="我的">${cloud() && S.me ? esc(initial(S.me.name)) : ic('user')}</button>`}`;
   },
   list() {
@@ -461,8 +515,9 @@ const Views = {
         <button class="btn primary big" onclick="App.openAdd()">${ic('plus')} 新增第一間</button></div>`;
     return `<div class="search">${ic('search')}<input id="q" placeholder="搜尋店名、地區、料理、標籤" value="${esc(S.f.q)}" oninput="App.setF('q', this.value, true)" enterkeyhint="search"></div>
       ${filterChips()}
-      <div class="count-line"><span>${list.length} 間${S.f.sort === 'near' ? '・由近到遠' : ''}</span></div>
-      ${list.length ? `<div class="grid">${list.map(placeCard).join('')}</div>` : `<div class="empty"><div class="art">🔍</div><h2>沒有符合的店</h2><p>換個條件試試看</p><button class="btn" onclick="App.clearF()">清除篩選</button></div>`}`;
+      ${!S.sel && (S.dups = dupGroups()).length ? `<button class="dup-banner" onclick="App.dups()"><span class="ic">${ic('layers')}</span><span class="grow"><b>有 ${S.dups.length} 組可能重複的店</b><small>點這裡比對，合併成一間或刪掉多的</small></span>${ic('next')}</button>` : ''}
+      <div class="count-line"><span>${S.sel ? '點卡片選要刪掉的店' : `${list.length} 間${S.f.sort === 'near' ? '・由近到遠' : ''}`}</span>${S.sel ? `<button class="link-btn" onclick="App.pickAll()">${list.filter(isMine).every(p => S.sel.has(p.id)) ? '全部取消' : '全選'}</button>` : list.some(isMine) ? `<button class="link-btn" onclick="App.pick()">選取</button>` : ''}</div>
+      ${list.length ? `<div class="grid ${S.sel ? 'picking' : ''}">${list.map(placeCard).join('')}</div>` : `<div class="empty"><div class="art">🔍</div><h2>沒有符合的店</h2><p>換個條件試試看</p><button class="btn" onclick="App.clearF()">清除篩選</button></div>`}`;
   },
   draw() {
     const d = S.draw;
@@ -602,7 +657,6 @@ const Views = {
     const m = S.authMode || 'in';
     const fl = [['🍜', 8, 12], ['🍰', 82, 9], ['☕', 12, 78], ['🥐', 86, 70], ['🍣', 70, 88], ['🧋', 22, 45]];
     return `<div class="auth">
-      <a class="icon-btn glass portal-home" href="https://anthony-apps.netlify.app/" aria-label="回入口">${ic('home')}</a>
       ${fl.map(([e, x, y], i) => `<span class="fl" style="left:${x}%;top:${y}%;animation-delay:${i * .6}s">${e}</span>`).join('')}
       <img class="logo" src="icon.svg" alt="">
       <h1>美食收藏</h1>
@@ -883,7 +937,11 @@ const App = {
     document.body.classList.toggle('on-round', onRound);
     const tabs = $('#tabs');
     tabs.classList.toggle('away', needAuth || onRound);
-    tabs.innerHTML = [...TABS.slice(0, 2).map(App.tabBtn), `<button class="add" onclick="App.openAdd()" aria-label="新增店家">${ic('plus')}</button>`, ...TABS.slice(2).map(App.tabBtn)].join('');
+    const picking = !!S.sel && S.tab === 'list' && !needAuth;
+    tabs.classList.toggle('selbar', picking);
+    tabs.innerHTML = picking
+      ? `<button class="btn ghost" onclick="App.pick(false)">取消</button><span class="grow sel-n">已選 ${S.sel.size} 間</span><button class="btn del" ${S.sel.size ? '' : 'disabled'} onclick="App.delPicked()">${ic('trash')} 刪除</button>`
+      : [...TABS.slice(0, 2).map(App.tabBtn), `<button class="add" onclick="App.openAdd()" aria-label="新增店家">${ic('plus')}</button>`, ...TABS.slice(2).map(App.tabBtn)].join('');
     if (needAuth) { $('#top').innerHTML = ''; $('#top').classList.add('hidden'); $('#main').innerHTML = Views.auth(); return; }
     $('#top').classList.toggle('hidden', onRound || (S.tab === 'groups' && !!S.group));
     $('#top').innerHTML = Views.header();
@@ -907,7 +965,7 @@ const App = {
   tab(t) {
     if (t === S.tab && t === 'groups' && (S.group || S.round)) { S.group = null; S.round = null; }
     else if (t === S.tab && t !== 'me') { window.scrollTo({ top: 0, behavior: 'smooth' }); if (t !== 'map') return; }
-    buzz(6);
+    buzz(6); S.sel = null;
     S.tab = t; if (t !== 'me') save('food.tab', t); if (t !== 'groups') S.round = null;
     S.animate = true; App.render(); window.scrollTo(0, 0);
     if (t === 'map') Me.start(true);
@@ -1010,7 +1068,9 @@ const App = {
   },
   renderCands() {
     const out = $('#add-out'); if (!out || !S.cands) return;
-    const dup = c => S.places.find(p => isMine(p) && p.name.replace(/\s/g, '') === c.name.replace(/\s/g, '') && (!c.city || !p.city || normCity(p.city) === c.city));
+    const dup = c => findDup({ ...c, id: null });
+    // 已經收藏過的，預設不勾（還是可以自己勾回來）
+    for (const c of S.cands) if (c.dupSeen == null && dup(c)) { c.dupSeen = true; c.on = false; }
     const n = S.cands.filter(c => c.on).length;
     const first = !out.querySelector('.cand');
     out.innerHTML = `<div class="section-t" style="margin-top:18px">${ic('spark')} 找到 ${S.cands.length} 間<span class="muted" style="font-weight:500;font-size:13px">名稱、分類可以直接改</span></div>
@@ -1026,7 +1086,7 @@ const App = {
           <div class="loc ${c.lat != null ? 'ok' : ''}">${c.locating ? '<span class="spin" style="width:12px;height:12px;border-width:2px"></span> 找地圖位置…' : c.lat != null ? `${ic('pin')} ${c.approx ? '已找到大概位置' : '已找到位置'}` : `${ic('pin')} 找不到位置，存好後可以補`}</div>
           ${c.note ? `<div class="muted" style="margin-top:4px">💬 ${esc(c.note)}</div>` : ''}
           ${c.dishes.length ? `<div class="dish-line">${ic('star')} 必點：${esc(c.dishes.join('、'))}</div>` : ''}
-          ${dup(c) ? '<div class="err" style="font-size:12.5px;margin-top:4px">已經收藏過同名的店</div>' : ''}
+          ${dup(c) ? `<div class="dup-note">${ic('layers')} 已經收藏過「${esc(dup(c).name)}」${c.on ? '，會再存一筆' : ''}</div>` : ''}
         </div>
       </div>`).join('')}
       ${cloud() && S.groups.length ? `<div class="fgroup"><div class="t">同時分享到群組</div><div class="chips wrap">${S.groups.map(g => `<span class="chip ${(S.addGroups || []).includes(g.id) ? 'on' : ''}" onclick="App.toggleAddGroup('${g.id}')">${ic('users')} ${esc(g.name)}</span>`).join('')}</div></div>` : ''}
@@ -1085,7 +1145,9 @@ const App = {
       </div>
       ${p.lat != null ? '<div id="mini" class="minimap"></div>' : mine ? '<p class="muted" style="margin-top:12px">還沒有地圖位置，到「編輯」裡點地圖就能補上。</p>' : ''}
       ${mine && cloud() && S.groups.length ? `<div class="fgroup"><div class="t">分享到群組</div><div class="chips wrap">${S.groups.map(g => { const on = myGroups.includes(g); return `<span class="chip ${on ? 'on' : ''}" onclick="App.${on ? 'unshare' : 'share'}('${g.id}', ['${p.id}']).then(() => App.openPlace('${p.id}', true))">${on ? ic('check') : ic('users')} ${esc(g.name)}</span>`; }).join('')}</div></div>` : ''}
-      ${p.source_url || p.source_text ? `<div class="post"><div class="post-h"><span class="src">${esc(srcName(p.source_url))}</span>${p.source_url ? `<a class="btn sm" href="${esc(p.source_url)}" target="_blank" rel="noopener">${ic('ext')} 看原始貼文</a>` : ''}</div>${p.source_text ? `<p class="post-t" onclick="this.classList.toggle('open')">${esc(p.source_text)}</p>` : ''}</div>` : ''}`, { hero: true, keep: arguments[1] });
+      ${mine && findDup(p) ? `<button class="dup-hint" onclick="App.dups('${p.id}')">${ic('layers')}<span class="grow">好像和「${esc(findDup(p).name)}」是同一間</span><b>整理</b></button>` : ''}
+      ${p.source_url || p.source_text ? `<div class="post"><div class="post-h"><span class="src">${esc(srcName(p.source_url))}</span>${p.source_url ? `<a class="btn sm" href="${esc(p.source_url)}" target="_blank" rel="noopener">${ic('ext')} 看原始貼文</a>` : ''}</div>${p.source_text ? `<p class="post-t" onclick="this.classList.toggle('open')">${esc(p.source_text)}</p>` : ''}</div>` : ''}
+      ${mine ? `<button class="btn ghost danger block del-row" onclick="App.delPlace('${p.id}')">${ic('trash')} 刪除這間收藏</button>` : ''}`, { hero: true, keep: arguments[1] });
     // 等抽屜滑上來再建小地圖，不然 iPhone 上滑動會卡一下
     if (p.lat != null && !S.miniMap) setTimeout(async () => { const el = $('#mini'); if (el && !S.miniMap) S.miniMap = await MapView.mini(el, p, false); }, arguments[1] ? 0 : 430);
   },
@@ -1148,6 +1210,8 @@ const App = {
     const e = S.edit;
     if (!e.name?.trim()) return toast('店名要填');
     e.city = normCity(e.city);
+    const d = !e.id && findDup({ ...e, id: null });
+    if (d && !await App.confirm(`已經收藏過「${d.name}」`, `${d.address || area(d) || ''}\n還是要再存一筆嗎？`, '還是要存')) return;
     try {
       const saved = await DB.savePlace(e); App.close(); toast('已儲存'); buzz(10); S.keepScroll = true; App.render();
       if (needsEnrich(saved)) App.enrich([saved]);
@@ -1158,10 +1222,125 @@ const App = {
       }
     } catch (err) { toast('儲存失敗：' + err.message, 5000); }
   },
-  async delPlace(id) {
-    if (!await App.confirm('刪除這間店？', '刪掉之後，群組裡也會一起消失。', '刪除', true)) return;
-    try { await DB.deletePlace(id); App.close(); S.keepScroll = true; App.render(); toast('已刪除'); }
-    catch (e) { toast('刪除失敗：' + e.message); }
+  // 刪掉後幾秒內可以按「復原」，所以單筆不用再問一次
+  async delPlace(id) { App.close(); await App.removePlaces([id]); },
+  async removePlaces(ids, msg) {
+    const rows = S.places.filter(p => ids.includes(p.id) && isMine(p)).map(p => ({ ...p }));
+    if (!rows.length) return false;
+    const shares = S.groupPlaces.filter(g => ids.includes(g.place_id)).map(g => ({ ...g }));
+    try { await DB.deletePlaces(rows.map(p => p.id)); }
+    catch (e) { toast('刪除失敗：' + e.message); return false; }
+    buzz(10); S.keepScroll = true;
+    if (S.tab === 'map') MapView.sync(false); else App.render();
+    toast(msg || (rows.length > 1 ? `刪除了 ${rows.length} 間` : `刪除了「${rows[0].name}」`), 6000, { label: '復原', run: async () => {
+      try { await DB.restore(rows, shares); buzz(8); S.keepScroll = true; if (S.tab === 'map') MapView.sync(false); else App.render(); toast('已復原'); }
+      catch (e) { toast('復原失敗：' + e.message, 5000); }
+    } });
+    return true;
+  },
+
+  // ----- 選取多間一起刪 -----
+  cardTap(id) {
+    if (App._lp) { App._lp = false; return; }
+    if (!S.sel || S.tab !== 'list') return App.openPlace(id);
+    const p = S.places.find(x => x.id === id); if (!p || !isMine(p)) return toast('朋友分享的店不能刪');
+    buzz(5); S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id);
+    App.pickPaint();
+  },
+  // 只更新勾勾和底下的數字，不重畫整頁
+  pickPaint() {
+    for (const c of document.querySelectorAll('.grid.picking .pcard')) c.classList.toggle('picked', S.sel.has(c.dataset.id));
+    const n = $('#tabs .sel-n'); if (n) n.textContent = `已選 ${S.sel.size} 間`;
+    const d = $('#tabs .del'); if (d) d.disabled = !S.sel.size;
+    const all = $('.count-line .link-btn'); if (all) all.textContent = visiblePlaces().filter(isMine).every(p => S.sel.has(p.id)) ? '全部取消' : '全選';
+  },
+  pick(on = true, first) {
+    buzz(on ? [8, 30, 8] : 6);
+    S.sel = on ? new Set(first ? [first] : []) : null;
+    S.keepScroll = true; App.render();
+  },
+  pickAll() {
+    const ids = visiblePlaces().filter(isMine).map(p => p.id);
+    const all = ids.every(id => S.sel.has(id));
+    S.sel = new Set(all ? [] : ids); buzz(6); App.pickPaint();
+  },
+  async delPicked() {
+    const ids = [...S.sel]; if (!ids.length) return;
+    const shared = S.groupPlaces.some(g => ids.includes(g.place_id));
+    if (ids.length > 1 && !await App.confirm(`刪除 ${ids.length} 間收藏？`, shared ? '有些分享在群組裡，群組也會一起拿掉。刪掉後幾秒內可以復原。' : '刪掉後幾秒內可以復原。', '刪除', true)) return;
+    S.sel = null;
+    if (!await App.removePlaces(ids)) App.render();
+  },
+
+  // ----- 重複店家：比對、合併 -----
+  dups(focus) {
+    const groups = dupGroups();
+    if (!groups.length) { App.close(); toast('沒有重複的店了 👍'); S.keepScroll = true; App.render(); return; }
+    if (focus) groups.sort((a, b) => b.some(p => p.id === focus) - a.some(p => p.id === focus));
+    S.dupKeep = S.dupKeep || {};
+    const when = p => p.created_at ? new Date(p.created_at).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }) + ' 收藏' : '';
+    const info = p => [p.photo ? '有照片' : '', (p.dishes || []).length ? `必點 ${p.dishes.length} 道` : '', p.lat != null ? (p.approx ? '大概位置' : '有位置') : '沒有位置', p.status === 'been' ? `去過${p.rating ? ' ★' + p.rating : ''}` : '', S.groupPlaces.some(g => g.place_id === p.id) ? '分享在群組' : ''].filter(Boolean).join('・');
+    const html = groups.map((g, gi) => {
+      g.sort((a, b) => richness(b) - richness(a));
+      const key = g.map(p => p.id).sort().join('|');
+      const keep = g.some(p => p.id === S.dupKeep[key]) ? S.dupKeep[key] : g[0].id;
+      const far = g.every(p => p.lat != null) ? Math.max(...g.flatMap(a => g.map(b => distKm(a, b)))) : null;
+      return `<div class="dup-group" style="--i:${gi}" data-key="${key}">
+        <div class="dup-why">${far != null ? far < 0.015 ? '同一個位置・' : `相距 ${fmtKm(far)}・` : ''}${new Set(g.map(p => nk(p.name))).size === 1 ? '店名相同' : '店名相近'}</div>
+        ${g.map(p => `<label class="dup-row ${p.id === keep ? 'keep' : ''}">
+          <input type="radio" name="k${gi}" ${p.id === keep ? 'checked' : ''} onchange="S.dupKeep['${key}']='${p.id}';App.dupPaint(this)" value="${p.id}">
+          <div class="ph">${photo(p)}</div>
+          <div class="grow"><div class="n">${esc(p.name)}${p.branch ? ` <span class="muted">${esc(p.branch)}</span>` : ''}</div>
+            <div class="m">${esc(p.address || area(p) || '沒有地址')}</div>
+            <div class="m m2">${esc([when(p), info(p)].filter(Boolean).join('・'))}</div></div>
+          <span class="keep-tag">保留</span>
+        </label>`).join('')}
+        <div class="row dup-acts"><button class="btn" onclick="App.notDup('${key}')">不是同一間</button><button class="btn primary grow" onclick="App.merge('${key}')">${ic('layers')} 合併成一間</button></div>
+      </div>`;
+    }).join('');
+    App.sheet(`<div class="sheet-h"><h2>可能重複的店</h2><button class="icon-btn" onclick="App.close()" aria-label="關閉">${ic('x')}</button></div>
+      <p class="muted" style="margin:-4px 2px 14px">選要保留哪一筆。合併時另一筆的照片、必點、筆記、位置、群組分享會補進來，再把它刪掉。</p>
+      ${html}`, { keep: !!$('#sheet .dup-group') });
+  },
+  dupPaint(r) { for (const row of r.closest('.dup-group').querySelectorAll('.dup-row')) row.classList.toggle('keep', row.contains(r)); buzz(5); },
+  notDup(key) {
+    const ids = key.split('|'), ok = load('food.notDup', []);
+    for (const a of ids) for (const b of ids) if (a < b) ok.push(pairKey(a, b));
+    save('food.notDup', [...new Set(ok)]); buzz(6);
+    App.dupOut(key, () => App.dups());
+  },
+  // 這組滑掉，再刷新清單
+  dupOut(key, then) {
+    const el = $(`.dup-group[data-key="${key}"]`);
+    if (el) { el.style.height = el.offsetHeight + 'px'; el.offsetHeight; el.classList.add('out'); }
+    setTimeout(then, el ? 320 : 0);
+  },
+  async merge(key) {
+    const ids = key.split('|');
+    const keepId = ids.includes(S.dupKeep?.[key]) ? S.dupKeep[key] : $(`.dup-group[data-key="${key}"] input:checked`)?.value || ids[0];
+    const keep = { ...S.places.find(p => p.id === keepId) };
+    const others = S.places.filter(p => ids.includes(p.id) && p.id !== keepId);
+    for (const o of others) {
+      for (const k of ['photo', 'branch', 'address', 'city', 'district', 'cuisine', 'hours', 'note', 'source_url', 'source_text']) if (!keep[k] && o[k]) keep[k] = o[k];
+      if (!keep.price && o.price) keep.price = o.price;
+      if (o.lat != null && (keep.lat == null || (keep.approx && !o.approx))) Object.assign(keep, { lat: o.lat, lng: o.lng, approx: o.approx });
+      keep.dishes = cleanDishes([...(keep.dishes || []), ...(o.dishes || [])]);
+      keep.tags = [...new Set([...(keep.tags || []), ...(o.tags || [])])].slice(0, 8);
+      keep.meals = [...new Set([...(keep.meals || []), ...(o.meals || [])])];
+      if (o.status === 'been') keep.status = 'been';
+      if ((o.rating || 0) > (keep.rating || 0)) keep.rating = o.rating;
+      if (o.note && keep.note && !keep.note.includes(o.note)) keep.note = `${keep.note}\n${o.note}`;
+    }
+    const btn = $(`.dup-group[data-key="${key}"] .btn.primary`); if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin" style="border-top-color:#fff"></span> 合併中…'; }
+    try {
+      await DB.savePlace(keep);
+      // 另一筆分享過的群組，改成分享保留的這筆
+      if (cloud()) for (const gid of new Set(S.groupPlaces.filter(g => others.some(o => o.id === g.place_id)).map(g => g.group_id))) await App.share(gid, [keepId], true);
+      await DB.deletePlaces(others.map(o => o.id));
+      buzz([10, 40, 10]); toast(`合併好了，留下「${keep.name}」`);
+      S.keepScroll = true; App.render();
+      App.dupOut(key, () => App.dups());
+    } catch (e) { toast('合併失敗：' + e.message, 5000); if (btn) { btn.disabled = false; btn.textContent = '再試一次'; } }
   },
   async copyToMine(id) {
     const p = { ...S.places.find(x => x.id === id) };
@@ -1561,6 +1740,18 @@ document.addEventListener('keydown', e => {
     if (e.key === 'ArrowLeft') App.swipe(false);
   }
 });
+// 收藏清單長按卡片 → 進入選取模式
+{
+  let t = null, x0 = 0, y0 = 0;
+  addEventListener('touchstart', e => {
+    const c = e.target.closest?.('.pcard'); if (!c || S.tab !== 'list' || S.sel || $('.sheet-bg')) return;
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+    t = setTimeout(() => { t = null; const p = S.places.find(x => x.id === c.dataset.id); if (p && isMine(p)) { App._lp = true; App.pick(true, p.id); } }, 480);
+  }, { passive: true });
+  addEventListener('touchmove', e => { if (t && Math.hypot(e.touches[0].clientX - x0, e.touches[0].clientY - y0) > 8) { clearTimeout(t); t = null; } }, { passive: true });
+  addEventListener('touchend', () => { clearTimeout(t); t = null; setTimeout(() => { App._lp = false; }, 400); }, { passive: true });
+  addEventListener('contextmenu', e => { if (e.target.closest?.('.pcard') && S.tab === 'list') e.preventDefault(); });
+}
 addEventListener('scroll', () => $('#top').classList.toggle('scrolled', scrollY > 8), { passive: true });
 
 (async () => {
