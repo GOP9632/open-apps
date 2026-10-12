@@ -12,7 +12,7 @@ export const HAIR = [
   ['hairGap', '補髮縫', '<svg viewBox="0 0 24 24"><path d="M5 20c0-9 3-15 7-15s7 6 7 15"/><path d="M12 5v6" stroke-dasharray="2 2"/></svg>', 0, 66],
   ['hairDense', '增髮', '<svg viewBox="0 0 24 24"><path d="M5 20c0-9 3-15 7-15s7 6 7 15"/><path d="M9 8v8M12 7v9M15 8v8"/></svg>', 0, 33],
 ];
-export const HAIR_P0 = { hairDye: '', hairDyeAmt: 70, hairUni: 0, hairVol: 0, hairLine: 0, hairFly: 0, hairGap: 0, hairDense: 0 };
+export const HAIR_P0 = { hairDye: '', hairDyeAmt: 100, hairUni: 0, hairVol: 0, hairLine: 0, hairFly: 0, hairGap: 0, hairDense: 0 };
 
 // 染髮色號（sRGB，0~1）：用在頭髮的平均亮度上，亮的髮絲會跟著亮
 export const DYES = [
@@ -216,7 +216,7 @@ export class HairFx {
     const dye = DYES.find(d => d.id === p.hairDye);
     gl.uniform3fv(u('uMean'), data.mean);
     gl.uniform3fv(u('uDye'), dye ? dye.c : [0, 0, 0]);
-    gl.uniform1f(u('uDyeAmt'), dye ? f('hairDyeAmt') : 0);
+    gl.uniform1f(u('uDyeAmt'), dye ? f('hairDyeAmt') * 0.7 : 0 /* 預設 100 照 Hypic，看起來跟以前的 70 一樣 */);
     gl.uniform1f(u('uUni'), f('hairUni')); gl.uniform1f(u('uFly'), f('hairFly'));
     gl.uniform1f(u('uGap'), f('hairGap')); gl.uniform1f(u('uDense'), f('hairDense'));
     gl.drawArrays(gl.TRIANGLES, 0, 3);
