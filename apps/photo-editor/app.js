@@ -14,6 +14,7 @@ import { SKIN, WRINKLE, AI_FACE, AI_BODY, SKIN_P0, skinOn, skinKey, prepSkin, Sk
 import { BODY, BODY_P0, BODY_MAN, REG_OF, bodyOn, detectBody, measureBody, bodyWarps, manualWarps, manualRegion, bodyNote } from './body.js';
 import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } from './faceshape.js';
 import { WarpField } from './warpfield.js';
+import { RESHAPE, liqDab, liqMoves, liqRadius } from './reshape.js';
 import { FONTS, T0, TEXT_COLORS, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
 import { initCollage, openCollage } from './collage.js';
 import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightPosOf, lightGrad } from './relight.js';
@@ -38,6 +39,7 @@ const P0 = {
   blur: 0, blurStyle: 'classic', blurSize: 55, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'lake', bgImg: 'beach', bgBlur: 30, frame: '',
   ...HAIR_P0,
   bgProtect: 1, // 背景保護：變形時背景不跟著彎
+  liq: [], // 重新塑形（液化）畫的每一點，見 reshape.js
   mk: {}, mkLook: -1, mkLookAmt: 100,
   look: '', lookAmt: 100, // 一鍵出片
   ...BODY_P0,
@@ -290,7 +292,7 @@ function paintFrame() {
 // 會在照片上拖曳的工具（消除、裁切、移動燈）不接手機雙指，免得跟筆刷打架
 const view = canvasZoom({
   stage: $('#stage'), box: $('#fbox'),
-  canPan: (e, touch) => !!base && !e.target.closest('.st,.tx') && (!touch || !(tab === 'erase' || tab === 'crop' || (tab === 'light' && P.light))),
+  canPan: (e, touch) => !!base && !e.target.closest('.st,.tx') && (!touch || !(tab === 'erase' || tab === 'crop' || tab === 'reshape' || (tab === 'light' && P.light))),
   // 手機上平常不顯示縮放按鈕，放大了才出現（點百分比回到全覽）
   onChange: z => { $('#zPct').textContent = Math.round(frameK * z * 100) + '%'; $('#zoom').classList.toggle('zoomed', z > 1); },
 });
@@ -374,7 +376,8 @@ function getHair(b) {
 // 臉型：所有滑桿換成位移圖
 function syncShape() {
   const sm = base.faces?.length ? shapeMoves(base.faces, P) : { moves: [], pins: [] };
-  R.setDisp(WF.update(base.canvas.width, base.canvas.height, base.faces || [], sm.moves, sm.pins));
+  const lq = liqMoves(P.liq, base.canvas.width, base.canvas.height);
+  R.setDisp(WF.update(base.canvas.width, base.canvas.height, base.faces || [], [...sm.moves, ...lq.moves], sm.pins, lq.boxes));
 }
 // 光效、背景、雙重曝光的圖：要用的時候才畫，照片比例變了就重畫
 const texKey = {};
@@ -543,7 +546,7 @@ const GI = {
 // 順序照 Hypic 編輯頁第一層：修飾、濾鏡、調整、清除、特效、貼圖、文字……重新塑形；
 // 人像底下照 Hypic「修飾」第二層：臉部、彩妝、皮膚、打光、頭髮、塑身
 const GROUPS = [
-  ['portrait', '人像', 'P', ['beauty', 'shape', 'sculpt', 'makeup', 'skin', 'aiskin', 'light', 'hair', 'body', 'cover']],
+  ['portrait', '人像', 'P', ['beauty', 'shape', 'sculpt', 'makeup', 'skin', 'aiskin', 'light', 'hair', 'body', 'reshape', 'cover']],
   ['filter', '濾鏡', 'F', ['looks', 'filter']],
   ['adjust', '調節', 'A', ['adjust', 'grade']],
   ['erase', '消除', 'E', ['erase', 'cutout']],
@@ -597,7 +600,7 @@ const keysOf = list => list.flatMap(x => SIDED.includes(x[0]) ? [x[0], x[0] + 'L
 const toP0 = keys => keys.forEach(k => { P[k] = clone(P0[k]); });
 const keysOn = keys => () => keys.some(k => JSON.stringify(P[k]) !== JSON.stringify(P0[k]));
 const tabKeys = {
-  adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...WRINKLE]), aiskin: keysOf([...AI_FACE, ...AI_BODY]), sculpt: Object.keys(SC_P0),
+  adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...WRINKLE]), aiskin: keysOf([...AI_FACE, ...AI_BODY]), sculpt: Object.keys(SC_P0), reshape: ['liq'],
   body: Object.keys(BODY_P0), hair: Object.keys(HAIR_P0), makeup: ['mk', 'mkLook', 'mkLookAmt'], filter: ['filter', 'filterAmt'],
   light: ['light', 'lightAmt', 'lightBri', 'lightCol', 'lightDist', 'lightSpec', 'lightBlur', 'lightFg', 'lightBg', 'lightX', 'lightY', 'lightSeed', 'flash', 'flashAmt'],
   fun: ['blur', 'blurStyle', 'blurSize', 'fx', 'fxAmt', 'ov', 'ovAmt', 'ex', ...Object.keys(POP_P0)], frame: ['frame'], cutout: ['bg', 'bgColor', 'bgImg', 'bgBlur'],
@@ -653,10 +656,10 @@ function showTab(t) {
   $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true;
   gradeHide();
   if (!base) return;
-  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, aiskin: tabAiSkin, sculpt: tabSculpt, light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
+  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, aiskin: tabAiSkin, sculpt: tabSculpt, reshape: tabReshape, light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
-  lightDot(); bmBox();
+  lightDot(); bmBox(); rsRing();
   syncNav();
 }
 
@@ -926,6 +929,55 @@ function tabHair(box) {
   paramItems(box, HAIR, 'hairUni');
   box.append(protectItem());
 }
+// ---------- 重新塑形（液化，reshape.js） ----------
+// 照 Hypic 修飾 › 重新塑形：彎曲、順時針旋轉、逆時針旋轉、脹大、縮小、還原，每個工具各自記大小、強度
+let rsTool = 'push', rsParam = 'size';
+const rsVal = Object.fromEntries(RESHAPE.map(t => [t.id, { size: t.size, str: t.str }]));
+function tabReshape(box) {
+  const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
+  [['size', '大小'], ['str', '強度']].forEach(([k, lb]) => cats.append(item({
+    label: lb, icon: lb, cls: 'wide', on: rsParam === k, onclick: () => { rsParam = k; showTab('reshape'); },
+  })));
+  RESHAPE.forEach(t => box.append(item({ label: t.name, icon: t.icon, on: rsTool === t.id, onclick: () => { rsTool = t.id; showTab('reshape'); } })));
+  box.append(protectItem());
+  const v = rsVal[rsTool], def = RESHAPE.find(t => t.id === rsTool)[rsParam];
+  setSlider(rsParam === 'size' ? '大小' : '強度', 1, 100, v[rsParam], x => { v[rsParam] = x; rsRing(); }, def);
+  $('#note').textContent = rsTool === 'push' ? '用手指在照片上推，被推的地方會跟著走。兩指可以縮放照片。' : rsTool === 'restore' ? '塗抹改過的地方，慢慢變回原樣。' : '在要改的地方按住或來回塗抹。';
+  rsRing();
+}
+// 筆刷大小的圓圈（調大小時顯示在照片中間，畫的時候跟著手指）
+function rsRing(p) {
+  let d = $('#rsring');
+  if (!d) { d = document.createElement('div'); d.id = 'rsring'; $('#wrap').append(d); }
+  d.hidden = !(base && tab === 'reshape');
+  if (d.hidden) return;
+  const W = base.canvas.width, H = base.canvas.height, r = liqRadius(rsVal[rsTool].size, W, H);
+  Object.assign(d.style, { width: r * 2 / W * 100 + '%', height: r * 2 / H * 100 + '%', left: (p ? p.x / W : 0.5) * 100 + '%', top: (p ? p.y / H : 0.5) * 100 + '%' });
+  d.classList.toggle('idle', !p);
+}
+(() => {
+  let last = null, timer = 0;
+  const at = e => { const r = $('#wrap').getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * base.canvas.width, y: (e.clientY - r.top) / r.height * base.canvas.height }; };
+  const dab = (a, b) => { const v = rsVal[rsTool]; P.liq = liqDab(P.liq, rsTool, a, b, v.size, v.str, base.canvas.width, base.canvas.height); render(); };
+  $('#wrap').addEventListener('pointerdown', e => {
+    if (tab !== 'reshape' || !base || e.target.closest('.st,.tx') || e.button > 0) return;
+    e.preventDefault(); $('#wrap').setPointerCapture(e.pointerId);
+    last = at(e); rsRing(last);
+    // 旋轉、脹大、縮小、還原：按住不動也會一直作用
+    if (rsTool !== 'push') { dab(last, last); timer = setInterval(() => last && dab(last, last), 90); }
+  });
+  $('#wrap').addEventListener('pointermove', e => {
+    if (!last) return;
+    const p = at(e), r = liqRadius(rsVal[rsTool].size, base.canvas.width, base.canvas.height);
+    rsRing(p);
+    if (Math.hypot(p.x - last.x, p.y - last.y) < r * 0.12) return;
+    if (rsTool === 'push') dab(last, p); else dab(p, p);
+    last = p;
+  });
+  const up = () => { if (!last) return; last = null; clearInterval(timer); rsRing(); commit(); };
+  $('#wrap').addEventListener('pointerup', up); $('#wrap').addEventListener('pointercancel', up);
+})();
+
 // 背景保護開關：蓬鬆感、臉型、身體這些變形都會用到
 function protectItem() {
   return item({
