@@ -1653,13 +1653,12 @@ const App = {
   shareSetup() {
     const base = `${location.origin}${location.pathname}?add=`;
     const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    // 已經簽好章的捷徑檔（入口網站和 GitHub Pages 各一份，打開的網址不同，登入狀態才對得上）
-    const scFile = `shortcut/${/netlify\.app$/.test(location.hostname) ? 'portal' : 'github'}/${encodeURIComponent('收進美食收藏')}.shortcut`;
-    const iosSteps = `<a class="btn primary big block" href="${scFile}" download="收進美食收藏.shortcut" onclick="return App.getShortcut(this.href)">${ic('down')} 加入分享捷徑</a>
+    // 捷徑放在 iCloud（簽好章的檔案在 shortcut/，直接下載的話 iPhone 只會當文字預覽）
+    const scLink = 'https://www.icloud.com/shortcuts/7529bc9f7a3f4c839c7ab03bcde31cbf';
+    const iosSteps = `<a class="btn primary big block" href="${scLink}" target="_blank" rel="noopener">${ic('down')} 加入分享捷徑</a>
       <ol class="howto" style="margin-top:14px">
-        <li>點上面的按鈕，在跳出來的選單選「<b>儲存到檔案</b>」，存到「下載項目」。</li>
-        <li>打開「<b>檔案</b>」App，點「收進美食收藏」，會跳到捷徑 App，按「<b>加入捷徑</b>」。</li>
-        <li>之後在 IG 按 <b>分享</b> → <b>分享到…</b> → 選「<b>收進美食收藏</b>」，就會打開這裡自動找店家，按收藏就好。</li>
+        <li>點上面的按鈕，會打開捷徑 App，按「<b>加入捷徑</b>」。</li>
+        <li>之後在 IG 按 <b>分享</b> → <b>分享到…</b> → 選「<b>收進美食收藏-portal</b>」，就會打開美食收藏自動找店家，按收藏就好。</li>
       </ol>
       <p class="muted">捷徑會用 Safari 打開，第一次要在 Safari 登入一次。想讓它排在分享選單前面，可以在分享選單最右邊「編輯動作」把它加到最愛。</p>
       <details class="muted"><summary>想自己做捷徑</summary><ol class="howto" style="margin-top:8px">
@@ -1677,21 +1676,6 @@ const App = {
       <div class="seg" style="margin:6px 0 12px"><button class="${ios ? 'on' : ''}" onclick="this.parentNode.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b===this));$('#ss-body').innerHTML=App._ssIos">iPhone</button><button class="${ios ? '' : 'on'}" onclick="this.parentNode.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b===this));$('#ss-body').innerHTML=App._ssAnd">Android</button></div>
       <div id="ss-body">${ios ? iosSteps : androidSteps}</div>`);
     App._ssIos = iosSteps; App._ssAnd = androidSteps;
-    if (navigator.canShare) (App._sc ||= App.loadShortcut(scFile)).catch(() => { App._sc = null; });
-  },
-
-  // 捷徑檔用分享選單交出去（直接開連結的話，iPhone 會把檔案當文字顯示）
-  async loadShortcut(href) { return new File([await (await fetch(href)).blob()], '收進美食收藏.shortcut', { type: 'application/octet-stream' }); },
-  getShortcut(href) {
-    if (!navigator.canShare) return true;
-    (async () => {
-      try {
-        const file = await (App._sc ||= App.loadShortcut(href));
-        if (!navigator.canShare({ files: [file] })) throw new Error('no-share');
-        await navigator.share({ files: [file] });
-      } catch (e) { if (e.name !== 'AbortError') location.href = href; }
-    })();
-    return false;
   },
 
   // ----- 外部分享進來（Android 把 IG 分享到這個 app）、邀請連結 -----
