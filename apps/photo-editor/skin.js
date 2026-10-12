@@ -35,8 +35,10 @@ export const WRINKLE = [
   ['wkEye', '眼紋', ic('<path d="M2 12s4-5 9-5 9 5 9 5-4 5-9 5-9-5-9-5z"/><circle cx="11" cy="12" r="2.5"/><path d="M20.5 9l1.5-1M21 12h1.5M20.5 15l1.5 1"/>'), 0, 60],
   ['wkLip', '唇紋', ic('<path d="M4 12c3-3 5-3 8-1 3-2 5-2 8 1-3 4-13 4-16 0z"/><path d="M9 11.5v2M12 11.5v2.5M15 11.5v2"/>'), 0, 60],
 ];
-const KEYS = [...SKIN, ...WRINKLE].map(x => x[0]).filter(k => k !== 'smooth');
-export const SKIN_P0 = Object.fromEntries(KEYS.map(k => [k, 0]));
+// 臉型分頁的豐臉、拉皮額頭也要在這裡補亮、淡化細紋（值存在臉型的 fs_ 鍵）
+const FILL = { uFFore: 'fs_fill_fore', uFCheek: 'fs_fill_cheek', uFFold: 'fs_fill_fold', uFBag: 'fs_fill_bag', uLFore: 'fs_lift_fore', uLEye: 'fs_lift_eye' };
+const KEYS = [...[...SKIN, ...WRINKLE].map(x => x[0]).filter(k => k !== 'smooth'), ...Object.values(FILL)];
+export const SKIN_P0 = Object.fromEntries(KEYS.filter(k => !k.startsWith('fs_')).map(k => [k, 0]));
 export const skinOn = p => KEYS.some(k => p[k]);
 export const skinKey = p => KEYS.map(k => p[k] || 0).join('|');
 
@@ -214,6 +216,7 @@ uniform vec2 uPx;
 uniform vec3 uMean;
 uniform float uNative, uGirl, uCream, uBaby, uFrost, uTex, uOil, uBare, uBody, uDewy, uMatte, uBlush, uTan, uUnify;
 uniform float uHead, uFold, uNeck, uEye, uLip;
+uniform float uFFore, uFCheek, uFFold, uFBag, uLFore, uLEye;
 float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float noise(vec2 p){
@@ -242,6 +245,15 @@ void main(){
   col = unline(col, B, C, uNeck * t2.a, 0.85);
   col = unline(col, A, B, uNeck * t2.a * 0.8, 0.75);
   col = unline(col, img * 0.5 + A * 0.5, A, uLip * t1.a * 0.9, 0.5);
+  // ---- 豐臉：比周圍暗的凹處（額頭、蘋果肌、法令紋、淚溝）補亮，再加一點飽滿的光 ----
+  #define FILLR(k, m, g) if ((k) > 0.0) { float hol = max(0.0, luma(C) - luma(B)); col += vec3(hol * 1.5) * (k) * (m); col += (1.0 - col) * (g) * (k) * (m); }
+  FILLR(uFFore, t2.r, 0.04)
+  FILLR(uFCheek, t3.g, 0.05)
+  FILLR(uFFold, t2.g, 0.02)
+  FILLR(uFBag, t2.b, 0.03)
+  // 拉皮：額頭、眼周的細紋一起淡化
+  col = unline(col, A, B, uLFore * t2.r * 0.8, 0.6);
+  col = unline(col, A, B, uLEye * t2.b * 0.6, 0.55);
   // ---- 膚質 ----
   // 磨平：中等起伏收掉，細紋理依比例保留
   #define SMOOTH(k, keep) col = mix(col, B + (col - A) * (keep), clamp((k) * sk, 0.0, 1.0))
@@ -426,7 +438,7 @@ export class SkinFx {
       gl.uniform2f(u('uPx'), 1 / W, 1 / H);
       gl.uniform3fv(u('uMean'), data.mean);
       const map = { uNative: 'skNative', uGirl: 'skGirl', uCream: 'skCream', uBaby: 'skBaby', uFrost: 'skFrost', uTex: 'skTex', uOil: 'skOil', uBare: 'skBare', uBody: 'skBody', uDewy: 'skDewy', uMatte: 'skMatte', uBlush: 'skBlush', uTan: 'skTan', uUnify: 'skUnify', uHead: 'wkHead', uFold: 'wkFold', uNeck: 'wkNeck', uEye: 'wkEye', uLip: 'wkLip' };
-      for (const [n, k] of Object.entries(map)) gl.uniform1f(u(n), f(k));
+      for (const [n, k] of Object.entries({ ...map, ...FILL })) gl.uniform1f(u(n), f(k));
     });
     return this.canvas;
   }
