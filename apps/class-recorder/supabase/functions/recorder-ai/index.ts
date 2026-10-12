@@ -21,7 +21,7 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-class HttpError extends Error { constructor(public status: number, msg: string) { super(msg); } }
+class HttpError extends Error { constructor(public status: number, msg: string, public daily = false) { super(msg); } }
 
 // 用登入者自己的身分呼叫資料庫（確認登入、查額度、記用量），不需要 service key
 async function rpc(req: Request, fn: string, args: Record<string, unknown>) {
@@ -54,17 +54,24 @@ const backends = () => ({
 });
 
 async function upstreamError(r: Response, who: string) {
-  const t = (await r.text()).slice(0, 300);
-  if (r.status === 429) return new HttpError(429, `${who} 免費額度暫時用完，稍等一下再試。`);
+  const full = await r.text(), t = full.slice(0, 300);
+  // 429 分兩種：每分鐘次數（等一下就好）和每天次數（今天用完了）；看不出是哪種就當作今天用完
+  if (r.status === 429) return new HttpError(429, `${who} 免費額度暫時用完，稍等一下再試。`, !/PerMinute/i.test(full));
   return new HttpError(502, `${who} 錯誤 ${r.status}：${t}`);
 }
 
-async function gemini(parts: unknown[], schema?: unknown) {
+async function gemini(parts: unknown[], schema?: unknown, fast = false) {
   const body: Record<string, unknown> = { contents: [{ parts }] };
-  if (schema) body.generationConfig = { responseMimeType: "application/json", responseSchema: schema };
-  const r = await fetch(`${GEMINI_BASE}/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`, {
+  const cfg: Record<string, unknown> = {};
+  if (schema) Object.assign(cfg, { responseMimeType: "application/json", responseSchema: schema });
+  // 逐字轉寫不需要深度思考，調低回得快很多；舊型號不認得這個設定就拿掉再送一次
+  if (fast) cfg.thinkingConfig = { thinkingLevel: "low" };
+  if (Object.keys(cfg).length) body.generationConfig = cfg;
+  const send = () => fetch(`${GEMINI_BASE}/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`, {
     method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY }, body: JSON.stringify(body),
   });
+  let r = await send();
+  if (r.status === 400 && fast && /thinking/i.test(await r.clone().text())) { delete cfg.thinkingConfig; r = await send(); }
   if (!r.ok) throw await upstreamError(r, "Gemini");
   const j = await r.json();
   return (j.candidates?.[0]?.content?.parts ?? []).map((x: { text?: string }) => x.text ?? "").join("");
@@ -91,10 +98,11 @@ const wavSeconds = (b64: string) => Math.max(1, (b64.length * 3 / 4 - 44) / 3200
 
 type Seg = { start: number; end: number; text: string; label?: string | null };
 type TBody = { audio: string; glossary?: string[]; teacherSample?: string; language?: string };
-// 免費 Gemini 每天次數有限，用完（429）就改用 Groq 繼續轉，只是不分講者
+// 免費 Gemini 每天次數有限，當天用完就改用 Groq 繼續轉，只是不分講者。
+// 只是每分鐘次數滿了就回 429，讓網頁等一下再送，保留分講者
 async function transcribe(body: TBody) {
   if (GEMINI_KEY) {
-    try { return await transcribeGemini(body); } catch (e) { if (!(GROQ_KEY && e instanceof HttpError && e.status === 429)) throw e; }
+    try { return await transcribeGemini(body); } catch (e) { if (!(GROQ_KEY && e instanceof HttpError && e.status === 429 && e.daily)) throw e; }
   }
   return await transcribeGroq(body);
 }
@@ -109,7 +117,7 @@ async function transcribeGemini(body: TBody): Promise<{ segments: Seg[]; engine:
     if (body.teacherSample) parts.push({ inline_data: { mime_type: "audio/wav", data: body.teacherSample } }, { text: "以下是要轉寫的上課錄音：" });
     parts.push({ inline_data: { mime_type: "audio/wav", data: body.audio } });
     const schema = { type: "ARRAY", items: { type: "OBJECT", properties: { start: { type: "NUMBER" }, end: { type: "NUMBER" }, speaker: { type: "STRING" }, text: { type: "STRING" } }, required: ["start", "end", "speaker", "text"] } };
-    const txt = await gemini(parts, schema);
+    const txt = await gemini(parts, schema, true);
     let arr: { start: number; end: number; speaker?: string; text: string }[];
     try { arr = JSON.parse(txt); } catch { throw new HttpError(502, "Gemini 回傳的格式看不懂：" + txt.slice(0, 200)); }
     return { engine: "gemini", segments: arr.map((x) => ({ start: +x.start || 0, end: +x.end || +x.start || 0, text: x.text, label: x.speaker || null })) };

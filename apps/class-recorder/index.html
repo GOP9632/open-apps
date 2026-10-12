@@ -423,8 +423,11 @@ const Engines = {
     const parts = [{ text: instr }];
     if (folder?.teacherSample) parts.push({ inline_data: { mime_type: 'audio/wav', data: await b64(folder.teacherSample) } }, { text: '以下是要轉寫的上課錄音：' });
     parts.push({ inline_data: { mime_type: 'audio/wav', data: await b64(wav) } });
-    const body = { contents: [{ parts }], generationConfig: { responseMimeType: 'application/json', responseSchema: { type: 'ARRAY', items: { type: 'OBJECT', properties: { start: { type: 'NUMBER' }, end: { type: 'NUMBER' }, speaker: { type: 'STRING' }, text: { type: 'STRING' } }, required: ['start', 'end', 'speaker', 'text'] } } } };
-    const r = await post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(S.geminiModel)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': S.geminiKey }, body: JSON.stringify(body) });
+    const body = { contents: [{ parts }], generationConfig: { thinkingConfig: { thinkingLevel: 'low' }, responseMimeType: 'application/json', responseSchema: { type: 'ARRAY', items: { type: 'OBJECT', properties: { start: { type: 'NUMBER' }, end: { type: 'NUMBER' }, speaker: { type: 'STRING' }, text: { type: 'STRING' } }, required: ['start', 'end', 'speaker', 'text'] } } } };
+    // 逐字轉寫不需要深度思考，思考調低回得快很多；舊型號不認得這個設定就拿掉再送一次
+    const send = () => post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(S.geminiModel)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': S.geminiKey }, body: JSON.stringify(body) });
+    let r = await send();
+    if (r.status === 400 && /thinking/i.test(await r.clone().text())) { delete body.generationConfig.thinkingConfig; r = await send(); }
     if (!r.ok) throw await apiError(r);
     const j = await r.json();
     const txt = (j.candidates?.[0]?.content?.parts || []).map(x => x.text || '').join('');
@@ -514,18 +517,29 @@ async function transcribeSession(id, onProgress) {
   if (!audio.size) throw new Error(s.audioCloud ? '音檔還沒從雲端下載下來，請重新打開這段錄音再試。' : '這台裝置上沒有這段錄音的音檔（可能是在別的裝置錄的）。');
   const pcm = await decode16k(audio);
   const engine = effEngine();
-  // Gemini 一次最多送 20 MB，所以每段最多 5 分鐘；雲端每段 3 分鐘，上傳比較快
+  // Gemini 一次最多送 20 MB，所以每段最多 5 分鐘；雲端每段 2 分鐘，上傳比較快
   const per = Math.max(1, engine === 'cloud' ? 2 : engine === 'gemini' ? Math.min(5, S.chunkMin) : S.chunkMin) * 60 * 16000;
   const total = Math.ceil(pcm.length / per);
-  const out = [];
-  for (let i = 0; i < total; i++) {
-    onProgress(`轉寫中 ${i + 1} / ${total} 段…`);
-    const offset = i * per / 16000;
-    const wav = encodeWav(pcm.subarray(i * per, Math.min(pcm.length, (i + 1) * per)), 16000);
-    const segs = await Engines[engine](wav, folder);
-    markTeacher(segs, !!folder?.teacherSample);
-    for (const g of segs) out.push({ start: g.start + offset, end: g.end + offset, text: await toTW((g.text || '').trim()), role: g.role || null, label: g.label ? `${i + 1}-${g.label}` : null });
-  }
+  // 各段同時送出（本機 whisper.cpp 吃自己電腦的 CPU，維持一次一段）。每段的講者代號本來就各自獨立，平行不影響分人
+  const parts = new Array(total);
+  let next = 0, done = 0, failed = false;
+  onProgress(`轉寫中 0 / ${total} 段…`);
+  const worker = async () => {
+    while (next < total && !failed) {
+      const i = next++;
+      const offset = i * per / 16000;
+      const wav = encodeWav(pcm.subarray(i * per, Math.min(pcm.length, (i + 1) * per)), 16000);
+      const segs = await Engines[engine](wav, folder);
+      markTeacher(segs, !!folder?.teacherSample);
+      const res = [];
+      for (const g of segs) res.push({ start: g.start + offset, end: g.end + offset, text: await toTW((g.text || '').trim()), role: g.role || null, label: g.label ? `${i + 1}-${g.label}` : null });
+      parts[i] = res;
+      onProgress(`轉寫中 ${++done} / ${total} 段…`);
+    }
+  };
+  const lanes = Math.min(total, engine === 'whispercpp' ? 1 : 4);
+  await Promise.all(Array.from({ length: lanes }, () => worker().catch(e => { failed = true; throw e; })));
+  const out = parts.flat();
   s.transcript = { engine, createdAt: Date.now(), segments: mergeSegments(out.filter(x => x.text)), merged: true };
   if (!s.duration) s.duration = pcm.length / 16000;
   await DB.put('sessions', s);
