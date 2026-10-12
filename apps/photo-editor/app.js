@@ -5,7 +5,7 @@ import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurC
 import { COVERS, COVER_CATS, coverPixels } from './coverface.js';
 import { STICKERS, STICKER_CATS, EMOJIS, EMOJI_FONT, BLENDS, blendById, stickerAR, stickerURL, svgURL, renderSticker, putCanvas, getCanvas, canvasURL, touchCanvas, ownImages } from './stickers.js';
 import { FX, OVERLAYS, BG_PHOTOS, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
-import { matte } from './matte.js';
+import { matte, LOW_MEM } from './matte.js';
 import { GRADE_P0, gradeOn, gradeFn, gradeKey, tabGrade, gradeHide } from './grade.js';
 import { HAIR, HAIR_P0, DYES, HairFx, prepHair, hairWarps, hairNeedsSeg, hairColorOn } from './hair.js';
 import { tabErase, eraseLeave } from './erase.js';
@@ -218,7 +218,7 @@ const needSeg = () => P.bg !== 'keep' || !!P.light || !!P.flash || P.blur > 0 ||
 const needMatte = () => P.bg !== 'keep' || P.blur > 0 || !!fxById(P.fx)?.seg || !!P.pop;
 function getMatte(b) {
   if (!b.matteP) {
-    const t = setTimeout(() => b === base && !b.matte && toast('正在精細摳圖（第一次要下載模型）…', 4000), 600);
+    const t = setTimeout(() => b === base && !b.matte && toast(LOW_MEM ? '正在摳出人像…' : '正在精細摳圖（第一次要下載模型）…', 4000), 600);
     b.matteP = matte(b.canvas).then(m => {
       clearTimeout(t);
       b.matte = m; b.segB = blurCanvas(m); b.harm = null;
@@ -1698,7 +1698,7 @@ function tabPop(box) {
     cats.append(sep);
     ks.forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: popK === k, onclick: () => { popK = k; showTab('fun'); } })));
   }
-  $('#note').textContent = !P.pop ? '照片放進相框或九宮格，人像衝出框外。全部在你的裝置上處理。' : base.matte ? '' : '正在摳出人像（第一次要下載模型）…';
+  $('#note').textContent = !P.pop ? '照片放進相框或九宮格，人像衝出框外。全部在你的裝置上處理。' : base.matte ? '' : LOW_MEM ? '正在摳出人像…' : '正在摳出人像（第一次要下載模型）…';
   // 背景、文字、描邊：選項取代範本列表
   if (popK === 'bg') {
     hideSlider();

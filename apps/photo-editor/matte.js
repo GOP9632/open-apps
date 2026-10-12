@@ -3,6 +3,10 @@
 const ORT = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
 const MODEL = 'https://huggingface.co/Xenova/modnet/resolve/main/onnx/model_fp16.onnx';
 const REF = 512;
+// iPhone、iPad 記憶體比較少：開照片時已經載了 MediaPipe，再載 onnxruntime 和 MODNet 要多 300MB 以上，
+// Safari 會直接把頁面重新載入（畫面閃一下就回到選照片）。這些裝置改用 MediaPipe 的人像分割，
+// 再用一樣的導向濾波貼齊頭髮和輪廓，不用下載模型
+export const LOW_MEM = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 
 let sessP;
 function session() {
@@ -16,6 +20,10 @@ function session() {
 
 // 回傳跟照片一樣大的 canvas，R 通道（也複製到 G、B）是前景透明度
 export async function matte(src) {
+  if (LOW_MEM || window.__lowMem) {
+    const { segment } = await import('./ai.js');
+    return refine(src, (await segment(src)).person);
+  }
   const { ort, s } = await session();
   const W = src.width, H = src.height, k = REF / Math.min(W, H);
   const w = Math.max(32, Math.round(W * k / 32) * 32), h = Math.max(32, Math.round(H * k / 32) * 32);
@@ -33,6 +41,12 @@ export async function matte(src) {
     img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
+  return refine(src, c);
+}
+
+// 粗的遮罩 c（任意大小）→ 跟照片一樣大、邊緣貼齊照片的遮罩
+function refine(src, c) {
+  const W = src.width, H = src.height;
   // 模型的結果比較糊，放大到 1280 再用原圖當參考做「導向濾波」，邊緣貼齊照片裡真正的髮絲和輪廓
   const k2 = Math.min(1, 1280 / Math.max(W, H)), tw = Math.round(W * k2), th = Math.round(H * k2);
   const g = document.createElement('canvas'); g.width = tw; g.height = th;
