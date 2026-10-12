@@ -644,7 +644,8 @@ function sliderRow({ label, min, max, val, def, onInput }) {
   const sync = () => { paintRange(inp, out); row.classList.toggle('set', +inp.value !== Math.min(max, Math.max(min, 0))); };
   inp.addEventListener('input', () => { sync(); onInput(+inp.value); });
   inp.addEventListener('change', () => { commit(); syncNav(); });
-  out.onclick = () => { inp.value = Math.min(max, Math.max(min, 0)); sync(); onInput(+inp.value); commit(); syncNav(); };
+  // 點數字回到預設（閃光燈 60 照 Hypic，其他 0）
+  out.onclick = () => { inp.value = def ?? Math.min(max, Math.max(min, 0)); sync(); onInput(+inp.value); commit(); syncNav(); };
   sync();
   return row;
 }
@@ -700,7 +701,7 @@ function paramItems(box, list, def, itemsOnly) {
   setSlider(it[1] + (sided && side !== 'both' ? (side === 'L' ? '左' : '右') : ''), it[3] ?? -100, it[5] ?? 100, P[key], v => {
     P[key] = v; if (list === BEAUTY) P.oneTap = -1; render();
     els[cur].classList.toggle('set', isSet(cur));
-  });
+  }, it[4]);
 }
 
 // 電腦版：每個項目一條滑桿，全部列出來
@@ -714,11 +715,11 @@ function paramRows(box, list) {
     $('#note').textContent += (($('#note').textContent ? '　' : '') + '瘦臉、大眼可以只調左邊或右邊');
   } else $('#items').hidden = !box.children.length;
   const rows = $('#rows');
-  for (const [k, label, , min, , max] of list) {
+  for (const [k, label, , min, d, max] of list) {
     const key = sided && SIDED.includes(k) && side !== 'both' ? k + side : k;
     const sfx = key !== k ? (side === 'L' ? '（左）' : '（右）') : '';
     rows.append(sliderRow({
-      label: label + sfx, min: min ?? -100, max: max ?? 100, val: P[key],
+      label: label + sfx, min: min ?? -100, max: max ?? 100, val: P[key], def: d,
       onInput: v => { P[key] = v; cur = k; if (list === BEAUTY) P.oneTap = -1; render(); bmBox(); },
     }));
   }
