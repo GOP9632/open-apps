@@ -1655,7 +1655,7 @@ const App = {
     const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     // 已經簽好章的捷徑檔（入口網站和 GitHub Pages 各一份，打開的網址不同，登入狀態才對得上）
     const scFile = `shortcut/${/netlify\.app$/.test(location.hostname) ? 'portal' : 'github'}/${encodeURIComponent('收進美食收藏')}.shortcut`;
-    const iosSteps = `<a class="btn primary big block" href="${scFile}" download="收進美食收藏.shortcut">${ic('down')} 加入分享捷徑</a>
+    const iosSteps = `<a class="btn primary big block" href="${scFile}" target="_blank" rel="noopener" download="收進美食收藏.shortcut">${ic('down')} 加入分享捷徑</a>
       <ol class="howto" style="margin-top:14px">
         <li>點上面的按鈕，Safari 問要不要下載時按「<b>下載</b>」。</li>
         <li>點網址列左邊的 <b>下載</b> 圖示（或到「檔案」App 的下載項目），打開「收進美食收藏」，按「<b>加入捷徑</b>」。</li>
