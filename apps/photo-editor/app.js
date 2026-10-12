@@ -19,6 +19,7 @@ import { tabDoodle, doodleInput } from './doodle.js';
 import { tabBeautyBrush, beautyBrushInput } from './beautybrush.js';
 import { FONTS, T0, TEXT_COLORS, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
 import { initCollage, openCollage } from './collage.js';
+import { CATS as TPL_CATS } from './templates.js';
 import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightPosOf, lightGrad } from './relight.js';
 import { enhanceRanges, paintRange, setGrad, nudge, canvasZoom } from './ui.js';
 import { tabLooks } from './looks.js';
@@ -543,6 +544,7 @@ const GI = {
   portrait: I.person,
   filter: I.tint,
   compose: '<svg viewBox="0 0 24 24"><path d="M6 2v16h16"/><path d="M2 6h16v16"/></svg>',
+  tpl: '<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><rect x="7" y="6" width="10" height="7" rx="1"/><path d="M7 16h10M7 18.5h6"/></svg>',
   erase: '<svg viewBox="0 0 24 24"><path d="M16 3l5 5-11 11H5v-5z"/><path d="M12 7l5 5M5 21h14"/></svg>',
   text: '<svg viewBox="0 0 24 24"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg>',
   fun: I.magic,
@@ -558,6 +560,8 @@ const GROUPS = [
   ['fun', '創意', 'X', ['fun', 'cut']],
   ['text', '文字', 'T', ['text', 'sticker']],
   ['compose', '構圖', 'C', ['crop', 'frame']],
+  // Hypic 編輯頁第一層有「模板」：用目前的照片套雜誌封面、拍立得、海報這些範本
+  ['tpl', '範本', 'M', ['tpl']],
 ];
 const groupOf = t => GROUPS.find(g => g[3].includes(t)) || GROUPS[GROUPS.length - 1];
 const lastTab = {};
@@ -661,7 +665,7 @@ function showTab(t) {
   $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true;
   gradeHide();
   if (!base) return;
-  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, aiskin: tabAiSkin, sculpt: tabSculpt, reshape: tabReshape, doodle: box => tabDoodle(box, { item, setSlider, showTab }), bbrush: box => tabBeautyBrush(box, { item, setSlider, showTab }), light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
+  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, aiskin: tabAiSkin, sculpt: tabSculpt, reshape: tabReshape, doodle: box => tabDoodle(box, { item, setSlider, showTab }), bbrush: box => tabBeautyBrush(box, { item, setSlider, showTab }), light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, tpl: tabTpl, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
   lightDot(); bmBox(); rsRing();
@@ -2257,6 +2261,16 @@ async function save() {
   finally { busy(); render(); }
 }
 $('#bSave').onclick = save;
+
+// 範本：選一個分類，用目前的照片（含所有修圖）開範本編輯
+function tabTpl(box) {
+  hideSlider();
+  TPL_CATS.forEach(cat => box.append(item({ label: cat, icon: cat, cls: 'wide', onclick: async () => {
+    busy('準備中…'); let c; try { c = await compose(); } finally { busy(); render(); }
+    openCollage('tpl', [c], cat);
+  } })));
+  $('#note').textContent = '選一個分類，用這張照片套範本（雜誌封面、拍立得、海報、拍貼機…），進去後可以換範本、改文字。';
+}
 
 // ---------- 開啟照片 ----------
 $('#bPick').onclick = () => $('#file').click();
