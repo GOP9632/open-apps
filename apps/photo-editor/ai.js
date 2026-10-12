@@ -329,6 +329,8 @@ export function faceAnchor(pts, where) {
     case 'eyes': return [{ x: (eyeL.x + eyeR.x) / 2, y: (eyeL.y + eyeR.y) / 2, size: W * 1.0, rot: g.roll }];
     case 'cheeks': return [205, 425].map(i => ({ x: pts[i].x, y: pts[i].y, size: W * 0.36, rot: g.roll }));
     case 'nose': return [{ x: pts[4].x, y: pts[4].y, size: W * 0.42, rot: g.roll }];
+    // 遮臉：整張臉（額頭到下巴）
+    case 'cover': return [{ x: (pts[10].x + pts[152].x) / 2, y: (pts[10].y + pts[152].y) / 2, size: W * 1.15, rot: g.roll }];
   }
   return [];
 }
