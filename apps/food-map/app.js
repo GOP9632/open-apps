@@ -141,6 +141,19 @@ function dupGroups() {
 }
 // 資料比較完整的那筆排前面，建議保留它
 const richness = p => (p.photo ? 3 : 0) + (p.lat != null && !p.approx ? 2 : p.lat != null ? 1 : 0) + (p.dishes || []).length + (p.address ? 1 : 0) + (p.source_url ? 1 : 0) + (p.note ? 1 : 0) + (p.status === 'been' ? 1 : 0) + (p.rating ? 1 : 0);
+// ---------- 分店：同一家店的多個地點，清單、抽籤、滑卡都算一間 ----------
+// 店名去掉寫在後面的分店名（「鼎泰豐 信義店」→ 鼎泰豐）
+const BRANCH_RE = /[\s・·\-–|｜(（]+([^\s・·\-–|｜(（]{1,12}?(?:分店|店|門市|館))[)）]?$/;
+const brandOf = p => nk(String(p.name || '').replace(BRANCH_RE, '')) || nk(p.name);
+const nearFirst = l => S.pos ? l.slice().sort((a, b) => (a.lat == null) - (b.lat == null) || (a.lat != null && distKm(S.pos, a) - distKm(S.pos, b))) : l;
+// 依品牌分組，保留原本順序；每組最近的分店排第一
+function brands(list) {
+  const m = new Map();
+  for (const p of list) { const k = brandOf(p); m.set(k, [...(m.get(k) || []), p]); }
+  return [...m.values()].map(nearFirst);
+}
+const branchesOf = (p, list = visiblePlaces({ ...S.f, q: '', city: '', cat: '', status: '' })) => { const k = brandOf(p); return nearFirst(list.filter(x => brandOf(x) === k)); };
+const branchLabel = p => p.branch || (String(p.name || '').match(BRANCH_RE) || [])[1] || p.district || normCity(p.city) || (p.address || '').slice(0, 10) || '分店';
 const findDup = c => S.places.find(p => isMine(p) && p.id !== c.id && sameShop(p, c));
 
 const fmtKm = d => d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(d < 10 ? 1 : 0)} km`;
@@ -478,7 +491,7 @@ function filterChips({ map = false } = {}) {
   </div>`;
 }
 
-function placeCard(p, i = 0) {
+function placeCard(p, i = 0, nBranch = 1) {
   const d = S.pos && p.lat != null ? fmtKm(distKm(S.pos, p)) : '';
   const [t, e] = cat(p);
   const pick = S.sel && S.tab === 'list';
@@ -487,7 +500,7 @@ function placeCard(p, i = 0) {
       <span class="badge ${p.status}">${p.status === 'been' ? `去過${p.rating ? ' ★' + p.rating : ''}` : '想去'}</span>
       ${d ? `<span class="dist">${d}</span>` : ''}
       ${!isMine(p) ? `<span class="who">${avatar(p.owner, 26)}</span>` : ''}
-      ${p.lat == null ? `<span class="nopos">沒有位置</span>` : ''}
+      ${nBranch > 1 ? `<span class="nopos branches">${ic('pin')}${nBranch} 間分店</span>` : p.lat == null ? `<span class="nopos">沒有位置</span>` : ''}
     </div>
     <div class="pc-body">
       <div class="pc-name">${esc(p.name)}${p.branch ? ` <span class="muted" style="font-weight:600">${esc(p.branch)}</span>` : ''}</div>
@@ -519,8 +532,8 @@ const Views = {
     return `<div class="search">${ic('search')}<input id="q" placeholder="搜尋店名、地區、料理、標籤" value="${esc(S.f.q)}" oninput="App.setF('q', this.value, true)" enterkeyhint="search"></div>
       ${filterChips()}
       ${!S.sel && (S.dups = dupGroups()).length ? `<button class="dup-banner" onclick="App.dups()"><span class="ic">${ic('layers')}</span><span class="grow"><b>有 ${S.dups.length} 組可能重複的店</b><small>點這裡比對，合併成一間或刪掉多的</small></span>${ic('next')}</button>` : ''}
-      <div class="count-line"><span>${S.sel ? '點卡片選要刪掉的店' : `${list.length} 間${S.f.sort === 'near' ? '・由近到遠' : ''}`}</span>${S.sel ? `<button class="link-btn" onclick="App.pickAll()">${list.filter(isMine).every(p => S.sel.has(p.id)) ? '全部取消' : '全選'}</button>` : list.some(isMine) ? `<button class="link-btn" onclick="App.pick()">選取</button>` : ''}</div>
-      ${list.length ? `<div class="grid ${S.sel ? 'picking' : ''}">${list.map(placeCard).join('')}</div>` : `<div class="empty"><div class="art">🔍</div><h2>沒有符合的店</h2><p>換個條件試試看</p><button class="btn" onclick="App.clearF()">清除篩選</button></div>`}`;
+      <div class="count-line"><span>${S.sel ? '點卡片選要刪掉的店' : `${brands(list).length} 間${brands(list).length < list.length ? `・${list.length} 個地點` : ''}${S.f.sort === 'near' ? '・由近到遠' : ''}`}</span>${S.sel ? `<button class="link-btn" onclick="App.pickAll()">${list.filter(isMine).every(p => S.sel.has(p.id)) ? '全部取消' : '全選'}</button>` : list.some(isMine) ? `<button class="link-btn" onclick="App.pick()">選取</button>` : ''}</div>
+      ${list.length ? `<div class="grid ${S.sel ? 'picking' : ''}">${(S.sel ? list.map(p => [p]) : brands(list)).map((g, i) => placeCard(g[0], i, g.length)).join('')}</div>` : `<div class="empty"><div class="art">🔍</div><h2>沒有符合的店</h2><p>換個條件試試看</p><button class="btn" onclick="App.clearF()">清除篩選</button></div>`}`;
   },
   draw() {
     const d = S.draw;
@@ -623,7 +636,7 @@ const Views = {
       <div class="ph">${photo(p)}</div>
       <div class="cap">
         <div class="n">${esc(p.name)}${p.branch ? ` <span style="font-size:17px;opacity:.8">${esc(p.branch)}</span>` : ''}</div>
-        <div class="m">${e} ${esc(p.cuisine || t)}${area(p) ? '・' + esc(area(p)) : ''}${S.pos && p.lat != null ? '・' + fmtKm(distKm(S.pos, p)) : ''}</div>
+        <div class="m">${e} ${esc(p.cuisine || t)}${area(p) ? '・' + esc(area(p)) : ''}${S.pos && p.lat != null ? '・' + fmtKm(distKm(S.pos, p)) : ''}${(n => n > 1 ? `・${n} 間分店` : '')(branchesOf(p, S.places.filter(x => S.groupPlaces.some(g => g.place_id === x.id && g.group_id === S.rounds.find(r => r.id === S.round)?.group_id))).length)}</div>
         <div class="tags">${p.price ? `<span class="tag">${PRICES[p.price]}</span>` : ''}${(p.meals || []).map(m => `<span class="tag">${MEALS[m]}</span>`).join('')}${(p.tags || []).slice(0, 3).map(x => `<span class="tag">#${esc(x)}</span>`).join('')}</div>
         ${p.note ? `<p>${esc(p.note)}</p>` : ''}
         <div class="by">${avatar(p.owner, 20)} ${esc(nameOf(p.owner))} 收藏${p.source_url ? `・<a href="${esc(p.source_url)}" target="_blank" rel="noopener" style="color:#fff;text-decoration:underline" onpointerdown="event.stopPropagation()">原始貼文</a>` : ''}</div>
@@ -833,7 +846,8 @@ const Draw = {
     const meal = d.meal === 'now' ? Draw.nowMeal() : d.meal;
     if (meal) list = list.filter(p => !(p.meals || []).length || p.meals.includes(meal));
     if (d.price) list = list.filter(p => !p.price || p.price <= d.price);
-    return list;
+    // 同一家的分店只算一次（抽中的是離我最近的那間），不然分店多的店比較容易被抽到
+    return brands(list).map(g => g[0]);
   },
   nowMeal() {
     const h = new Date().getHours();
@@ -1130,6 +1144,7 @@ const App = {
     App.sheet(`<div class="hero-ph">${photo(p)}<button class="icon-btn glass x" onclick="App.close()" aria-label="關閉">${ic('x')}</button></div>
       <div class="d-name">${esc(p.name)}${p.branch ? `<small>${esc(p.branch)}</small>` : ''}</div>
       <div class="d-meta">${e} ${esc(p.cuisine || t)}${area(p) ? '・' + esc(area(p)) : ''}${p.price ? '・' + PRICES[p.price] : ''}</div>
+      ${(br => br.length > 1 ? `<div class="branch-row"><div class="t">${ic('pin')} ${br.length} 間分店${S.pos ? '・由近到遠' : ''}</div><div class="chips">${br.map(b => `<span class="chip ${b.id === p.id ? 'on' : ''}" onclick="App.openPlace('${b.id}', true)">${esc(branchLabel(b))}${S.pos && b.lat != null ? ` <small>${fmtKm(distKm(S.pos, b))}</small>` : ''}</span>`).join('')}</div></div>` : '')(branchesOf(p))}
       ${(p.meals || []).length || (p.tags || []).length ? `<div class="tags">${(p.meals || []).map(m => `<span class="tag hot">${MEALS[m]}</span>`).join('')}${(p.tags || []).map(x => `<span class="tag">#${esc(x)}</span>`).join('')}</div>` : ''}
       ${(p.dishes || []).length ? `<div class="must"><div class="t">${ic('star')} 必點</div><div class="chips wrap">${p.dishes.map(x => `<span class="dish">${esc(x)}</span>`).join('')}</div></div>` : ''}
       <div class="acts">
@@ -1370,7 +1385,8 @@ const App = {
     const d = S.draw;
     let pool = Draw.pool();
     if (exclude) d.recent = [exclude, ...d.recent.filter(x => x !== exclude)];
-    const fresh = pool.filter(p => !d.recent.slice(0, 5).includes(p.id));
+    const recent = new Set(d.recent.slice(0, 5).map(id => S.places.find(p => p.id === id)).filter(Boolean).map(brandOf));
+    const fresh = pool.filter(p => !recent.has(brandOf(p)));
     if (fresh.length) pool = fresh;
     if (!pool.length) return toast('沒有可以抽的店');
     const slot = $('#slot'), cta = $('#drawcta');
@@ -1378,7 +1394,7 @@ const App = {
     cta.querySelectorAll('button,a').forEach(b => b.disabled = true);
     slot.classList.remove('idle', 'win');
     const pick = pool[Math.floor(Math.random() * pool.length)];
-    const face = (p, final) => `<div class="ph">${photo(p)}</div><div class="cap"><div class="k">${final ? '今天就吃' : '・・・'}</div><div class="n">${esc(p.name)}</div><div class="m">${cat(p)[1]} ${esc(p.cuisine || cat(p)[0])}${area(p) ? '・' + esc(area(p)) : ''}${p.price ? '・' + PRICES[p.price] : ''}${S.pos && p.lat != null ? '・' + fmtKm(distKm(S.pos, p)) : ''}</div></div>`;
+    const face = (p, final) => `<div class="ph">${photo(p)}</div><div class="cap"><div class="k">${final ? '今天就吃' : '・・・'}</div><div class="n">${esc(p.name)}</div><div class="m">${cat(p)[1]} ${esc(p.cuisine || cat(p)[0])}${final && branchesOf(p).length > 1 ? `・${esc(branchLabel(p))}（${branchesOf(p).length} 間分店${S.pos ? '裡最近的' : ''}）` : area(p) ? '・' + esc(area(p)) : ''}${p.price ? '・' + PRICES[p.price] : ''}${S.pos && p.lat != null ? '・' + fmtKm(distKm(S.pos, p)) : ''}</div></div>`;
     // 先快後慢地翻牌
     const n = Math.min(18, 8 + pool.length * 2);
     for (let i = 0, t = 60; i < n; i++, t *= 1.13) {
@@ -1508,7 +1524,8 @@ const App = {
     if (n.cats.length) l = l.filter(p => n.cats.includes(p.category));
     if (n.meal) l = l.filter(p => !(p.meals || []).length || p.meals.includes(n.meal));
     if (n.price) l = l.filter(p => !p.price || p.price <= n.price);
-    return l.sort(() => Math.random() - 0.5).slice(0, n.max);
+    // 同一家的分店只出一張卡（用離我最近的那間），配對才不會分散在不同分店
+    return brands(l).map(g => g[0]).sort(() => Math.random() - 0.5).slice(0, n.max);
   },
   nrCount() { const c = App.nrPool().length, b = $('#nr-go'); if (b) { b.disabled = !c; b.innerHTML = c ? `${ic('heart')} 開始滑 ${c} 張` : '沒有符合條件的店'; } },
   async startRound() {
