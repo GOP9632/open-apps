@@ -27,13 +27,13 @@ const MAX_SIDE = 4096, MAX_AREA = 16e6;
 
 const P0 = {
   exposure: 0, brightness: 0, contrast: 0, saturation: 0, temp: 0, tint: 0, highlights: 0, shadows: 0,
-  sharpen: 0, vignette: 0, grain: 0, fade: 0, vibrance: 0, structure: 0, texture: 0, lightSense: 0, backlight: 0,
+  sharpen: 0, vignette: 0, grain: 0, fade: 0, vibrance: 0, structure: 0, texture: 0, lightSense: 0, backlight: 0, flashFill: 0,
   filter: 'none', filterAmt: 60, // 照 Hypic：濾鏡強度預設 60
   smooth: 0, white: 0, slim: 0, vface: 0, eyes: 0, nose: 0, mouth: 0,
   chin: 0, dark: 0, fold: 0, eyeb: 0, teeth: 0, slimL: 0, slimR: 0, eyesL: 0, eyesR: 0,
   bg: 'keep', bgColor: '#ffffff',
   oneTap: -1, oneAmt: 100,
-  light: '', lightAmt: 70, lightBri: 50, lightCol: 0, lightDist: 50, lightX: null, lightY: null, flash: '', flashAmt: 60,
+  light: '', lightAmt: 70, lightBri: 50, lightCol: 0, lightDist: 50, lightSpec: 50, lightBlur: 0, lightFg: 0, lightBg: 0, lightX: null, lightY: null, flash: '', flashAmt: 60,
   blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'lake', bgImg: 'beach', bgBlur: 30, frame: '',
   ...HAIR_P0,
   bgProtect: 1, // 背景保護：變形時背景不跟著彎
@@ -91,10 +91,11 @@ const I = {
   lsense: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/><path d="M12 8a4 4 0 0 1 0 8z" fill="currentColor"/></svg>',
   backlit: '<svg viewBox="0 0 24 24"><circle cx="17" cy="6" r="3"/><circle cx="9" cy="10" r="3"/><path d="M3 21c1-4 3-6 6-6s5 2 6 6"/></svg>',
   off: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>',
+  flashA: '<svg viewBox="0 0 24 24"><path d="M13 2L5 14h6l-1 8 8-12h-6z"/></svg>',
 };
 
 const ADJUST = [
-  ['brightness', '亮度', I.sun], ['lightSense', '光感', I.lsense], ['exposure', '曝光', I.exposure], ['contrast', '對比', I.contrast], ['saturation', '飽和', I.drop],
+  ['flashFill', '閃光燈', I.flashA], ['brightness', '亮度', I.sun], ['lightSense', '光感', I.lsense], ['exposure', '曝光', I.exposure], ['contrast', '對比', I.contrast], ['saturation', '飽和', I.drop],
   ['vibrance', '自然飽和', I.vib], ['texture', '質感', I.texture, 0], ['sharpen', '銳化', I.sharp, 0], ['structure', '結構', I.struct],
   ['highlights', '高光', I.high], ['shadows', '陰影', I.shadow], ['backlight', '背光校正', I.backlit, 0], ['temp', '色溫', I.temp], ['tint', '色調', I.tint],
   ['grain', '顆粒', I.grain, 0], ['fade', '褪色', I.fade, 0], ['vignette', '暗角', I.vig],
@@ -194,7 +195,7 @@ function applyBase() {
 }
 
 const fxById = id => FX.find(f => f.id === id);
-const needSeg = () => P.bg !== 'keep' || !!P.light || !!P.flash || P.blur > 0 || !!fxById(P.fx)?.seg;
+const needSeg = () => P.bg !== 'keep' || !!P.light || !!P.flash || P.blur > 0 || !!P.flashFill || !!fxById(P.fx)?.seg;
 // 換背景、去背、景深、分身要精細到頭髮絲，用摳圖模型
 const needMatte = () => P.bg !== 'keep' || P.blur > 0 || !!fxById(P.fx)?.seg || !!P.pop;
 function getMatte(b) {
@@ -581,7 +582,7 @@ const keysOn = keys => () => keys.some(k => JSON.stringify(P[k]) !== JSON.string
 const tabKeys = {
   adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...WRINKLE]),
   body: Object.keys(BODY_P0), hair: Object.keys(HAIR_P0), makeup: ['mk', 'mkLook', 'mkLookAmt'], filter: ['filter', 'filterAmt'],
-  light: ['light', 'lightAmt', 'lightBri', 'lightCol', 'lightDist', 'lightX', 'lightY', 'flash', 'flashAmt'],
+  light: ['light', 'lightAmt', 'lightBri', 'lightCol', 'lightDist', 'lightSpec', 'lightBlur', 'lightFg', 'lightBg', 'lightX', 'lightY', 'flash', 'flashAmt'],
   fun: ['blur', 'fx', 'fxAmt', 'ov', 'ovAmt', 'ex', ...Object.keys(POP_P0)], frame: ['frame'], cutout: ['bg', 'bgColor', 'bgImg', 'bgBlur'],
 };
 const TAB_RESET = Object.fromEntries(Object.entries(tabKeys).map(([t, keys]) => [t, { on: keysOn(keys), reset: () => toP0(keys) }]));
@@ -886,9 +887,10 @@ function tabShape(box) {
 
 // ---------- 光影：打光、閃光燈（relight.js） ----------
 // 照醒圖（Hypic）的打光面板：上面一排分類（自然、單色、多彩），燈可以在照片上拖，
-// 滑桿有強度、亮度、顏色、距離四個；閃光燈另外一類
+// 滑桿有強度、亮度、顏色、距離、高光、模糊、前景暗、背景暗八個；閃光燈另外一類
 let lightSec = 'nat', lightParam = 'lightAmt';
-const LIGHT_SLIDERS = [['lightAmt', '強度', 0, 100], ['lightBri', '亮度', 0, 100], ['lightCol', '顏色', -50, 50], ['lightDist', '距離', 0, 100]];
+const LIGHT_SLIDERS = [['lightAmt', '強度', 0, 100], ['lightBri', '亮度', 0, 100], ['lightCol', '顏色', -50, 50], ['lightDist', '距離', 0, 100],
+  ['lightSpec', '高光', 0, 100], ['lightBlur', '模糊', 0, 100], ['lightFg', '前景暗', 0, 100], ['lightBg', '背景暗', 0, 100]];
 // 立體深度圖：人像遮罩或臉換了才重算
 function ensureGeo() {
   const b = base, mask = b.matte || b.seg?.person;
@@ -937,7 +939,7 @@ function tabLight(box) {
     label: name, icon: name, cls: 'wide', on: lightParam === k, onclick: () => { lightParam = k; showTab('light'); },
   })));
   const [k, name, min, max] = LIGHT_SLIDERS.find(x => x[0] === lightParam);
-  setSlider(name, min, max, P[k], v => { P[k] = v; render(); lightDot(); }, k === 'lightBri' ? P0.lightBri : undefined);
+  setSlider(name, min, max, P[k], v => { P[k] = v; render(); lightDot(); }, k === 'lightBri' || k === 'lightSpec' ? P0[k] : undefined);
   $('#note').textContent = (base.faces && !base.faces.length ? '沒找到臉，燈以照片中間為準。' : '') + '在照片上拖曳移動燈的位置。';
 }
 // 燈的位置：照片上的一個小圓圈
