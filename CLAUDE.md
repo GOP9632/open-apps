@@ -8,6 +8,7 @@
   select,input,textarea{font-size:16px}
   ```
   不要用 `maximum-scale=1` 或 `user-scalable=no` 擋縮放，那會讓使用者沒辦法自己放大。
+- 每個網頁 app 的頁首都要有「回入口」按鈕：`<head>` 引入 `apps/portal-home.js`，頁首放 `<a class="portal-home" href="https://anthony-apps.netlify.app/">`，做法見 README。
 - 交付前用 Playwright 的 iPhone 裝置模擬檢查每個輸入框的 computed font-size 都 ≥ 16px。
 
 ## 入口網站

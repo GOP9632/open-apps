@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>課堂錄音</title>
+<script src="../portal-home.js"></script>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -60,6 +61,9 @@ aside#aside{background:var(--side);border-right:1px solid var(--line);padding:16
 .topbar{position:sticky;top:0;z-index:20;background:var(--bg);display:flex;gap:8px;align-items:center;padding:12px 24px;border-bottom:1px solid var(--line)}
 .topbar .search{max-width:420px;border-radius:99px;padding:8px 14px;background:var(--panel)}
 .menu-btn{display:none}
+.portal-home{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;flex:none;border-radius:8px;color:var(--muted)}
+.portal-home:hover{background:var(--accent-soft);color:var(--text)}
+.portal-home svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 main{padding:20px 24px 110px;width:100%}
 .narrow{max-width:900px}
 #scrim{display:none}
@@ -207,6 +211,7 @@ details.menu summary:hover{background:var(--accent-soft)}
 <div id="scrim" onclick="UI.closeDrawer()"></div>
 <div class="mainwrap">
   <header class="topbar">
+    <a class="portal-home" href="https://anthony-apps.netlify.app/" title="回入口" aria-label="回入口"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h5v-6h4v6h5V10"/></svg></a>
     <button class="menu-btn ghost" onclick="UI.openDrawer()" aria-label="選單">☰</button>
     <input id="q" class="search grow" type="search" placeholder="🔍 搜尋標題、逐字稿、筆記" oninput="UI.search(this.value)">
     <button onclick="UI.importFile()" title="匯入音檔">⬆<span class="lbl"> 匯入</span></button>
