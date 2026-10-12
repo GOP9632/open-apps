@@ -226,10 +226,12 @@ export function litParams(P, base, geo) {
     const dx = P.lightX ?? l0.dx, dy = P.lightY ?? l0.dy;
     const tint = c => L.cat === 'nat' ? temp(c, P.lightCol / 50) : rot(c, P.lightCol * 3.6);
     // 燈越遠越柔、明暗差越小
-    const par = { ...l0 }, soft = l0.soft * s * s, pw = l0.pow / s;
-    put(dx * s, dy * s, l0.z * s, tint(l0.col), l0.I * k * bri, [l0.wrap, l0.spec * k, soft, pw]);
-    if (L.mirror) { const l1 = { ...par, ...L.l[1] }; put(-dx * s, dy * s, l1.z * s, tint(l1.col), l1.I * k * bri, [l1.wrap, l1.spec * k, soft, pw]); }
-    ambS *= (1 + (L.ambS - 1) * k) * bri; ambB *= (1 + (L.ambB - 1) * k) * bri; bgDepth = 4 * A.F;
+    // 子滑桿照 Hypic：高光 0~100 預設 50、模糊（燈更柔）、前景暗、背景暗 0~100 預設 0
+    const sp = (P.lightSpec ?? 50) / 50, bl = 1 + (P.lightBlur || 0) / 50;
+    const par = { ...l0 }, soft = l0.soft * s * s * bl, pw = l0.pow / s / Math.sqrt(bl);
+    put(dx * s, dy * s, l0.z * s, tint(l0.col), l0.I * k * bri, [l0.wrap, l0.spec * k * sp, soft, pw]);
+    if (L.mirror) { const l1 = { ...par, ...L.l[1] }; put(-dx * s, dy * s, l1.z * s, tint(l1.col), l1.I * k * bri, [l1.wrap, l1.spec * k * sp, soft, pw]); }
+    ambS *= (1 + (L.ambS - 1) * k) * bri * (1 - 0.6 * (P.lightFg || 0) / 100); ambB *= (1 + (L.ambB - 1) * k) * bri * (1 - 0.7 * (P.lightBg || 0) / 100); bgDepth = 4 * A.F;
     if (L.haze) {
       haze = [A.x + dx * s * A.F / gw, A.y + dy * s * A.F / gh, 0.45 * s, 0.55 * k * bri];
       hazeCol = tint(L.haze);

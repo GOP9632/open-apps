@@ -25,6 +25,7 @@ export const SKIN = [
   ['skDewy', '水光肌', ic(FACE + '<path d="M10 8c1-1 3-1 4 0M8 12.5c.5-.8 1.5-1 2-.8M16 12.5c-.5-.8-1.5-1-2-.8"/>'), 0, 75],
   ['skMatte', '啞光肌', ic(FACE + '<path d="M8 10h8M8 13h8" opacity=".5"/>'), 0, 90],
   ['skBlush', '腮紅肌', ic(FACE + '<ellipse cx="8.3" cy="13.5" rx="2" ry="1.3" fill="currentColor" opacity=".45"/><ellipse cx="15.7" cy="13.5" rx="2" ry="1.3" fill="currentColor" opacity=".45"/>'), 0, 60],
+  ['skUnify', '膚色統一', ic('<ellipse cx="9" cy="12" rx="5" ry="7"/><ellipse cx="15" cy="12" rx="5" ry="7" fill="currentColor" opacity=".3"/>'), 0, 60],
   ['skTan', '美黑肌', ic('<circle cx="12" cy="12" r="4" fill="currentColor" opacity=".45"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/>'), 0, 70],
 ];
 export const WRINKLE = [
@@ -211,7 +212,7 @@ in vec2 vUV; out vec4 o;
 uniform sampler2D uImg, uA, uB, uC, uT1, uT2, uT3;
 uniform vec2 uPx;
 uniform vec3 uMean;
-uniform float uNative, uGirl, uCream, uBaby, uFrost, uTex, uOil, uBare, uBody, uDewy, uMatte, uBlush, uTan;
+uniform float uNative, uGirl, uCream, uBaby, uFrost, uTex, uOil, uBare, uBody, uDewy, uMatte, uBlush, uTan, uUnify;
 uniform float uHead, uFold, uNeck, uEye, uLip;
 float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -249,6 +250,14 @@ void main(){
     vec3 unify = B + (uMean * (luma(B) / max(luma(uMean), 0.05)) - B) * 0.45;
     col += (unify - B) * uNative * sk;
     SMOOTH(uNative * 0.35, 1.0);
+  }
+  // 膚色統一（Hypic 修飾 › 膚色，0~100）：臉和身體的皮膚顏色往整體平均膚色拉，亮度和紋理不動，
+  // 大範圍的明暗不均（一邊臉暗、脖子偏暗）也收一點
+  if (uUnify > 0.0) {
+    float lb = luma(B);
+    vec3 tgt = uMean * (lb / max(luma(uMean), 0.05));
+    col += (tgt - B) * 0.75 * uUnify * sk;
+    col += vec3((luma(C) - lb) * 0.3 * uUnify * sk);
   }
   // 素顏肌：比原生感更淡，再把局部泛紅退掉
   if (uBare > 0.0) {
@@ -416,7 +425,7 @@ export class SkinFx {
       const f = k => (p[k] || 0) / 100;
       gl.uniform2f(u('uPx'), 1 / W, 1 / H);
       gl.uniform3fv(u('uMean'), data.mean);
-      const map = { uNative: 'skNative', uGirl: 'skGirl', uCream: 'skCream', uBaby: 'skBaby', uFrost: 'skFrost', uTex: 'skTex', uOil: 'skOil', uBare: 'skBare', uBody: 'skBody', uDewy: 'skDewy', uMatte: 'skMatte', uBlush: 'skBlush', uTan: 'skTan', uHead: 'wkHead', uFold: 'wkFold', uNeck: 'wkNeck', uEye: 'wkEye', uLip: 'wkLip' };
+      const map = { uNative: 'skNative', uGirl: 'skGirl', uCream: 'skCream', uBaby: 'skBaby', uFrost: 'skFrost', uTex: 'skTex', uOil: 'skOil', uBare: 'skBare', uBody: 'skBody', uDewy: 'skDewy', uMatte: 'skMatte', uBlush: 'skBlush', uTan: 'skTan', uUnify: 'skUnify', uHead: 'wkHead', uFold: 'wkFold', uNeck: 'wkNeck', uEye: 'wkEye', uLip: 'wkLip' };
       for (const [n, k] of Object.entries(map)) gl.uniform1f(u(n), f(k));
     });
     return this.canvas;

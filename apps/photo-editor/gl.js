@@ -80,7 +80,7 @@ uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）；骨架收
 uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大 2 骨架收窄 3 往下拉長)、強度、橢圓比（收窄：只收一點的那側）
 uniform vec2 uW3[${MAX_WARPS}]; // 頭的傾斜 cos、sin（收窄：最強的位置、範圍）
 uniform float uExposure, uBright, uContrast, uSat, uTemp, uTint, uHigh, uShadow, uSharp, uVig, uGrain, uFade;
-uniform float uVib, uStruct, uTexture, uLSense, uBack;
+uniform float uVib, uStruct, uTexture, uLSense, uBack, uFlashA;
 uniform float uSmoothAmt, uWhite, uLutAmt, uHasLut, uLutSkin;
 uniform float uDark, uFold, uEyeB, uTeeth;
 // 打光、閃光燈：最多三盞點光源（閃光燈也算一盞）
@@ -107,11 +107,8 @@ float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32);
 // 深度圖（uSegB 的 G、B 是 16 位元高度）
 float geoH(vec2 q){ vec3 g = texture(uSegB, q).rgb; return (g.g * 65280.0 + g.b * 255.0) / 65535.0 * uGeoMax; }
 // 從 P 往燈走，路上有比光線還高的東西就是在影子裡；離得越遠影子邊越糊
-float shadow(vec3 P, vec3 L, float soft){
-  vec3 dv = L - P; float len = length(dv.xy);
-  if (len < 1.0) return 1.0;
-  vec3 dir = dv / len;
-  float res = 1.0, t = 1.5;
+float shadow1(vec3 P, vec3 dir, float len, float soft, float j){
+  float res = 1.0, t = 1.0 + j * 1.5;
   for (int s = 0; s < 28; s++) {
     if (t > len) break;
     vec3 q = P + dir * t;
@@ -123,9 +120,17 @@ float shadow(vec3 P, vec3 L, float soft){
     float pen = soft * t * 0.12 + 1.0;
     float blk = clamp(0.5 + (hq - q.z - 1.5) / pen, 0.0, 1.0) * clamp(0.5 + (q.z - (hq - uThick)) / pen, 0.0, 1.0);
     res = min(res, 1.0 - blk);
-    t = t * 1.22 + 1.0;
+    t = t * 1.22 + 1.0 + j * 0.5;
   }
   return res;
+}
+// 走兩次、起點錯開再平均：固定步距會在背景的影子上畫出一圈一圈的等高線
+float shadow(vec3 P, vec3 L, float soft){
+  vec3 dv = L - P; float len = length(dv.xy);
+  if (len < 1.0) return 1.0;
+  vec3 dir = dv / len;
+  float j = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+  return 0.5 * (shadow1(P, dir, len, soft, j * 0.5) + shadow1(P, dir, len, soft, j * 0.5 + 0.5));
 }
 
 // LUT 圖是 1024×512：左半一般顏色，右半皮膚那套（side 0 或 1）
@@ -380,6 +385,16 @@ void main(){
     float Lb = luma(texture(uBlurS, uv).rgb);
     float g = 1.0 + uBack * 1.6 * pow(1.0 - smoothstep(0.05, 0.65, Lb), 1.5);
     col = 1.0 - pow(max(1.0 - col, 0.0), vec3(g));
+  }
+  if (uFlashA != 0.0) {
+    // 閃光燈（Hypic 調整第一項，−100~100）：像正面補一下閃光，人比背景亮得多、暗部補得多、
+    // 顏色偏一點冷白；往左是反過來把人壓暗
+    float pw = texture(uSeg, uv).r, k = uFlashA * mix(0.25, 1.0, pw);
+    if (k > 0.0) {
+      col = 1.0 - pow(max(1.0 - col, 0.0), vec3(1.0 + k * 0.9));
+      col = mix(col, col * vec3(0.985, 1.0, 1.03), k * 0.6);
+    } else col = pow(max(col, 0.0), vec3(1.0 - k * 0.6));
+    col = clamp(col, 0.0, 1.0);
   }
   col *= exp2(uExposure);
   col = pow(max(col, 0.0), vec3(1.0 - uBright * 0.45));
@@ -723,7 +738,7 @@ export class Renderer {
     gl.uniform1f(u.uVig, f(p.vignette));
     gl.uniform1f(u.uGrain, f(p.grain));
     gl.uniform1f(u.uFade, f(p.fade));
-    gl.uniform1f(u.uVib, f(p.vibrance || 0)); gl.uniform1f(u.uStruct, f(p.structure || 0)); gl.uniform1f(u.uTexture, f(p.texture || 0)); gl.uniform1f(u.uLSense, f(p.lightSense || 0)); gl.uniform1f(u.uBack, f(p.backlight || 0));
+    gl.uniform1f(u.uVib, f(p.vibrance || 0)); gl.uniform1f(u.uStruct, f(p.structure || 0)); gl.uniform1f(u.uTexture, f(p.texture || 0)); gl.uniform1f(u.uLSense, f(p.lightSense || 0)); gl.uniform1f(u.uBack, f(p.backlight || 0)); gl.uniform1f(u.uFlashA, f(p.flashFill || 0));
     gl.uniform1f(u.uSmoothAmt, f(p.smooth));
     gl.uniform1f(u.uWhite, f(p.white));
     gl.uniform1f(u.uDark, f(p.dark)); gl.uniform1f(u.uFold, f(p.fold));
