@@ -19,7 +19,7 @@ export const STROKES = [
 ];
 export const STROKE_COLORS = ['#ffffff', '#111111', '#ff5c8a', '#ffb36b', '#ffe066', '#69db7c', '#4dabf7', '#b197fc', '#ff3b30', '#ff9ec7'];
 // 預設：白色實線，粗細 40（約主體長邊的 2%）
-export const STROKE0 = { t: '', c: '#ffffff', w: 40, o: 100 };
+export const STROKE0 = { t: '', c: '#ffffff', w: 30, o: 100 }; // 粗細 30、不透明度 100 照 Hypic
 
 const GRID = 1024; // 距離場最多算到 1024 邊長，再放大貼回去，邊緣用平滑放大
 

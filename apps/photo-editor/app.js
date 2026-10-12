@@ -27,7 +27,7 @@ const MAX_SIDE = 4096, MAX_AREA = 16e6;
 
 const P0 = {
   exposure: 0, brightness: 0, contrast: 0, saturation: 0, temp: 0, tint: 0, highlights: 0, shadows: 0,
-  sharpen: 0, vignette: 0, grain: 0, fade: 0, vibrance: 0, structure: 0, texture: 0,
+  sharpen: 0, vignette: 0, grain: 0, fade: 0, vibrance: 0, structure: 0, texture: 0, lightSense: 0, backlight: 0,
   filter: 'none', filterAmt: 60, // 照 Hypic：濾鏡強度預設 60
   smooth: 0, white: 0, slim: 0, vface: 0, eyes: 0, nose: 0, mouth: 0,
   chin: 0, dark: 0, fold: 0, eyeb: 0, teeth: 0, slimL: 0, slimR: 0, eyesL: 0, eyesR: 0,
@@ -88,23 +88,25 @@ const I = {
   vib: '<svg viewBox="0 0 24 24"><path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z"/><path d="M9 14a3 3 0 0 0 3 3"/></svg>',
   struct: '<svg viewBox="0 0 24 24"><path d="M3 20l6-10 4 6 3-4 5 8z"/></svg>',
   texture: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18" opacity=".6"/></svg>',
+  lsense: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/><path d="M12 8a4 4 0 0 1 0 8z" fill="currentColor"/></svg>',
+  backlit: '<svg viewBox="0 0 24 24"><circle cx="17" cy="6" r="3"/><circle cx="9" cy="10" r="3"/><path d="M3 21c1-4 3-6 6-6s5 2 6 6"/></svg>',
   off: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>',
 };
 
 const ADJUST = [
-  ['brightness', '亮度', I.sun], ['exposure', '曝光', I.exposure], ['contrast', '對比', I.contrast], ['saturation', '飽和', I.drop],
+  ['brightness', '亮度', I.sun], ['lightSense', '光感', I.lsense], ['exposure', '曝光', I.exposure], ['contrast', '對比', I.contrast], ['saturation', '飽和', I.drop],
   ['vibrance', '自然飽和', I.vib], ['texture', '質感', I.texture, 0], ['sharpen', '銳化', I.sharp, 0], ['structure', '結構', I.struct],
-  ['highlights', '高光', I.high], ['shadows', '陰影', I.shadow], ['temp', '色溫', I.temp], ['tint', '色調', I.tint],
+  ['highlights', '高光', I.high], ['shadows', '陰影', I.shadow], ['backlight', '背光校正', I.backlit, 0], ['temp', '色溫', I.temp], ['tint', '色調', I.tint],
   ['grain', '顆粒', I.grain, 0], ['fade', '褪色', I.fade, 0], ['vignette', '暗角', I.vig],
 ];
 const BEAUTY = [
   ['smooth', '磨皮', I.skin, 0], ['white', '美白', I.white, 0], ['dark', '黑眼圈', I.dark, 0], ['fold', '法令紋', I.fold, 0],
   ['eyeb', '亮眼', I.eyeb, 0], ['teeth', '白牙', I.teeth, 0],
-  ['slim', '瘦臉', I.slim], ['vface', '小 V 臉', I.vface, 0], ['chin', '下巴', I.chin],
+  ['slim', '瘦臉', I.slim, 0], ['vface', '小 V 臉', I.vface, 0], ['chin', '下巴', I.chin],
   ['eyes', '大眼', I.eye], ['nose', '瘦鼻', I.nose], ['mouth', '嘴巴', I.mouth],
 ];
 // 第一次點開時的起始強度，照醒圖點開滑桿時的預設值
-const BEAUTY_DEF = { white: 60 };
+const BEAUTY_DEF = { white: 60, slim: 50 }; // 瘦臉點開 50 照 Hypic
 // 可以左右分開調的項目
 const SIDED = ['slim', 'eyes'];
 // 兩種一鍵美顏
@@ -1153,7 +1155,7 @@ function cutView(s, w, h, plain) {
   } else ctx.drawImage(c.canvas, 0, 0, cv.width, cv.height);
   return cv;
 }
-let brushR = 20; // 1~100，照 Hypic 預設 20；半徑 = 值 × 1.5 像素
+let brushR = 40; // 1~100，照 Hypic 手動摳圖筆刷預設 40；半徑 = 值 × 1.5 像素
 function drawStickers() {
   const layer = $('#stickers'), wr = { width: $('#wrap').offsetWidth };
   layer.innerHTML = '';
@@ -1543,7 +1545,7 @@ function tabFun(box) {
   const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
   [['pop', '出框'], ['blur', '景深'], ['fx', '特效'], ['ov', '光效']].forEach(([k, lb]) => cats.append(item({
     label: lb, icon: lb, cls: 'wide', on: cSec === k, set: k === 'pop' ? !!P.pop : k === 'blur' ? P.blur > 0 : k === 'fx' ? !!P.fx : !!P.ov,
-    onclick: () => { cSec = k; if (k === 'blur' && !P.blur) { P.blur = 60; findPerson(true); render(); commit(); } showTab('fun'); },
+    onclick: () => { cSec = k; if (k === 'blur' && !P.blur) { P.blur = 40; findPerson(true); render(); commit(); } showTab('fun'); },
   })));
   if (cSec === 'pop') return tabPop(box);
   if (cSec === 'blur') {

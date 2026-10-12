@@ -80,7 +80,7 @@ uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）；骨架收
 uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大 2 骨架收窄 3 往下拉長)、強度、橢圓比（收窄：只收一點的那側）
 uniform vec2 uW3[${MAX_WARPS}]; // 頭的傾斜 cos、sin（收窄：最強的位置、範圍）
 uniform float uExposure, uBright, uContrast, uSat, uTemp, uTint, uHigh, uShadow, uSharp, uVig, uGrain, uFade;
-uniform float uVib, uStruct, uTexture;
+uniform float uVib, uStruct, uTexture, uLSense, uBack;
 uniform float uSmoothAmt, uWhite, uLutAmt, uHasLut;
 uniform float uDark, uFold, uEyeB, uTeeth;
 // 打光、閃光燈：最多三盞點光源（閃光燈也算一盞）
@@ -373,8 +373,20 @@ void main(){
     col = clamp(col, 0.0, 1.0);
   }
 
+  if (uBack > 0.0) {
+    // 背光校正：周圍（大範圍模糊）越暗的地方提亮越多，用 1-(1-c)^g 提亮，亮部不會爆
+    float Lb = luma(texture(uBlurS, uv).rgb);
+    float g = 1.0 + uBack * 1.6 * pow(1.0 - smoothstep(0.05, 0.65, Lb), 1.5);
+    col = 1.0 - pow(max(1.0 - col, 0.0), vec3(g));
+  }
   col *= exp2(uExposure);
   col = pow(max(col, 0.0), vec3(1.0 - uBright * 0.45));
+  if (uLSense != 0.0) {
+    // 光感：中間調提亮或壓暗，黑白兩端不動，按比例縮放 RGB 保留顏色
+    float L0 = max(luma(col), 1e-4);
+    float L1 = clamp(L0 + uLSense * (uLSense > 0.0 ? 0.9 : 0.5) * L0 * (1.0 - L0), 0.0, 1.0);
+    col = clamp(col * (L1 / L0), 0.0, 1.0);
+  }
   float L = luma(col);
   float sh = 1.0 - smoothstep(0.0, 0.55, L), hl = smoothstep(0.45, 1.0, L);
   col += uShadow * 0.35 * sh * (uShadow > 0.0 ? (1.0 - col) : col);
@@ -704,7 +716,7 @@ export class Renderer {
     gl.uniform1f(u.uVig, f(p.vignette));
     gl.uniform1f(u.uGrain, f(p.grain));
     gl.uniform1f(u.uFade, f(p.fade));
-    gl.uniform1f(u.uVib, f(p.vibrance || 0)); gl.uniform1f(u.uStruct, f(p.structure || 0)); gl.uniform1f(u.uTexture, f(p.texture || 0));
+    gl.uniform1f(u.uVib, f(p.vibrance || 0)); gl.uniform1f(u.uStruct, f(p.structure || 0)); gl.uniform1f(u.uTexture, f(p.texture || 0)); gl.uniform1f(u.uLSense, f(p.lightSense || 0)); gl.uniform1f(u.uBack, f(p.backlight || 0));
     gl.uniform1f(u.uSmoothAmt, f(p.smooth));
     gl.uniform1f(u.uWhite, f(p.white));
     gl.uniform1f(u.uDark, f(p.dark)); gl.uniform1f(u.uFold, f(p.fold));
