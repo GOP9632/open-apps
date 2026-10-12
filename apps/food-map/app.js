@@ -74,6 +74,8 @@ const normCity = c => (c || '').replace(/^臺/, '台').replace(/[市縣]$/, '').
 const cat = p => CATS[p.category] || CATS.other;
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 私密模式或空間滿了 */ } };
+// iPhone 開了「阻擋所有 Cookie」之類的設定時，網站存不了東西，登入每次都會不見
+const canStore = (() => { try { localStorage.setItem('food.t', '1'); localStorage.removeItem('food.t'); return true; } catch { return false; } })();
 const hash = s => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7) >>> 0;
 const buzz = p => { try { navigator.vibrate?.(p); } catch { /* 不支援 */ } };
 let toastTimer;
@@ -577,6 +579,7 @@ const Views = {
       <p class="tag-line">IG 看到就收藏，地圖幫你整理，跟朋友滑卡決定吃什麼。</p>
       <div class="box">
         <div class="seg" style="margin:14px 0 4px"><button class="${m === 'in' ? 'on' : ''}" onclick="S.authMode='in';App.render()">登入</button><button class="${m === 'up' ? 'on' : ''}" onclick="S.authMode='up';App.render()">建立帳號</button></div>
+        ${canStore ? '' : '<div class="tag hot" style="margin-top:12px;height:auto;padding:8px 12px;line-height:1.5">這支手機擋住了網站儲存，登入沒辦法記住。到「設定 → App → Safari」把「阻擋所有 Cookie」關掉就好。</div>'}
         ${load('food.pendingJoin', '') ? '<div class="tag hot" style="margin-top:12px;height:auto;padding:8px 12px">登入後會自動加入朋友的群組 🎉</div>' : ''}
         ${m === 'up' ? '<label class="field"><span>名字（朋友看到的）</span><input id="au-name" autocomplete="nickname"></label>' : ''}
         <label class="field"><span>Email</span><input id="au-email" type="email" autocomplete="email" inputmode="email"></label>
