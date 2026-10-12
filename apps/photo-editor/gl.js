@@ -110,7 +110,10 @@ uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）；骨架收
 uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大 2 骨架收窄 3 往下拉長 4 整段拉長)、強度、橢圓比（收窄：只收一點的那側）
 uniform vec2 uW3[${MAX_WARPS}]; // 頭的傾斜 cos、sin（收窄：最強的位置、範圍）
 uniform float uExposure, uBright, uContrast, uSat, uTemp, uTint, uHigh, uShadow, uSharp, uVig, uGrain, uFade;
-uniform float uVib, uStruct, uTexture, uLSense, uBack, uLProt;
+uniform float uVib, uStruct, uTexture, uLSense, uBack;
+uniform vec4 uFlashF;
+uniform vec2 uFlashR, uLCap, uFlashG;
+uniform vec4 uFlashC;
 uniform float uSmoothAmt, uWhite, uLutAmt, uHasLut, uLutSkin;
 uniform float uDark, uFold, uEyeB, uTeeth;
 // 打光、閃光燈：最多 8 盞燈（閃光燈也算一盞）
@@ -425,8 +428,40 @@ void main(){
     float Ll = luma(lit);
     float kn = max(0.72, L0);
     if (Ll > kn) { float e = Ll - kn; lit *= (kn + e / (1.0 + e * 3.0)) / Ll; }
-    // 調整 › 閃光燈：人身上本來就亮的地方（受光面、亮皮膚）不再補光，只補暗的地方，臉才會變平而不是過曝
-    if (uLProt > 0.0) lit = mix(lit, col, smoothstep(0.72, 0.95, L0) * uLProt * pw);
+    // 光斑亮度上限（陽光碎片）：每個通道最多加到 uLCap.y，超過 uLCap.x 開始慢慢收
+    if (uLCap.y > 0.0) {
+      vec3 d = max(lit - col, 0.0), e = max(d - uLCap.x, 0.0);
+      vec3 dc = min(d, uLCap.x) + e / (1.0 + e / (uLCap.y - uLCap.x)), hr = max(0.96 - col, 1e-3);
+      // 本來就亮的地方剩下的空間少，加的量跟著變少，永遠不會到 255
+      lit += hr * (1.0 - exp(-dc / hr)) - d;
+    }
+    if (uFlashF.x > 0.0) {
+      // 調整 › 閃光燈：臉上的皮膚看附近皮膚的平均亮度補平，暗的那側補多、本來就亮的那側收一點，
+      // 像從相機打一盞平光。用附近的平均而不是單一像素，鬍子、眉毛這種本來就深的地方不會被洗白
+      float sw = 0.0, sl = 0.0;
+      for (int j = 0; j < 17; j++) {
+        float ring = j == 0 ? 0.0 : (j < 9 ? 1.0 : 2.0), an = float(j) * 0.785398 + (j < 9 ? 0.0 : 0.3927);
+        vec2 q = uv + ring * uFlashR * vec2(cos(an), sin(an));
+        float w = texture(uMask, q).r + 0.01;
+        sl += luma(texture(uBlurS, q).rgb) * w; sw += w;
+      }
+      // 皮膚的亮度改成「原本 × g」，燈只決定顏色
+      float g = clamp(1.0 + uFlashF.y * (uFlashF.z / max(sl / sw, 0.02) - 1.0), 0.6, uFlashG.y);
+      // 本身就很亮的像素（受光面的亮點）不再加亮
+      g = mix(g, min(g, 1.0), smoothstep(0.5, 0.75, L0));
+      vec2 fc = (uv - uFlashC.xy) / uFlashC.zw;
+      float face = 1.0 - smoothstep(0.7, 1.0, length(fc));   // 只在臉上（肩膀、身體照燈的結果）
+      lit = mix(lit, lit * (L0 * g / max(luma(lit), 0.01)), skin * pw * face);
+      // 亮的地方保留原本的顏色，不洗成奶油白
+      lit = mix(lit, col * (luma(lit) / max(L0, 0.02)), smoothstep(0.5, 0.8, L0) * uFlashF.w * pw);
+      // 超過 214 的部分慢慢收到 237 以下（存 JPEG 時顏色還會再往外衝一點），紅色通道不會被推到 255（本來就比較亮的不動）
+      { vec3 e = max(lit - 0.84, 0.0), sc = 0.84 + 0.09 * (1.0 - exp(-e / 0.09));
+        lit = mix(lit, min(lit, max(sc, col)), pw); }
+      // 背景只會變暗
+      lit = mix(min(lit, col), lit, pw);
+      // 燈是照全強度算的，這裡照滑桿跟原圖混合
+      lit = mix(col, lit, uFlashF.x);
+    }
     col = clamp(lit, 0.0, 1.0);
   }
 
@@ -794,7 +829,7 @@ export class Renderer {
     const lp = new Float32Array(32), lr = new Float32Array(32), le = new Float32Array(32), ld = new Float32Array(32), lc = new Float32Array(24);
     ls.forEach((l, i) => { lp.set(l.pos, i * 4); lr.set(l.par, i * 4); le.set(l.ext || [36, 1, 0, 0], i * 4); ld.set(l.dir || [0, 0, 0, 0], i * 4); lc.set(l.col, i * 3); });
     gl.uniform1i(u.uLn, ls.length); gl.uniform4fv(u.uLPos, lp); gl.uniform4fv(u.uLPar, lr); gl.uniform4fv(u.uLExt, le); gl.uniform4fv(u.uLDir, ld); gl.uniform3fv(u.uLCol, lc);
-    gl.uniform1f(u.uLAmbS, L?.ambS ?? 1); gl.uniform1f(u.uLAmbB, L?.ambB ?? 1); gl.uniform1f(u.uBgDepth, L?.bgDepth ?? 0); gl.uniform1f(u.uThick, L?.thick ?? 1e4); gl.uniform1f(u.uLProt, L?.protect ?? 0);
+    gl.uniform1f(u.uLAmbS, L?.ambS ?? 1); gl.uniform1f(u.uLAmbB, L?.ambB ?? 1); gl.uniform1f(u.uBgDepth, L?.bgDepth ?? 0); gl.uniform1f(u.uThick, L?.thick ?? 1e4); gl.uniform4fv(u.uFlashF, L?.flashF || [0, 0, 0, 0]); gl.uniform2fv(u.uFlashR, L?.flashR || [0, 0]); gl.uniform2fv(u.uFlashG, L?.flashG || [0, 1]); gl.uniform4fv(u.uFlashC, L?.flashC || [0, 0, 1, 1]); gl.uniform2fv(u.uLCap, L?.cap || [0, 0]);
     const g = this.geo;
     gl.uniform1f(u.uHasGeo, g ? 1 : 0); gl.uniform1f(u.uGeoMax, g ? g.max : 0); gl.uniform2f(u.uGeoTex, 1 / (g?.w || 1), 1 / (g?.h || 1));
     gl.uniform4fv(u.uHaze, L?.haze || [0, 0, 1, 0]); gl.uniform3fv(u.uHazeCol, L?.hazeCol || [1, 1, 1]);
