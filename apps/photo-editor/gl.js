@@ -81,7 +81,7 @@ uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大 2 骨架收
 uniform vec2 uW3[${MAX_WARPS}]; // 頭的傾斜 cos、sin（收窄：最強的位置、範圍）
 uniform float uExposure, uBright, uContrast, uSat, uTemp, uTint, uHigh, uShadow, uSharp, uVig, uGrain, uFade;
 uniform float uVib, uStruct, uTexture, uLSense, uBack;
-uniform float uSmoothAmt, uWhite, uLutAmt, uHasLut;
+uniform float uSmoothAmt, uWhite, uLutAmt, uHasLut, uLutSkin;
 uniform float uDark, uFold, uEyeB, uTeeth;
 // 打光、閃光燈：最多三盞點光源（閃光燈也算一盞）
 //   uLPos：位置 xy（照片 0~1）、高度 z（深度圖像素，負的是在人後面）、燈到臉中間的距離 w
@@ -128,13 +128,15 @@ float shadow(vec3 P, vec3 L, float soft){
   return res;
 }
 
-vec3 lut(vec3 c){
+// LUT 圖是 1024×512：左半一般顏色，右半皮膚那套（side 0 或 1）
+vec3 lut(vec3 c, float side){
   float b = c.b * 63.0;
   float b0 = floor(b), b1 = min(b0 + 1.0, 63.0);
   vec2 off = (c.rg * 63.0 + 0.5) / 512.0;
   vec2 q0 = vec2(mod(b0, 8.0), floor(b0 / 8.0)) / 8.0;
   vec2 q1 = vec2(mod(b1, 8.0), floor(b1 / 8.0)) / 8.0;
-  return mix(texture(uLut, q0 + off).rgb, texture(uLut, q1 + off).rgb, b - b0);
+  vec2 h = vec2(0.5, 1.0), s = vec2(side * 0.5, 0.0);
+  return mix(texture(uLut, (q0 + off) * h + s).rgb, texture(uLut, (q1 + off) * h + s).rgb, b - b0);
 }
 
 void main(){
@@ -407,7 +409,12 @@ void main(){
   col = mix(col, col * 0.84 + 0.1, uFade);
   col = clamp(col, 0.0, 1.0);
 
-  if (uHasLut > 0.5) col = mix(col, lut(col), uLutAmt);
+  if (uHasLut > 0.5) {
+    vec3 lc = lut(col, 0.0);
+    float sk = uLutSkin > 0.5 ? texture(uMask, uv).r : 0.0;
+    if (sk > 0.0) lc = mix(lc, lut(col, 1.0), sk);
+    col = mix(col, lc, uLutAmt);
+  }
 
   if (uFx >= 1 && uFx <= 4) {
     // 邊緣：用保邊模糊過的圖算，比較乾淨
@@ -666,7 +673,7 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, this.tMakeup);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
   }
-  setLut(src) { this.hasLut = !!src; if (src) this.upload(this.tLut, src); }
+  setLut(src, skin) { this.hasLut = !!src; this.lutSkin = !!skin; if (src) this.upload(this.tLut, src); }
 
   // fx：{ lit: { lights: [{ pos, col, par }], ambS, ambB, bgDepth, haze, hazeCol }, flash: { amt, retro } }
   render(p, warps, fx = {}) {
@@ -721,7 +728,7 @@ export class Renderer {
     gl.uniform1f(u.uWhite, f(p.white));
     gl.uniform1f(u.uDark, f(p.dark)); gl.uniform1f(u.uFold, f(p.fold));
     gl.uniform1f(u.uEyeB, f(p.eyeb)); gl.uniform1f(u.uTeeth, f(p.teeth));
-    gl.uniform1f(u.uHasLut, this.hasLut ? 1 : 0);
+    gl.uniform1f(u.uHasLut, this.hasLut ? 1 : 0); gl.uniform1f(u.uLutSkin, this.lutSkin ? 1 : 0);
     gl.uniform1f(u.uLutAmt, f(p.filterAmt));
     gl.uniform1i(u.uFx, fx.fxMode || 0); gl.uniform1f(u.uFxAmt, fx.fxAmt || 0);
     const ra = this.w / this.h, re = this.exAr || 1;

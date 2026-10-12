@@ -5,6 +5,7 @@
 //   2. 暗、中、亮三段 × 8 個色相：色度（偏離灰色的量）怎麼變、亮度怎麼變
 //   3. 依亮度（9 點）的色度變化
 // 權重存在 xt/filters.bin（int16，每個濾鏡一個縮放值），名稱、分類、預設強度在 xt/filters.json。
+// 醒圖很多濾鏡對皮膚另外調一套顏色，那套的權重在 xt/skin.bin（同樣的模型）。
 
 const K = 9, H = 8, NF = 150;
 const LR = 0.2126, LG = 0.7152, LB = 0.0722;
@@ -14,10 +15,14 @@ export function loadXT() {
   loading ||= Promise.all([
     fetch(new URL('xt/filters.json', import.meta.url)).then(r => r.json()),
     fetch(new URL('xt/filters.bin', import.meta.url)).then(r => r.arrayBuffer()),
-  ]).then(([meta, buf]) => {
-    const q = new Int16Array(buf), n = meta.scale.length, w = new Float32Array(q.length);
-    for (let f = 0; f < n; f++) { const s = meta.scale[f], o = f * NF * 3; for (let k = 0; k < NF * 3; k++) w[o + k] = q[o + k] * s; }
-    data = { cats: meta.cats, items: meta.items.map(([name, cat, p, def], i) => ({ id: 'xt' + i, name, cat, p, def })), w };
+    fetch(new URL('xt/skin.bin', import.meta.url)).then(r => r.arrayBuffer()),
+  ]).then(([meta, buf, sbuf]) => {
+    const deq = (buf, scale) => {
+      const q = new Int16Array(buf), w = new Float32Array(q.length);
+      scale.forEach((s, f) => { const o = f * NF * 3; for (let k = 0; k < NF * 3; k++) w[o + k] = q[o + k] * s; });
+      return w;
+    };
+    data = { cats: meta.cats, items: meta.items.map(([name, cat, p, def, skin], i) => ({ id: 'xt' + i, name, cat, p, def, skin })), w: deq(buf, meta.scale), ws: deq(sbuf, meta.skinScale) };
     return data;
   }).catch(e => { console.warn(e); loading = null; return null; });
   return loading;
@@ -25,10 +30,10 @@ export function loadXT() {
 export const xtData = () => data;
 export const xtItem = id => data && id?.startsWith('xt') ? data.items[+id.slice(2)] : null;
 
-// 一個濾鏡的顏色函式 (r,g,b) → [r,g,b]，數值 0～1
-export function xtFn(id) {
-  const it = xtItem(id); if (!it) return null;
-  const W = data.w, base = it.p * NF * 3;
+// 一個濾鏡的顏色函式 (r,g,b) → [r,g,b]，數值 0～1；skin 為 true 時是皮膚那套（沒有就回傳 null）
+export function xtFn(id, skin) {
+  const it = xtItem(id); if (!it || (skin && !(it.skin >= 0))) return null;
+  const W = skin ? data.ws : data.w, base = (skin ? it.skin : it.p) * NF * 3;
   const out = [0, 0, 0];
   return (r, g, b) => {
     out[0] = out[1] = out[2] = 0;
