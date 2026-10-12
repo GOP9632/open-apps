@@ -117,7 +117,10 @@ uniform float uDark, uFold, uEyeB, uTeeth;
 //   uLPos：位置 xy（照片 0~1）、高度 z（深度圖像素，負的是在人後面）、燈到臉中間的距離 w
 //   uLCol：顏色 × 強度；uLPar：包覆（光繞到暗面）、反光、影子柔和度、衰減次方
 uniform int uLn;
-uniform vec4 uLPos[6], uLPar[6], uLExt[6];
+uniform vec4 uLPos[6], uLPar[6], uLExt[6], uLDir[6];
+// 打光樣式（uLExt.w > 0.5）的燈換一套意思（relight.js 照 Hypic 成品擬合的數字）：
+//   uLPos：位置 xy（照片 0~1）、高度 z、範圍 w（都是深度圖像素）；uLPar：乘的強度（人、背景）、加的強度（人、背景）
+//   uLDir：方向性（0 整片一樣亮、1 只照朝燈的面）、高光；uLCol：顏色
 uniform vec3 uLCol[6];
 uniform float uLAmbS, uLAmbB, uBgDepth, uThick, uHasGeo, uGeoMax;
 uniform vec2 uGeoTex;
@@ -133,8 +136,6 @@ out vec4 o;
 
 float luma(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
-float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y); }
 
 // 深度圖（uSegB 的 G、B 是 16 位元高度）
 float geoH(vec2 q){ vec3 g = texture(uSegB, q).rgb; return (g.g * 65280.0 + g.b * 255.0) / 65535.0 * uGeoMax; }
@@ -364,12 +365,28 @@ void main(){
       N = normalize(mix(vec3(0.0, 0.0, 1.0), normalize(vec3(-hx, -hy, 2.0)), smoothstep(0.1, 0.6, pw)));
     }
     vec3 Pw = vec3(uv / gt, h0 * pw - (1.0 - pw) * uBgDepth);
-    vec3 light = vec3(0.0), spec = vec3(0.0), rim = vec3(0.0), tint = vec3(0.0), orb = vec3(0.0);
-    // 陽光碎片：樹葉縫隙透下來的一塊一塊光斑（柔焦越大邊越軟）
-    vec2 dq = vUV * vec2(uSize.x / uSize.y, 1.0) * 16.0;
-    float dn = vnoise(dq + vnoise(dq * 0.7) * 1.5) * 0.65 + vnoise(dq * 2.3 + 7.1) * 0.35;
+    vec3 light = vec3(0.0), spec = vec3(0.0), rim = vec3(0.0), mul = vec3(0.0), add = vec3(0.0), orb = vec3(0.0);
     for (int i = 0; i < 6; i++) {
       if (i >= uLn) break;
+      if (uLExt[i].w > 0.5) {
+        // Hypic 的打光：先整張壓暗，每盞燈是一團有範圍的光（高斯），照在人身上時朝燈的面亮、背對的面暗；
+        // 乘的部分照亮原本的顏色，加的部分讓藍光、綠光在偏紅的皮膚上也看得到
+        vec2 dg = (uv - uLPos[i].xy) / gt;
+        float G = exp(-dot(dg, dg) / (2.0 * uLPos[i].w * uLPos[i].w));
+        vec3 Pf = vec3(uv / gt, h0 * pw), Lf = vec3(uLPos[i].xy / gt, uLPos[i].z), Lf2 = normalize(Lf - Pf);
+        float kd = 1.0 - uLDir[i].x + uLDir[i].x * clamp(dot(N, Lf2), 0.0, 1.0);
+        vec3 c = uLCol[i];
+        mul += c * G * (uLPar[i].x * pw * kd + uLPar[i].y * (1.0 - pw));
+        add += c * G * (uLPar[i].z * pw * kd + uLPar[i].w * (1.0 - pw));
+        vec3 Hv = normalize(Lf2 + vec3(0.0, 0.0, 1.0));
+        spec += c * uLDir[i].y * pow(max(dot(N, Hv), 0.0), uLExt[i].x) * G * pw;
+        // 光點（彩虹光點）：背景上看得到的發光小球
+        if (uLExt[i].z > 1.5) {
+          vec2 dv = (vUV - uLPos[i].xy) * vec2(uSize.x / uSize.y, 1.0);
+          orb += normalize(c + 1e-4) * exp(-dot(dv, dv) / 0.0012) * (1.0 - pw);
+        }
+        continue;
+      }
       vec3 Lp = vec3(uLPos[i].xy / gt, uLPos[i].z);
       vec3 Lv = Lp - Pw; float dist = max(length(Lv), 1.0); vec3 Ld = Lv / dist;
       float wr = uLPar[i].x + 0.3 * skin;
@@ -377,46 +394,21 @@ void main(){
       // 衰減：在臉中間是 1，離燈越近越亮、越遠越暗（燈越近，明暗差越大）
       float att = min(pow(uLPos[i].w * uLPos[i].w / (dist * dist), uLPar[i].w), 1.6);
       float sh = uHasGeo > 0.5 && uLExt[i].y > 0.5 ? shadow(Pw, Lp, uLPar[i].z) : 1.0;
-      float pch = uLExt[i].z > 0.5 && uLExt[i].z < 1.5 ? smoothstep(0.56, 0.6 + 0.02 * uLPar[i].z, dn) : 0.0;
-      float dap = uLExt[i].z > 0.5 && uLExt[i].z < 1.5 ? mix(0.3, 1.5, pch) : 1.0;
-      if (uLExt[i].w > 0.5) {
-        // Hypic 的打光：先整張壓暗，再照燈的顏色整體調色（不是只在人身上打一盞燈）。
-        // 對照 Hypic 成品量出來：偏離平均的顏色乘 0.25、整體亮度加 0.13，朝燈的地方多、背對的地方少
-        vec3 c = uLCol[i]; float m = (c.r + c.g + c.b) / 3.0;
-        float shade = mix(0.75, 1.1, clamp(diff * att * mix(1.0, sh, pw), 0.0, 1.4));
-        if (uLExt[i].w > 2.5) shade *= 1.0 - smoothstep(0.2, 0.7, pw);   // 多色雙燈：只染背景，人只壓暗
-        else if (uLExt[i].w > 1.5) shade *= smoothstep(0.2, 0.7, pw);    // 臉部柔光、彩虹光點：只照人
-        tint += ((c - m) * 0.25 + m * 0.13) * shade;
-        // 光斑（夕陽餘輝、陽光碎片）：人身上一塊一塊的亮光
-        if (uLExt[i].z > 0.5 && uLExt[i].z < 1.5) {
-          vec2 q2 = vUV * vec2(uSize.x / uSize.y, 1.0) * 7.0;
-          float big = vnoise(q2 + vnoise(q2 * 0.6) * 1.2);
-          tint += c * 0.45 * smoothstep(0.58, 0.8, big) * pw * pow(shade, 3.0);
-        }
-        // 光點（彩虹光點、雙色寶盒）：背景上看得到的發光小球
-        if (uLExt[i].z > 1.5) {
-          vec2 dv = (vUV - uLPos[i].xy) * vec2(uSize.x / uSize.y, 1.0);
-          orb += normalize(c + 1e-4) * exp(-dot(dv, dv) / 0.0012) * (1.0 - pw);
-        }
-        vec3 Hv = normalize(Ld + vec3(0.0, 0.0, 1.0));
-        spec += c * pow(max(dot(N, Hv), 0.0), uLExt[i].x) * uLPar[i].y * att * sh * max(skin, 0.5 * pw);
-        continue;
-      }
       // 燈在人後面（輪廓光、逆光）只照人，不照背景；邊緣直接亮起來，暗的頭髮也看得到一圈光
       // 後面的燈只照到側面朝燈的地方，越邊緣越亮，所以是細細一圈
       float back = uLPos[i].z < 0.0 ? smoothstep(0.45, 0.95, pw) : 1.0;
       if (uLPos[i].z < 0.0) diff = pow(diff, 3.0);
-      vec3 li = uLCol[i] * diff * att * sh * back * dap;
+      vec3 li = uLCol[i] * diff * att * sh * back;
       light += li;
       if (uLPos[i].z < 0.0) rim += li * 0.45;
       // 彩色的燈：皮膚的紅色很多，只用乘的話藍光、綠光幾乎看不到，所以再直接加一點燈的顏色
       float cs = max(uLCol[i].r, max(uLCol[i].g, uLCol[i].b)) - min(uLCol[i].r, min(uLCol[i].g, uLCol[i].b));
       rim += li * cs * 0.22 * pw;
       vec3 Hv = normalize(Ld + vec3(0.0, 0.0, 1.0));
-      spec += uLCol[i] * pow(max(dot(N, Hv), 0.0), uLExt[i].x) * uLPar[i].y * att * sh * dap * max(skin, 0.5 * pw);
+      spec += uLCol[i] * pow(max(dot(N, Hv), 0.0), uLExt[i].x) * uLPar[i].y * att * sh * max(skin, 0.5 * pw);
     }
     float L0 = luma(col);
-    vec3 lit = col * (mix(uLAmbB, uLAmbS, pw) * (1.0 + tint) + light) + spec * smoothstep(0.1, 0.45, L0) + rim;
+    vec3 lit = col * (mix(uLAmbB, uLAmbS, pw) + mul + light) + add + spec * smoothstep(0.1, 0.45, L0) + rim;
     lit = 1.0 - (1.0 - lit) * (1.0 - min(orb, vec3(1.0)) * 0.9);
     // 逆光光暈：燈後面一團暖光，人的輪廓邊緣透光
     if (uHaze.w > 0.0) {
@@ -803,9 +795,9 @@ export class Renderer {
     gl.uniform1i(u.uWn, n);
     gl.uniform4fv(u.uW1, w1); gl.uniform4fv(u.uW2, w2); gl.uniform2fv(u.uW3, w3);
     const L = fx.lit, ls = (L?.lights || []).slice(0, 6);
-    const lp = new Float32Array(24), lr = new Float32Array(24), le = new Float32Array(24), lc = new Float32Array(18);
-    ls.forEach((l, i) => { lp.set(l.pos, i * 4); lr.set(l.par, i * 4); le.set(l.ext || [36, 1, 0, 0], i * 4); lc.set(l.col, i * 3); });
-    gl.uniform1i(u.uLn, ls.length); gl.uniform4fv(u.uLPos, lp); gl.uniform4fv(u.uLPar, lr); gl.uniform4fv(u.uLExt, le); gl.uniform3fv(u.uLCol, lc);
+    const lp = new Float32Array(24), lr = new Float32Array(24), le = new Float32Array(24), ld = new Float32Array(24), lc = new Float32Array(18);
+    ls.forEach((l, i) => { lp.set(l.pos, i * 4); lr.set(l.par, i * 4); le.set(l.ext || [36, 1, 0, 0], i * 4); ld.set(l.dir || [0, 0, 0, 0], i * 4); lc.set(l.col, i * 3); });
+    gl.uniform1i(u.uLn, ls.length); gl.uniform4fv(u.uLPos, lp); gl.uniform4fv(u.uLPar, lr); gl.uniform4fv(u.uLExt, le); gl.uniform4fv(u.uLDir, ld); gl.uniform3fv(u.uLCol, lc);
     gl.uniform1f(u.uLAmbS, L?.ambS ?? 1); gl.uniform1f(u.uLAmbB, L?.ambB ?? 1); gl.uniform1f(u.uBgDepth, L?.bgDepth ?? 0); gl.uniform1f(u.uThick, L?.thick ?? 1e4);
     const g = this.geo;
     gl.uniform1f(u.uHasGeo, g ? 1 : 0); gl.uniform1f(u.uGeoMax, g ? g.max : 0); gl.uniform2f(u.uGeoTex, 1 / (g?.w || 1), 1 / (g?.h || 1));

@@ -160,40 +160,22 @@ export function buildDepth(segB, person, faces, W, H) {
 //   lum、spec：有沒有亮度、高光滑桿（spec 是高光預設值）；n：用幾顆燈；pick：隨機挑色的多色樣式
 const NOT_USE = [[0, 7], [1, 4], [1, 5], [1, 8], [2, 4], [2, 9], [2, 10], [3, 7], [3, 10], [4, 8], [4, 9], [5, 8], [6, 7], [7, 10], [8, 9], [9, 10], [0, 1], [0, 3], [0, 6], [0, 10], [1, 6], [1, 9], [2, 3], [2, 7], [3, 6], [4, 5], [5, 6], [6, 10]];
 const PAL = [[255, 0, 0, 8], [0, 255, 0, 9], [0, 0, 255, 13], [255, 0, 255, 8], [0, 255, 255, 11], [255, 255, 0, 10], [255, 120, 0, 10], [255, 0, 120, 8], [0, 255, 150, 9], [0, 120, 255, 13], [120, 0, 255, 13]];
-export const LIGHT_CATS = [
-  { id: 'nat', name: '自然光', items: [
-    { id: 'soft', name: '臉部柔光', mode: 1, fg: 1, bg: 1, blur: 1, apart: 5, lum: 1, seg: [[0, 0.118, 1, 360, 0.118, 1, 1]], cdef: 0.889, l: [[1, 1, 1, 255, 225, 245, 5, 0, 200]] },
-    { id: 'warm', name: '氣氛暖光', mode: 3, fg: 0.95, bg: 0.95, blur: 1, apart: 5, lum: 1, seg: [[0, 0.8, 1, 46.8, 0.8, 1, 1]], cdef: 0.798, l: [[0.5, 0.5, 0.7, 255, 178, 51, 8, 0, 200]] },
-    { id: 'dawn', name: '清晨陽光', mode: 2, fg: 0.95, bg: 0.95, blur: 1, apart: 5, lum: 1,
-      seg: [[0, 0.255, 1, 36, 0.255, 1, 45], [36, 0.255, 1, 106.2, 0, 1, 5], [106.2, 0, 1, 176.4, 0.255, 1, 5], [176.4, 0.255, 1, 242.1, 0.255, 1, 45]], cdef: 0.764, l: [[0.2, 0.2, 0.6, 190, 225, 255, 7, 0, 200]] },
-    { id: 'sunset', name: '夕陽餘輝', mode: 4, dapple: 1, fg: 0.8, bg: 0.8, blur: 7, apart: 0.55, lum: 1, spec: 35, seg: [[7.2, 1, 1, 36, 1, 1, 1]], cdef: 0.5, l: [[0.8, 0.2, 0.5, 255, 92, 0, 6, 7, 36]] },
-    { id: 'shards', name: '陽光碎片', mode: 4, fg: 1, bg: 1, blur: 13, apart: 5, spec: 35, dapple: 1,
-      seg: [[0, 0.255, 1, 36, 0.255, 1, 45], [36, 0.255, 1, 111.6, 0.255, 1, 5], [111.6, 0.255, 1, 187.2, 0.255, 1, 5], [187.2, 0.255, 1, 206, 0.255, 1, 45]], cdef: 0.55, l: [[1, 0.25, 0.5, 255, 255, 255, 1, 7, 36]] },
-  ] },
-  { id: 'mono', name: '單色光', items: [
-    { id: 'pink', name: '暗夜粉', mode: 4, fg: 0.85, bg: 0.85, blur: 1, apart: 5, lum: 1, seg: [[288, 1, 1, 324, 1, 1, 1]], cdef: 0.693, l: [[0.1, 0.5, 0.6, 255, 0, 200, 7, 1, 200]] },
-    { id: 'purple', name: '驚艷紫', mode: 4, fg: 0.85, bg: 0.85, blur: 1, apart: 5, lum: 1, seg: [[226.8, 1, 1, 270, 1, 1, 1]], cdef: 0.393, l: [[0.1, 0.5, 0.6, 16, 0, 255, 13, 1, 200]] },
-    { id: 'metal', name: '金屬藍', mode: 4, fg: 0.7, bg: 0.7, blur: 1, apart: 0.55, lum: 1, spec: 50, seg: [[198, 1, 1, 248.4, 1, 1, 1]], cdef: 0.571, l: [[0.8, 0.2, 0.5, 0, 57, 255, 6, 10, 36]] },
-    { id: 'red', name: '神秘紅', mode: 4, fg: 0.85, bg: 0.85, blur: 1, apart: 5, lum: 1, seg: [[-43.2, 0.608, 1, 18, 0.608, 1, 1]], cdef: 0.706, l: [[0.1, 0.5, 0.6, 255, 100, 100, 8, 0, 200]] },
-  ] },
-  { id: 'multi', name: '多色', items: [
-    { id: 'rainbow', name: '彩虹光點', mode: 6, fg: 0.6, bg: 0.6, blur: 3, apart: 5, lum: 1, flat: 1, n: 6, pick: 4,
-      l: [[0.2, 0.2, 0.7, 200, 230, 255, 7, 1, 200], [0.8, 0.3, 0.7, 200, 230, 255, 7, 1, 200]] },
-    { id: 'duo', name: '雙色寶盒', mode: 9, fg: 0.8, bg: 0.8, blur: 3, apart: 0.4, lum: 1, n: 2, pick: 2,
-      l: [[0.2, 0.8, 0.6, 255, 0, 0, 8, 0, 200], [0.8, 0.2, 0.6, 0, 255, 0, 9, 0, 200]] },
-    { id: 'pinkpurple', name: '粉紫', mode: 4, fg: 0.8, bg: 0.8, blur: 5, apart: 0.4, lum: 1,
-      l: [[0.1, 0.9, 0.55, 0, 0, 255, 15, 1, 200], [0.9, 0.1, 0.55, 255, 0, 155, 10, 1, 200]] },
-    { id: 'orangecyan', name: '橘青', mode: 4, fg: 0.8, bg: 0.8, blur: 5, apart: 0.4, lum: 1,
-      l: [[0.1, 0.9, 0.55, 0, 200, 255, 13, 1, 200], [0.9, 0.1, 0.55, 255, 77, 0, 10, 1, 200]] },
-  ] },
-];
-export const LIGHTS = LIGHT_CATS.flatMap(c => c.items.map(it => ({ ...it, cat: c.id })));
-
-// HSV（色相 0~360）→ RGB 0~1
-const hsv = (h, s, v) => {
-  h = ((h % 360) + 360) % 360 / 60;
-  const f = k => { const t = (k + h) % 6; return v - v * s * Math.max(0, Math.min(t, 4 - t, 1)); };
-  return [f(5), f(3), f(1)];
+// 每個樣式擬合出來的燈（對照 Hypic 同一張照片的成品，用最小平方法算出來的數字，不是 Hypic 的檔案）
+//   amb：人、背景先壓暗到多少；l：每盞燈 [x, y（以臉中心、臉寬為單位）, 高度, 範圍, 乘（人、背景）, 加（人、背景）, 方向性, 高光, R, G, B]
+const LIGHT_FIT = {
+  soft: { amb: [0.39, 0.999], l: [[-0.034,0.186,1.907,2.916,0.808,0.0,0.0,0.001,0.128,0.0,0.932,0.922,0.935]] }, // 臉部柔光
+  warm: { amb: [0.932, 0.949], l: [[0.315,0.793,1.781,0.681,0.256,0.217,0.001,0.0,0.552,0.042,0.472,0.321,0.153],[1.947,3.0,4.278,3.608,0.165,0.14,0.0,0.0,1.0,0.0,1.279,0.88,0.0]] }, // 氣氛暖光
+  dawn: { amb: [0.842, 0.685], l: [[-3.0,-0.962,3.591,3.106,0.727,0.004,0.01,0.0,0.873,0.0,0.374,0.441,0.495],[0.205,-0.192,0.892,4.411,0.163,0.477,0.0,0.0,0.334,0.0,0.86,0.919,0.981]] }, // 清晨陽光
+  sunset: { amb: [0.751, 0.763], l: [[1.653,-0.113,2.542,4.507,0.786,0.511,0.0,0.0,0.854,0.225,0.418,0.159,0.002],[0.329,0.054,1.857,0.475,0.103,0.0,0.0,0.0,1.0,1.279,0.284,0.084,0.032]] }, // 夕陽餘輝
+  shards: { amb: [0.993, 1.0], l: [[0.238,-0.494,1.386,0.12,0.315,3.0,0.0,1.2,0.821,0.041,0.947,1.161,1.196],[0.124,-0.012,1.666,0.147,0.264,0.098,0.0,1.2,1.0,0.0,0.716,0.871,0.901],[0.668,0.867,4.999,0.146,0.0,0.063,0.276,0.0,0.0,0.0,0.629,0.59,0.518]] }, // 陽光碎片
+  pink: { amb: [0.801, 0.812], l: [[0.482,0.751,1.917,0.62,0.343,0.002,0.0,0.108,0.859,0.035,0.475,0.0,0.286],[1.929,3.0,4.225,3.387,0.254,0.265,0.0,0.0,0.788,0.0,0.809,0.0,0.704]] }, // 暗夜粉
+  purple: { amb: [0.766, 0.792], l: [[-3.0,0.513,1.646,1.5,0.859,0.208,0.0,0.0,0.0,0.302,0.218,0.145,0.609],[1.209,0.148,2.307,1.778,0.592,0.462,0.0,0.0,1.0,0.006,0.04,0.0,0.962]] }, // 驚艷紫
+  metal: { amb: [0.642, 0.656], l: [[0.256,-0.634,1.615,1.139,0.427,0.134,0.0,0.0,0.9,0.706,0.005,0.081,0.382],[2.727,-3.0,1.678,4.967,0.409,0.247,0.0,0.0,0.974,0.072,0.0,0.112,0.538]] }, // 金屬藍
+  red: { amb: [0.619, 0.772], l: [[3.0,0.79,4.018,6.0,0.512,0.448,0.0,0.0,1.0,0.0,0.569,0.249,0.239],[-2.999,-0.047,1.481,3.732,0.857,0.152,0.0,0.0,0.0,0.076,0.389,0.322,0.319]] }, // 神秘紅
+  rainbow: { amb: [0.564, 0.583], l: [[-1.729,0.832,2.075,0.797,0.814,0.0,0.0,0.046,1.0,0.044,0.379,0.322,0.985],[1.686,-2.996,4.951,6.0,0.755,0.022,0.0,0.043,0.838,0.008,0.16,0.486,0.804]] }, // 彩虹光點
+  duo: { amb: [0.732, 0.739], l: [[-1.306,-0.487,2.01,0.943,0.384,0.172,0.0,0.0,1.0,0.0,1.178,0.165,0.0],[0.618,-1.393,1.803,1.238,0.551,0.42,0.0,0.0,0.704,0.014,0.352,0.0,0.825]] }, // 雙色寶盒
+  pinkpurple: { amb: [0.73, 0.726], l: [[-1.56,3.0,0.533,2.304,0.0,0.627,0.383,0.0,0.808,0.0,0.0,0.061,0.956],[0.707,-1.494,2.068,1.315,0.434,0.309,0.0,0.0,0.77,0.032,0.762,0.089,0.226]] }, // 粉紫
+  orangecyan: { amb: [0.695, 0.72], l: [[-0.681,1.14,0.647,1.25,0.237,0.422,0.196,0.025,0.661,0.041,0.0,0.576,0.741],[0.721,-1.435,1.82,1.457,0.493,0.317,0.0,0.019,0.562,0.009,0.739,0.22,0.0]] }, // 橘青
 };
 // 顏色滑桿：位置 0~1 沿色相段走（每段照權重分長度），輸出光的顏色
 export function lightColor(L, t) {
@@ -267,17 +249,13 @@ export function lightAnchor(base, geo) {
   return { x: 0.5, y: 0.38, F: Math.max(W, H) * 0.16 * k, Fpx: Math.max(W, H) * 0.16 };
 }
 
-// Hypic 的 x、y 是自拍畫面上的位置，臉大概在正中間。這裡換成以臉為中心、約 5 個臉寬的框，
-// 全身照、臉不在中間的照片，燈才會照在人身上
-const SPAN = 5;
-const toPhoto = (A, base, x, y) => ({ x: A.x + (x - 0.5) * SPAN * A.Fpx / base.canvas.width, y: A.y + (y - 0.5) * SPAN * A.Fpx / base.canvas.height });
-// 第一盞燈在照片上的預設位置（0~1）；臉部柔光的燈在臉的正前方稍微上面
-export function lightHome(L, base, seed) {
-  const r = lightList(L, seed)[0], A = lightAnchor(base, null);
-  return L.mode === 1 ? { x: A.x, y: A.y - 0.5 * A.Fpx / base.canvas.height } : toPhoto(A, base, r[0], r[1]);
+// 第一盞燈在照片上的預設位置（0~1）
+const fitXY = (A, base, f) => ({ x: A.x + f[0] * A.Fpx / base.canvas.width, y: A.y + f[1] * A.Fpx / base.canvas.height });
+export function lightHome(L, base) {
+  return fitXY(lightAnchor(base, null), base, L.fit.l[0]);
 }
 export function lightPosOf(L, P, base) {
-  const h = lightHome(L, base, P.lightSeed || 0);
+  const h = lightHome(L, base);
   return { x: P.lightX ?? h.x, y: P.lightY ?? h.y };
 }
 
@@ -295,41 +273,34 @@ export function litParams(P, base, geo) {
     lights.push({ pos: [x, y, zz, ref], col: col.map(c => c * I), par, ext: ext || [36, 1, 0, 0] });
   };
   if (L) {
-    const k = (P.lightAmt ?? 100) / 100, seed = P.lightSeed || 0;
+    // 每盞燈是一團有範圍的光（數字是對照 Hypic 成品擬合的，見 LIGHT_FIT）：
+    //   位置以臉中心、臉寬為單位；照在人身上時朝燈的面亮、背對的面暗；先把人和背景壓暗
+    const k = (P.lightAmt ?? 100) / 100, seed = P.lightSeed || 0, fit = L.fit;
     // 子滑桿照 Hypic：亮度、距離 0~100 預設 50；高光預設照樣式（35 或 50）；柔焦、前景暗、背景暗預設 0
     const lum = L.lum ? (P.lightBri ?? 50) / 50 : 1;
     const s = 0.5 + (P.lightDist ?? 50) / 100;
     const sp = L.spec ? (P.lightSpec ?? L.spec) / L.spec : 1;
     const bl = 1 + (P.lightBlur || 0) / 25;
-    const col0 = L.seg ? lightColor(L, P.lightCol == null ? L.cdef : P.lightCol / 100) : null;
-    const m = L.mode;
-    // mode 1 臉部柔光：光包住臉、幾乎沒影子；2~3 柔和方向光；4 方向光；6、9 多顆彩色光
-    const wrap = m === 1 ? 0.7 : m < 4 ? 0.4 : m === 4 ? 0.12 : 0.25;
-    const pw = (m === 1 ? 0.3 : m < 4 ? 0.35 : m === 4 ? 0.9 : 1.3) / s;
-    const soft = (1 + L.blur * 0.35) * s * s * bl;
-    const home = lightHome(L, base, seed), ox = (P.lightX ?? home.x) - home.x, oy = (P.lightY ?? home.y) - home.y;
-    // 多色：彩虹光點的燈都照在人身上；雙色的兩盞燈只染背景（Hypic 成品裡人只有壓暗）
-    const ls = lightList(L, seed), many = L.id === 'rainbow' ? 0.8 : ls.length > 1 ? 0.65 : 1, only = m === 1 || L.id === 'rainbow' ? 2 : ls.length > 1 ? 3 : 1;
-    ls.forEach((r, i) => {
-      let [x, y, z, R, G, B, I, spk, shine] = r;
-      // 光點是畫在照片上的發光小球，直接用 Hypic 的畫面座標
-      const orbXY = L.pick && i >= (L.id === 'rainbow' ? 2 : 0);
-      ({ x, y } = i === 0 && m === 1 ? home : orbXY ? { x, y } : toPhoto(A, base, x, y));
-      x += ox; y += oy;
-      const zz = A.F * (z * 4 - 1.2) * s;
-      const col = col0 || [R / 255, G / 255, B / 255];
-      // 彩虹光點的彩色小光點只照附近：參考距離縮短
-      const spot = L.pick && L.id === 'rainbow' && i >= 2;
-      // 陽光碎片是太陽光：很遠，不衰減
-      // ext：[光澤硬度, 要不要投影, 1 光斑／2 光點, 1 整體調色／2 只照人]
-      const fx = L.dapple ? 1 : L.pick && i >= (L.id === 'rainbow' ? 2 : 0) ? 2 : 0;
-      put(x, y, zz, col, I / 8 * lum * k * many, [wrap, spk / 10 * sp * k, soft, L.dapple ? 0 : pw * (spot ? 1.6 : 1)],
-        [shine, L.flat || i > 2 ? 0 : 1, fx, only], spot ? A.F * 1.4 : 0);
+    // 顏色滑桿：照滑桿移動的量，把擬合出來的顏色往新顏色推
+    let dc = [0, 0, 0];
+    if (L.seg && P.lightCol != null) { const a = lightColor(L, L.cdef), b = lightColor(L, P.lightCol / 100); dc = b.map((v, i) => v - a[i]); }
+    const home = lightHome(L, base), ox = (P.lightX ?? home.x) - home.x, oy = (P.lightY ?? home.y) - home.y;
+    const picks = L.pick && seed ? pickLights(L, seed) : null;
+    fit.l.forEach((f, i) => {
+      const [fx, fy, z, sig, Ip, Ib, Jp, Jb, dr, Sp] = f;
+      let col = f.slice(10, 13);
+      const m = (col[0] + col[1] + col[2]) / 3;
+      col = col.map((v, j) => Math.max(0, v + dc[j] * Math.max(m, 0.3)));
+      // 雙色寶盒「換一組」：換成挑到的顏色，亮度照原本那盞
+      if (picks && L.id === 'duo' && picks[i]) { const pc = picks[i].slice(3, 6).map(v => v / 255), pm = (pc[0] + pc[1] + pc[2]) / 3 || 1; col = pc.map(v => v / pm * m); }
+      const q = fitXY(A, base, f), g = k * lum / s;
+      lights.push({ pos: [q.x + ox, q.y + oy, z * A.F, sig * A.F * s * bl], col, par: [Ip * g, Ib * g, Jp * g, Jb * g], dir: [dr / bl, Sp * sp * k, 0, 0], ext: [36, 0, 0, 1] });
     });
-    // 先壓暗：照 Hypic 的 fgDarkLow、bgDarkLow，人和背景一起壓
-    ambS = (1 + (L.fg - 1) * k) * (1 - 0.6 * (P.lightFg || 0) / 100);
-    ambB = (1 + (L.bg - 1) * k) * (1 - 0.7 * (P.lightBg || 0) / 100);
-    bgDepth = A.F * Math.min(4, 0.2 + L.apart * 0.8);
+    // 彩虹光點：背景上的彩色發光小球（照片座標）
+    if (L.id === 'rainbow') lightList(L, seed).slice(2).forEach(r => lights.push({ pos: [r[0] + ox, r[1] + oy, 0, 1], col: r.slice(3, 6).map(v => v / 255 * k), par: [0, 0, 0, 0], dir: [0, 0, 0, 0], ext: [36, 0, 2, 1] }));
+    // 先壓暗：人和背景（前景暗、背景暗滑桿再多壓）
+    ambS = (1 + (fit.amb[0] - 1) * k) * (1 - 0.6 * (P.lightFg || 0) / 100);
+    ambB = (1 + (fit.amb[1] - 1) * k) * (1 - 0.7 * (P.lightBg || 0) / 100);
   }
   let flash = null;
   if (Fl) {
