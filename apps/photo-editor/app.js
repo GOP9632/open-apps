@@ -34,7 +34,7 @@ const P0 = {
   bg: 'keep', bgColor: '#ffffff',
   oneTap: -1, oneAmt: 100,
   light: '', lightAmt: 70, lightBri: 50, lightCol: 0, lightDist: 50, lightSpec: 50, lightBlur: 0, lightFg: 0, lightBg: 0, lightX: null, lightY: null, flash: '', flashAmt: 60,
-  blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'lake', bgImg: 'beach', bgBlur: 30, frame: '',
+  blur: 0, blurStyle: 'classic', blurSize: 55, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'lake', bgImg: 'beach', bgBlur: 30, frame: '',
   ...HAIR_P0,
   bgProtect: 1, // 背景保護：變形時背景不跟著彎
   mk: {}, mkLook: -1, mkLookAmt: 100,
@@ -132,6 +132,19 @@ let hist = [], hi = -1;
 let tab = 'beauty', cur = 'brightness', selText = -1;
 let cropState = null;
 let landing = false;  // 剛開照片、使用者還沒自己換分頁
+// 景深的 6 種光斑樣式，名稱照 Hypic 背景模糊
+const bi = d => `<svg viewBox="0 0 24 24">${d}</svg>`;
+const BOKEH = [
+  ['galaxy', '銀河', bi('<path d="M12 4v16M4 12h16" stroke-width="1.2"/><path d="M7 7l10 10M17 7L7 17" stroke-width=".8" opacity=".6"/><circle cx="12" cy="12" r="2" fill="currentColor"/>')],
+  ['cateye', '貓眼', bi('<path d="M4 12c3-5 13-5 16 0-3 5-13 5-16 0z"/><circle cx="12" cy="12" r="2.5" fill="currentColor" opacity=".5"/>')],
+  ['swirl', '漩渦散景', bi('<path d="M12 12c0-2 3-2 3 0s-2 5-6 4-5-6-1-9 11-1 10 5"/>')],
+  ['classic', '經典', bi('<circle cx="8" cy="9" r="3.5" fill="currentColor" opacity=".35"/><circle cx="16" cy="10" r="4" fill="currentColor" opacity=".55"/><circle cx="11" cy="16" r="3" fill="currentColor" opacity=".45"/>')],
+  ['motion', '動態', bi('<path d="M4 8h12M2 12h16M5 16h11"/><circle cx="19" cy="12" r="2" fill="currentColor"/>')],
+  ['heart', '愛心', bi('<path d="M12 19s-7-4.5-7-9.5A3.8 3.8 0 0 1 12 7a3.8 3.8 0 0 1 7 2.5c0 5-7 9.5-7 9.5z" fill="currentColor" opacity=".5"/>')],
+];
+// 跟 gl.js 的散景樣式編號對上：經典 0、愛心 1、貓眼 2、漩渦 3、動態 4、銀河 5
+const BOKEH_GL = { classic: 0, heart: 1, cateye: 2, swirl: 3, motion: 4, galaxy: 5 };
+let blurK = 'blur';
 let cSec = 'pop';         // 創意分頁目前在哪一區：出框、景深、特效、光效
 let exOwn = null, exN = 0; // 雙重曝光自己選的第二張照片
 let frameK = 1;
@@ -440,6 +453,8 @@ function effects() {
   if (e) { fx.fxMode = e.mode; fx.fxAmt = P.fxAmt / 100; }
   if (P.ov) fx.over = P.ovAmt / 100;
   fx.blur = P.blur / 100;
+  // 散景的光斑半徑：強度 × 大小（大小 55 照 Hypic 預設）
+  if (P.blur > 0) fx.bokeh = { style: BOKEH_GL[P.blurStyle] ?? 0, r: 0.06 * P.blur / 100 * (0.4 + 1.2 * P.blurSize / 100) };
   if (P.bg === 'img') { fx.bgBlur = P.bgBlur / 100; fx.harm = harmony(); }
   return fx;
 }
@@ -584,7 +599,7 @@ const tabKeys = {
   adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...WRINKLE]),
   body: Object.keys(BODY_P0), hair: Object.keys(HAIR_P0), makeup: ['mk', 'mkLook', 'mkLookAmt'], filter: ['filter', 'filterAmt'],
   light: ['light', 'lightAmt', 'lightBri', 'lightCol', 'lightDist', 'lightSpec', 'lightBlur', 'lightFg', 'lightBg', 'lightX', 'lightY', 'flash', 'flashAmt'],
-  fun: ['blur', 'fx', 'fxAmt', 'ov', 'ovAmt', 'ex', ...Object.keys(POP_P0)], frame: ['frame'], cutout: ['bg', 'bgColor', 'bgImg', 'bgBlur'],
+  fun: ['blur', 'blurStyle', 'blurSize', 'fx', 'fxAmt', 'ov', 'ovAmt', 'ex', ...Object.keys(POP_P0)], frame: ['frame'], cutout: ['bg', 'bgColor', 'bgImg', 'bgBlur'],
 };
 const TAB_RESET = Object.fromEntries(Object.entries(tabKeys).map(([t, keys]) => [t, { on: keysOn(keys), reset: () => toP0(keys) }]));
 TAB_RESET.grade = {
@@ -1633,7 +1648,12 @@ function tabFun(box) {
   if (cSec === 'pop') return tabPop(box);
   if (cSec === 'blur') {
     box.append(item({ label: '關閉', icon: I.off, on: !P.blur, onclick: () => { P.blur = 0; render(); commit(); showTab('fun'); } }));
-    setSlider('虛化', 0, 100, P.blur, v => { P.blur = v; if (v) findPerson(true); render(); });
+    BOKEH.forEach(([id, lb, ic]) => box.append(item({ label: lb, icon: ic, on: !!P.blur && P.blurStyle === id, onclick: () => {
+      P.blurStyle = id; if (!P.blur) P.blur = 40; findPerson(true); render(); commit(); showTab('fun');
+    } })));
+    if (P.blur) [['blurSize', '大小'], ['blur', '強度']].forEach(([k, lb]) => box.prepend(item({ label: lb, icon: lb, cls: 'wide', on: blurK === k, onclick: () => { blurK = k; showTab('fun'); } })));
+    if (blurK === 'blurSize' && P.blur) setSlider('大小', 0, 100, P.blurSize, v => { P.blurSize = v; render(); }, P0.blurSize);
+    else setSlider('虛化', 0, 100, P.blur, v => { P.blur = v; if (v) findPerson(true); render(); });
     $('#note').textContent = base.seg ? '自動找出人像，把背景模糊掉，像大光圈拍的。' : '正在找人像…';
     if (!base.seg && P.blur) findPerson(true).then(() => tab === 'fun' && showTab('fun'));
     return;
