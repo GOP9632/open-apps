@@ -384,6 +384,22 @@ function encodeWav(samples, rate) {
   for (let i = 0; i < samples.length; i++) { const x = Math.max(-1, Math.min(1, samples[i])); v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true); }
   return new Blob([buf], { type: 'audio/wav' });
 }
+// 上傳前壓成 MP3（40 kbps），大小只有 WAV 的八分之一，手機網路上傳快很多
+let _lame;
+async function encodeMp3(samples, rate) {
+  if (!_lame) _lame = new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js'; sc.onload = res; sc.onerror = () => { _lame = null; rej(new Error('載入 MP3 壓縮程式失敗')); }; document.head.appendChild(sc); });
+  await _lame;
+  const enc = new lamejs.Mp3Encoder(1, rate, 40), out = [], block = 1152 * 64, pcm = new Int16Array(block);
+  for (let i = 0; i < samples.length; i += block) {
+    const n = Math.min(block, samples.length - i);
+    for (let k = 0; k < n; k++) { const x = Math.max(-1, Math.min(1, samples[i + k])); pcm[k] = x < 0 ? x * 0x8000 : x * 0x7fff; }
+    const b = enc.encodeBuffer(pcm.subarray(0, n)); if (b.length) out.push(new Uint8Array(b));
+    if ((i / block) % 20 === 19) await new Promise(r => setTimeout(r));
+  }
+  const b = enc.flush(); if (b.length) out.push(new Uint8Array(b));
+  return new Blob(out, { type: 'audio/mpeg' });
+}
+const audioName = blob => blob.type === 'audio/mpeg' ? 'chunk.mp3' : 'chunk.wav';
 async function decode16k(blob) {
   const ctx = new AudioContext({ sampleRate: 16000 });
   try {
@@ -418,7 +434,7 @@ const Engines = {
   // 雲端：登入就能用，key 放在伺服器，每天有免費額度
   async cloud(wav, folder) {
     const glossary = (folder?.glossary || '').split(/[\n,，、]/).map(x => x.trim()).filter(Boolean);
-    const j = await Cloud.call({ task: 'transcribe', audio: await b64(wav), glossary, teacherSample: folder?.teacherSample ? await b64(folder.teacherSample) : undefined, language: S.language || undefined });
+    const j = await Cloud.call({ task: 'transcribe', audio: await b64(wav), mime: wav.type, sec: wav.sec, glossary, teacherSample: folder?.teacherSample ? await b64(folder.teacherSample) : undefined, language: S.language || undefined });
     return j.segments.map(x => ({ start: +x.start || 0, end: +x.end || +x.start || 0, text: x.text, label: x.label || null }));
   },
   // Google Gemini：有免費額度，會分說話者，可用老師的聲音樣本認出老師
@@ -430,7 +446,7 @@ const Engines = {
     if (words.length) instr += '可能出現的專有名詞：' + words.join('、') + '。';
     const parts = [{ text: instr }];
     if (folder?.teacherSample) parts.push({ inline_data: { mime_type: 'audio/wav', data: await b64(folder.teacherSample) } }, { text: '以下是要轉寫的上課錄音：' });
-    parts.push({ inline_data: { mime_type: 'audio/wav', data: await b64(wav) } });
+    parts.push({ inline_data: { mime_type: wav.type || 'audio/wav', data: await b64(wav) } });
     const body = { contents: [{ parts }], generationConfig: { thinkingConfig: { thinkingLevel: 'low' }, responseMimeType: 'application/json', responseSchema: { type: 'ARRAY', items: { type: 'OBJECT', properties: { start: { type: 'NUMBER' }, end: { type: 'NUMBER' }, speaker: { type: 'STRING' }, text: { type: 'STRING' } }, required: ['start', 'end', 'speaker', 'text'] } } } };
     // 逐字轉寫不需要深度思考，思考調低回得快很多；舊型號不認得這個設定就拿掉再送一次
     const send = () => post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(S.geminiModel)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': S.geminiKey }, body: JSON.stringify(body) });
@@ -446,7 +462,7 @@ const Engines = {
   async 'openai-diarize'(wav, folder) {
     if (!S.openaiKey) throw new Error('請先在設定填入 OpenAI API key。');
     const f = new FormData();
-    f.append('file', wav, 'chunk.wav');
+    f.append('file', wav, audioName(wav));
     f.append('model', 'gpt-4o-transcribe-diarize');
     f.append('response_format', 'diarized_json');
     f.append('chunking_strategy', 'auto');
@@ -464,7 +480,7 @@ const Engines = {
   async 'whisper-api'(wav, folder) {
     if (!S.whisperKey) throw new Error('請先在設定填入 Groq API key。');
     const f = new FormData();
-    f.append('file', wav, 'chunk.wav');
+    f.append('file', wav, audioName(wav));
     f.append('model', S.whisperModel);
     f.append('response_format', 'verbose_json');
     if (S.language) f.append('language', S.language);
@@ -477,7 +493,7 @@ const Engines = {
   // 你 Mac 上的 whisper.cpp（whisper-server），免費、不上網
   async whispercpp(wav, folder) {
     const f = new FormData();
-    f.append('file', wav, 'chunk.wav');
+    f.append('file', wav, audioName(wav));
     f.append('response_format', 'verbose_json');
     f.append('language', S.language || 'auto');
     const p = glossaryPrompt(folder); if (p) f.append('prompt', p);
@@ -529,6 +545,8 @@ async function transcribeSession(id, onProgress) {
   // Gemini 一次最多送 20 MB，所以每段最多 5 分鐘；雲端每段 2 分鐘，上傳比較快
   const per = Math.max(1, engine === 'cloud' ? 2 : engine === 'gemini' ? Math.min(5, S.chunkMin) : S.chunkMin) * 60 * 16000;
   const total = Math.ceil(pcm.length / per);
+  // 雲端要新版函式才收 MP3；本機 whisper.cpp 維持 WAV
+  const mp3 = engine === 'gemini' || engine === 'whisper-api' || (engine === 'cloud' && !!(await Cloud.getStatus().catch(() => ({}))).mp3);
   // 各段同時送出（本機 whisper.cpp 吃自己電腦的 CPU，維持一次一段）。每段的講者代號本來就各自獨立，平行不影響分人
   // 已經轉好的段落先留著，中途失敗再按一次轉寫就只補沒轉好的
   const key = `${id}|${engine}|${per}|${total}|${folder?.teacherSample ? 1 : 0}`;
@@ -542,7 +560,9 @@ async function transcribeSession(id, onProgress) {
     while (next < todo.length && !failed) {
       const i = todo[next++];
       const offset = i * per / 16000;
-      const wav = encodeWav(pcm.subarray(i * per, Math.min(pcm.length, (i + 1) * per)), 16000);
+      const slice = pcm.subarray(i * per, Math.min(pcm.length, (i + 1) * per));
+      const wav = mp3 ? await encodeMp3(slice, 16000) : encodeWav(slice, 16000);
+      wav.sec = slice.length / 16000;
       const segs = await Engines[engine](wav, folder);
       markTeacher(segs, !!folder?.teacherSample);
       const res = [];

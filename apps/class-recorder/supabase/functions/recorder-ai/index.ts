@@ -95,9 +95,12 @@ function b64ToBytes(b64: string) {
 }
 // 16 kHz 單聲道 16-bit WAV：每秒 32000 bytes
 const wavSeconds = (b64: string) => Math.max(1, (b64.length * 3 / 4 - 44) / 32000);
+// 網頁會先壓成 40 kbps MP3（每秒約 5000 bytes）；額度以網頁報的秒數為準，但不少於檔案大小推算的
+const isMp3 = (b: TBody) => b.mime === "audio/mpeg";
+const audioSeconds = (b: TBody) => isMp3(b) ? Math.max(1, Number(b.sec) || 0, b.audio.length * 3 / 4 / 6000) : wavSeconds(b.audio);
 
 type Seg = { start: number; end: number; text: string; label?: string | null };
-type TBody = { audio: string; glossary?: string[]; teacherSample?: string; language?: string };
+type TBody = { audio: string; mime?: string; sec?: number; glossary?: string[]; teacherSample?: string; language?: string };
 // 免費 Gemini 每天次數有限，當天用完就改用 Groq 繼續轉，只是不分講者。
 // 只是每分鐘次數滿了就回 429，讓網頁等一下再送，保留分講者
 async function transcribe(body: TBody) {
@@ -115,7 +118,7 @@ async function transcribeGemini(body: TBody): Promise<{ segments: Seg[]; engine:
     if (words.length) instr += "可能出現的專有名詞：" + words.join("、") + "。";
     const parts: unknown[] = [{ text: instr }];
     if (body.teacherSample) parts.push({ inline_data: { mime_type: "audio/wav", data: body.teacherSample } }, { text: "以下是要轉寫的上課錄音：" });
-    parts.push({ inline_data: { mime_type: "audio/wav", data: body.audio } });
+    parts.push({ inline_data: { mime_type: isMp3(body) ? "audio/mpeg" : "audio/wav", data: body.audio } });
     const schema = { type: "ARRAY", items: { type: "OBJECT", properties: { start: { type: "NUMBER" }, end: { type: "NUMBER" }, speaker: { type: "STRING" }, text: { type: "STRING" } }, required: ["start", "end", "speaker", "text"] } };
     const txt = await gemini(parts, schema, true);
     let arr: { start: number; end: number; speaker?: string; text: string }[];
@@ -127,7 +130,7 @@ async function transcribeGemini(body: TBody): Promise<{ segments: Seg[]; engine:
 async function transcribeGroq(body: TBody): Promise<{ segments: Seg[]; engine: string }> {
   const words = (body.glossary ?? []).map(String).filter(Boolean).slice(0, 60);
   const f = new FormData();
-  f.append("file", new Blob([b64ToBytes(body.audio)], { type: "audio/wav" }), "chunk.wav");
+  f.append("file", new Blob([b64ToBytes(body.audio)], { type: isMp3(body) ? "audio/mpeg" : "audio/wav" }), isMp3(body) ? "chunk.mp3" : "chunk.wav");
   f.append("model", GROQ_WHISPER_MODEL);
   f.append("response_format", "verbose_json");
   if (body.language) f.append("language", body.language);
@@ -155,11 +158,11 @@ Deno.serve(async (req) => {
     if (body.task === "status") {
       const q = await quota(req, 0, 0);
       if (q?.reason === "login") throw new HttpError(401, "請先登入");
-      return Response.json({ ...backends(), speakers: !!GEMINI_KEY, limits: LIMITS, used: { audioMin: Math.round(q.audio_sec / 60), calls: q.ai_calls } }, { headers: cors });
+      return Response.json({ ...backends(), speakers: !!GEMINI_KEY, mp3: true, limits: LIMITS, used: { audioMin: Math.round(q.audio_sec / 60), calls: q.ai_calls } }, { headers: cors });
     }
     if (body.task === "transcribe") {
       if (typeof body.audio !== "string" || !body.audio) throw new HttpError(400, "沒有收到音檔");
-      const sec = wavSeconds(body.audio);
+      const sec = audioSeconds(body);
       await needQuota(req, sec, 0);
       const out = await transcribe(body);
       await rpc(req, "add_usage", { p_audio_sec: Math.ceil(sec), p_calls: 0 });
