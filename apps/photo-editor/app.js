@@ -10,7 +10,7 @@ import { GRADE_P0, gradeOn, gradeFn, gradeKey, tabGrade, gradeHide } from './gra
 import { HAIR, HAIR_P0, DYES, HairFx, prepHair, hairWarps, hairNeedsSeg, hairColorOn } from './hair.js';
 import { tabErase, eraseLeave } from './erase.js';
 import { makeupLayer, makeupTab } from './makeup.js';
-import { SKIN, WRINKLE, SKIN_P0, skinOn, skinKey, prepSkin, SkinFx, skinNote } from './skin.js';
+import { SKIN, WRINKLE, AI_FACE, AI_BODY, SKIN_P0, skinOn, skinKey, prepSkin, SkinFx, skinNote } from './skin.js';
 import { BODY, BODY_P0, BODY_MAN, REG_OF, bodyOn, detectBody, measureBody, bodyWarps, manualWarps, manualRegion, bodyNote } from './body.js';
 import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } from './faceshape.js';
 import { WarpField } from './warpfield.js';
@@ -543,7 +543,7 @@ const GI = {
 // 順序照 Hypic 編輯頁第一層：修飾、濾鏡、調整、清除、特效、貼圖、文字……重新塑形；
 // 人像底下照 Hypic「修飾」第二層：臉部、彩妝、皮膚、打光、頭髮、塑身
 const GROUPS = [
-  ['portrait', '人像', 'P', ['beauty', 'shape', 'makeup', 'skin', 'light', 'hair', 'body', 'cover']],
+  ['portrait', '人像', 'P', ['beauty', 'shape', 'makeup', 'skin', 'aiskin', 'light', 'hair', 'body', 'cover']],
   ['filter', '濾鏡', 'F', ['looks', 'filter']],
   ['adjust', '調節', 'A', ['adjust', 'grade']],
   ['erase', '消除', 'E', ['erase', 'cutout']],
@@ -597,7 +597,7 @@ const keysOf = list => list.flatMap(x => SIDED.includes(x[0]) ? [x[0], x[0] + 'L
 const toP0 = keys => keys.forEach(k => { P[k] = clone(P0[k]); });
 const keysOn = keys => () => keys.some(k => JSON.stringify(P[k]) !== JSON.stringify(P0[k]));
 const tabKeys = {
-  adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...WRINKLE]),
+  adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...WRINKLE]), aiskin: keysOf([...AI_FACE, ...AI_BODY]),
   body: Object.keys(BODY_P0), hair: Object.keys(HAIR_P0), makeup: ['mk', 'mkLook', 'mkLookAmt'], filter: ['filter', 'filterAmt'],
   light: ['light', 'lightAmt', 'lightBri', 'lightCol', 'lightDist', 'lightSpec', 'lightBlur', 'lightFg', 'lightBg', 'lightX', 'lightY', 'lightSeed', 'flash', 'flashAmt'],
   fun: ['blur', 'blurStyle', 'blurSize', 'fx', 'fxAmt', 'ov', 'ovAmt', 'ex', ...Object.keys(POP_P0)], frame: ['frame'], cutout: ['bg', 'bgColor', 'bgImg', 'bgBlur'],
@@ -653,7 +653,7 @@ function showTab(t) {
   $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true;
   gradeHide();
   if (!base) return;
-  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
+  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, aiskin: tabAiSkin, light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
   lightDot(); bmBox();
@@ -798,6 +798,22 @@ function tabSkin(box) {
     label: lb, icon: lb, cls: 'wide', on: skSec === s, set: l.some(x => isSet(x[0])),
     onclick: () => { skSec = s; cur = l[0][0]; showTab('skin'); },
   })));
+  paramItems(box, list, list[0][0]);
+  $('#note').textContent = skinNote(base, cur);
+}
+
+// ---------- AI 美肌 ----------
+// 照 Hypic 的 AI 美肌面板：臉部、身體兩類。Hypic 上傳雲端重畫，這裡在手機上算
+let aiSec = 'face';
+function tabAiSkin(box) {
+  if (!base.faces) findFaces();
+  if (!base.skin) getSkin(base);
+  const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
+  [['face', '臉部', AI_FACE], ['body', '身體', AI_BODY]].forEach(([s, lb, l]) => cats.append(item({
+    label: lb, icon: lb, cls: 'wide', on: aiSec === s, set: l.some(x => isSet(x[0])),
+    onclick: () => { aiSec = s; cur = l[0][0]; showTab('aiskin'); },
+  })));
+  const list = aiSec === 'face' ? AI_FACE : AI_BODY;
   paramItems(box, list, list[0][0]);
   $('#note').textContent = skinNote(base, cur);
 }
