@@ -2,11 +2,17 @@
 // MI-GAN（Picsart，MIT 授權）在瀏覽器裡跑，照片不會上傳。模型第一次用時下載約 28MB，之後瀏覽器會快取
 import { segment } from './ai.js';
 import { blurred } from './cblur.js';
+import { LOW_MEM } from './matte.js';
+import { patchFill } from './patchfill.js';
 
 const ORT = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
 const MODEL = 'https://huggingface.co/andraniksargsyan/migan/resolve/main/migan_pipeline_v2.onnx';
 const MASK_SIDE = 2048;  // 選區畫布最長邊
 const RUN_SIDE = 1024;   // 送進模型的範圍最長邊，太大手機記憶體不夠
+const PATCH_SIDE = 640;  // iPhone、iPad 改用方塊補洞時的範圍最長邊
+// iPhone、iPad：MI-GAN 跑一次要多 500MB 以上記憶體，Safari 會直接重新載入頁面，
+// 所以改用 patchfill.js（從周圍找相似的小方塊補），不下載模型
+export const ERASE_LITE = LOW_MEM;
 const MASK_RGB = '255,64,110';
 
 let sessP;
@@ -48,13 +54,12 @@ function grow(mask, w, h, px, blur) {
 export async function inpaint(src, mask) {
   const box = maskBox(mask);
   if (!box) return null;
-  const { ort, s } = await session();
   const W = src.width, H = src.height;
   // 取選區周圍一圈當參考，模型才知道背景長什麼樣
   const bw = box.w * W, bh = box.h * H, pad = Math.max(64, 0.6 * Math.max(bw, bh));
   const x0 = Math.max(0, Math.floor(box.x * W - pad)), y0 = Math.max(0, Math.floor(box.y * H - pad));
   const x1 = Math.min(W, Math.ceil((box.x + box.w) * W + pad)), y1 = Math.min(H, Math.ceil((box.y + box.h) * H + pad));
-  const cw = x1 - x0, ch = y1 - y0, k = Math.min(1, RUN_SIDE / Math.max(cw, ch));
+  const cw = x1 - x0, ch = y1 - y0, k = Math.min(1, (ERASE_LITE ? PATCH_SIDE : RUN_SIDE) / Math.max(cw, ch));
   const w = Math.max(8, Math.round(cw * k)), h = Math.max(8, Math.round(ch * k)), n = w * h;
 
   const ic = newCanvas(w, h), ictx = ic.getContext('2d', { willReadFrequently: true });
@@ -67,15 +72,24 @@ export async function inpaint(src, mask) {
   const hole = grow(mc, w, h, Math.max(2, Math.round(Math.max(w, h) / 200)), 0);
   const md = hole.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
 
-  const img = new Uint8Array(3 * n), m = new Uint8Array(n);
-  for (let i = 0; i < n; i++) {
-    img[i] = id[i * 4]; img[n + i] = id[i * 4 + 1]; img[2 * n + i] = id[i * 4 + 2];
-    m[i] = md[i * 4 + 3] > 10 ? 0 : 255; // MI-GAN：0 = 要補的洞，255 = 保留
-  }
-  const r = (await s.run({ image: new ort.Tensor('uint8', img, [1, 3, h, w]), mask: new ort.Tensor('uint8', m, [1, 1, h, w]) })).result.data;
   const oc = newCanvas(w, h), octx = oc.getContext('2d'), od = octx.createImageData(w, h);
-  for (let i = 0; i < n; i++) {
-    od.data[i * 4] = r[i]; od.data[i * 4 + 1] = r[n + i]; od.data[i * 4 + 2] = r[2 * n + i]; od.data[i * 4 + 3] = 255;
+  if (ERASE_LITE) {
+    const holeM = new Uint8Array(n);
+    for (let i = 0; i < n; i++) holeM[i] = md[i * 4 + 3] > 10 ? 1 : 0;
+    await new Promise(r => setTimeout(r, 30)); // 讓「消除中」先畫出來
+    od.data.set(patchFill(id, holeM, w, h));
+    for (let i = 0; i < n; i++) od.data[i * 4 + 3] = 255;
+  } else {
+    const { ort, s } = await session();
+    const img = new Uint8Array(3 * n), m = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      img[i] = id[i * 4]; img[n + i] = id[i * 4 + 1]; img[2 * n + i] = id[i * 4 + 2];
+      m[i] = md[i * 4 + 3] > 10 ? 0 : 255; // MI-GAN：0 = 要補的洞，255 = 保留
+    }
+    const r = (await s.run({ image: new ort.Tensor('uint8', img, [1, 3, h, w]), mask: new ort.Tensor('uint8', m, [1, 1, h, w]) })).result.data;
+    for (let i = 0; i < n; i++) {
+      od.data[i * 4] = r[i]; od.data[i * 4 + 1] = r[n + i]; od.data[i * 4 + 2] = r[2 * n + i]; od.data[i * 4 + 3] = 255;
+    }
   }
   octx.putImageData(od, 0, 0);
 
@@ -259,7 +273,7 @@ export function tabErase(box, app) {
   // 醒圖把「立即消除」做成面板上最顯眼的按鈕，手機上放第一個，不用往右滑才找得到
   const go = app.item({ label: '立即消除', icon: '立即消除', cls: 'wide', style: 'background:var(--accent);color:#fff;font-weight:600', onclick: async () => {
     if (!hasMask()) return app.toast('先塗抹或框選要消除的地方');
-    app.busy(sessP ? '消除中…' : '下載消除模型（約 28MB，只有第一次）…');
+    app.busy(sessP || ERASE_LITE ? '消除中…' : '下載消除模型（約 28MB，只有第一次）…');
     try {
       const t = setTimeout(() => app.busy('消除中…'), 4000);
       const out = await inpaint(s.b.canvas, s.mask);
@@ -268,7 +282,7 @@ export function tabErase(box, app) {
       app.setBase(out); app.commit();
       state(app.base);
       redraw();
-    } catch (e) { console.error(e); app.toast('消除失敗，檢查一下網路再試一次'); }
+    } catch (e) { console.error(e); app.toast(ERASE_LITE ? '消除失敗，再試一次' : '消除失敗，檢查一下網路再試一次'); }
     finally { app.busy(); }
   } });
   box.prepend(go); s.ui();
