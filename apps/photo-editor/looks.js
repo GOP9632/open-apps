@@ -6,7 +6,7 @@
 // 依照片條件（性別、幾張臉、有沒有臉、是不是 RAW）改參數，再把照片上傳給伺服器，
 // 拿回 AI 處理過的整張圖疊在最底層。這裡只做本機那一半：每個風格是自己調的參數組合，
 // 「智慧優化」照片條件自動算，照片不上傳。
-import { FILTERS } from './filters.js';
+import { filterFn } from './filters.js';
 import { LOOKS as MK_LOOKS } from './makeup.js';
 
 const mkIdx = name => MK_LOOKS.findIndex(l => l.name === name);
@@ -100,7 +100,7 @@ function lookThumb(src, set) {
   const m = Math.min(src.width, src.height);
   ctx.drawImage(src, (src.width - m) / 2, (src.height - m) / 2, m, m, 0, 0, size, size);
   const f = k => (set[k] || 0) / 100;
-  const flt = set.filter && set.filter !== 'none' ? FILTERS.find(x => x.id === set.filter).fn : null, fa = (set.filterAmt ?? 80) / 100;
+  const flt = filterFn(set.filter), fa = (set.filterAmt ?? 80) / 100;
   const img = ctx.getImageData(0, 0, size, size), d = img.data;
   const ex = Math.pow(2, f('exposure') * 1.2), con = 1 + f('contrast') * 0.55, sat = 1 + f('saturation');
   for (let i = 0; i < d.length; i += 4) {

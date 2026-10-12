@@ -5,7 +5,7 @@
 // 照片格 slot：r=[x,y,w,h]、rot 角度、rad 圓角（短邊的比例，0.5 是圓形）、frame 外框、p 指定第幾張照片（預設依序）。
 // 文字 text：可以點兩下改字；slot 有給時座標是那一格的局部座標（中心是 0，-0.5~0.5），會跟著那格一起轉。
 
-import { FILTERS } from './filters.js';
+import { filterFn } from './filters.js';
 import { OVERLAYS, paint } from './creative.js';
 import { THEMES } from './themes.js';
 
@@ -208,7 +208,7 @@ export const tplById = id => TEMPLATES.find(t => t.id === id);
 // 先調整再疊濾鏡，烘成一張查找表，所以每格照片只算一次。
 export function lookFn(L) {
   const v = k => (L[k] || 0) / 100;
-  const flt = L.filter && L.filter !== 'none' ? FILTERS.find(f => f.id === L.filter)?.fn : null, fa = (L.filterAmt ?? 80) / 100;
+  const flt = filterFn(L.filter), fa = (L.filterAmt ?? 80) / 100;
   const ex = Math.pow(2, v('exposure') * 1.2), con = 1 + v('contrast') * 0.55, sat = 1 + v('saturation'), fade = v('fade');
   const sh = v('shadows'), hl = v('highlights'), tp = v('temp'), tn = v('tint');
   const cl = x => Math.min(1, Math.max(0, x));

@@ -1,6 +1,8 @@
 // 濾鏡：每個濾鏡是一個 (r,g,b) → [r,g,b] 的顏色函式，數值 0～1。
 // 開啟時烘成 512×512 的 LUT 圖（64 階、8×8 格），在 GPU 上查表，強度滑桿就是跟原圖混合。
 
+import { xtFn } from './xt.js';
+
 const clamp = v => v < 0 ? 0 : v > 1 ? 1 : v;
 const lum = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
@@ -60,6 +62,9 @@ export const FILTERS = [
   { id: 'bw', name: '黑白', fn: mk({ rgb: curve([[0, 8], [64, 56], [192, 204], [255, 250]]), s: 0 }) },
   { id: 'mono', name: '灰調', fn: mk({ rgb: curve([[0, 36], [128, 132], [255, 230]]), s: 0, tone: [[0, 0.005, 0.015], [0.015, 0.01, 0], 1] }) },
 ];
+
+// 濾鏡 id → 顏色函式；醒圖風格濾鏡（xt 開頭）在 xt.js，還沒載入時回傳 null
+export const filterFn = id => !id || id === 'none' ? null : FILTERS.find(f => f.id === id)?.fn ?? xtFn(id);
 
 export function bakeLUT(fn) {
   const c = document.createElement('canvas');
