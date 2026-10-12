@@ -14,6 +14,7 @@ header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px
 header h1{font-size:28px;margin:0;flex:1}
 a{color:var(--accent)}
 .btn{display:inline-block;background:#e03131;color:#fff;text-decoration:none;padding:8px 16px;border-radius:99px;font-weight:600}
+.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
 nav.toc{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 20px;margin:20px 0}
 nav.toc ol{margin:6px 0;padding-left:22px;columns:2;column-gap:32px}
 @media (max-width:640px){nav.toc ol{columns:1}}
@@ -38,10 +39,11 @@ th{background:var(--accent-soft)}
 dt{font-weight:700;margin-top:14px}
 dd{margin:4px 0 0 0}
 </style>
+<script src="../../portal-home.js"></script>
 </head>
 <body>
 <div class="wrap">
-<header><h1>🎙️ 課堂錄音 使用說明</h1><a class="btn" href="../">打開 app</a></header>
+<header><h1>🎙️ 課堂錄音 使用說明</h1><a class="btn" href="../">打開 app</a><a class="btn ghost portal-home" href="https://anthony-apps.netlify.app/">回入口</a></header>
 <p>上課、開會時錄音，自動變成逐字稿和 AI 筆記，還能直接問「老師說哪些會考？」。登入之後不用申請任何 API key 就能用，換手機或電腦登入同一個帳號，逐字稿和筆記都在。</p>
 <p>圖片上的紅色數字，對應圖片下面的說明。</p>
 

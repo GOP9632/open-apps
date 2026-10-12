@@ -49,6 +49,7 @@ const ICONS = {
   spark: 'M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z',
   pin: 'M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z M12 7a3 3 0 1 0 0 6 3 3 0 1 0 0-6z',
   clock: 'M12 2a10 10 0 1 0 0 20 10 10 0 1 0 0-20z M12 6v6l4 2',
+  home: 'M3 11l9-7 9 7 M5 10v10h5v-6h4v6h5V10',
   user: 'M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2 M12 3a4 4 0 1 0 0 8 4 4 0 1 0 0-8z',
   trash: 'M3 6h18 M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6 M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2',
   out: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4 M16 17l5-5-5-5 M21 12H9',
@@ -421,6 +422,7 @@ const Views = {
     const title = { list: ['美食收藏', n ? `${n} 間收藏・${S.places.filter(p => isMine(p) && p.status === 'been').length} 間去過` : '把想吃的店都存在這裡'], draw: ['今天吃什麼？', '選條件，交給運氣'], groups: ['美食群組', '跟朋友一起收藏、一起決定'], me: ['我的', ''] }[t] || ['', ''];
     if (t === 'groups' && S.group) return '';
     return `<div class="grow"><h1>${title[0]}</h1>${title[1] ? `<div class="sub">${title[1]}</div>` : ''}</div>
+      <a class="icon-btn portal-home" href="https://anthony-apps.netlify.app/" aria-label="回入口">${ic('home')}</a>
       ${t === 'me' ? '' : `<button class="me-btn" onclick="App.tab('me')" aria-label="我的">${cloud() && S.me ? esc(initial(S.me.name)) : ic('user')}</button>`}`;
   },
   list() {
@@ -573,6 +575,7 @@ const Views = {
     const m = S.authMode || 'in';
     const fl = [['🍜', 8, 12], ['🍰', 82, 9], ['☕', 12, 78], ['🥐', 86, 70], ['🍣', 70, 88], ['🧋', 22, 45]];
     return `<div class="auth">
+      <a class="icon-btn glass portal-home" href="https://anthony-apps.netlify.app/" aria-label="回入口">${ic('home')}</a>
       ${fl.map(([e, x, y], i) => `<span class="fl" style="left:${x}%;top:${y}%;animation-delay:${i * .6}s">${e}</span>`).join('')}
       <img class="logo" src="icon.svg" alt="">
       <h1>美食收藏</h1>
