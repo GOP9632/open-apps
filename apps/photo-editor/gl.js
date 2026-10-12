@@ -80,6 +80,7 @@ uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）；骨架收
 uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大 2 骨架收窄 3 往下拉長)、強度、橢圓比（收窄：只收一點的那側）
 uniform vec2 uW3[${MAX_WARPS}]; // 頭的傾斜 cos、sin（收窄：最強的位置、範圍）
 uniform float uExposure, uBright, uContrast, uSat, uTemp, uTint, uHigh, uShadow, uSharp, uVig, uGrain, uFade;
+uniform float uVib, uStruct, uTexture;
 uniform float uSmoothAmt, uWhite, uLutAmt, uHasLut;
 uniform float uDark, uFold, uEyeB, uTeeth;
 // 打光、閃光燈：最多三盞點光源（閃光燈也算一盞）
@@ -220,6 +221,24 @@ void main(){
     vec3 n = (texture(uImg, uv + vec2(px.x, 0.0)).rgb + texture(uImg, uv - vec2(px.x, 0.0)).rgb
             + texture(uImg, uv + vec2(0.0, px.y)).rgb + texture(uImg, uv - vec2(0.0, px.y)).rgb) * 0.25;
     col += (col - n) * uSharp * 2.0;
+  }
+  if (uTexture > 0.0) {
+    // 質感：放大 3 像素尺度的細節（皮膚紋理、布料、葉子），只動亮度，不碰顏色
+    vec2 px = 3.0 / uSize;
+    float n = luma((texture(uImg, uv + vec2(px.x, 0.0)).rgb + texture(uImg, uv - vec2(px.x, 0.0)).rgb
+                  + texture(uImg, uv + vec2(0.0, px.y)).rgb + texture(uImg, uv - vec2(0.0, px.y)).rgb) * 0.25);
+    float d = clamp(luma(col) - n, -0.15, 0.15);
+    col += d * uTexture * 1.6;
+  }
+  if (uStruct != 0.0) {
+    // 結構：局部對比（照片跟大範圍模糊的差），正的讓輪廓立體，負的變柔
+    vec3 b = texture(uBlurS, uv).rgb;
+    if (uStruct > 0.0) {
+      float L0 = luma(col), d = L0 - luma(b);
+      float mid = 1.0 - abs(L0 - 0.5) * 1.2; // 很亮、很暗的地方少加，避免爆白死黑
+      col += d * uStruct * 1.4 * max(mid, 0.2);
+    } else col = mix(col, b, -uStruct * 0.3);
+    col = clamp(col, 0.0, 1.0);
   }
 
   vec2 mk = texture(uMask, uv).rg;
@@ -365,6 +384,14 @@ void main(){
   col.g -= uTint * 0.05; col.rb += uTint * 0.02;
   L = luma(col);
   col = mix(vec3(L), col, 1.0 + uSat);
+  if (uVib != 0.0) {
+    // 自然飽和：越不飽和的顏色加越多，已經很鮮豔的和膚色少加
+    float mx = max(col.r, max(col.g, col.b)), mn = min(col.r, min(col.g, col.b));
+    float s = mx - mn;
+    float skin = smoothstep(0.06, 0.0, abs(col.r - col.g - 0.12)) * step(col.b, col.g) * 0.5;
+    float k = uVib > 0.0 ? uVib * 0.8 * (1.0 - s) * (1.0 - skin) : uVib * 0.7; // 往左只褪到七成，不會變黑白
+    col = mix(vec3(luma(col)), col, 1.0 + k);
+  }
   col = mix(col, col * 0.84 + 0.1, uFade);
   col = clamp(col, 0.0, 1.0);
 
@@ -677,6 +704,7 @@ export class Renderer {
     gl.uniform1f(u.uVig, f(p.vignette));
     gl.uniform1f(u.uGrain, f(p.grain));
     gl.uniform1f(u.uFade, f(p.fade));
+    gl.uniform1f(u.uVib, f(p.vibrance || 0)); gl.uniform1f(u.uStruct, f(p.structure || 0)); gl.uniform1f(u.uTexture, f(p.texture || 0));
     gl.uniform1f(u.uSmoothAmt, f(p.smooth));
     gl.uniform1f(u.uWhite, f(p.white));
     gl.uniform1f(u.uDark, f(p.dark)); gl.uniform1f(u.uFold, f(p.fold));
