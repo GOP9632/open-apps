@@ -26,7 +26,7 @@ const MAX_SIDE = 4096, MAX_AREA = 16e6;
 
 const P0 = {
   exposure: 0, brightness: 0, contrast: 0, saturation: 0, temp: 0, tint: 0, highlights: 0, shadows: 0,
-  sharpen: 0, vignette: 0, grain: 0, fade: 0,
+  sharpen: 0, vignette: 0, grain: 0, fade: 0, vibrance: 0, structure: 0, texture: 0,
   filter: 'none', filterAmt: 60, // 照 Hypic：濾鏡強度預設 60
   smooth: 0, white: 0, slim: 0, vface: 0, eyes: 0, nose: 0, mouth: 0,
   chin: 0, dark: 0, fold: 0, eyeb: 0, teeth: 0, slimL: 0, slimR: 0, eyesL: 0, eyesR: 0,
@@ -84,12 +84,16 @@ const I = {
   flash: '<svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>',
   copy: '<svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>',
   grid: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="18" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>',
+  vib: '<svg viewBox="0 0 24 24"><path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z"/><path d="M9 14a3 3 0 0 0 3 3"/></svg>',
+  struct: '<svg viewBox="0 0 24 24"><path d="M3 20l6-10 4 6 3-4 5 8z"/></svg>',
+  texture: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18" opacity=".6"/></svg>',
   off: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>',
 };
 
 const ADJUST = [
   ['brightness', '亮度', I.sun], ['exposure', '曝光', I.exposure], ['contrast', '對比', I.contrast], ['saturation', '飽和', I.drop],
-  ['highlights', '高光', I.high], ['shadows', '陰影', I.shadow], ['temp', '色溫', I.temp], ['tint', '色調', I.tint],
+  ['vibrance', '自然飽和', I.vib], ['structure', '結構', I.struct], ['highlights', '高光', I.high], ['shadows', '陰影', I.shadow],
+  ['temp', '色溫', I.temp], ['tint', '色調', I.tint], ['texture', '質感', I.texture, 0],
   ['sharpen', '銳化', I.sharp, 0], ['grain', '顆粒', I.grain, 0], ['fade', '褪色', I.fade, 0], ['vignette', '暗角', I.vig],
 ];
 const BEAUTY = [
