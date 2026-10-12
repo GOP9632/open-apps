@@ -135,9 +135,33 @@ const nameOf = id => S.profiles[id]?.name || '朋友';
 
 // ---------- 資料層 ----------
 const DB = {
-  async init() {
+  client() {
     if (!S.cfg.supabaseUrl || !S.cfg.supabaseKey || !window.supabase) return;
     S.sb = window.supabase.createClient(S.cfg.supabaseUrl, S.cfg.supabaseKey, { db: { schema: 'food' } });
+  },
+  // 上次讀到的資料先畫出來，不用等登入確認和資料庫（換發登入憑證要多一輪網路）
+  peek() {
+    if (!S.sb) return null;
+    const c = load('food.cache', null);
+    let ref = ''; try { ref = new URL(S.cfg.supabaseUrl).hostname.split('.')[0]; } catch { return null; }
+    const user = load(`sb-${ref}-auth-token`, null)?.user;
+    if (!c || !user || c.uid !== user.id) return null;
+    S.user = user; DB.apply(c);
+    return c;
+  },
+  apply(c) {
+    for (const k of DB.KEYS) S[k] = c[k] || (k === 'profiles' ? {} : []);
+    S.me = S.profiles[S.user.id] || S.me;
+  },
+  KEYS: ['places', 'groups', 'members', 'groupPlaces', 'rounds', 'profiles', 'swipes'],
+  snap() {
+    if (!cloud() || !S.user) return;
+    const c = { uid: S.user.id }; for (const k of DB.KEYS) c[k] = S[k];
+    save('food.cache', c);
+    return JSON.stringify(c);
+  },
+  async init() {
+    if (!S.sb) return;
     const { data } = await S.sb.auth.getSession();
     S.user = data.session?.user || null;
     S.sb.auth.onAuthStateChange((ev, session) => {
@@ -159,7 +183,9 @@ const DB = {
     for (const r of [pl, gr, gm, gp, rd]) if (r.error) throw r.error;
     S.places = pl.data; S.groups = gr.data; S.members = gm.data; S.groupPlaces = gp.data; S.rounds = rd.data;
     const ids = [...new Set([S.user.id, ...S.members.map(m => m.user_id), ...S.places.map(p => p.owner)])];
-    const pr = await sb.from('profiles').select('*').in('id', ids);
+    const rids = S.rounds.map(r => r.id);
+    // 名字和滑卡紀錄同時讀，少等一輪
+    const [pr, sw] = await Promise.all([sb.from('profiles').select('*').in('id', ids), rids.length ? sb.from('swipes').select('*').in('round_id', rids) : null]);
     S.profiles = Object.fromEntries((pr.data || []).map(p => [p.id, p]));
     if (!S.profiles[S.user.id]) {
       // 這個帳號在跑 schema.sql 之前就存在（和其他 app 共用的 Supabase）
@@ -167,8 +193,8 @@ const DB = {
       await sb.from('profiles').upsert(me); S.profiles[me.id] = me;
     }
     S.me = S.profiles[S.user.id];
-    const rids = S.rounds.map(r => r.id);
-    S.swipes = rids.length ? ((await sb.from('swipes').select('*').in('round_id', rids)).data || []) : [];
+    S.swipes = sw ? sw.data || [] : [];
+    return DB.snap();
   },
   async savePlace(p) {
     p.updated_at = new Date().toISOString();
@@ -184,13 +210,14 @@ const DB = {
     if (error) throw error;
     const i = S.places.findIndex(x => x.id === data.id);
     if (i >= 0) S.places[i] = data; else S.places.unshift(data);
+    DB.snap();
     return data;
   },
   async deletePlace(id) {
     if (cloud()) { const { error } = await S.sb.from('places').delete().eq('id', id); if (error) throw error; }
     S.places = S.places.filter(p => p.id !== id);
     S.groupPlaces = S.groupPlaces.filter(g => g.place_id !== id);
-    if (!cloud()) save('food.places', S.places);
+    if (!cloud()) save('food.places', S.places); else DB.snap();
   },
   async rpc(fn, args) { const { data, error } = await S.sb.rpc(fn, args); if (error) throw error; return data; },
   async q(promise) { const { data, error } = await promise; if (error) throw error; return data; },
@@ -597,28 +624,51 @@ const Views = {
 // ---------- 地圖（MapLibre 向量地圖） ----------
 const MapView = {
   map: null, markers: new Map(), meMarker: null, sel: null, style: null,
+  // 地圖函式庫很大（800 KB），開 app 時先不載，畫面出來後在背景預先載好
+  lib() {
+    if (window.maplibregl) return Promise.resolve(true);
+    return MapView._lib ||= new Promise(res => {
+      const v = 'maplibre-gl@5.6.0', css = document.createElement('link');
+      css.rel = 'stylesheet'; css.href = `https://cdn.jsdelivr.net/npm/${v}/dist/maplibre-gl.css`;
+      document.head.insertBefore(css, document.querySelector('style'));
+      const js = document.createElement('script');
+      js.src = `https://cdn.jsdelivr.net/npm/${v}/dist/maplibre-gl.js`;
+      js.onload = () => res(true);
+      js.onerror = () => { MapView._lib = null; res(false); };
+      document.head.appendChild(js);
+    });
+  },
+  prefetch() {
+    const go = () => { MapView.lib(); MapView.getStyle(); };
+    if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 2500 }); else setTimeout(go, 1200);
+  },
   async getStyle() {
     if (MapView.style) return MapView.style;
+    return MapView._style ||= MapView.fetchStyle();
+  },
+  async fetchStyle() {
     try {
       const j = await (await fetch(MAP_STYLE())).json();
       // 地名優先用中文
       for (const l of j.layers) if (l.layout?.['text-field']) l.layout['text-field'] = ['coalesce', ['get', 'name:zh-Hant'], ['get', 'name:zh'], ['get', 'name']];
       return (MapView.style = j);
-    } catch { return MAP_STYLE(); }
+    } catch { MapView._style = null; return MAP_STYLE(); }
   },
   async ensure() {
-    if (MapView.map || !window.maplibregl) return;
-    const map = MapView.map = new maplibregl.Map({ container: 'bigmap', style: await MapView.getStyle(), center: S.pos ? [S.pos.lng, S.pos.lat] : TAIPEI, zoom: 12, attributionControl: { compact: true }, pitchWithRotate: false, dragRotate: false });
+    if (MapView.map) return;
+    const [ok, style] = await Promise.all([MapView.lib(), MapView.getStyle()]);
+    if (MapView.map || !ok) return;
+    const map = MapView.map = new maplibregl.Map({ container: 'bigmap', style, center: S.pos ? [S.pos.lng, S.pos.lat] : TAIPEI, zoom: 12, attributionControl: { compact: true }, pitchWithRotate: false, dragRotate: false });
     map.touchZoomRotate.disableRotation();
     map.on('zoom', () => $('#bigmap').classList.toggle('zoomed-out', map.getZoom() < 11.5));
     map.on('click', e => { if (!e.originalEvent.target.closest('.pin')) MapView.select(null); });
-    await new Promise(r => map.loaded() ? r() : map.once('load', r));
+    // 標籤不用等地圖圖磚全部載完才放
   },
   pinEl(p) {
     const el = document.createElement('div');
     el.className = `pin ${p.status === 'been' ? 'been' : ''}`;
     el.style.setProperty('--c', cat(p)[2]);
-    el.innerHTML = `<div class="b">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : `<span>${cat(p)[1]}</span>`}</div>`;
+    el.innerHTML = `<div class="pi"><div class="b">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : `<span>${cat(p)[1]}</span>`}</div></div>`;
     el.onclick = ev => { ev.stopPropagation(); MapView.select(p.id, true); };
     return el;
   },
@@ -702,7 +752,7 @@ const MapView = {
   },
   // 店家詳細、編輯用的小地圖
   async mini(el, p, editable, onPick) {
-    if (!el || !window.maplibregl) return null;
+    if (!el || !await MapView.lib() || !el.isConnected) return null;
     const center = p.lat != null ? [p.lng, p.lat] : S.pos ? [S.pos.lng, S.pos.lat] : TAIPEI;
     const m = new maplibregl.Map({ container: el, style: await MapView.getStyle(), center, zoom: p.lat != null ? 15.5 : 12, attributionControl: false, interactive: editable, dragRotate: false });
     let mk = p.lat != null ? new maplibregl.Marker({ element: MapView.pinEl(p), anchor: 'bottom' }).setLngLat(center).addTo(m) : null;
@@ -791,9 +841,12 @@ const Swipe = {
 // ---------- 動作 ----------
 const App = {
   async boot() {
+    const cached = S.painted; S.painted = false;
+    if (cloud() && !S.user) localStorage.removeItem('food.cache');
+    let sig = null;
     // 剛換發的登入憑證，資料庫的時鐘有時還沒追上（JWT issued at future），等一下再讀，不然會整個空白
     for (let i = 0; ; i++) {
-      try { await DB.loadAll(); break; } catch (e) {
+      try { sig = await DB.loadAll(); break; } catch (e) {
         if (i < 4 && /JWT|PGRST30/.test(`${e.code} ${e.message}`)) { await new Promise(r => setTimeout(r, 1000 * (i + 1))); continue; }
         console.error(e); toast('讀取資料失敗：' + e.message, 5000); break;
       }
@@ -803,11 +856,24 @@ const App = {
       if (code) { save('food.pendingJoin', ''); await App.join(code); }
       App.realtime();
     }
-    S.animate = true;
-    App.render();
-    App.handleShare();
+    if (cached && S.user?.id === cached.uid) {
+      // 已經用上次的資料畫好了：資料有變才安靜地更新，不重播動畫、不打斷正在打字或開著的抽屜
+      if (sig !== cached.sig) App.refresh();
+    } else { S.animate = true; App.render(); App.handleShare(); }
     Me.start(false);
+    MapView.prefetch();
     setTimeout(() => App.enrich(), 2500);
+  },
+  paintCache() {
+    const c = DB.peek(); if (!c) return;
+    S.painted = { uid: c.uid, sig: JSON.stringify(c) };
+    S.animate = true; App.render(); App.handleShare();
+  },
+  refresh() {
+    S.keepScroll = true;
+    if (S.tab === 'map' && !$('.sheet-bg')) { MapView.sync(false); return; }
+    if ($('.sheet-bg') || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || ($('#scard') && $('#scard').style.transform)) { S.stale = true; return; }
+    App.render();
   },
   render() {
     const needAuth = cloud() && !S.user;
@@ -1020,14 +1086,19 @@ const App = {
       ${p.lat != null ? '<div id="mini" class="minimap"></div>' : mine ? '<p class="muted" style="margin-top:12px">還沒有地圖位置，到「編輯」裡點地圖就能補上。</p>' : ''}
       ${mine && cloud() && S.groups.length ? `<div class="fgroup"><div class="t">分享到群組</div><div class="chips wrap">${S.groups.map(g => { const on = myGroups.includes(g); return `<span class="chip ${on ? 'on' : ''}" onclick="App.${on ? 'unshare' : 'share'}('${g.id}', ['${p.id}']).then(() => App.openPlace('${p.id}', true))">${on ? ic('check') : ic('users')} ${esc(g.name)}</span>`; }).join('')}</div></div>` : ''}
       ${p.source_url || p.source_text ? `<div class="post"><div class="post-h"><span class="src">${esc(srcName(p.source_url))}</span>${p.source_url ? `<a class="btn sm" href="${esc(p.source_url)}" target="_blank" rel="noopener">${ic('ext')} 看原始貼文</a>` : ''}</div>${p.source_text ? `<p class="post-t" onclick="this.classList.toggle('open')">${esc(p.source_text)}</p>` : ''}</div>` : ''}`, { hero: true, keep: arguments[1] });
-    if (p.lat != null) setTimeout(async () => { S.miniMap = await MapView.mini($('#mini'), p, false); }, 60);
+    // 等抽屜滑上來再建小地圖，不然 iPhone 上滑動會卡一下
+    if (p.lat != null && !S.miniMap) setTimeout(async () => { const el = $('#mini'); if (el && !S.miniMap) S.miniMap = await MapView.mini(el, p, false); }, arguments[1] ? 0 : 430);
   },
   async quick(id, patch) {
-    const p = S.places.find(x => x.id === id);
+    const p = S.places.find(x => x.id === id); if (!p) return;
     buzz(8);
     if (patch.status === 'been' && p.status !== 'been') FX.confetti(30);
-    try { await DB.savePlace({ ...p, ...patch }); S.keepScroll = true; App.render(); App.openPlace(id, true); }
-    catch (e) { toast('儲存失敗：' + e.message); }
+    // 先換畫面再存，按下去馬上有反應；存失敗再改回來
+    const before = { ...p };
+    const show = () => { S.keepScroll = true; App.render(); if ($('.sheet-bg')) App.openPlace(id, true); };
+    Object.assign(p, patch); show();
+    try { await DB.savePlace({ ...p }); }
+    catch (e) { Object.assign(S.places.find(x => x.id === id) || {}, before); show(); toast('儲存失敗：' + e.message); }
   },
   editPlace(id, base = {}) {
     const p = id ? { ...S.places.find(x => x.id === id) } : { name: '', branch: '', address: '', city: '', district: '', lat: null, lng: null, approx: false, category: 'restaurant', cuisine: '', price: null, meals: [], hours: '', status: 'want', rating: null, note: '', tags: [], dishes: [], source_url: '', source_text: '', photo: '', ...base };
@@ -1052,7 +1123,7 @@ const App = {
       <label class="field"><span>必點菜色（用逗號或頓號分開）</span><input value="${esc((p.dishes || []).join('、'))}" onchange="S.edit.dishes=cleanDishes(this.value.split(/[,，、\n]+/))"></label>
       ${f('source_url', '來源連結', 'https://')}
       <div class="sticky-foot row">${id ? `<button class="btn danger" onclick="App.delPlace('${id}')">${ic('trash')}</button>` : ''}<button class="btn grow" onclick="App.close()">取消</button><button class="btn primary grow" id="ed-save" onclick="App.saveEdit()">儲存</button></div>`);
-    setTimeout(async () => { S.miniMap = await MapView.mini($('#mini'), p, true, ll => { S.edit.lat = ll.lat; S.edit.lng = ll.lng; S.edit.approx = false; $('#pinmsg').textContent = '📍 位置已更新'; }); }, 60);
+    setTimeout(async () => { S.miniMap = await MapView.mini($('#mini'), p, true, ll => { S.edit.lat = ll.lat; S.edit.lng = ll.lng; S.edit.approx = false; $('#pinmsg').textContent = '📍 位置已更新'; }); }, 430);
   },
   async pickPhoto(file) {
     if (!file) return;
@@ -1419,13 +1490,17 @@ const App = {
 
   // ----- 抽屜、對話框 -----
   sheet(html, { hero = false, keep = false } = {}) {
-    S.miniMap?.remove(); S.miniMap = null;
     const old = $('#sheet .sheet');
     if (keep && old) {
-      // 同一個抽屜更新內容（例如切換想去／去過），不要重播動畫
-      const st = old.scrollTop; old.className = `sheet ${hero ? 'hero' : ''}`; old.innerHTML = `<div class="grab"></div>${html}`; old.scrollTop = st;
+      // 同一個抽屜更新內容（例如切換想去／去過），不要重播動畫，小地圖也直接搬過去不重建
+      const mini = S.miniMap && old.querySelector('#mini');
+      const st = old.scrollTop; old.className = `sheet ${hero ? 'hero' : ''}`; old.innerHTML = `<div class="grab"></div>${html}`;
+      const slot = old.querySelector('#mini');
+      if (mini && slot) slot.replaceWith(mini); else { S.miniMap?.remove(); S.miniMap = null; }
+      old.scrollTop = st;
       App.dragSheet(); return;
     }
+    S.miniMap?.remove(); S.miniMap = null;
     $('#sheet').innerHTML = `<div class="sheet-bg" onclick="if(event.target===this)App.close()"><div class="sheet ${hero ? 'hero' : ''}" role="dialog"><div class="grab"></div>${html}</div></div>`;
     document.body.style.overflow = 'hidden';
     requestAnimationFrame(() => requestAnimationFrame(() => $('.sheet-bg')?.classList.add('in')));
@@ -1456,7 +1531,12 @@ const App = {
     const bg = $('.sheet-bg'); if (!bg) return;
     bg.classList.remove('in'); const sh = bg.querySelector('.sheet'); sh.style.transform = '';
     document.body.style.overflow = '';
-    setTimeout(() => { if ($('.sheet-bg') === bg) $('#sheet').innerHTML = ''; }, 320);
+    setTimeout(() => {
+      if ($('.sheet-bg') !== bg) return;
+      $('#sheet').innerHTML = '';
+      // 抽屜開著時背景資料更新了，關掉後再補畫
+      if (S.stale) { S.stale = false; App.refresh(); }
+    }, 320);
   },
   dialog(html) {
     return new Promise(res => {
@@ -1487,6 +1567,8 @@ addEventListener('scroll', () => $('#top').classList.toggle('scrolled', scrollY 
   S.addGroups = load('food.addGroups', []);
   const join = new URL(location.href).searchParams.get('join');
   if (join) save('food.pendingJoin', join);
+  DB.client();
+  App.paintCache();
   await DB.init();
   if (!cloud() && join) { save('food.pendingJoin', ''); toast('這個網址還沒接上雲端，加入不了群組', 5000); }
   await App.boot();
