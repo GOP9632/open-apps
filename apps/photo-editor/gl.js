@@ -77,7 +77,7 @@ uniform sampler2D uImg, uSmooth, uMask, uSeg, uLut, uMask2, uSegB, uBlurS, uBgA,
 uniform vec2 uSize;
 uniform int uWn;
 uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）；骨架收窄是 A、B 兩端；拉長是 y0、y1、強度、照片高
-uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大 2 骨架收窄 3 往下拉長)、強度、橢圓比（收窄：只收一點的那側）
+uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大 2 骨架收窄 3 往下拉長 4 整段拉長)、強度、橢圓比（收窄：只收一點的那側）
 uniform vec2 uW3[${MAX_WARPS}]; // 頭的傾斜 cos、sin（收窄：最強的位置、範圍）
 uniform float uExposure, uBright, uContrast, uSat, uTemp, uTint, uHigh, uShadow, uSharp, uVig, uGrain, uFade;
 uniform float uVib, uStruct, uTexture, uLSense, uBack, uFlashA;
@@ -150,6 +150,15 @@ void main(){
   for (int i = 0; i < ${MAX_WARPS}; i++) {
     if (i >= uWn) break;
     float kind = uW2[i].y;
+    if (kind > 3.5) {
+      // 手動增高：y0~y1 這一段整段拉長 1+s 倍（s 負的是縮短），下面的部分壓回照片裡
+      float y0 = uW1[i].x, y1 = uW1[i].y, s = uW1[i].z, H = uW1[i].w, y1o = y0 + (y1 - y0) * (1.0 + s);
+      if (p.y > y0) {
+        if (p.y < y1o) p.y = y0 + (p.y - y0) / (1.0 + s);
+        else p.y = y1 + (p.y - y1o) * (H - y1) / max(H - y1o, 1.0);
+      }
+      continue;
+    }
     if (kind > 2.5) {
       // 往下拉長：y0 以下慢慢拉開（剛開始不拉，接得順），y1 以下壓回照片裡
       float y0 = uW1[i].x, y1 = uW1[i].y, s = uW1[i].z, H = uW1[i].w, y1o = y0 + (y1 - y0) * (1.0 + s);
@@ -706,7 +715,7 @@ export class Renderer {
     const n = Math.min(warps.length, MAX_WARPS), w1 = new Float32Array(MAX_WARPS * 4), w2 = new Float32Array(MAX_WARPS * 4), w3 = new Float32Array(MAX_WARPS * 2);
     for (let i = 0; i < n; i++) {
       const w = warps[i];
-      if (w.type === 'stretch') { w1.set([w.y0, w.y1, w.s, w.H], i * 4); w2.set([1, 3, 0, 0], i * 4); continue; }
+      if (w.type === 'stretch' || w.type === 'band') { w1.set([w.y0, w.y1, w.s, w.H], i * 4); w2.set([1, w.type === 'band' ? 4 : 3, 0, 0], i * 4); continue; }
       if (w.type === 'seg') { w1.set([w.ax, w.ay, w.bx, w.by], i * 4); w2.set([w.r, 2, w.k, w.inner || 0], i * 4); w3.set([w.tc, w.ts], i * 2); continue; }
       w1.set([w.cx, w.cy, w.dx || 0, w.dy || 0], i * 4);
       w2.set([w.r, w.type === 'scale' ? 1 : 0, w.s || 0, w.ey || 1], i * 4);
