@@ -117,8 +117,11 @@ function sameShop(a, b) {
   const ba = nk(a.branch), bb = nk(b.branch);
   if (ba && bb && ba !== bb) return false;
   const d = a.lat != null && b.lat != null ? distKm(a, b) : null;
+  // 同一區常有好幾間分店：兩筆都有地址而且地址不同，除非幾乎在同一個點，就當作不同分店
+  const aa = nk(a.address).replace(/\d+樓.*$|[bB]?\d+f.*$/, ''), ab = nk(b.address).replace(/\d+樓.*$|[bB]?\d+f.*$/, '');
+  if (aa && ab && aa !== ab && !aa.includes(ab) && !ab.includes(aa) && !(d != null && d < 0.08)) return false;
   const sameName = na === nb || nk(a.name + (a.branch || '')) === nk(b.name + (b.branch || ''));
-  if (sameName) return d != null ? d < 0.5 : (!a.city || !b.city || normCity(a.city) === normCity(b.city));
+  if (sameName) return d != null ? d < 0.15 : (!a.city || !b.city || normCity(a.city) === normCity(b.city)) && (!a.district || !b.district || a.district === b.district);
   if (d == null) return false;
   const contain = Math.min(na.length, nb.length) >= 2 && (na.includes(nb) || nb.includes(na));
   return (contain && d < 0.25) || (d < 0.06 && nameSim(na, nb) >= 0.5);
