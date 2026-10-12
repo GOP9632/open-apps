@@ -439,25 +439,36 @@ void main(){
     if (uFlashF.x > 0.0) {
       // 調整 › 閃光燈：臉上的皮膚看附近皮膚的平均亮度補平，暗的那側補多、本來就亮的那側收一點，
       // 像從相機打一盞平光。用附近的平均而不是單一像素，鬍子、眉毛這種本來就深的地方不會被洗白
-      float sw = 0.0, sl = 0.0;
+      float sw = 0.0, sl = 0.0, sg = 0.0;
       for (int j = 0; j < 17; j++) {
         float ring = j == 0 ? 0.0 : (j < 9 ? 1.0 : 2.0), an = float(j) * 0.785398 + (j < 9 ? 0.0 : 0.3927);
         vec2 q = uv + ring * uFlashR * vec2(cos(an), sin(an));
-        float w = texture(uMask, q).r + 0.01;
-        sl += luma(texture(uBlurS, q).rgb) * w; sw += w;
+        float w = texture(uMask, q).r + 0.15;
+        sl += luma(texture(uBlurS, q).rgb) * w; sw += w; sg += texture(uMask, q).g;
       }
-      // 臉：照附近皮膚的平均亮度決定補多少（暗的那側補多、亮的那側幾乎不補），
-      // 用「加」一層中性偏冷的白光（uFlashT），不是把整塊乘亮，所以鬍子、毛孔的紋理和原本的顏色都留著
+      // 臉：照附近皮膚的平均亮度決定補多少（暗的那側補多、亮的那側幾乎不補），有上限（uFlashG.y）
       vec2 fc = (uv - uFlashC.xy) / uFlashC.zw;
-      // 亮度主要看附近皮膚的平均（八成），這一點周圍佔兩成，鼻子的立體感才留得住；嘴巴以下這一點周圍佔六成，鬍子暗的那側補得到。補的量有上限（uFlashG.y），最暗的地方也補得到；像素比附近亮（皮膚）多補一點、比附近暗（鬍子、毛孔）少補一點
-      float Ls = max(mix(sl / sw, luma(texture(uBlurS, uv).rgb), mix(0.2, 0.6, smoothstep(0.1, 0.3, fc.y))), 0.02), dl = min(uFlashF.y * (uFlashF.z - Ls), uFlashG.y);
-      // 跟 Hypic 一樣，鼻子以下補得比額頭、臉頰少一點
-      vec3 fill = dl > 0.0 ? col + uFlashT * dl * (1.0 - 0.22 * smoothstep(0.0, 0.5, fc.y)) * mix(1.0, clamp(L0 / Ls, 0.0, 2.0), 0.5) : col * (1.0 + max(dl, -0.03) / Ls);   // 本來就亮的地方最多暗一點點
-      // 臉的範圍：上半臉只補皮膚（瀏海、頭髮不補），鼻子到下巴連鬍子一起補，脖子補少一點；邊緣拉長，看不出一圈
-      float face = (1.0 - smoothstep(0.75, 1.2, length(fc))) * mix(texture(uMask, uv).g, 1.0, smoothstep(-0.05, 0.15, fc.y)) * (1.0 - 0.6 * smoothstep(0.6, 1.0, fc.y));
+      float Ls = max(sl / sw, 0.02), dl = min(uFlashF.y * (uFlashF.z - Ls), uFlashG.y);
+      // 閃光燈從鏡頭打過來：正對鏡頭的面補滿，下顎、臉頰外側、鼻翼這些斜的面補少，輪廓的陰影留著
+      float nz = mix(0.4, 1.0, smoothstep(0.3, 0.8, N.z));
+      // 補光的顏色：亮的臉照 Hypic 偏冷一點（少一點紅）；暗的地方跟著膚色走，不會被稀釋成灰綠色
+      vec3 sc0 = texture(uBlurS, uv).rgb, skinT = mix(vec3(1.0), sc0 / max(luma(sc0), 0.02), 0.3);
+      vec3 tint = mix(skinT, uFlashT, smoothstep(0.34, 0.44, Ls));
+      // 嘴唇（美白遮罩 0.4、磨皮遮罩 0）少補，高光才不會爆白
+      vec2 mk = texture(uMask, uv).rg;
+      float lip = 1.0 - 0.7 * smoothstep(0.2, 0.35, mk.y) * (1.0 - smoothstep(0.05, 0.2, mk.x)) * step(0.0, fc.y);
+      // 眼睛（美白遮罩 0.2）也少補，眼珠不會變灰
+      float eye = 1.0 - 0.6 * (1.0 - smoothstep(0.15, 0.45, mk.y)) * smoothstep(-0.6, -0.45, fc.y) * (1.0 - smoothstep(-0.15, 0.0, fc.y));
+      // 鼻子以下補得比額頭、臉頰少一點（Hypic 也是）
+      float k = nz * lip * eye * (1.0 - 0.22 * smoothstep(0.0, 0.5, fc.y));
+      vec3 fill = dl > 0.0 ? col + tint * dl * k : col * (1.0 + max(dl, -0.03) * k / Ls);   // 本來就亮的地方最多暗一點點
+      // 臉的範圍：上半臉只補皮膚（瀏海、頭髮不補；用附近的平均，額頭不會補得一塊一塊），鼻子到下巴連鬍子一起補，脖子補少一點；邊緣拉長，看不出一圈
+      float face = (1.0 - smoothstep(0.75, 1.2, length(fc))) * mix(smoothstep(0.25, 0.7, sg / 17.0), 1.0, smoothstep(-0.05, 0.15, fc.y)) * (1.0 - 0.6 * smoothstep(0.6, 1.0, fc.y));
       // 臉以外：露出的皮膚（脖子、肩膀）照燈的結果；衣服、頭髮只會跟著變暗，不加光、不褪色
       lit = mix(lit, col * (luma(lit) / max(L0, 0.02)), smoothstep(0.5, 0.8, L0) * uFlashF.w * pw);
-      vec3 body = mix(col * min(1.0, luma(lit) / max(L0, 0.02)), lit, texture(uMask, uv).g);
+      // 頭頂的頭髮跟 Hypic 一樣再壓暗一點
+      float hairZ = (1.0 - smoothstep(1.2, 1.5, length(fc))) * (1.0 - smoothstep(-0.4, -0.1, fc.y));
+      vec3 body = mix(col * min(1.0, luma(lit) / max(L0, 0.02)) * (1.0 - 0.25 * hairZ), lit, mk.y);
       lit = mix(lit, mix(body, fill, face), pw);
       // 超過 214 的部分慢慢收到 237 以下（存 JPEG 時顏色還會再往外衝一點），紅色通道不會被推到 255（本來就比較亮的不動）
       { vec3 e = max(lit - 0.84, 0.0), sc = 0.84 + 0.09 * (1.0 - exp(-e / 0.09));
