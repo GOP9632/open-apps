@@ -3,13 +3,19 @@
 // 全部自己算，不用別家的素材或 shader
 
 // 醒圖把描邊分成「基本」和「進階」兩組
+// 基本 10 種的名稱、順序照 Hypic：麥克筆、點刷、雙描邊 I、筆刷、鉛筆、偏移陰影、雙描邊 II、蠟筆、發光刷、噪點筆刷
 export const STROKES = [
-  { id: 'solid', name: '實線', g: 'basic' },
-  { id: 'double', name: '雙層', g: 'basic' },
-  { id: 'dash', name: '虛線', g: 'basic' },
-  { id: 'dot', name: '圓點', g: 'basic' },
-  { id: 'glow', name: '發光', g: 'basic' },
-  { id: 'shadow', name: '投影', g: 'basic' },
+  { id: 'solid', name: '麥克筆', g: 'basic' },
+  { id: 'dot', name: '點刷', g: 'basic' },
+  { id: 'double', name: '雙描邊 I', g: 'basic' },
+  { id: 'brush', name: '筆刷', g: 'basic' },
+  { id: 'pencil', name: '鉛筆', g: 'basic' },
+  { id: 'shadow', name: '偏移陰影', g: 'basic' },
+  { id: 'double2', name: '雙描邊 II', g: 'basic' },
+  { id: 'crayon', name: '蠟筆', g: 'basic' },
+  { id: 'glow', name: '發光刷', g: 'basic' },
+  { id: 'noise', name: '噪點筆刷', g: 'basic' },
+  { id: 'dash', name: '虛線', g: 'fx' },
   { id: 'sticker', name: '貼紙', g: 'fx' },
   { id: 'neon', name: '霓虹', g: 'fx' },
   { id: 'rainbow', name: '彩虹', g: 'fx' },
@@ -29,7 +35,7 @@ export const strokePx = (st, W, H) => Math.max(1, st.w / 100 * 0.05 * Math.max(W
 export function strokePad(st, W, H) {
   if (!st?.t) return 0;
   const w = strokePx(st, W, H);
-  const k = { glow: 2.6, neon: 2.6, shadow: 1.8, sticker: 2.2, sparkle: 2, hearts: 2 }[st.t] || 1.2;
+  const k = { glow: 2.6, neon: 2.6, shadow: 1.8, sticker: 2.2, sparkle: 2, hearts: 2, brush: 1.45, crayon: 1.35 }[st.t] || 1.2;
   return Math.ceil(w * k + 4);
 }
 
@@ -66,6 +72,13 @@ function canvas(w, h) { const c = document.createElement('canvas'); c.width = Ma
 const hex = c => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
 const sat = x => x < 0 ? 0 : x > 1 ? 1 : x;
 const smooth = (a, b, x) => { const t = sat((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+// 雜訊：每個格點一個隨機值，中間平滑內插（筆刷、蠟筆的毛邊和紋理用）
+const rnd = (x, y) => { const v = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return v - Math.floor(v); };
+function vnoise(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi, u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+  const a = rnd(xi, yi), b = rnd(xi + 1, yi), c = rnd(xi, yi + 1), d = rnd(xi + 1, yi + 1);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
 
 // 輪廓線：在距離場上用 marching squares 找出「距離 = off」的等高線，接成一條條封閉曲線
 function contours(D, w, h, off) {
@@ -172,13 +185,31 @@ export function strokeLayer(src, st, pad = strokePad(st, src.width, src.height))
   };
   const band = d => sat((wpx - d) / aa + 0.5);
   const t = st.t;
-  if (t === 'solid' || t === 'double' || t === 'sticker' || t === 'rainbow' || t === 'gradient' || t === 'neon' || t === 'glow' || t === 'shadow') {
+  if (['solid', 'double', 'double2', 'brush', 'pencil', 'crayon', 'noise', 'sticker', 'rainbow', 'gradient', 'neon', 'glow', 'shadow'].includes(t)) {
+    const nk = 1 / Math.max(2, wpx * k * 0.6); // 雜訊的格子跟筆的粗細走
     for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
       const i = y * gw + x, d = D[i];
       if (t === 'solid') put(i, r, gg, b, band(d));
       else if (t === 'double') { // 內圈白、外圈選的顏色
         put(i, r, gg, b, band(d));
         put(i, 255, 255, 255, sat((wpx * 0.45 - d) / aa + 0.5));
+      } else if (t === 'double2') { // 內圈選的顏色、中間留一條白、外面再一圈細的選的顏色
+        put(i, r, gg, b, band(d));
+        put(i, 255, 255, 255, sat((wpx * 0.78 - d) / aa + 0.5));
+        put(i, r, gg, b, sat((wpx * 0.5 - d) / aa + 0.5));
+      } else if (t === 'brush') { // 粗細不均、邊緣有毛邊的筆刷
+        const w = wpx * (0.8 + 0.35 * vnoise(x * nk * 0.25, y * nk * 0.25)) + (vnoise(x * nk * 2, y * nk * 2) - 0.5) * wpx * 0.25;
+        put(i, r, gg, b, sat((w - d) / aa + 0.5));
+      } else if (t === 'pencil') { // 細線，筆芯的顆粒讓顏色有深有淺
+        const w = wpx * 0.35, g0 = vnoise(x * 0.9, y * 0.9);
+        put(i, r, gg, b, sat((w - d) / aa + 0.5) * (0.55 + 0.45 * g0));
+      } else if (t === 'crayon') { // 蠟筆：邊緣毛、裡面一條條沒塗滿的紋理
+        const w = wpx * (0.9 + (vnoise(x * nk * 1.5, y * nk * 1.5) - 0.5) * 0.45);
+        const grain = vnoise(x * 0.6 + y * 0.15, y * 1.8);
+        put(i, r, gg, b, sat((w - d) / aa + 0.5) * (grain > 0.3 ? 0.95 : 0.35));
+      } else if (t === 'noise') { // 噪點：選的顏色上撒深淺不一的點
+        const n0 = rnd(x, y) - 0.5, m = 1 + n0 * 0.7;
+        put(i, Math.min(255, r * m + n0 * 60), Math.min(255, gg * m + n0 * 60), Math.min(255, b * m + n0 * 60), band(d) * (0.75 + 0.25 * rnd(y, x)));
       } else if (t === 'sticker') { // 白色厚邊加一點陰影，像剪下來的貼紙
         const sd = D[Math.max(0, i - Math.round(wpx * 0.35 * k) * gw)];
         put(i, 0, 0, 0, 0.28 * (1 - smooth(wpx * 0.6, wpx * 2.1, sd)));

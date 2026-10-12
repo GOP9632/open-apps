@@ -118,12 +118,13 @@ export function compose(s) {
 export const padOf = s => { const L = store.get(s.v); return L ? strokePad(s.st, L.rgb.width, L.rgb.height) : 0; };
 
 // 擦除／補回：在圖層的透明度上畫一筆（x, y 是圖層內的像素座標）
-export function brush(id, pts, r, restore) {
+// hard：硬度 0~100（照 Hypic 手動摳圖預設 80），越低邊緣越柔
+export function brush(id, pts, r, restore, hard = 80) {
   const L = store.get(id), ctx = L.alpha.getContext('2d');
   ctx.save();
   ctx.globalCompositeOperation = restore ? 'source-over' : 'destination-out';
   ctx.strokeStyle = ctx.fillStyle = '#fff'; ctx.lineWidth = r * 2; ctx.lineCap = ctx.lineJoin = 'round';
-  ctx.shadowColor = '#fff'; ctx.shadowBlur = r * 0.4;
+  ctx.shadowColor = '#fff'; ctx.shadowBlur = r * 2 * (1 - hard / 100);
   ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
   if (pts.length === 1) { ctx.arc(pts[0].x, pts[0].y, r, 0, 7); ctx.fill(); } else ctx.stroke();
   ctx.restore();

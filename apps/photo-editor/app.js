@@ -1236,6 +1236,7 @@ function cutView(s, w, h, plain) {
   return cv;
 }
 let brushR = 40; // 1~100，照 Hypic 手動摳圖筆刷預設 40；半徑 = 值 × 1.5 像素
+let cutHard = 80, cutBsub = 'size'; // 硬度 0~100 預設 80 照 Hypic
 function drawStickers() {
   const layer = $('#stickers'), wr = { width: $('#wrap').offsetWidth };
   layer.innerHTML = '';
@@ -1267,7 +1268,7 @@ function drawStickers() {
         s.v = cloneAlpha(s.v); // 每一筆存成新的一份，才能復原
         const p = local(e.clientX, e.clientY);
         paint = { pts: [p], r: brushR * 1.5 / p.sc };
-        brush(s.v, paint.pts, paint.r, cur === 'restore');
+        brush(s.v, paint.pts, paint.r, cur === 'restore', cutHard);
         d.replaceChildren(cutView(s, bw, bh, true));
         return;
       }
@@ -1284,7 +1285,7 @@ function drawStickers() {
     d.addEventListener('pointermove', e => {
       if (paint) {
         const p = local(e.clientX, e.clientY);
-        brush(s.v, [paint.pts[paint.pts.length - 1], p], paint.r, cur === 'restore'); paint.pts.push(p);
+        brush(s.v, [paint.pts[paint.pts.length - 1], p], paint.r, cur === 'restore', cutHard); paint.pts.push(p);
         d.replaceChildren(cutView(s, bw, bh, true));
         return;
       }
@@ -1470,7 +1471,9 @@ function tabCut(box) {
     return;
   }
   if (cur === 'erase' || cur === 'restore') {
-    setSlider('筆刷', 1, 100, brushR, v => { brushR = v; });
+    [['size', '大小'], ['hard', '硬度']].forEach(([k, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: cutBsub === k, onclick: () => { cutBsub = k; showTab('cut'); } })));
+    if (cutBsub === 'hard') setSlider('硬度', 0, 100, cutHard, v => { cutHard = v; });
+    else setSlider('筆刷', 1, 100, brushR, v => { brushR = v; });
     $('#note').textContent = cur === 'erase' ? '在圖層上塗抹，擦掉不要的地方。' : '塗抹把擦掉的地方補回來。';
     return;
   }
