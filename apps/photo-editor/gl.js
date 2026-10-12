@@ -69,6 +69,36 @@ void main(){
   float w = pow(1.0 - texture(uSeg, vUV).r, 2.0) + 0.002;
   o = vec4(texture(uTex, vUV).rgb * w, w);
 }`;
+// 散景（景深的光斑）：每個點往四周取 96 個樣本平均，樣本落在「光斑形狀」裡才算，
+// 亮的樣本權重大，所以背景的亮點會變成一顆顆圓、愛心、星星形狀的光斑；人身上的樣本不算，人不會暈到背景上
+// 樣式：0 經典（圓）1 愛心 2 貓眼（越往邊緣越像被切掉一角的橄欖形）3 漩渦（繞著中心轉的拉長光斑）4 動態（水平拖影）5 銀河（十字星芒）
+const FS_BOKEH = `#version 300 es
+precision highp float;
+in vec2 vUV; uniform sampler2D uTex, uSeg; uniform vec2 uR, uAsp; uniform int uStyle; uniform float uHi; out vec4 o;
+float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
+float heart(vec2 p){ p *= 1.25; p.y = -p.y + 0.25; float a = p.x * p.x + p.y * p.y - 1.0; return step(a * a * a - p.x * p.x * p.y * p.y * p.y, 0.0); }
+void main(){
+  vec2 d = (vUV - 0.5) * uAsp; float e = clamp(length(d) * 1.6, 0.0, 1.0);
+  vec2 n = length(d) > 1e-4 ? normalize(d) : vec2(1.0, 0.0), t = vec2(-n.y, n.x);
+  vec3 sum = vec3(0.0); float ws = 0.0;
+  // 每個像素把取樣的螺旋轉一個不同的角度，光斑裡面才不會看到一格一格的取樣點
+  float j = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) * 6.2831853;
+  for (int i = 0; i < 96; i++) {
+    float fi = float(i), r = sqrt((fi + 0.5) / 96.0), th = fi * 2.39996323 + j;
+    vec2 q = r * vec2(cos(th), sin(th)), off = q; float w = 1.0;
+    if (uStyle == 1) w = heart(q);
+    else if (uStyle == 2) w = step(length(q + n * e * 0.75), 1.0);
+    else if (uStyle == 3) off = t * q.x * (1.0 + 1.6 * e) + n * q.y * (1.0 - 0.55 * e);
+    else if (uStyle == 4) off = vec2(q.x * 1.8, q.y * 0.06);
+    else if (uStyle == 5) { float s = min(abs(q.x), abs(q.y)), s2 = min(abs(q.x + q.y), abs(q.x - q.y)) * 0.7071; w = 0.25 + smoothstep(0.07, 0.0, s) * 1.5 * (1.0 - r * 0.6) + smoothstep(0.05, 0.0, s2) * 0.7 * (1.0 - r); }
+    if (w <= 0.0) continue;
+    vec2 uv = vUV + off * uR;
+    vec3 c = texture(uTex, uv).rgb;
+    w *= (1.0 + uHi * pow(luma(c), 4.0) * 14.0) * (1.0 - 0.98 * texture(uSeg, uv).r);
+    sum += c * w; ws += w;
+  }
+  o = vec4(ws > 1e-3 ? sum / ws : texture(uTex, vUV).rgb, 1.0);
+}`;
 
 const FS_MAIN = `#version 300 es
 precision highp float;
@@ -97,7 +127,7 @@ uniform float uBgMode; uniform vec3 uBgColor;
 // 創意特效：1 漫畫 2 波普 3 素描 4 彩鉛 5 馬賽克 6 故障 7 鏡像 8 分身 9 雙重曝光
 uniform float uProtect;
 uniform int uFx; uniform float uFxAmt; uniform vec2 uExFit;
-uniform float uOAmt, uBlur;
+uniform float uOAmt, uBlur, uBokeh;
 uniform float uBgBlurAmt, uHarmAmt; uniform vec3 uHarm;
 out vec4 o;
 
@@ -218,7 +248,7 @@ void main(){
     // 背景虛化：只模糊人以外的地方，越模糊亮點越像光斑
     vec4 a = texture(uBgA, uv), b = texture(uBgB, uv);
     vec3 ba = a.rgb / max(a.a, 1e-4), bb = b.rgb / max(b.a, 1e-4);
-    vec3 bg = uBlur < 0.4 ? mix(col, ba, uBlur / 0.4) : mix(ba, bb, (uBlur - 0.4) / 0.6);
+    vec3 bg = uBokeh > 0.5 ? b.rgb : uBlur < 0.4 ? mix(col, ba, uBlur / 0.4) : mix(ba, bb, (uBlur - 0.4) / 0.6);
     bg += pow(luma(bg), 3.0) * 0.25 * uBlur;
     col = mix(bg, col, smoothstep(0.3, 0.7, pw0));
   }
@@ -569,7 +599,7 @@ export class Renderer {
     this.pCopy = program(gl, FS_COPY); this.pDisp = program(gl, FS_DISP); this.fbPost = this.fbo();
     this.pBil = program(gl, FS_BILATERAL);
     this.pMain = program(gl, FS_MAIN);
-    this.pGauss = program(gl, FS_GAUSS); this.pW = program(gl, FS_WCOPY);
+    this.pGauss = program(gl, FS_GAUSS); this.pW = program(gl, FS_WCOPY); this.pBokeh = program(gl, FS_BOKEH); this.fbK = this.fbo(); this.bkKey = '';
     this.tImg = this.tex(); this.tMask = this.tex(); this.tSeg = this.tex(); this.tLut = this.tex();
     this.tMask2 = this.tex(); this.tSegB = this.tex();
     this.blank(this.tMask, 0); this.blank(this.tSeg, 255); this.blank(this.tLut, 0);
@@ -623,7 +653,7 @@ export class Renderer {
   setImage(src) {
     this.w = src.width; this.h = src.height;
     this.canvas.width = this.w; this.canvas.height = this.h;
-    this.upload(this.tImg, src);
+    this.upload(this.tImg, src); this.bkKey = '';
     // 磨皮用的低解析度保邊模糊圖
     const k = SMOOTH_SHORT / Math.min(this.w, this.h);
     const sw = Math.max(1, Math.round(this.w * Math.min(1, k))), sh = Math.max(1, Math.round(this.h * Math.min(1, k)));
@@ -671,7 +701,23 @@ export class Renderer {
     this.gauss(this.fbL, 3);
   }
   setMask(src) { src ? this.upload(this.tMask, src) : this.blank(this.tMask, 0); }
-  setSeg(src) { src ? this.upload(this.tSeg, src) : this.blank(this.tSeg, 255); this.blurs(); }
+  setSeg(src) { src ? this.upload(this.tSeg, src) : this.blank(this.tSeg, 255); this.blurs(); this.bkKey = ''; }
+  // 散景：短邊最多 720 像素算一次，參數沒變就不重算。bk：{ style 0~5, r 光斑半徑（佔短邊的比例）}
+  bokeh(bk) {
+    const key = [bk.style, bk.r.toFixed(4), this.w, this.h].join('|');
+    if (key === this.bkKey) return;
+    this.bkKey = key;
+    const gl = this.gl;
+    this.size([this.fbK], 720);
+    const { w, h } = this.fbK, sh = Math.min(w, h);
+    // 來源用稍微模糊過的小圖（fbS），小亮點先暈開一點，光斑才會是一整片，不是一顆顆的點
+    this.pass(this.pBokeh, this.fbK, w, h, this.fbS[0].t);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.tSeg); gl.uniform1i(this.pBokeh.u.uSeg, 1);
+    gl.uniform2f(this.pBokeh.u.uR, bk.r * sh / w, bk.r * sh / h);
+    gl.uniform2f(this.pBokeh.u.uAsp, w / sh, h / sh);
+    gl.uniform1i(this.pBokeh.u.uStyle, bk.style); gl.uniform1f(this.pBokeh.u.uHi, 1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
   setOver(src) { src ? this.upload(this.tOver, src) : this.blank(this.tOver, 0); }
   setEx(src) { src ? this.upload(this.tEx, src) : this.blank(this.tEx, 255); this.exAr = src ? src.width / src.height : 1; }
   // 換背景的照片，另外做一份輕微模糊、一份很糊（背景虛化和光線包邊用）
@@ -702,13 +748,14 @@ export class Renderer {
   // fx：{ lit: { lights: [{ pos, col, par }], ambS, ambB, bgDepth, haze, hazeCol }, flash: { amt, retro } }
   render(p, warps, fx = {}) {
     const gl = this.gl, u = this.pMain.u;
+    if (fx.bokeh) this.bokeh(fx.bokeh);
     // 有臉型變形時先畫到暫存，最後再變形一次畫到畫面
     const post = this.disp?.step > 0;
     if (post) this.sizeFbo(this.fbPost, this.w, this.h);
     this.pass(this.pMain, post ? this.fbPost : null, this.w, this.h);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     const texs = [[this.tImg, 'uImg'], [this.tSmooth, 'uSmooth'], [this.tMask, 'uMask'], [this.tSeg, 'uSeg'], [this.tLut, 'uLut'], [this.tMask2, 'uMask2'], [this.tSegB, 'uSegB'],
-      [this.fbS[0].t, 'uBlurS'], [this.fbM[0].t, 'uBgA'], [this.fbL[0].t, 'uBgB'], [this.tOver, 'uOver'], [this.tEx, 'uEx'], [this.tBgImg, 'uBgImg'],
+      [this.fbS[0].t, 'uBlurS'], [this.fbM[0].t, 'uBgA'], [fx.bokeh ? this.fbK.t : this.fbL[0].t, 'uBgB'], [this.tOver, 'uOver'], [this.tEx, 'uEx'], [this.tBgImg, 'uBgImg'],
       [this.fbBm[0].t, 'uBgMid'], [this.fbBf[0].t, 'uBgFar'], [this.tMakeup, 'uMakeup']];
     texs.forEach(([t, name], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(u[name], i); });
     gl.uniform2f(u.uSize, this.w, this.h);
@@ -757,7 +804,7 @@ export class Renderer {
     gl.uniform1i(u.uFx, fx.fxMode || 0); gl.uniform1f(u.uFxAmt, fx.fxAmt || 0);
     const ra = this.w / this.h, re = this.exAr || 1;
     gl.uniform2f(u.uExFit, re > ra ? ra / re : 1, re > ra ? 1 : re / ra);
-    gl.uniform1f(u.uOAmt, fx.over || 0); gl.uniform1f(u.uBlur, fx.blur || 0);
+    gl.uniform1f(u.uOAmt, fx.over || 0); gl.uniform1f(u.uBlur, fx.blur || 0); gl.uniform1f(u.uBokeh, fx.bokeh ? 1 : 0);
     gl.uniform1f(u.uBgBlurAmt, fx.bgBlur || 0); gl.uniform1f(u.uHarmAmt, fx.harm ? 1 : 0);
     gl.uniform3fv(u.uHarm, fx.harm || [1, 1, 1]);
     const mode = { keep: 0, clear: 1, color: 2, img: 3 }[p.bg] || 0;
