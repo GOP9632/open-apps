@@ -4,8 +4,9 @@
 // 這裡用 2D canvas 自己畫，預覽和存檔走同一個函式，只差解析度。
 
 import { LAYOUTS, RATIOS, stitch, insetCell, polyPath, inPoly, bbox } from './layouts.js';
-import { TEMPLATES, CATS, FONTS, FONT_LIST, BGS, tplById, paintBg, paintDeco, dateText } from './templates.js';
+import { TEMPLATES, CATS, FONTS, FONT_LIST, BGS, tplById, paintBg, paintDeco, dateText, lookFn, paintFx } from './templates.js';
 import { FILTERS } from './filters.js';
+import { segment } from './ai.js';
 
 const MAX_PHOTOS = 9, FULL = 1800, SMALL = 360, OUT_LONG = 2400;
 const $ = s => document.querySelector(s);
@@ -63,7 +64,7 @@ async function toPhoto(src) {
 function design() {
   if (S.mode !== 'grid' && S.tpl) {
     const t = tplById(S.tpl);
-    return { ratio: t.ratio, bg: t.bg, deco: t.deco || [], under: t.under, filter: t.filter, slots: t.slots.map(s => ({ ...s, kind: 'rect' })) };
+    return { ratio: t.ratio, bg: t.bg, deco: t.deco || [], under: t.under, filter: t.filter, look: t.look ? 'L:' + t.id : '', fx: t.fx, pop: t.pop, slots: t.slots.map(s => ({ ...s, kind: 'rect' })) };
   }
   const g = S.grid, n = Math.min(S.photos.length, MAX_PHOTOS);
   let cells, ratio = RATIOS.find(r => r.id === g.ratio).v;
@@ -105,10 +106,12 @@ function geometry(d, W, Hh) {
 const toLocal = (g, x, y) => { const dx = x - g.cx, dy = y - g.cy, c = Math.cos(-g.rot), s = Math.sin(-g.rot); return [dx * c - dy * s, dx * s + dy * c]; };
 
 // ---------- 濾鏡（CPU 查表，三線性內插） ----------
+// id 是濾鏡名稱，或 'L:範本id'（範本的整組風格）
 const luts = {};
+const fnOf = id => id.startsWith('L:') ? lookFn(tplById(id.slice(2)).look) : FILTERS.find(f => f.id === id)?.fn;
 function lut(id) {
   if (luts[id]) return luts[id];
-  const fn = FILTERS.find(f => f.id === id)?.fn, N = 33, t = new Float32Array(N * N * N * 3);
+  const fn = fnOf(id), N = 33, t = new Float32Array(N * N * N * 3);
   for (let b = 0; b < N; b++) for (let g = 0; g < N; g++) for (let r = 0; r < N; r++) {
     const o = fn ? fn(r / (N - 1), g / (N - 1), b / (N - 1)) : [r / (N - 1), g / (N - 1), b / (N - 1)], i = ((b * N + g) * N + r) * 3;
     t[i] = o[0] * 255; t[i + 1] = o[1] * 255; t[i + 2] = o[2] * 255;
@@ -141,6 +144,33 @@ function img(pi, id, small) {
   return p.cache[key] || (p.cache[key] = filtered(src, id));
 }
 
+// ---------- 人在字前（範本的 pop） ----------
+// 照片裡的人摳出來，在文字之後再畫一次，人就會擋在標題前面（雜誌封面那種）。
+// 摳圖用主畫面同一個 MediaPipe 人像分割，在裝置上做。
+function needMasks() {
+  const d = design(); if (!d.pop) return;
+  const cell = S.cells[d.pop.slot ?? 0], p = cell && cell.p != null && S.photos[cell.p];
+  if (!p || p.mask || p.maskP) return;
+  p.maskP = segment(p.full).then(r => {
+    const m = r.person, c = document.createElement('canvas'); c.width = m.width; c.height = m.height;
+    const cx = c.getContext('2d'); cx.drawImage(m, 0, 0);
+    const im = cx.getImageData(0, 0, c.width, c.height);
+    for (let i = 0; i < im.data.length; i += 4) { im.data[i + 3] = im.data[i]; im.data[i] = im.data[i + 1] = im.data[i + 2] = 255; }
+    cx.putImageData(im, 0, 0); p.mask = c;
+    if (S) { thumbs = {}; draw(); }
+  }).catch(e => { console.error(e); p.mask = 'none'; });
+}
+function person(pi, id, small) {
+  const p = S.photos[pi]; if (!p.mask || p.mask === 'none') return null;
+  const key = 'P' + (small ? 's' : 'f') + (id || '');
+  if (!p.cache[key]) {
+    const src = img(pi, id, small), c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
+    const cx = c.getContext('2d'); cx.drawImage(src, 0, 0); cx.globalCompositeOperation = 'destination-in'; cx.drawImage(p.mask, 0, 0, c.width, c.height);
+    p.cache[key] = c;
+  }
+  return p.cache[key];
+}
+
 // ---------- 畫 ----------
 function render(ctx, W, Hh, opt = {}) {
   const d = design(), u = W;
@@ -150,7 +180,12 @@ function render(ctx, W, Hh, opt = {}) {
   const geo = geometry(d, W, Hh);
   geo.forEach((g, i) => drawSlot(ctx, g, S.cells[i], d, u, opt));
   if (!d.under) d.deco.forEach(x => paintDeco(ctx, x, W, Hh));
-  const hits = S.texts.map((t, i) => drawText(ctx, t, W, Hh, geo, opt.preview && S.sel?.k === 'text' && S.sel.i === i));
+  if (d.fx) paintFx(ctx, d.fx, W, Hh);
+  // 人在字前：一般文字畫完先疊上摳出來的人，標了 front 的文字（小標、日期）再畫在人上面
+  const hits = [], txt = front => S.texts.forEach((t, i) => { if (!!t.front === front) hits[i] = drawText(ctx, t, W, Hh, geo, opt.preview && S.sel?.k === 'text' && S.sel.i === i); });
+  txt(false);
+  if (d.pop) { const i = d.pop.slot ?? 0; if (geo[i] && S.cells[i]) drawSlot(ctx, geo[i], S.cells[i], d, u, { ...opt, person: true, noClip: d.pop.out }); }
+  txt(true);
   if (opt.preview && S.sel?.k === 'cell' && geo[S.sel.i]) outline(ctx, geo[S.sel.i], u, '#ff5c8a');
   if (opt.preview && opt.target != null && geo[opt.target]) outline(ctx, geo[opt.target], u, '#ffffff');
   return { geo, hits };
@@ -161,7 +196,7 @@ function outline(ctx, g, u, color) {
 }
 function drawSlot(ctx, g, cell, d, u, opt) {
   ctx.save(); ctx.translate(g.cx, g.cy); ctx.rotate(g.rot);
-  const f = g.frame, sh = () => { ctx.shadowColor = 'rgba(0,0,0,.28)'; ctx.shadowBlur = u * 0.025; ctx.shadowOffsetY = u * 0.008; };
+  const f = opt.person ? null : g.frame, sh = () => { ctx.shadowColor = 'rgba(0,0,0,.28)'; ctx.shadowBlur = u * 0.025; ctx.shadowOffsetY = u * 0.008; };
   if (f) {
     ctx.save(); if (f.shadow) sh();
     if (f.kind === 'polaroid') {
@@ -172,9 +207,21 @@ function drawSlot(ctx, g, cell, d, u, opt) {
     } else { ctx.fillStyle = '#000'; g.path(ctx); ctx.fill(); }
     ctx.restore();
   }
-  g.path(ctx); ctx.clip();
+  // 出框：人只能往上、往兩側超出照片框，框的下緣照樣切齊
+  if (opt.noClip) { ctx.beginPath(); ctx.rect(-g.w * 2, -g.h * 4, g.w * 4, g.h * 4.5); ctx.clip(); }
+  else { g.path(ctx); ctx.clip(); }
+  if (opt.person) {
+    // 只畫摳出來的人，位置、縮放跟底下那格完全一樣
+    if (!cell || cell.p == null || !S.photos[cell.p]) { ctx.restore(); return; }
+    const fid = cell.filter || d.filter || d.look || '', pim = person(cell.p, fid && fid !== 'none' ? fid : '', opt.small);
+    if (!pim) { ctx.restore(); return; }
+    const odd = cell.rot % 2, iw = odd ? pim.height : pim.width, ih = odd ? pim.width : pim.height, s = Math.max(g.w / iw, g.h / ih) * cell.zoom;
+    ctx.translate(cell.ox * g.w, cell.oy * g.h); ctx.rotate(cell.rot * Math.PI / 2); if (cell.flip) ctx.scale(-1, 1);
+    ctx.drawImage(pim, -pim.width * s / 2, -pim.height * s / 2, pim.width * s, pim.height * s);
+    ctx.restore(); return;
+  }
   if (cell && cell.p != null && S.photos[cell.p]) {
-    const fid = cell.filter || d.filter || '';
+    const fid = cell.filter || d.filter || d.look || '';
     const base = img(cell.p, '', opt.small), im = fid && fid !== 'none' ? img(cell.p, fid, opt.small) : null;
     const odd = cell.rot % 2, iw = odd ? base.height : base.width, ih = odd ? base.width : base.height;
     const s = Math.max(g.w / iw, g.h / ih) * cell.zoom;
@@ -235,6 +282,7 @@ function fit() {
   cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
 }
 function draw(opt = {}) {
+  needMasks();
   cancelAnimationFrame(raf);
   raf = requestAnimationFrame(() => { const ctx = cv.getContext('2d'); ctx.setTransform(1, 0, 0, 1, 0, 0); last = render(ctx, cv.width, cv.height, { preview: true, ...opt }); });
 }
@@ -525,9 +573,12 @@ function exportCanvas() {
   render(c.getContext('2d'), c.width, c.height, {});
   return c;
 }
+// 人在字前的範本：存檔前等人像摳好
+async function masksReady() { needMasks(); await Promise.all(S.photos.map(p => p.maskP).filter(Boolean)); }
 async function save() {
   H.busy('輸出中…');
   try {
+    await masksReady();
     const c = exportCanvas();
     const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.95));
     const name = `隨手修-拼貼-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.jpg`;
@@ -545,6 +596,7 @@ async function toEditor() {
   H.busy('輸出中…');
   let file;
   try {
+    await masksReady();
     const c = exportCanvas(), blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.95));
     file = new File([blob], 'collage.jpg', { type: 'image/jpeg' });
   } finally { H.busy(); }
