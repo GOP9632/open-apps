@@ -393,7 +393,9 @@ const Geo = {
   },
   // 台灣地址常寫到巷弄號樓，OSM 不一定有門牌，所以一路簡化到路名、行政區
   candidates(p) {
-    const a = (p.address || '').replace(/臺/g, '台').replace(/\(.*?\)|（.*?）/g, '').replace(/\s+/g, '');
+    const a = (p.address || '').replace(/臺/g, '台').replace(/\(.*?\)|（.*?）/g, '').replace(/\s+/g, '')
+      // 地址裡的「○○里／村」OSM 找不到，拿掉
+      .replace(/([區鄉鎮市])[\u4e00-\u9fff]{1,3}[村里](?![路街大])/, '$1');
     const out = [];
     if (a) {
       const base = a.replace(/(\d+|[一二三四五六七八九十]+)(樓|F|f).*$/, '').replace(/之\d+/, '');
@@ -932,7 +934,7 @@ const App = {
         if (document.hidden || !S.user || Date.now() - App._loadedAt < 10000) return;
         App._loadedAt = Date.now();
         const now = await DB.loadAll().catch(() => null);
-        if (now && now !== App._sig) { App._sig = now; App.refresh(); }
+        if (now && now !== App._sig) { App._sig = now; App.refresh(); App.fillCoords(); App.enrich(); }
       });
     }
     if (cached && S.user?.id === cached.uid) {
@@ -941,7 +943,7 @@ const App = {
     } else { S.animate = true; App.render(); App.handleShare(); }
     Me.start(false);
     MapView.prefetch();
-    setTimeout(() => App.enrich(), 2500);
+    setTimeout(() => { App.fillCoords(); App.enrich(); }, 2500);
   },
   paintCache() {
     const c = DB.peek(); if (!c) return;
@@ -1655,6 +1657,25 @@ const App = {
       if (!$('.sheet-bg')) { if (S.tab === 'map') MapView.sync(); else App.render(); }
       toast(`幫 ${changed} 間店補上了照片和必點菜色`);
     }
+  },
+
+  // ----- 分享捷徑在背景收藏的店沒有座標：打開 app 時用地址補（每間只試一次） -----
+  async fillCoords() {
+    if (S.locating || (cloud() && !S.user)) return;
+    const tried = load('food.geoTried', {});
+    const todo = S.places.filter(p => isMine(p) && p.lat == null && (p.address || p.district || p.city) && !tried[p.id]);
+    if (!todo.length) return;
+    S.locating = true;
+    let n = 0;
+    for (const p0 of todo) {
+      const t = load('food.geoTried', {}); t[p0.id] = 1; save('food.geoTried', t);
+      const g = await Geo.locate(p0).catch(() => null);
+      const p = S.places.find(x => x.id === p0.id);
+      if (!g || !p || p.lat != null) continue;
+      try { await DB.savePlace({ ...p, lat: g.lat, lng: g.lng, approx: g.approx, city: p.city || g.city, district: p.district || g.district }); n++; } catch (e) { console.warn('fillCoords', e); }
+    }
+    S.locating = false;
+    if (n) { S.keepScroll = true; if (!$('.sheet-bg')) { if (S.tab === 'map') MapView.sync(); else App.render(); } }
   },
 
   // ----- 從 IG 一鍵分享進來的設定說明 -----
