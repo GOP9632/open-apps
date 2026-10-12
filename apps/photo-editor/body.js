@@ -9,20 +9,22 @@ const VER = '0.10.14';
 const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VER}`;
 const POSE_MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task';
 
-// [key, 名稱, 圖示, 最小, 點開時的強度, 最大]；範圍照醒圖（豐胸、美胯、寬肩是 -50~50，其他 0~100）
+// [key, 名稱, 圖示, 最小, 點開時的強度, 最大]
+// 前 9 項的順序、範圍、預設照 Hypic 自動塑身（美胯 -100~100，其他 0~100；只有瘦身點開是 40）；
+// 一鍵美體、寬肩、直角肩是醒圖電腦版的，範圍照醒圖
 export const BODY = [
-  ['bodyAuto', '一鍵美體', '<svg viewBox="0 0 24 24"><circle cx="12" cy="4.5" r="2"/><path d="M8 9h8l-1 6h-6zM10 15l-1 6M14 15l1 6"/><path d="M19 3l.6 1.4L21 5l-1.4.6L19 7l-.6-1.4L17 5l1.4-.6z" fill="currentColor"/></svg>', 0, 30, 100],
+  ['bodyHead', '小頭', '<svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><circle cx="12" cy="7" r="2" stroke-dasharray="1.5 1.5"/><path d="M5 21c1-4 4-6 7-6s6 2 7 6"/></svg>', 0, 0, 100],
   ['bodySlim', '瘦身', '<svg viewBox="0 0 24 24"><circle cx="12" cy="4.5" r="2"/><path d="M9 8h6l-1 7h-4zM10.5 15l-.5 6M13.5 15l.5 6"/><path d="M4 12h3M20 12h-3"/></svg>', 0, 40, 100],
-  ['bodyLeg', '長腿', '<svg viewBox="0 0 24 24"><path d="M9 3h6l-1 7h-4z"/><path d="M10 10l-1 11M14 10l1 11"/><path d="M19 13v8M17.5 19.5L19 21l1.5-1.5"/></svg>', 0, 40, 100],
-  ['bodyThigh', '瘦腿', '<svg viewBox="0 0 24 24"><path d="M8 3h8l-1 8-1 10M9 11l1 10M8 3l1 8"/><path d="M4 12h2.5M20 12h-2.5"/></svg>', 0, 40, 100],
-  ['bodyWaist', '瘦腰', '<svg viewBox="0 0 24 24"><path d="M7 3c0 5 3 6 3 9s-3 4-3 9M17 3c0 5-3 6-3 9s3 4 3 9"/><path d="M4 12h3M20 12h-3"/></svg>', 0, 40, 100],
-  ['bodyArm', '瘦手臂', '<svg viewBox="0 0 24 24"><path d="M5 5c3 0 5 2 7 5l5 7"/><path d="M7 9c2 0 3 1 4 3l4 6"/><path d="M3 15l2-1M18 9l-1 2"/></svg>', 0, 40, 100],
-  ['bodyBreast', '豐胸', '<svg viewBox="0 0 24 24"><path d="M5 4v4M19 4v4"/><path d="M5 8c0 4 3 6 7 6s7-2 7-6"/><circle cx="8.5" cy="11" r="1"/><circle cx="15.5" cy="11" r="1"/></svg>', -50, 20, 50],
-  ['bodyHip', '美胯', '<svg viewBox="0 0 24 24"><path d="M8 3c0 4-3 6-3 10 0 3 2 4 3 8M16 3c0 4 3 6 3 10 0 3-2 4-3 8"/><path d="M2 13h2M22 13h-2"/></svg>', -50, 20, 50],
+  ['bodyLeg', '長腿', '<svg viewBox="0 0 24 24"><path d="M9 3h6l-1 7h-4z"/><path d="M10 10l-1 11M14 10l1 11"/><path d="M19 13v8M17.5 19.5L19 21l1.5-1.5"/></svg>', 0, 0, 100],
+  ['bodyThigh', '瘦腿', '<svg viewBox="0 0 24 24"><path d="M8 3h8l-1 8-1 10M9 11l1 10M8 3l1 8"/><path d="M4 12h2.5M20 12h-2.5"/></svg>', 0, 0, 100],
+  ['bodyWaist', '瘦腰', '<svg viewBox="0 0 24 24"><path d="M7 3c0 5 3 6 3 9s-3 4-3 9M17 3c0 5-3 6-3 9s3 4 3 9"/><path d="M4 12h3M20 12h-3"/></svg>', 0, 0, 100],
+  ['bodyBreast', '豐胸', '<svg viewBox="0 0 24 24"><path d="M5 4v4M19 4v4"/><path d="M5 8c0 4 3 6 7 6s7-2 7-6"/><circle cx="8.5" cy="11" r="1"/><circle cx="15.5" cy="11" r="1"/></svg>', 0, 0, 100],
+  ['bodyHip', '美胯', '<svg viewBox="0 0 24 24"><path d="M8 3c0 4-3 6-3 10 0 3 2 4 3 8M16 3c0 4 3 6 3 10 0 3-2 4-3 8"/><path d="M2 13h2M22 13h-2"/></svg>', -100, 0, 100],
+  ['bodyArm', '瘦手臂', '<svg viewBox="0 0 24 24"><path d="M5 5c3 0 5 2 7 5l5 7"/><path d="M7 9c2 0 3 1 4 3l4 6"/><path d="M3 15l2-1M18 9l-1 2"/></svg>', 0, 0, 100],
+  ['bodyNeck', '天鵝頸', '<svg viewBox="0 0 24 24"><circle cx="12" cy="4.5" r="2.5"/><path d="M11 7v6M13 7v6M5 17c2-3 4-4 6-4h2c2 0 4 1 6 4"/></svg>', 0, 0, 100],
+  ['bodyAuto', '一鍵美體', '<svg viewBox="0 0 24 24"><circle cx="12" cy="4.5" r="2"/><path d="M8 9h8l-1 6h-6zM10 15l-1 6M14 15l1 6"/><path d="M19 3l.6 1.4L21 5l-1.4.6L19 7l-.6-1.4L17 5l1.4-.6z" fill="currentColor"/></svg>', 0, 30, 100],
   ['bodyShoulder', '寬肩', '<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"/><path d="M4 12c1-3 4-4 8-4s7 1 8 4"/><path d="M2 9l2 2M22 9l-2 2"/></svg>', -50, 20, 50],
   ['bodySquare', '直角肩', '<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"/><path d="M10 9H4v6M14 9h6v6"/></svg>', 0, 40, 100],
-  ['bodyNeck', '天鵝頸', '<svg viewBox="0 0 24 24"><circle cx="12" cy="4.5" r="2.5"/><path d="M11 7v6M13 7v6M5 17c2-3 4-4 6-4h2c2 0 4 1 6 4"/></svg>', 0, 40, 100],
-  ['bodyHead', '小頭', '<svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><circle cx="12" cy="7" r="2" stroke-dasharray="1.5 1.5"/><path d="M5 21c1-4 4-6 7-6s6 2 7 6"/></svg>', 0, 40, 100],
 ];
 export const BODY_P0 = Object.fromEntries(BODY.map(b => [b[0], 0]));
 export const bodyOn = p => BODY.some(b => p[b[0]]);
@@ -186,13 +188,13 @@ export function bodyWarps(body, faces, p) {
 
   const rot = Math.atan2(right.y, right.x);
   // 豐胸：胸前兩點放大或縮小
-  const br = v('bodyBreast');
+  const br = v('bodyBreast') * 0.5; // 滑桿 0~100，100 跟以前 50 一樣強
   if (br) for (const sd of [-1, 1]) {
     const c = add(lerp(S, Hm, 0.3), mul(right, sd * sh * 0.22));
     out.push({ cx: c.x, cy: c.y, r: sh * 0.27, type: 'scale', s: 0.42 * br, ey: 1.1, rot });
   }
   // 美胯：髖部兩側往外（正）或往內（負）
-  const hip = v('bodyHip');
+  const hip = v('bodyHip') * 0.5; // 滑桿 -100~100，±100 跟以前 ±50 一樣強
   if (hip) for (const [i, sd] of [[LH, -1], [RH, 1]]) {
     const c = add(pts[i], mul(right, sd * sh * 0.18)), d = sh * 0.16 * hip;
     out.push({ cx: c.x, cy: c.y, dx: right.x * sd * d, dy: right.y * sd * d, r: sh * 0.42, ey: 0.75, rot });

@@ -32,7 +32,7 @@ const P0 = {
   chin: 0, dark: 0, fold: 0, eyeb: 0, teeth: 0, slimL: 0, slimR: 0, eyesL: 0, eyesR: 0,
   bg: 'keep', bgColor: '#ffffff',
   oneTap: -1, oneAmt: 100,
-  light: '', lightAmt: 70, lightBri: 0, lightCol: 0, lightDist: 50, lightX: null, lightY: null, flash: '', flashAmt: 60,
+  light: '', lightAmt: 70, lightBri: 50, lightCol: 0, lightDist: 50, lightX: null, lightY: null, flash: '', flashAmt: 60,
   blur: 0, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'lake', bgImg: 'beach', bgBlur: 30, frame: '',
   ...HAIR_P0,
   bgProtect: 1, // 背景保護：變形時背景不跟著彎
@@ -92,9 +92,9 @@ const I = {
 
 const ADJUST = [
   ['brightness', '亮度', I.sun], ['exposure', '曝光', I.exposure], ['contrast', '對比', I.contrast], ['saturation', '飽和', I.drop],
-  ['vibrance', '自然飽和', I.vib], ['structure', '結構', I.struct], ['highlights', '高光', I.high], ['shadows', '陰影', I.shadow],
-  ['temp', '色溫', I.temp], ['tint', '色調', I.tint], ['texture', '質感', I.texture, 0],
-  ['sharpen', '銳化', I.sharp, 0], ['grain', '顆粒', I.grain, 0], ['fade', '褪色', I.fade, 0], ['vignette', '暗角', I.vig],
+  ['vibrance', '自然飽和', I.vib], ['texture', '質感', I.texture, 0], ['sharpen', '銳化', I.sharp, 0], ['structure', '結構', I.struct],
+  ['highlights', '高光', I.high], ['shadows', '陰影', I.shadow], ['temp', '色溫', I.temp], ['tint', '色調', I.tint],
+  ['grain', '顆粒', I.grain, 0], ['fade', '褪色', I.fade, 0], ['vignette', '暗角', I.vig],
 ];
 const BEAUTY = [
   ['smooth', '磨皮', I.skin, 0], ['white', '美白', I.white, 0], ['dark', '黑眼圈', I.dark, 0], ['fold', '法令紋', I.fold, 0],
@@ -475,10 +475,11 @@ $('#bCmp').addEventListener('pointerdown', e => { e.preventDefault(); cmp(true);
 
 // ---------- 面板 ----------
 const slider = $('#slider');
-function setSlider(label, min, max, val, onInput) {
+function setSlider(label, min, max, val, onInput, def) {
   $('#srow').classList.remove('hide');
   $('#sLabel').textContent = label;
   slider.min = min; slider.max = max; slider.value = val;
+  if (def !== undefined) slider.dataset.def = def; else delete slider.dataset.def; // 點數字、雙擊回到的值
   slider._on = onInput;
   setGrad(slider, label);
   paintSlider();
@@ -488,7 +489,7 @@ function paintSlider() { paintRange(slider, $('#sVal')); }
 enhanceRanges();
 slider.addEventListener('input', () => { paintSlider(); slider._on?.(+slider.value); });
 slider.addEventListener('change', () => { commit(); syncNav(); });
-$('#sVal').onclick = () => { if (!slider._on) return; slider.value = Math.max(+slider.min, 0); paintSlider(); slider._on(+slider.value); commit(); };
+$('#sVal').onclick = () => { if (!slider._on) return; slider.value = slider.dataset.def ?? Math.max(+slider.min, 0); paintSlider(); slider._on(+slider.value); commit(); };
 
 $('#tabs').onclick = e => { const b = e.target.closest('.tab'); if (b) { landing = false; showTab(b.dataset.tab); } };
 
@@ -740,7 +741,7 @@ function tabSkin(box) {
 // ---------- 身體 ----------
 function tabBody(box) {
   if (!base.body) getBody(base);
-  paramItems(box, BODY, 'bodyAuto');
+  paramItems(box, BODY, 'bodyHead');
   $('#note').textContent = bodyNote(base.body, cur);
 }
 
@@ -841,7 +842,7 @@ function tabShape(box) {
 // 照醒圖（Hypic）的打光面板：上面一排分類（自然、單色、多彩），燈可以在照片上拖，
 // 滑桿有強度、亮度、顏色、距離四個；閃光燈另外一類
 let lightSec = 'nat', lightParam = 'lightAmt';
-const LIGHT_SLIDERS = [['lightAmt', '強度', 0, 100], ['lightBri', '亮度', -50, 50], ['lightCol', '顏色', -50, 50], ['lightDist', '距離', 0, 100]];
+const LIGHT_SLIDERS = [['lightAmt', '強度', 0, 100], ['lightBri', '亮度', 0, 100], ['lightCol', '顏色', -50, 50], ['lightDist', '距離', 0, 100]];
 // 立體深度圖：人像遮罩或臉換了才重算
 function ensureGeo() {
   const b = base, mask = b.matte || b.seg?.person;
@@ -890,7 +891,7 @@ function tabLight(box) {
     label: name, icon: name, cls: 'wide', on: lightParam === k, onclick: () => { lightParam = k; showTab('light'); },
   })));
   const [k, name, min, max] = LIGHT_SLIDERS.find(x => x[0] === lightParam);
-  setSlider(name, min, max, P[k], v => { P[k] = v; render(); lightDot(); });
+  setSlider(name, min, max, P[k], v => { P[k] = v; render(); lightDot(); }, k === 'lightBri' ? P0.lightBri : undefined);
   $('#note').textContent = (base.faces && !base.faces.length ? '沒找到臉，燈以照片中間為準。' : '') + '在照片上拖曳移動燈的位置。';
 }
 // 燈的位置：照片上的一個小圓圈

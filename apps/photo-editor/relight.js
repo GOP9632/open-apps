@@ -221,7 +221,7 @@ export function litParams(P, base, geo) {
     lights.push({ pos: [x, y, zz, ref], col: col.map(c => c * I), par });
   };
   if (L) {
-    const k = P.lightAmt / 100, bri = 1 + P.lightBri / 100, s = 0.4 + P.lightDist / 50 * 0.6; // 距離 0~100 → 0.4~1.6 倍
+    const k = P.lightAmt / 100, bri = 1 + (P.lightBri - 50) / 100, /* 亮度 0~100，預設 50 照 Hypic */ s = 0.4 + P.lightDist / 50 * 0.6; // 距離 0~100 → 0.4~1.6 倍
     const l0 = L.l[0];
     const dx = P.lightX ?? l0.dx, dy = P.lightY ?? l0.dy;
     const tint = c => L.cat === 'nat' ? temp(c, P.lightCol / 50) : rot(c, P.lightCol * 3.6);
