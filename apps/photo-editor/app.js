@@ -1,5 +1,6 @@
 import { Renderer } from './gl.js';
-import { FILTERS, bakeLUT, thumb } from './filters.js';
+import { FILTERS, bakeLUT, thumb, filterFn } from './filters.js';
+import { loadXT, xtData, xtItem } from './xt.js';
 import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor } from './ai.js';
 import { STICKERS, STICKER_CATS, EMOJIS, EMOJI_FONT, BLENDS, blendById, stickerAR, stickerURL, svgURL, renderSticker, putCanvas, getCanvas, canvasURL, touchCanvas, ownImages } from './stickers.js';
 import { FX, OVERLAYS, BG_PHOTOS, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
@@ -440,11 +441,11 @@ function effects() {
 let gradeLut = null, gradeLutKey = '';
 function getGradeLut() {
   const k = gradeKey(P) + '|' + P.filter + '|' + P.filterAmt;
-  if (k !== gradeLutKey) { gradeLutKey = k; gradeLut = bakeLUT(gradeFn(P, P.filter === 'none' ? null : FILTERS.find(f => f.id === P.filter).fn)); }
+  if (k !== gradeLutKey) { gradeLutKey = k; gradeLut = bakeLUT(gradeFn(P, filterFn(P.filter))); }
   return gradeLut;
 }
 function getLut(id) {
-  if (!lutCache.has(id)) lutCache.set(id, bakeLUT(FILTERS.find(f => f.id === id).fn));
+  if (!lutCache.has(id)) { const fn = filterFn(id); if (!fn) return null; lutCache.set(id, bakeLUT(fn)); }
   return lutCache.get(id);
 }
 
@@ -684,15 +685,43 @@ function tabGrade2(box) {
   tabGrade(box, { P: () => P, render, commit, setSlider, hideSlider, item, note: t => { $('#note').textContent = t; }, refresh: () => showTab('grade') });
 }
 
+// 濾鏡分類：「基本」是自己調的 15 個，其他是照醒圖分類的醒圖風格濾鏡（xt.js）
+let fCat = -1, thumbJob = 0;
 function tabFilter(box) {
-  base.thumbs ||= FILTERS.map(f => thumb(base.canvas, f.fn));
-  FILTERS.forEach((f, i) => box.append(item({
-    label: f.name, cls: 'ft', on: P.filter === f.id, style: `background-image:url(${base.thumbs[i]})`,
-    onclick: () => {
-      if (P.filter === f.id && f.id !== 'none') return;
-      P.filter = f.id; P.filterAmt = P0.filterAmt; render(); commit(); showTab('filter');
-    },
+  const xd = xtData();
+  if (!xd) loadXT().then(d => { if (d && tab === 'filter') showTab('filter'); });
+  if (xd && fCat === -1 && xtItem(P.filter)) fCat = xtItem(P.filter).cat;
+  const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
+  [[-1, '基本'], ...(xd ? xd.cats.map((c, i) => [i, c]) : [])].forEach(([i, name]) => cats.append(item({
+    label: name, icon: name, cls: 'wide', on: fCat === i, set: i === -1 ? FILTERS.some(f => f.id === P.filter && f.id !== 'none') : xtItem(P.filter)?.cat === i,
+    onclick: () => { fCat = i; showTab('filter'); },
   })));
+  base.thumbs ||= {};
+  const list = fCat === -1 || !xd ? FILTERS.map(f => ({ ...f, def: P0.filterAmt })) : [{ ...FILTERS[0], def: P0.filterAmt }, ...xd.items.filter(x => x.cat === fCat)];
+  const els = list.map(f => {
+    const el = item({
+      label: f.name, cls: 'ft', on: P.filter === f.id, style: base.thumbs[f.id] ? `background-image:url(${base.thumbs[f.id]})` : '',
+      onclick: () => {
+        if (P.filter === f.id && f.id !== 'none') return;
+        P.filter = f.id; P.filterAmt = f.def ?? P0.filterAmt; render(); commit(); showTab('filter');
+      },
+    });
+    box.append(el); return el;
+  });
+  // 縮圖分批算，不卡畫面
+  const job = ++thumbJob, src = base.thumbSrc ||= (() => { const c = document.createElement('canvas'); c.width = c.height = 96; const s = Math.min(base.canvas.width, base.canvas.height); c.getContext('2d').drawImage(base.canvas, (base.canvas.width - s) / 2, (base.canvas.height - s) / 2, s, s, 0, 0, 96, 96); return c; })();
+  let k = 0;
+  const step = () => {
+    if (job !== thumbJob || tab !== 'filter') return;
+    const t0 = performance.now();
+    for (; k < list.length && performance.now() - t0 < 12; k++) {
+      const f = list[k];
+      if (!base.thumbs[f.id]) base.thumbs[f.id] = thumb(src, filterFn(f.id), 96);
+      els[k].querySelector('.ic').style.backgroundImage = `url(${base.thumbs[f.id]})`;
+    }
+    if (k < list.length) setTimeout(step, 0);
+  };
+  step();
   if (P.filter === 'none') hideSlider();
   else setSlider('強度', 0, 100, P.filterAmt, v => { P.filterAmt = v; render(); });
 }
@@ -2013,6 +2042,8 @@ $('#bCollage').onclick = () => { multiFor = 'grid'; $('#fileMulti').click(); };
 $('#bTpl').onclick = () => { multiFor = 'tpl'; $('#fileMulti').click(); };
 $('#fileMulti').onchange = e => { const f = [...e.target.files]; e.target.value = ''; if (f.length) openCollage(multiFor, f); };
 initCollage({ loadFile, toast, busy });
+// 醒圖風格濾鏡的參數先在背景載入；載入前選到的（例如復原回來的）載好後重畫
+loadXT().then(d => { if (d && base && xtItem(P.filter)) { gradeLutKey = ''; render(); } });
 ['#file', '#cam'].forEach(s => $(s).onchange = e => { loadFile(e.target.files[0]); e.target.value = ''; });
 addEventListener('dragover', e => e.preventDefault());
 addEventListener('drop', e => { e.preventDefault(); const f = [...e.dataTransfer.files].find(f => f.type.startsWith('image/')); if (f) loadFile(f); });
