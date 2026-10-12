@@ -389,12 +389,14 @@ async function decode16k(blob) {
   } finally { ctx.close(); }
 }
 const blobToDataURL = b => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(b); });
-// 免費方案有每分鐘次數限制，碰到 429 就等一下再試
+// 免費方案有每分鐘次數限制，碰到 429 就等一下再試；Gemini 太忙（503）或暫時出錯也等一下再試
+const BUSY = /\b(500|503|504)\b|UNAVAILABLE|high demand|overloaded|INTERNAL/i;
 async function post(url, opts, onWait) {
   for (let i = 0; ; i++) {
     const r = await fetch(url, opts);
-    if (r.status !== 429 || i >= 4) return r;
-    onWait?.(); await new Promise(res => setTimeout(res, 20000 * (i + 1)));
+    const busy = [500, 503, 504].includes(r.status) || (r.status === 502 && BUSY.test(await r.clone().text().catch(() => '')));
+    if ((r.status !== 429 && !busy) || i >= 5) return r;
+    onWait?.(); await new Promise(res => setTimeout(res, r.status === 429 ? 20000 * (i + 1) : 4000 * 2 ** i));
   }
 }
 const b64 = async blob => (await blobToDataURL(blob)).split(',')[1];
@@ -403,6 +405,7 @@ async function apiError(r) {
   let hint = '';
   if (r.status === 402 && r.url.includes('generativelanguage')) hint = '這把 Gemini key 所在的專案綁了預付帳單，但額度是 0。到 AI Studio 把專案和帳單解除連結，或建一個沒綁帳單的新專案再產生 key，就會回到免費方案。也可以先改用 Groq。\n\n';
   if (r.status === 429) hint = '免費額度用完了，等一下再試，或改用其他引擎。\n\n';
+  if (r.status === 503) hint = 'Gemini 現在太多人用，已經自動重試好幾次還是不行。等幾分鐘再按一次轉寫，已經轉好的段落會保留。\n\n';
   return new Error(`${hint}${r.status} ${r.statusText}\n${t.slice(0, 500)}`);
 }
 
@@ -509,6 +512,7 @@ function mergeSegments(segs) {
   return out;
 }
 
+const partialTranscripts = new Map();
 async function transcribeSession(id, onProgress) {
   const s = await DB.get('sessions', id);
   const folder = s.folderId ? await DB.get('folders', s.folderId) : null;
@@ -521,12 +525,17 @@ async function transcribeSession(id, onProgress) {
   const per = Math.max(1, engine === 'cloud' ? 2 : engine === 'gemini' ? Math.min(5, S.chunkMin) : S.chunkMin) * 60 * 16000;
   const total = Math.ceil(pcm.length / per);
   // 各段同時送出（本機 whisper.cpp 吃自己電腦的 CPU，維持一次一段）。每段的講者代號本來就各自獨立，平行不影響分人
-  const parts = new Array(total);
-  let next = 0, done = 0, failed = false;
-  onProgress(`轉寫中 0 / ${total} 段…`);
+  // 已經轉好的段落先留著，中途失敗再按一次轉寫就只補沒轉好的
+  const key = `${id}|${engine}|${per}|${total}|${folder?.teacherSample ? 1 : 0}`;
+  if (partialTranscripts.get(id)?.key !== key) partialTranscripts.set(id, { key, parts: new Array(total) });
+  const parts = partialTranscripts.get(id).parts;
+  let next = 0, failed = false;
+  const todo = [...parts.keys()].filter(i => !parts[i]);
+  let done = total - todo.length;
+  onProgress(`轉寫中 ${done} / ${total} 段…`);
   const worker = async () => {
-    while (next < total && !failed) {
-      const i = next++;
+    while (next < todo.length && !failed) {
+      const i = todo[next++];
       const offset = i * per / 16000;
       const wav = encodeWav(pcm.subarray(i * per, Math.min(pcm.length, (i + 1) * per)), 16000);
       const segs = await Engines[engine](wav, folder);
@@ -537,9 +546,12 @@ async function transcribeSession(id, onProgress) {
       onProgress(`轉寫中 ${++done} / ${total} 段…`);
     }
   };
-  const lanes = Math.min(total, engine === 'whispercpp' ? 1 : 4);
-  await Promise.all(Array.from({ length: lanes }, () => worker().catch(e => { failed = true; throw e; })));
+  const lanes = Math.min(todo.length, engine === 'whispercpp' ? 1 : 4);
+  // 一段失敗就不再開新段，但等送出去的都回來，好把它們留著
+  const errs = (await Promise.allSettled(Array.from({ length: lanes }, () => worker().catch(e => { failed = true; throw e; })))).filter(x => x.status === 'rejected');
+  if (errs.length) throw errs[0].reason;
   const out = parts.flat();
+  partialTranscripts.delete(id);
   s.transcript = { engine, createdAt: Date.now(), segments: mergeSegments(out.filter(x => x.text)), merged: true };
   if (!s.duration) s.duration = pcm.length / 16000;
   await DB.put('sessions', s);
@@ -782,7 +794,7 @@ const Cloud = {
     const c = this.cfg();
     const r = await post(`${c.supabaseUrl}/functions/v1/recorder-ai`, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + await this.token(), apikey: c.supabaseKey }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || `雲端錯誤 ${r.status}`);
+    if (!r.ok) throw new Error(BUSY.test(j.error || '') ? 'Gemini 現在太多人用，已經自動重試好幾次還是不行。等幾分鐘再按一次轉寫，已經轉好的段落會保留。' : j.error || `雲端錯誤 ${r.status}`);
     return j;
   },
   async getStatus(force) { if (!this.status || force) this.status = await this.call({ task: 'status' }); return this.status; },
