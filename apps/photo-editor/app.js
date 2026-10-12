@@ -15,6 +15,7 @@ import { BODY, BODY_P0, BODY_MAN, REG_OF, bodyOn, detectBody, measureBody, bodyW
 import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } from './faceshape.js';
 import { WarpField } from './warpfield.js';
 import { RESHAPE, liqDab, liqMoves, liqRadius } from './reshape.js';
+import { tabDoodle, doodleInput } from './doodle.js';
 import { FONTS, T0, TEXT_COLORS, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
 import { initCollage, openCollage } from './collage.js';
 import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightPosOf, lightGrad } from './relight.js';
@@ -292,7 +293,7 @@ function paintFrame() {
 // 會在照片上拖曳的工具（消除、裁切、移動燈）不接手機雙指，免得跟筆刷打架
 const view = canvasZoom({
   stage: $('#stage'), box: $('#fbox'),
-  canPan: (e, touch) => !!base && !e.target.closest('.st,.tx') && (!touch || !(tab === 'erase' || tab === 'crop' || tab === 'reshape' || (tab === 'light' && P.light))),
+  canPan: (e, touch) => !!base && !e.target.closest('.st,.tx') && (!touch || !(tab === 'erase' || tab === 'crop' || tab === 'reshape' || tab === 'doodle' || (tab === 'light' && P.light))),
   // 手機上平常不顯示縮放按鈕，放大了才出現（點百分比回到全覽）
   onChange: z => { $('#zPct').textContent = Math.round(frameK * z * 100) + '%'; $('#zoom').classList.toggle('zoomed', z > 1); },
 });
@@ -492,6 +493,8 @@ function commit() {
   hist = hist.slice(0, hi + 1);
   hist.push({ base, P: clone(P), texts: clone(texts), stickers: clone(stickers) });
   if (hist.length > 40) hist.shift();
+  // 塗鴉、消除每一步都是一張新的整張照片，手機記憶體有限：最多留 8 張不同的照片
+  while (new Set(hist.map(h => h.base)).size > 8) hist.shift();
   hi = hist.length - 1;
   syncHist();
 }
@@ -549,7 +552,7 @@ const GROUPS = [
   ['portrait', '人像', 'P', ['beauty', 'shape', 'sculpt', 'makeup', 'skin', 'aiskin', 'light', 'hair', 'body', 'reshape', 'cover']],
   ['filter', '濾鏡', 'F', ['looks', 'filter']],
   ['adjust', '調節', 'A', ['adjust', 'grade']],
-  ['erase', '消除', 'E', ['erase', 'cutout']],
+  ['erase', '消除', 'E', ['erase', 'doodle', 'cutout']],
   ['fun', '創意', 'X', ['fun', 'cut']],
   ['text', '文字', 'T', ['text', 'sticker']],
   ['compose', '構圖', 'C', ['crop', 'frame']],
@@ -656,7 +659,7 @@ function showTab(t) {
   $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true;
   gradeHide();
   if (!base) return;
-  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, aiskin: tabAiSkin, sculpt: tabSculpt, reshape: tabReshape, light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
+  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, aiskin: tabAiSkin, sculpt: tabSculpt, reshape: tabReshape, doodle: box => tabDoodle(box, { item, setSlider, showTab }), light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
   lightDot(); bmBox(); rsRing();
@@ -716,6 +719,7 @@ function paramRows(box, list) {
 
 // 消除筆在 erase.js，這裡把它要用的東西傳過去
 const eraseApp = { get base() { return base; }, setBase, commit, item, hideSlider, showTab, toast, busy };
+doodleInput($('#wrap'), { get base() { return base; }, tab: () => tab, setBase, commit });
 function tabEraseHere(box) { tabErase(box, eraseApp); }
 
 function tabAdjust(box) { paramItems(box, ADJUST, 'brightness'); }
