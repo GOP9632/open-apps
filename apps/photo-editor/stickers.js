@@ -143,19 +143,19 @@ export const EMOJIS = ['❤️', '💖', '✨', '⭐', '🌸', '🎀', '🔥', '
 export const EMOJI_FONT = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
 export const stickerById = id => STICKERS.find(s => s.id === id);
 
-// 混合模式：醒圖貼圖的「暈染」有 10 種，名稱改用 Photoshop 中文版的叫法
+// 混合模式：照 Hypic 貼紙的 10 種，名稱和順序照 Hypic
 // [id, 名稱, canvas 的 globalCompositeOperation, CSS 的 mix-blend-mode]
 export const BLENDS = [
   ['normal', '正常', 'source-over', 'normal'],
-  ['darken', '變暗', 'darken', 'darken'],
-  ['multiply', '色彩增值', 'multiply', 'multiply'],
-  ['burn', '加深', 'color-burn', 'color-burn'],
-  ['lighten', '變亮', 'lighten', 'lighten'],
+  ['multiply', '疊加', 'multiply', 'multiply'],
   ['screen', '濾色', 'screen', 'screen'],
-  ['dodge', '線性加亮', 'lighter', 'plus-lighter'],
-  ['overlay', '覆蓋', 'overlay', 'overlay'],
+  ['overlay', '覆疊', 'overlay', 'overlay'],
   ['soft', '柔光', 'soft-light', 'soft-light'],
-  ['diff', '差異化', 'difference', 'difference'],
+  ['darken', '暗化', 'darken', 'darken'],
+  ['lighten', '亮化', 'lighten', 'lighten'],
+  ['burn', '色彩加深', 'color-burn', 'color-burn'],
+  ['dodge', '線性柔和', 'lighter', 'plus-lighter'],
+  ['diff', '差別', 'difference', 'difference'],
 ];
 export const blendById = id => BLENDS.find(b => b[0] === id) || BLENDS[0];
 
