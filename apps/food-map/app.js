@@ -1653,15 +1653,21 @@ const App = {
   shareSetup() {
     const base = `${location.origin}${location.pathname}?add=`;
     const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    const iosSteps = `<ol class="howto">
-        <li>打開 iPhone 內建的「<b>捷徑</b>」App，按右上角 <b>＋</b>，把名稱改成「<b>收進美食收藏</b>」。</li>
-        <li>按下方的 <b>ⓘ</b>（或右上角設定），打開「<b>在分享表單中顯示</b>」。</li>
-        <li>搜尋並加入「<b>URL</b>」動作，貼上下面這串，然後在最後面點一下，從上方變數選「<b>捷徑輸入</b>」。
-          <div class="copy-row"><code>${esc(base)}</code><button class="btn sm" onclick="App.copy(${esc(JSON.stringify(base))})">${ic('copy')} 複製</button></div></li>
-        <li>再加入「<b>打開 URL</b>」動作，按完成。</li>
+    // 已經簽好章的捷徑檔（入口網站和 GitHub Pages 各一份，打開的網址不同，登入狀態才對得上）
+    const scFile = `shortcut/${/netlify\.app$/.test(location.hostname) ? 'portal' : 'github'}/${encodeURIComponent('收進美食收藏')}.shortcut`;
+    const iosSteps = `<a class="btn primary big block" href="${scFile}" download="收進美食收藏.shortcut">${ic('down')} 加入分享捷徑</a>
+      <ol class="howto" style="margin-top:14px">
+        <li>點上面的按鈕，Safari 問要不要下載時按「<b>下載</b>」。</li>
+        <li>點網址列左邊的 <b>下載</b> 圖示（或到「檔案」App 的下載項目），打開「收進美食收藏」，按「<b>加入捷徑</b>」。</li>
         <li>之後在 IG 按 <b>分享</b> → <b>分享到…</b> → 選「<b>收進美食收藏</b>」，就會打開這裡自動找店家，按收藏就好。</li>
       </ol>
-      <p class="muted">捷徑會用 Safari 打開，第一次要在 Safari 登入一次。想讓它排在分享選單前面，可以在分享選單最右邊「編輯動作」把它加到最愛。</p>`;
+      <p class="muted">捷徑會用 Safari 打開，第一次要在 Safari 登入一次。想讓它排在分享選單前面，可以在分享選單最右邊「編輯動作」把它加到最愛。</p>
+      <details class="muted"><summary>想自己做捷徑</summary><ol class="howto" style="margin-top:8px">
+        <li>打開「捷徑」App，按右上角 <b>＋</b>，名稱改成「收進美食收藏」，在設定裡打開「在分享表單中顯示」。</li>
+        <li>加入「<b>URL</b>」動作，貼上下面這串，最後面接上變數「捷徑輸入」。
+          <div class="copy-row"><code>${esc(base)}</code><button class="btn sm" onclick="App.copy(${esc(JSON.stringify(base))})">${ic('copy')} 複製</button></div></li>
+        <li>再加入「<b>打開 URL</b>」動作，按完成。</li>
+      </ol></details>`;
     const androidSteps = `<ol class="howto">
         <li>用 Chrome 打開這個網頁，選單裡按「<b>加到主畫面</b>」（安裝應用程式）。</li>
         <li>之後在 IG 按 <b>分享</b> → <b>分享到…</b>，選「<b>美食收藏</b>」就會自動找店家。</li>
