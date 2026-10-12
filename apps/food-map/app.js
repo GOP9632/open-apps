@@ -788,7 +788,13 @@ const Swipe = {
 // ---------- 動作 ----------
 const App = {
   async boot() {
-    try { await DB.loadAll(); } catch (e) { console.error(e); toast('讀取資料失敗：' + e.message, 5000); }
+    // 剛換發的登入憑證，資料庫的時鐘有時還沒追上（JWT issued at future），等一下再讀，不然會整個空白
+    for (let i = 0; ; i++) {
+      try { await DB.loadAll(); break; } catch (e) {
+        if (i < 4 && /JWT|PGRST30/.test(`${e.code} ${e.message}`)) { await new Promise(r => setTimeout(r, 1000 * (i + 1))); continue; }
+        console.error(e); toast('讀取資料失敗：' + e.message, 5000); break;
+      }
+    }
     if (cloud() && S.user) {
       const code = load('food.pendingJoin', '');
       if (code) { save('food.pendingJoin', ''); await App.join(code); }
