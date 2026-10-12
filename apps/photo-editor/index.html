@@ -86,6 +86,8 @@ button{background:none;border:0;padding:0;cursor:pointer}
 #bmbox{position:absolute;border:2px dashed #fff;box-shadow:0 0 0 1px rgba(0,0,0,.4);pointer-events:none;z-index:5;box-sizing:border-box}
 #bmbox.band{border-left:0;border-right:0;background:rgba(255,255,255,.08)}
 #bmbox.oval{border-radius:50%}
+#rsring{position:absolute;transform:translate(-50%,-50%);border:2px solid #fff;border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.4);pointer-events:none;z-index:5}
+#rsring.idle{opacity:.6;border-style:dashed}
 #lightdot{position:absolute;width:26px;height:26px;margin:-13px 0 0 -13px;border:2px solid #fff;border-radius:50%;background:rgba(255,236,170,.35);box-shadow:0 0 0 1px rgba(0,0,0,.35),0 0 12px rgba(255,230,150,.8);pointer-events:none;z-index:5}
 .it.stk .ic svg{width:38px;height:30px;stroke:none;fill:initial;stroke-width:initial}
 .it.stk .ic img{max-width:38px;max-height:34px;display:block}
@@ -315,6 +317,7 @@ input[type=range].grad::-moz-range-progress{background:transparent}
       <button class="tab" data-tab="light">光影</button>
       <button class="tab" data-tab="hair">頭髮</button>
       <button class="tab" data-tab="body">身體</button>
+      <button class="tab" data-tab="reshape">重新塑形</button>
       <button class="tab" data-tab="cover">遮臉</button>
       <button class="tab" data-tab="looks">一鍵出片</button>
       <button class="tab" data-tab="filter">濾鏡</button>

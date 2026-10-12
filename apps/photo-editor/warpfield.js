@@ -59,9 +59,9 @@ export class WarpField {
   }
 
   // 回傳 { tex, step }；沒有任何變形時 step = 0（主 shader 會跳過）
-  update(w, h, faces, moves, pins) {
+  update(w, h, faces, moves, pins, boxes = []) {
     if (!moves.length && !pins.length) { this.key = ''; return { tex: this.tex, step: 0 }; }
-    const key = w + 'x' + h + JSON.stringify(moves) + JSON.stringify(pins);
+    const key = w + 'x' + h + JSON.stringify(moves) + JSON.stringify(pins) + JSON.stringify(boxes);
     if (key === this.key) return { tex: this.tex, step: this.step };
     this.key = key;
 
@@ -86,6 +86,13 @@ export class WarpField {
       const x0 = Math.max(0, b.cx - b.half), x1 = Math.min(w, b.cx + b.half), y0 = Math.max(0, b.cy - b.half), y1 = Math.min(h, b.cy + b.half);
       if (x1 - x0 < 4 || y1 - y0 < 4) continue;
       const cell = Math.max(b.cell, (x1 - x0) / 220, (y1 - y0) / 220);
+      grid(x0, y0, x1, y1, Math.max(2, Math.round((x1 - x0) / cell)), Math.max(2, Math.round((y1 - y0) / cell)));
+    }
+    // 重新塑形（液化）畫過的範圍也用細網格
+    for (const b of boxes) {
+      const x0 = Math.max(0, b.x0), x1 = Math.min(w, b.x1), y0 = Math.max(0, b.y0), y1 = Math.min(h, b.y1);
+      if (x1 - x0 < 4 || y1 - y0 < 4) continue;
+      const cell = Math.max(b.cell, (x1 - x0) / 200, (y1 - y0) / 200);
       grid(x0, y0, x1, y1, Math.max(2, Math.round((x1 - x0) / cell)), Math.max(2, Math.round((y1 - y0) / cell)));
     }
     this.step = Math.max(maxD / 30000, 1e-4);
