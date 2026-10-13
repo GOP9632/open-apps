@@ -20,7 +20,7 @@ import { tabBeautyBrush, beautyBrushInput } from './beautybrush.js';
 import { FONTS, T0, TEXT_COLORS, TEXT_FX, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
 import { initCollage, openCollage } from './collage.js';
 import { CATS as TPL_CATS } from './templates.js';
-import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightPosOf, lightGrad } from './relight.js';
+import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightPosOf, lightGrad, flashStats } from './relight.js';
 import { enhanceRanges, paintRange, setGrad, nudge, canvasZoom } from './ui.js';
 import { tabLooks } from './looks.js';
 import { STROKES, STROKE_COLORS, STROKE0, strokeLayer, alphaFromMatte, alphaBox } from './outline.js';
@@ -250,6 +250,7 @@ function findFaces() {
     if (b === base && !f.length && landing && tab === 'beauty') { landing = false; showTab('filter'); }
     const seg = f.length ? await getSeg(b) : null;
     b.mask = f.length ? skinMask(f, b.canvas.width, b.canvas.height, seg) : null;
+    b.flashSt = seg && b.mask ? flashStats(b.canvas, seg, b.mask) : null;
     if (b === base) { R.setMask(b.mask); render(); if (tab === 'beauty' || tab === 'sticker' || tab === 'makeup' || tab === 'looks') showTab(tab); }
     return f;
   }).catch(e => { console.warn(e); b.faces = []; b.faceErr = true; if (b === base && (tab === 'beauty' || tab === 'makeup')) showTab(tab); return []; });
