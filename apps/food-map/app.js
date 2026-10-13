@@ -71,6 +71,58 @@ const ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24"><path d="
 
 // ---------- 小工具 ----------
 const $ = s => document.querySelector(s);
+// 只改有變的地方：同一張卡片、同一張照片留著不重建（整片換掉的話照片要重新解碼，iPhone 上會閃、會卡一下）
+// 有 data-id 的元素按 id 對應（篩選、排序後順序變了也認得）；有 data-keep 的元素（小地圖、影片框）內容由程式自己管，值一樣就整個不動
+function morph(el, html) {
+  const t = document.createElement('template'); t.innerHTML = html;
+  morphKids(el, t.content);
+}
+const keyOf = n => n.nodeType === 1 ? n.getAttribute('data-id') : null;
+// 篩選、搜尋時暫時拿掉的卡片先留著，條件改回來時直接拿回來用（照片不用重新解碼）
+const POOL = new Map();
+function morphKids(old, neu) {
+  const keyed = new Map();
+  for (const c of old.childNodes) { const k = keyOf(c); if (k) keyed.set(k, c); }
+  let cur = old.firstChild;
+  for (const n of [...neu.childNodes]) {
+    const k = keyOf(n);
+    let m = null;
+    if (k) {
+      m = keyed.get(k); if (m && m.nodeName === n.nodeName) keyed.delete(k); else m = null;
+      const pk = n.nodeName + k;
+      if (!m && POOL.has(pk)) { m = POOL.get(pk); POOL.delete(pk); }
+    }
+    else if (cur && !keyOf(cur) && cur.nodeName === n.nodeName) m = cur;
+    if (!m) { old.insertBefore(n, cur); continue; }
+    if (m === cur) cur = cur.nextSibling; else old.insertBefore(m, cur);
+    // data-keep 不一樣（換了一間店的小地圖、換了影片）：整個換新的
+    if (m.nodeType === 1 && m.getAttribute('data-keep') !== n.getAttribute('data-keep')) { old.replaceChild(n, m); continue; }
+    morphNode(m, n);
+  }
+  while (cur) {
+    const nx = cur.nextSibling, k = keyOf(cur); old.removeChild(cur);
+    if (k) { POOL.set(cur.nodeName + k, cur); if (POOL.size > 400) POOL.delete(POOL.keys().next().value); }
+    cur = nx;
+  }
+}
+function morphNode(a, b) {
+  if (a.nodeType !== 1) { if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue; return; }
+  if (a.isEqualNode(b)) return;
+  if (a.hasAttribute('data-keep')) return;
+  for (const { name } of [...a.attributes]) if (!b.hasAttribute(name)) a.removeAttribute(name);
+  for (const { name, value } of b.attributes) {
+    if (a.getAttribute(name) === value) continue;
+    // 已經顯示過的照片不要再變回透明（淡入只在第一次）
+    if (a.tagName === 'IMG' && name === 'class' && a.complete && a.naturalWidth) continue;
+    a.setAttribute(name, value);
+  }
+  const focused = a === document.activeElement;
+  if ((a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && !focused && a.value !== (b.getAttribute('value') ?? b.textContent)) a.value = a.tagName === 'INPUT' ? b.getAttribute('value') ?? '' : b.textContent;
+  if (a.type === 'radio' || a.type === 'checkbox') a.checked = b.hasAttribute('checked');
+  if (a.tagName === 'TEXTAREA') return;
+  morphKids(a, b);
+  if (a.tagName === 'SELECT') { const o = a.querySelector('option[selected]'); a.value = o ? o.value : a.options[0]?.value ?? ''; }
+}
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => ((Math.random() * 16) | (c === 'x' ? 0 : 8)).toString(16)));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -796,7 +848,9 @@ const MapView = {
   async sync(fit) {
     await MapView.ensure();
     const map = MapView.map; if (!map) return;
-    map.resize();
+    // 地圖大小沒變就不重算（resize 會讓整張地圖重畫一次，切回地圖時會頓一下）
+    const box = map.getContainer(), size = box.clientWidth + 'x' + box.clientHeight;
+    if (size !== MapView._size) { MapView._size = size; map.resize(); }
     const list = visiblePlaces().filter(p => p.lat != null);
     const want = new Set(list.map(p => p.id));
     for (const [id, m] of MapView.markers) if (!want.has(id)) { m.remove(); MapView.markers.delete(id); }
@@ -833,7 +887,7 @@ const MapView = {
     }).join('');
     // 內容一樣就不重建，不然卡片照片會閃、滑到一半的位置會跳回去
     const key = html.replace(/class="loading"/g, 'class=""');
-    if (key !== MapView._cardsKey || !box.children.length) { box.innerHTML = html; MapView._cardsKey = key; }
+    if (key !== MapView._cardsKey || !box.children.length) { morph(box, html); MapView._cardsKey = key; }
     // 卡片滑到哪一張，地圖就跟到那間
     clearTimeout(MapView._st);
     box.onscroll = () => {
@@ -871,8 +925,8 @@ const MapView = {
     if (pos && MapView.map) MapView.map.flyTo({ center: [pos.lng, pos.lat], zoom: 15, speed: 1.6 });
   },
   chrome() {
-    $('#maptop').innerHTML = `<div class="search">${ic('search')}<input id="q" class="grow" placeholder="搜尋地圖上的店" value="${esc(S.f.q)}" oninput="if(!event.isComposing)App.setF('q', this.value, true)" enterkeyhint="search">${Views.home().replace('icon-btn', 'icon-btn glass')}<button class="me-btn" onclick="App.tab('me')" aria-label="我的">${cloud() && S.me ? esc(initial(S.me.name)) : ic('user')}</button></div>${filterChips({ map: true })}`;
-    $('#mapside').innerHTML = `<button class="icon-btn glass ${S.pos ? 'on' : ''}" id="locbtn" onclick="MapView.locate()" aria-label="我的位置">${ic('locate')}</button><button class="icon-btn glass" onclick="MapView.sync(true)" aria-label="看全部">${ic('refresh')}</button>`;
+    morph($('#maptop'), `<div class="search">${ic('search')}<input id="q" class="grow" placeholder="搜尋地圖上的店" value="${esc(S.f.q)}" oninput="if(!event.isComposing)App.setF('q', this.value, true)" enterkeyhint="search">${Views.home().replace('icon-btn', 'icon-btn glass')}<button class="me-btn" onclick="App.tab('me')" aria-label="我的">${cloud() && S.me ? esc(initial(S.me.name)) : ic('user')}</button></div>${filterChips({ map: true })}`);
+    morph($('#mapside'), `<button class="icon-btn glass ${S.pos ? 'on' : ''}" id="locbtn" onclick="MapView.locate()" aria-label="我的位置">${ic('locate')}</button><button class="icon-btn glass" onclick="MapView.sync(true)" aria-label="看全部">${ic('refresh')}</button>`);
   },
   // 店家詳細、編輯用的小地圖
   async mini(el, p, editable, onPick) {
@@ -1021,12 +1075,12 @@ const App = {
     tabs.classList.toggle('away', needAuth || onRound);
     const picking = !!S.sel && S.tab === 'list' && !needAuth;
     tabs.classList.toggle('selbar', picking);
-    tabs.innerHTML = picking
+    morph(tabs, picking
       ? `<button class="btn ghost" onclick="App.pick(false)">取消</button><span class="grow sel-n">已選 ${S.sel.size} 間</span><button class="btn del" ${S.sel.size ? '' : 'disabled'} onclick="App.delPicked()">${ic('trash')} 刪除</button>`
-      : [...TABS.slice(0, 2).map(App.tabBtn), `<button class="add" onclick="App.openAdd()" aria-label="新增店家">${ic('plus')}</button>`, ...TABS.slice(2).map(App.tabBtn)].join('');
-    if (needAuth) { $('#top').innerHTML = ''; $('#top').classList.add('hidden'); $('#main').innerHTML = Views.auth(); return; }
+      : [...TABS.slice(0, 2).map(App.tabBtn), `<button class="add" onclick="App.openAdd()" aria-label="新增店家">${ic('plus')}</button>`, ...TABS.slice(2).map(App.tabBtn)].join(''));
+    if (needAuth) { $('#top').innerHTML = ''; $('#top').classList.add('hidden'); App._views?.clear(); delete $('#main').dataset.view; $('#main').innerHTML = Views.auth(); return; }
     $('#top').classList.toggle('hidden', onRound || (S.tab === 'groups' && !!S.group));
-    $('#top').innerHTML = Views.header();
+    morph($('#top'), Views.header());
     if (onMap) {
       MapView.chrome();
       const first = !MapView.map || S.animate;
@@ -1039,17 +1093,17 @@ const App = {
     main.classList.toggle('enter', !!S.animate);
     // 不是換頁的重畫（同步、定位、補照片…）不重播卡片進場動畫，不然整頁會閃
     main.classList.toggle('still', !S.animate);
-    // 正在搜尋框打字（注音、拼音選字中）時，搜尋框本身不能換掉，不然選字會被打斷、只剩注音：只更新下面的結果
-    const q = document.activeElement?.id === 'q' && main.contains(document.activeElement) ? document.activeElement.closest('.search') : null;
     const html = onRound ? Views.round() : Views[S.tab]();
-    if (q && q.parentNode === main && !S.animate) {
-      const tmp = document.createElement('div'); tmp.innerHTML = html;
-      if (tmp.firstElementChild?.matches('.search')) {
-        tmp.firstElementChild.remove();
-        while (q.nextSibling) q.nextSibling.remove();
-        main.append(...tmp.childNodes);
-      } else main.innerHTML = html;
-    } else main.innerHTML = html;
+    // 換頁時把上一頁的畫面整個收起來，切回來時直接放回去（照片不用重新載入、解碼），再只改有變的地方
+    // 同一頁的重畫只改有變的地方：搜尋框不會被換掉（注音選字不會斷），照片也不會閃
+    const view = onRound ? 'round' : S.tab + (S.tab === 'groups' && S.group ? ':' + S.group.id : '');
+    if (main.dataset.view !== view) {
+      const views = App._views ||= new Map();
+      if (main.dataset.view) { const f = document.createDocumentFragment(); f.append(...main.childNodes); views.set(main.dataset.view, f); }
+      const back = views.get(view); views.delete(view);
+      if (back) { main.textContent = ''; main.append(back); morph(main, html); } else main.innerHTML = html;
+      main.dataset.view = view;
+    } else morph(main, html);
     S.animate = false;
     if (onRound) Swipe.bind();
     if (S.keepScroll) window.scrollTo(0, y);
@@ -1240,8 +1294,8 @@ const App = {
         ${p.hours ? `<div>${ic('clock')}<div class="grow" style="white-space:pre-wrap">${esc(p.hours)}</div></div>` : ''}
         ${p.note ? `<div>${ic('msg')}<div class="grow">${esc(p.note)}</div></div>` : ''}
       </div>
-      ${p.lat != null ? `<a id="mini" class="minimap" href="${mapsUrl(p)}" target="_blank" rel="noopener" aria-label="在 Google 地圖打開"></a>` : mine ? '<p class="muted" style="margin-top:12px">還沒有地圖位置，到「編輯」裡點地圖就能補上。</p>' : ''}
-      ${p.source_url || p.source_text ? `<div class="post"><div class="post-h"><span class="src">${esc(srcName(p.source_url))}</span>${p.source_url ? `<a class="btn sm" href="${esc(p.source_url)}" target="_blank" rel="noopener">${ic('ext')} ${igEmbed(p.source_url) ? '在 IG 打開' : '看原始貼文'}</a>` : ''}</div>${igEmbed(p.source_url) ? `<div class="reel" data-src="${igEmbed(p.source_url)}"><div class="reel-ph">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : ''}<span class="reel-play">${ic('play')}</span><span class="reel-msg">影片載入中…</span></div></div>` : ''}${p.source_text ? `<p class="post-t" onclick="this.classList.toggle('open')">${esc(p.source_text)}</p>` : ''}</div>` : ''}
+      ${p.lat != null ? `<a id="mini" class="minimap" data-keep="${p.id}|${p.lat}|${p.lng}" href="${mapsUrl(p)}" target="_blank" rel="noopener" aria-label="在 Google 地圖打開"></a>` : mine ? '<p class="muted" style="margin-top:12px">還沒有地圖位置，到「編輯」裡點地圖就能補上。</p>' : ''}
+      ${p.source_url || p.source_text ? `<div class="post"><div class="post-h"><span class="src">${esc(srcName(p.source_url))}</span>${p.source_url ? `<a class="btn sm" href="${esc(p.source_url)}" target="_blank" rel="noopener">${ic('ext')} ${igEmbed(p.source_url) ? '在 IG 打開' : '看原始貼文'}</a>` : ''}</div>${igEmbed(p.source_url) ? `<div class="reel" data-src="${igEmbed(p.source_url)}" data-keep="${igEmbed(p.source_url)}"><div class="reel-ph">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : ''}<span class="reel-play">${ic('play')}</span><span class="reel-msg">影片載入中…</span></div></div>` : ''}${p.source_text ? `<p class="post-t" onclick="this.classList.toggle('open')">${esc(p.source_text)}</p>` : ''}</div>` : ''}
       ${mine && cloud() && S.groups.length ? `<div class="fgroup"><div class="t">分享到群組</div><div class="chips wrap">${S.groups.map(g => { const on = myGroups.includes(g); return `<span class="chip ${on ? 'on' : ''}" onclick="App.${on ? 'unshare' : 'share'}('${g.id}', ['${p.id}']).then(() => App.openPlace('${p.id}', true))">${on ? ic('check') : ic('users')} ${esc(g.name)}</span>`; }).join('')}</div></div>` : ''}
       ${mine && findDup(p) ? `<button class="dup-hint" onclick="App.dups('${p.id}')">${ic('layers')}<span class="grow">好像和「${esc(findDup(p).name)}」是同一間</span><b>整理</b></button>` : ''}
       ${mine ? `<button class="btn ghost danger block del-row" onclick="App.delPlace('${p.id}')">${ic('trash')} 刪除這間收藏</button>` : ''}`, { cls: 'place', keep, zoom: !!from });
@@ -1869,14 +1923,9 @@ const App = {
     const old = $('#sheet .sheet');
     if (keep && old) {
       // 同一個抽屜更新內容（例如切換想去／去過），不要重播動畫，小地圖也直接搬過去不重建
-      const mini = S.miniMap && old.querySelector('#mini');
-      const reel = old.querySelector('.reel.on');
-      const st = old.scrollTop; old.className = `sheet still ${cls}`; old.innerHTML = `<div class="grab"></div>${html}`;
-      const slot = old.querySelector('#mini');
-      if (mini && slot) slot.replaceWith(mini); else { S.miniMap?.remove(); S.miniMap = null; }
-      // 影片框也搬過去，保留量好的高度，畫面不會跳（iframe 搬動會重新載入）
-      const rs = old.querySelector('.reel');
-      if (reel && rs && rs.dataset.src === reel.dataset.src) { reel.classList.remove('ready'); rs.replaceWith(reel); }
+      // 只改有變的地方：大照片不重建、不閃；小地圖和影片框（data-keep）原地留著，影片不會重新載入
+      const st = old.scrollTop; old.className = `sheet still ${cls}`; morph(old, `<div class="grab"></div>${html}`);
+      if (S.miniMap && !S.miniMap.getContainer().isConnected) { S.miniMap.remove(); S.miniMap = null; }
       old.scrollTop = st;
       App.dragSheet(); return;
     }
@@ -1961,7 +2010,8 @@ document.addEventListener('keydown', e => {
 }
 // 注音、拼音選字中的 input 不搜尋（oninput 裡跳過），選好字才搜尋
 addEventListener('compositionend', e => { if (e.target.id === 'q') App.setF('q', e.target.value, true); });
-addEventListener('scroll', () => $('#top').classList.toggle('scrolled', scrollY > 8), { passive: true });
+// 捲動時只在狀態改變那一下才動 class（每次捲動都改會一直重算樣式，捲起來不夠順）
+{ let on = null; addEventListener('scroll', () => { const v = scrollY > 8; if (v !== on) { on = v; $('#top').classList.toggle('scrolled', v); } }, { passive: true }); }
 
 (async () => {
   S.addGroups = load('food.addGroups', []);
@@ -1974,3 +2024,16 @@ addEventListener('scroll', () => $('#top').classList.toggle('scrolled', scrollY 
   await App.boot();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
+
+// 換新版：app 是從手機裡存好的版本直接打開的，背景發現有新版時（sw.js 通知）悄悄換掉——
+// 剛打開還沒碰畫面就馬上換；已經在用了就等你切出去再換，不會用到一半突然重新整理
+{
+  let touched = false, pending = false, t;
+  addEventListener('pointerdown', () => { touched = true; }, { once: true, capture: true });
+  const apply = () => {
+    if (document.hidden || (!touched && performance.now() < 10000 && !$('.sheet-bg'))) location.reload();
+    else pending = true;
+  };
+  navigator.serviceWorker?.addEventListener('message', e => { if (e.data?.type === 'food-map-update') { clearTimeout(t); t = setTimeout(apply, 1200); } });
+  document.addEventListener('visibilitychange', () => { if (pending && document.hidden) location.reload(); });
+}

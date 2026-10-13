@@ -136,6 +136,8 @@ nav.tabbar .add:active{transform:translateY(-14px) scale(.9)}
 /* 卡片只在切換分頁、第一次打開時彈出；改篩選、按想去／去過這類重畫不重播，不然每次都閃一下 */
 .pcard{cursor:pointer;transition:transform .2s var(--ease)}
 main.enter .pcard{animation:pop .45s var(--ease) both;animation-delay:calc(min(var(--i,0),14) * 35ms)}
+/* 畫面外的卡片不跑進場動畫（一次幾十張一起動，切頁會頓） */
+main.enter .pcard:nth-child(n+15){animation:none}
 .pcard:active{transform:scale(.97)}
 .ph{position:relative;aspect-ratio:4/5;border-radius:var(--r2);overflow:hidden;box-shadow:var(--sh2);background:var(--bg2)}
 .ph img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .5s var(--ease),opacity .4s}
