@@ -217,3 +217,34 @@ export async function renderSticker(s, w, h) {
   if (m) { ctx.globalCompositeOperation = 'destination-in'; ctx.drawImage(m, 0, 0, c.width, c.height); }
   return c;
 }
+
+// 線上貼紙包：Microsoft Fluent Emoji 3D（MIT 授權，© Microsoft），用 LobeHub 打包的 npm 版本（固定版本號），
+// 從 jsDelivr 下載，點開分類才載入縮圖，貼上時才把那一張讀進來。圖檔不放在 repo 裡。
+export const NET_BASE = 'https://cdn.jsdelivr.net/npm/@lobehub/fluent-emoji-3d@1.1.0/assets/';
+export const NET_PACKS = [
+  ['f3d_face', '3D表情', '1f600 1f603 1f604 1f601 1f606 1f605 1f923 1f602 1f642 1f609 1f60a 1f607 1f970 1f60d 1f929 1f618 1f60b 1f61b 1f61c 1f92a 1f61d 1f917 1f92d 1f92b 1f914 1f610 1f60f 1f634 1f62e 1f632 1f97a 1f62d 1f624 1f621 1f92f 1f633 1f973 1f60e 1f913 1f9d0 1f920 1f608 1f47b 1f480 1f47d 1f916 1f4a9 1f63a 1f63b 1f648'.split(' ')],
+  ['f3d_love', '3D愛心', '2764-fe0f 1f9e1 1f49b 1f49a 1f499 1f49c 1f90e 1f5a4 1f90d 1f496 1f497 1f493 1f49e 1f495 1f498 1f49d 1f49f 2763-fe0f 1f494 2764-fe0f-200d-1f525 2764-fe0f-200d-1fa79 1f48b 1f48c 1f339 1f490 1f48d 1f380 1faf6 1f970 1f618 1f63b 1f491'.split(' ')],
+  ['f3d_hand', '3D手勢', '1f44d 1f44e 1f44c 270c-fe0f 1f91e 1f91f 1f918 1f919 1f44b 1f44f 1f64c 1f64f 1f4aa 270d-fe0f 1f933 1f449 1f448 1f446 1f447 261d-fe0f 270b 1f91a 1f590-fe0f 1faf0 1faf5 1f91d 1f44a 270a'.split(' ')],
+  ['f3d_animal', '3D動物', '1f436 1f431 1f42d 1f439 1f430 1f98a 1f43b 1f43c 1f428 1f42f 1f981 1f42e 1f437 1f438 1f435 1f414 1f427 1f426 1f424 1f423 1f984 1f41d 1f98b 1f40c 1f41e 1f422 1f419 1f42c 1f433 1f996 1f43e 1f415 1f408'.split(' ')],
+  ['f3d_food', '3D美食', '1f353 1f352 1f351 1f349 1f34b 1f34a 1f34e 1f951 1f354 1f35f 1f355 1f32d 1f32e 1f363 1f35c 1f359 1f366 1f369 1f36a 1f382 1f370 1f9c1 1f36b 1f36c 1f36d 1f36e 2615 1f9cb 1f37a 1f942 1f379 1f37f'.split(' ')],
+  ['f3d_nature', '3D自然', '2600-fe0f 1f324-fe0f 26c5 1f308 2601-fe0f 1f327-fe0f 26c8-fe0f 2744-fe0f 2603-fe0f 26c4 1f319 2b50 1f31f 2728 26a1 1f525 1f4a7 1f30a 1f338 1f33a 1f33b 1f33c 1f337 1f340 1f33f 1f341 1f342 1f335 1f334 1f344'.split(' ')],
+  ['f3d_party', '3D派對', '1f389 1f38a 1f388 1f381 1f382 1f973 1f386 1f387 1fa85 1f380 1f3c6 1f947 1f451 1f48e 1f3b5 1f3b6 1f3a4 1f3a7 1f3ae 1f4f8 1f384 1f383 1f56f-fe0f 1faa9'.split(' ')],
+  ['f3d_life', '3D生活', '1f4f7 1f484 1f460 1f457 1f45c 1f576-fe0f 1f485 1f6cd-fe0f 1f9f8 1f4da 270f-fe0f 1f4bb 1f4f1 23f0 1f3e0 2708-fe0f 1f697 1f680 1f30d 1f5fc 1f3d6-fe0f 26f1-fe0f 1f392 1f4b0 1f4a1 1f52e 1fa9e 1f9f3'.split(' ')],
+  ['f3d_sign', '3D符號', '1f4af 2705 274c 2757 2753 203c-fe0f 2049-fe0f 1f4a2 1f4a5 1f4ab 1f4a4 1f4ac 1f4ad 1f197 1f192 1f195 1f51d 2795 1f3af 1f4cd 26a0-fe0f 1f6ab'.split(' ')],
+];
+export const netURL = code => NET_BASE + code + '.webp';
+// 下載一張線上貼紙，畫進 canvas 存起來；同一張只下載一次
+const netCache = new Map();
+export function loadNetSticker(code) {
+  if (!netCache.has(code)) {
+    const p = fetch(netURL(code)).then(r => { if (!r.ok) throw new Error(r.status); return r.blob(); })
+      .then(b => createImageBitmap(b)).then(bmp => {
+        const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+        c.getContext('2d').drawImage(bmp, 0, 0);
+        return putCanvas(c, 'net');
+      });
+    p.catch(() => netCache.delete(code));
+    netCache.set(code, p);
+  }
+  return netCache.get(code);
+}

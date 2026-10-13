@@ -3,7 +3,7 @@ import { FILTERS, bakeLUT, thumb, filterFn, skinFilterFn } from './filters.js';
 import { loadXT, xtData, xtItem } from './xt.js';
 import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor } from './ai.js';
 import { COVERS, COVER_CATS, coverPixels } from './coverface.js';
-import { STICKERS, STICKER_CATS, EMOJIS, EMOJI_FONT, BLENDS, blendById, stickerAR, stickerURL, svgURL, renderSticker, putCanvas, getCanvas, canvasURL, touchCanvas, ownImages } from './stickers.js';
+import { STICKERS, STICKER_CATS, EMOJIS, EMOJI_FONT, BLENDS, blendById, stickerAR, stickerURL, svgURL, renderSticker, putCanvas, getCanvas, canvasURL, touchCanvas, ownImages, NET_PACKS, netURL, loadNetSticker } from './stickers.js';
 import { FX, OVERLAYS, BG_PHOTOS, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
 import { matte, LOW_MEM } from './matte.js';
 import { GRADE_P0, gradeOn, gradeFn, gradeKey, tabGrade, gradeHide } from './grade.js';
@@ -1210,7 +1210,7 @@ function tabSticker(box) {
       box.append(item({ label: '複製', icon: I.copy, onclick: () => {
         stickers.push({ ...st, x: Math.min(0.95, st.x + 0.05), y: Math.min(0.95, st.y + 0.05) }); selSt = stickers.length - 1; redo();
       } }));
-      if (st.kind === 'img') box.append(item({ label: '摳出人像', icon: I.person, onclick: () => cutoutSticker(st) }));
+      if (st.kind === 'img' && !st.v.startsWith('net')) box.append(item({ label: '摳出人像', icon: I.person, onclick: () => cutoutSticker(st) }));
       box.append(item({ label: '刪除', icon: I.trash, onclick: () => { stickers.splice(selSt, 1); selSt = -1; redo(); } }));
       $('#note').textContent = stickers.length > 1 ? `第 ${selSt + 1} 層，共 ${stickers.length} 層` : '';
     }
@@ -1218,19 +1218,28 @@ function tabSticker(box) {
   }
   hideSlider();
   // 沒選貼紙：上面一排是分類，下面是貼紙庫，可以搜尋
-  STICKER_CATS.forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: !stQ && stCat === k, onclick: () => { stCat = k; stQ = ''; showTab('sticker'); } })));
+  // 線上貼紙包排在內建分類後面、「我的」前面
+  const net = NET_PACKS.find(p => p[0] === stCat);
+  [...STICKER_CATS.slice(0, -1), ...NET_PACKS, ...STICKER_CATS.slice(-1)].forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: !stQ && stCat === k, onclick: () => { stCat = k; stQ = ''; showTab('sticker'); } })));
   const sr = $('#stsearch'); sr.hidden = false;
   const q = $('#stkQ'); q.value = stQ;
   q.oninput = () => { stQ = q.value.trim(); showTab('sticker'); q.focus(); };
   $('#note').textContent = stQ ? '' : stCat === 'face' ? (!faces ? '正在找臉…' : faces.length ? `臉部貼紙會自動貼到 ${faces.length} 張臉上` : '點一下加到照片上')
-    : stCat === 'mine' ? '匯入自己的圖片當貼紙，人像照可以自動摳圖。' : '點一下加到照片上';
+    : stCat === 'mine' ? '匯入自己的圖片當貼紙，人像照可以自動摳圖。' : net ? '線上貼紙包，要連網路。圖案是 Microsoft Fluent Emoji（MIT 授權）。' : '點一下加到照片上';
   const list = stQ ? STICKERS.filter(sk => sk.name.toLowerCase().includes(stQ.toLowerCase()))
-    : stCat === 'emoji' || stCat === 'mine' ? [] : STICKERS.filter(sk => sk.cat === stCat);
+    : stCat === 'emoji' || stCat === 'mine' || net ? [] : STICKERS.filter(sk => sk.cat === stCat);
   list.forEach(sk => box.append(item({
     label: sk.name, cls: 'stk', icon: `<img src="${svgURL(sk.id)}" alt="">`, onclick: () => addSticker({ kind: 'svg', v: sk.id }, sk.face),
   })));
   if (stQ && !list.length) $('#note').textContent = '找不到這個貼紙，換個關鍵字試試。';
   if (!stQ && stCat === 'emoji') EMOJIS.forEach(e => box.append(item({ label: '', cls: 'stk emo', icon: e, onclick: () => addSticker({ kind: 'emoji', v: e }) })));
+  if (!stQ && net) {
+    net[2].forEach(code => box.append(item({
+      label: '', cls: 'stk', icon: `<img src="${netURL(code)}" alt="" loading="lazy" crossorigin="anonymous">`,
+      onclick: () => loadNetSticker(code).then(id => addSticker({ kind: 'img', v: id })).catch(() => toast('下載不到這張貼紙，檢查一下網路')),
+    })));
+    box.querySelector('img')?.addEventListener('error', () => { $('#note').textContent = '沒有網路，線上貼紙包載入不了。'; });
+  }
   if (!stQ && stCat === 'mine') {
     box.append(item({ label: '匯入圖片', icon: I.plus, onclick: () => $('#file5').click() }));
     ownImages().forEach(id => box.append(item({ label: '', cls: 'stk', icon: `<img src="${canvasURL(id)}" alt="">`, onclick: () => addSticker({ kind: 'img', v: id }) })));
@@ -1267,7 +1276,7 @@ function addSticker(s, face) {
     base.faces.forEach(pts => faceAnchor(pts, face).forEach(a => add(a.x, a.y, a.size, a.rot)));
     selSt = -1;
   } else {
-    add(W / 2, H / 2, Math.min(W, H) * (s.kind === 'img' ? 0.5 : 0.3 * Math.min(2, Math.max(1, stickerAR(s)))), 0);
+    add(W / 2, H / 2, Math.min(W, H) * (s.kind === 'img' && !s.v.startsWith('net') ? 0.5 : 0.3 * Math.min(2, Math.max(1, stickerAR(s)))), 0);
     selSt = stickers.length - 1; cur = 'size'; stSec = 'adjust';
   }
   drawStickers(); commit(); showTab('sticker');
