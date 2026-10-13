@@ -111,7 +111,7 @@ uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大 2 骨架收
 uniform vec2 uW3[${MAX_WARPS}]; // 頭的傾斜 cos、sin（收窄：最強的位置、範圍）
 uniform float uExposure, uBright, uContrast, uSat, uTemp, uTint, uHigh, uShadow, uSharp, uVig, uGrain, uFade;
 uniform float uVib, uStruct, uTexture, uLSense, uBack;
-uniform vec4 uFlashF, uFS, uFP[6], uFlashO, uFlashC, uFlashX;
+uniform vec4 uFlashF, uFS, uFP[7], uFlashO, uFlashC, uFlashX;
 uniform vec2 uFlashR, uLCap, uFlashG;
 uniform vec3 uFlashT;
 uniform vec3 uFCs, uFCast;
@@ -358,6 +358,7 @@ void main(){
   // 打光、閃光燈：照深度圖（relight.js）算每個像素的立體方向，再用點光源照
   //   深度圖座標：x、y 是深度圖的像素，z 是高度（朝鏡頭）；背景往後推 uBgDepth，
   //   所以燈離背景比較遠、比較暗，人的影子也會投在背景上
+  vec3 cPre = col;
   if (uLn > 0) {
     float pw = texture(uSeg, uv).r, skin = texture(uMask, uv).r;
     vec2 gt = uGeoTex;
@@ -532,7 +533,10 @@ void main(){
   // Hypic 是雲端 AI 整張重畫，這裡把皮膚、五官、頭髮、衣服、背景分開，各用一條公式近似它的成品，最後照滑桿跟原圖混合
   //   uSeg：R = 人像；有分類圖（uFlashF.z = 1）時 G = 0.5 + 0.5 ×（頭髮 − 五官）、B = 皮膚（挖掉五官）
   //   uFS：臉上皮膚亮度（第 90 百分位）、背景平均亮度、臉上皮膚亮度中位數；uFCs：臉上皮膚的顏色比例；uFCast：背景色偏
+  //   uFlashF.w：舊版佔多少（臉的光介於平和不平之間）；公式從打光前的顏色算，最後跟舊版的成品照比例混合
   if (uFlashF.x > 0.0) {
+    vec3 cOld = col;
+    if (uFlashF.w > 0.0) col = cPre;
     bool cls = uFlashF.z > 0.5;
     vec3 sg = texture(uSeg, uv).rgb;
     float ps = sg.r, wsk = cls ? sg.b : texture(uMask, uv).r, wh = cls ? max(2.0 * sg.g - 1.0, 0.0) : 0.0, wf = cls ? max(1.0 - 2.0 * sg.g, 0.0) : 0.0;
@@ -549,10 +553,13 @@ void main(){
     vec3 ch = col - L;
     float sh = clamp(Lbl / Lh, 1e-3, 1.5), det = clamp(L / Lbl, 1e-3, 3.0);
     // 皮膚：附近的明暗壓平（g）、細節留一部分（g2）；顏色往標準膚色拉（k），保留一點原本的顏色變化（ss）
-    float Lb0 = uFP[0].x * pow(uFP[5].z > 0.5 ? uFS.z / 0.45 : Lh / 0.65, uFP[0].w) * pow(sh, uFP[0].y);
+    float Lb0 = uFP[0].x * pow(uFP[5].z > 0.5 ? uFS.z / 0.45 : Lh / 0.65, uFP[0].w) * pow(Lh / 0.65, uFP[5].w) * pow(sh, uFP[0].y);
     vec3 C = vec3(uFP[1].x, 1.0, uFP[1].y); C /= luma(C);
     vec3 cs = uFCs, Ct = cs * pow(C / cs, vec3(uFP[1].z)); Ct /= luma(Ct);
     vec3 cp = clamp(Ct + uFP[1].w * (col / max(L, 1e-3) - cs), 0.05, 3.0);
+    // 另一種膚色：原本的顏色比例乘上暖色倍率（深膚色 Hypic 比較像這樣，不會被拉成同一個膚色），跟上面的混合
+    vec3 cm = col / max(L, 1e-3) * vec3(uFP[6].x, 1.0, uFP[6].y); cm /= max(luma(cm), 1e-3);
+    cp = mix(cp, clamp(cm, 0.05, 3.0), uFP[6].z);
     vec3 skin = Lb0 * pow(det, uFP[0].z) * cp;
     // 五官（眼睛、眉毛、嘴唇、牙齒）：跟皮膚一樣變亮，但暗的地方照原本的明暗（瞳孔、嘴巴裡還是黑的），亮的（眼白、牙齒）收一點不爆白；
     // 顏色大部分跟皮膚一樣往自然膚色拉，留一點原本的（嘴唇淡淡的粉紅，不會變橘紅）
@@ -577,6 +584,7 @@ void main(){
     float wo = clamp(1.0 - wsk - wb - wf - wh, 0.0, 1.0);
     vec3 F = (wsk * skin + wb * beard + wf * feat + wh * hair + wo * mix(bg, cl, ps)) / max(wsk + wb + wf + wh + wo, 1e-3);
     col = clamp(mix(col, clamp(F, 0.0, 1.0), uFlashF.x), 0.0, 1.0);
+    if (uFlashF.w > 0.0) col = mix(col, cOld, uFlashF.w);
   }
 
   if (uFAmt > 0.0) {
@@ -964,7 +972,7 @@ export class Renderer {
     ls.forEach((l, i) => { lp.set(l.pos, i * 4); lr.set(l.par, i * 4); le.set(l.ext || [36, 1, 0, 0], i * 4); ld.set(l.dir || [0, 0, 0, 0], i * 4); lc.set(l.col, i * 3); });
     gl.uniform1i(u.uLn, ls.length); gl.uniform4fv(u.uLPos, lp); gl.uniform4fv(u.uLPar, lr); gl.uniform4fv(u.uLExt, le); gl.uniform4fv(u.uLDir, ld); gl.uniform3fv(u.uLCol, lc);
     gl.uniform1f(u.uLAmbS, L?.ambS ?? 1); gl.uniform1f(u.uLAmbB, L?.ambB ?? 1); gl.uniform1f(u.uBgDepth, L?.bgDepth ?? 0); gl.uniform1f(u.uThick, L?.thick ?? 1e4); const ff = L?.flashF;
-    gl.uniform4fv(u.uFlashF, ff ? [ff[0], ff[1], this.hasCls ? 1 : 0, 0] : [0, 0, 0, 0]); gl.uniform2fv(u.uFlashR, L?.flashR || [0, 0]);
+    gl.uniform4fv(u.uFlashF, ff ? [ff[0], ff[1], this.hasCls ? 1 : 0, ff[3] || 0] : [0, 0, 0, 0]); gl.uniform2fv(u.uFlashR, L?.flashR || [0, 0]);
     gl.uniform4fv(u.uFlashO, L?.flashO || [0, 0, 0, 0]); gl.uniform2fv(u.uFlashG, L?.flashG || [0, 1]); gl.uniform4fv(u.uFlashC, L?.flashC || [0, 0, 1, 1]); gl.uniform3fv(u.uFlashT, L?.flashT || [1, 1, 1]); gl.uniform4fv(u.uFlashX, L?.flashX || [0, 0, 0, 0]);
     if (ff) { gl.uniform4fv(u.uFP, L.flashP); gl.uniform4fv(u.uFS, L.flashS); gl.uniform3fv(u.uFCs, L.flashCs); gl.uniform3fv(u.uFCast, L.flashCast); }
      gl.uniform2fv(u.uLCap, L?.cap || [0, 0]);
