@@ -312,7 +312,7 @@ function render() {
   if (needMatte() && !base.matteP) getMatte(base);
   raf = requestAnimationFrame(() => {
     raf = 0;
-    const lut = gradeOn(P) ? getGradeLut() : P.filter === 'none' ? null : getLut(P.filter);
+    const f = liveFilter(), lut = gradeOn(P) ? getGradeLut() : f === 'none' ? null : getLut(f);
     // 皮膚、頭髮另外一套顏色要用皮膚遮罩和分類圖，還沒找過臉就先找
     if ((lut?.skin || lut?.hair) && !base.facesP) findFaces();
     R.setLut(lut?.c, lut?.skin, lut?.hair);
@@ -470,11 +470,16 @@ function effects() {
 }
 // 調色（HSL、曲線、分色）跟濾鏡合成一張 LUT，強度已經混在裡面
 let gradeLut = null, gradeLutKey = '';
+// 醒圖一鍵出片的「富士閃光」只對有人的照片有效，沒有臉的照片醒圖保持原樣，這裡也不套
+function liveFilter() {
+  const x = xtItem(P.filter);
+  return x?.name === '富士閃光' && xtData().cats[x.cat] === '📸一鍵出片' && base?.faces && !base.faces.length ? 'none' : P.filter;
+}
 function getGradeLut() {
-  const k = gradeKey(P) + '|' + P.filter + '|' + P.filterAmt;
+  const f = liveFilter(), k = gradeKey(P) + '|' + f + '|' + P.filterAmt;
   if (k !== gradeLutKey) {
-    gradeLutKey = k; const sk = skinFilterFn(P.filter), hr = hairFilterFn(P.filter);
-    gradeLut = lutPair(bakeLUT(gradeFn(P, filterFn(P.filter))), sk && bakeLUT(gradeFn(P, sk)), hr && bakeLUT(gradeFn(P, hr)));
+    gradeLutKey = k; const sk = skinFilterFn(f), hr = hairFilterFn(f);
+    gradeLut = lutPair(bakeLUT(gradeFn(P, filterFn(f))), sk && bakeLUT(gradeFn(P, sk)), hr && bakeLUT(gradeFn(P, hr)));
   }
   return gradeLut;
 }
