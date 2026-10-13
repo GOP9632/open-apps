@@ -552,6 +552,10 @@ void main(){
     float Lh = uFS.x, L = luma(col), Lbl = max(sl / sw, 1e-3);
     vec3 ch = col - L;
     float sh = clamp(Lbl / Lh, 1e-3, 1.5), det = clamp(L / Lbl, 1e-3, 3.0);
+    // 很暗的陰影（脖子、背光那側的臉）Hypic 會提亮兩三倍：附近亮度比例有下限 uFP[4].w（平滑的取大）
+    sh = pow(pow(sh, 4.0) + pow(uFP[4].w, 4.0), 0.25);
+    // 細節分兩層：中等大小的起伏（g2）和毛孔、鬍渣那種很細的紋理（uFP[6].w，跟小模糊圖比）
+    float Lbs = max(luma(texture(uBlurS, uv).rgb), 1e-3), detM = clamp(Lbs / Lbl, 1e-3, 3.0), hf = clamp(L / Lbs, 0.2, 3.0);
     // 皮膚：附近的明暗壓平（g）、細節留一部分（g2）；顏色往標準膚色拉（k），保留一點原本的顏色變化（ss）
     // 平光臉（uFS.w）本來就沒什麼明暗，三個都往 1 拉：每一點照原本的亮度按比例提亮，臉才不會變成一片面具
     vec3 gk = mix(vec3(uFP[0].y, uFP[0].z, uFP[1].w), vec3(1.0), uFS.w);
@@ -562,7 +566,7 @@ void main(){
     // 另一種膚色：原本的顏色比例乘上暖色倍率（深膚色 Hypic 比較像這樣，不會被拉成同一個膚色），跟上面的混合
     vec3 cm = col / max(L, 1e-3) * vec3(uFP[6].x, 1.0, uFP[6].y); cm /= max(luma(cm), 1e-3);
     cp = mix(cp, clamp(cm, 0.05, 3.0), uFP[6].z);
-    vec3 skin = Lb0 * pow(det, gk.y) * cp;
+    vec3 skin = Lb0 * pow(detM, gk.y) * pow(hf, mix(uFP[6].w, 1.0, uFS.w)) * cp;
     // 五官（眼睛、眉毛、嘴唇、牙齒）：跟皮膚一樣變亮，但暗的地方照原本的明暗（瞳孔、嘴巴裡還是黑的），亮的（眼白、牙齒）收一點不爆白；
     // 顏色大部分跟皮膚一樣往自然膚色拉，留一點原本的（嘴唇淡淡的粉紅，不會變橘紅）
     vec3 feat = Lb0 * (det > 1.0 ? pow(det, 0.7) : det) * clamp(mix(cp, col / max(L, 1e-3), 0.25), 0.05, 3.0);
