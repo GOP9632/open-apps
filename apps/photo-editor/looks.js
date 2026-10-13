@@ -160,6 +160,7 @@ export function tabLooks(box, api) {
   else api.hideSlider();
   const faces = base.faces;
   api.note(!L ? '點一下套用整組風格，再點一次取消。套用後各分頁還可以再微調。'
+    : L.xt === '富士閃光' && faces && !faces.length ? '這張照片沒找到人，富士閃光跟醒圖一樣只對人像有效，照片保持原樣。'
     : L.face && faces && !faces.length ? '這張照片沒找到臉，人像風格只會套到色調；可以試試「生活風景」。'
       : L.auto ? '依這張照片自動校正色偏、亮度、去灰和細節。'
         : '整組效果一起調強度。套用後各分頁還可以再微調。');
