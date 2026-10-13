@@ -268,9 +268,11 @@ export function lightList(L, seed) {
 //   相機閃光燈：燈和壓暗（fit）、臉上補光（flat：補平多少、目標亮度、亮部保留顏色；dmax 上限；tint 顏色）、頭頂頭髮壓暗（hair）。
 //   CCD 還是舊的：燈在鏡頭上面一點，離人大約 6 個臉寬，再加偏冷、暈光、雜訊
 export const FLASHES = [
-  { id: 'direct', name: '相機閃光燈', def: 60, cam: true },
+  // old：臉本來就打得很平、很正面的照片用的舊版（燈和壓暗 fit、臉上補光 flat：補平多少、目標亮度、亮部保留顏色；dmax 上限；tint 顏色；hair 頭頂頭髮壓暗）
+  { id: 'direct', name: '相機閃光燈', def: 60, cam: true, old: { fit: { amb: [0.3, 0.32], l: [[0.462,3.624,5.453,3.193,0.0,0.015,1.197,0.798,0.223,0.0,0.434,0.236,1.598,1.14,0.988],[-1.734,0.105,7.228,3.497,0.345,0.115,0.195,0.0,0.06,0.0,0.15,-0.002,1.015,0.831,0.774],[-0.027,-1.591,4.159,7.978,0.537,0.524,0.131,0.0,1.0,0.082,0.184,0.603,1.014,1.003,0.966]] }, flat: [1.1, 0.66, 0.5], dmax: 0.25, tint: [1.06, 0.96, 0.9], hair: 0, skin: 1.0 } },
   // 富士閃光燈的成品大約是 Hypic「調整 › 閃光燈」的 53（8 張測試照擬合），所以直接用它：滑桿 50 = 調整 53
-  { id: 'softf', name: '富士閃光燈', def: 50, adj: 1.06 },
+  //   舊版時富士的成品跟調整 › 閃光燈 60 幾乎一樣：滑桿 50 = 調整 60
+  { id: 'softf', name: '富士閃光燈', def: 50, adj: 1.06, adjOld: 1.2 },
   { id: 'ccd', name: 'CCD', I: 1.2, ambS: 0.35, ambB: 0.22, spec: 0.8, soft: 0.5, wrap: 0, retro: 1 },
 ];
 
@@ -288,16 +290,21 @@ export function lightAnchor(base, geo) {
   return { x: 0.5, y: 0.38, F: Math.max(W, H) * 0.16 * k, Fpx: Math.max(W, H) * 0.16 };
 }
 
-// 閃光燈（gl.js）：照 Hypic 在 8 張公開測試照和一張自拍上的成品擬合（plans/修圖/閃光燈評審）。
+// 閃光燈（gl.js）：照 Hypic 在 8 張公開測試照上的成品擬合（plans/修圖/閃光燈評審）。
 // Hypic 的閃光燈是雲端 AI 重畫整張照片，滑桿只是跟原圖按比例混合；這裡用皮膚、頭髮、五官、背景、衣服分開的公式近似它的成品：
 //   皮膚：附近皮膚的明暗壓平（陰影那側補亮）、細節保留一部分；顏色往標準膚色拉（洗掉環境色光）
 //   調整 › 閃光燈：頭髮變暗去色，背景、衣服往中間亮度收、去色；相機閃光燈：頭髮、背景、衣服只照比例稍微變亮
-// 參數：[T 目標亮度, g 明暗壓平, g2 細節, tl 跟著原本的亮度, Cr Cb 標準膚色, k 膚色拉多少, ss 保留原本的顏色變化,
-//        頭髮 ×4, 背景 ×4, 衣服 ×4]（調整和相機各一組，用法見 gl.js）
+// 參數：[T 目標亮度, g 明暗壓平, g2 細節, tl 跟著原本的膚色亮度, Cr Cb 標準膚色, k 膚色拉多少, ss 保留原本的顏色變化,
+//        頭髮 ×4, 背景 ×4, 衣服 ×4, 鬍子亮度 a + b × 原本亮度、1 = tl 用膚色中位數, 0]（調整和相機各一組，用法見 gl.js）
 const FLASH_R = 0.2;
-const FLASH_ADJ = [0.672, 0.283, 0.524, 0.348, 1.214, 0.891, 0.654, 0.368, 0.567, 0.249, 0.261, -0.634, 0.161, 0.826, 0.024, -0.189, -0.001, 0.922, 0.427, 0];
-const FLASH_CAM = [0.728, 0.462, 0.604, 0.54, 1.266, 0.898, 0.511, 0.388, 0.883, 0, 0, 0, 0.909, 0.029, 0, 0, 0.96, 0.065, 0, 0];
-const FLASH_ST0 = { Lh: 0.65, cs: [1.3, 0.94, 0.7], Lb: 0.5, cast: [0, 0, 0] };
+// 臉本來就打得很平、很正面（暗部 ÷ 亮部 × 左右亮度比 ≥ FLASH_EVEN）的照片，Hypic 幾乎只是整體提亮，
+// 公式反而會把下顎影子、肩膀弄錯，所以改用舊版：燈和壓暗照 Hypic 強度 100 的成品擬合（格式同 LIGHT_FIT），臉上再補平
+const FLASH_EVEN = 0.67;
+const FLASH_FIT_OLD = { amb: [0.5, 0.648], l: [[0.126,1.459,2.53,0.856,0.168,0.0,0.382,0.508,0.632,0.0,0.794,1.478,0.67,0.642,0.581],[-0.218,-0.096,8.0,1.387,0.687,0.154,0.0,0.022,0.212,0.0,0.447,0.184,0.936,1.233,1.215],[0.193,-1.034,2.176,0.83,0.404,0.208,0.0,0.041,1.0,0.0,0.652,1.112,0.888,0.992,1.182]], flat: [1.5, 0.58, 0.5] };
+const FLASH_DMAX = 0.2, FLASH_T = [0.73, 1.08, 0.99];
+const FLASH_ADJ = [0.724, 0.342, 0.377, 0.175, 1.235, 0.893, 0.63, 0.284, 0.587, 0.242, 0.23, -0.006, 0.495, 0.859, 0.136, -0.741, 0, 0.922, 0.427, 0, 0.12, 0.55, 1, 0];
+const FLASH_CAM = [0.692, 0.301, 0.487, 0.45, 1.227, 0.892, 0.543, 0.337, 0.913, 0, 0, 0, 1.03, 0.012, 0, 0, 0.959, 0.065, 0, 0, 0, 0.9, 1, 0];
+const FLASH_ST0 = { Lh: 0.65, Lm: 0.45, cs: [1.3, 0.94, 0.7], Lb: 0.5, cast: [0, 0, 0] };
 
 // 一組擬合的燈（LIGHT_FIT 的格式）放進 lights：g 亮度倍數、s 範圍倍數、bl 柔焦、sp 高光倍數、ox／oy 位移、col 改顏色、gls 高光指數
 function putFit(lights, fit, A, base, k, o = {}) {
@@ -322,25 +329,31 @@ export function lightPosOf(L, P, base) {
 }
 
 // 閃光燈要的整張照片統計（照片載入、找到臉和皮膚之後算一次）：
-// Lh 臉上皮膚亮度的第 90 百分位、cs 臉上皮膚的平均顏色比例（RGB ÷ 亮度）、Lb 背景平均亮度、cast 背景的平均色偏
-export function flashStats(canvas, seg, mask) {
+// Lh 臉上皮膚亮度的第 90 百分位、Lm 中位數、cs 臉上皮膚的平均顏色比例（RGB ÷ 亮度）、Lb 背景平均亮度、cast 背景的平均色偏
+export function flashStats(canvas, seg, mask, geom) {
   const w = seg.w, h = seg.h, c = document.createElement('canvas'); c.width = w; c.height = h;
   const x = c.getContext('2d', { willReadFrequently: true });
   x.drawImage(canvas, 0, 0, w, h);
   const d = x.getImageData(0, 0, w, h).data;
   x.drawImage(mask, 0, 0, w, h);
   const mk = x.getImageData(0, 0, w, h).data;
-  const Ls = [], cs = [0, 0, 0], cast = [0, 0, 0];
+  const Ls = [], cs = [0, 0, 0], cast = [0, 0, 0], cx = geom ? geom.cx * w / canvas.width : w / 2, lr = [0, 0, 0, 0];
   let nb = 0, Lb = 0;
   for (let i = 0; i < w * h; i++) {
     const r = d[i * 4] / 255, g = d[i * 4 + 1] / 255, b = d[i * 4 + 2] / 255, L = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    if (seg.skin[i] > 0.6 && mk[i * 4] > 204) { Ls.push(L); const q = Math.max(L, 1e-3); cs[0] += r / q; cs[1] += g / q; cs[2] += b / q; }
+    if (seg.skin[i] > 0.6 && mk[i * 4] > 204) {
+      Ls.push(L); const q = Math.max(L, 1e-3); cs[0] += r / q; cs[1] += g / q; cs[2] += b / q;
+      const k = i % w < cx ? 0 : 2; lr[k] += L; lr[k + 1]++;
+    }
     if (seg.bg[i] > 0.7) { nb++; Lb += L; cast[0] += r - L; cast[1] += g - L; cast[2] += b - L; }
   }
   if (Ls.length < 50) return null;
   Ls.sort((a, b) => a - b);
+  const Lh = Math.max(0.1, Ls[Math.floor(Ls.length * 0.9)]), a = lr[0] / Math.max(lr[1], 1), b = lr[2] / Math.max(lr[3], 1);
   return {
-    Lh: Math.max(0.1, Ls[Math.floor(Ls.length * 0.9)]), cs: cs.map(v => v / Ls.length),
+    Lh, Lm: Ls[Math.floor(Ls.length * 0.5)], cs: cs.map(v => v / Ls.length),
+    // 臉的光有多平：暗部（第 10 百分位）÷ 亮部 × 左右兩半平均亮度的比
+    even: Ls[Math.floor(Ls.length * 0.1)] / Lh * Math.min(a, b) / Math.max(a, b, 1e-3),
     Lb: nb > 100 ? Lb / nb : 0.5, cast: nb > 100 ? cast.map(v => v / nb) : [0, 0, 0],
   };
 }
@@ -349,7 +362,8 @@ export function flashStats(canvas, seg, mask) {
 export function litParams(P, base, geo) {
   const L = LIGHTS.find(x => x.id === P.light), F0 = FLASHES.find(x => x.id === P.flash);
   // adj：這個樣式就是調整 › 閃光燈換個強度
-  const Fl = F0?.adj ? null : F0, ff = Math.max(0, P.flashFill || 0, F0?.adj ? Math.min(100, P.flashAmt * F0.adj) : 0) / 100;
+  const old = (base.flashSt?.even ?? 0) >= FLASH_EVEN;
+  const Fl = F0?.adj ? null : F0, ff = Math.max(0, P.flashFill || 0, F0?.adj ? Math.min(100, P.flashAmt * (old ? F0.adjOld : F0.adj)) : 0) / 100;
   if (!L && !Fl && !ff) return {};
   const A = lightAnchor(base, geo), W = base.canvas.width, H = base.canvas.height;
   const gw = geo?.w || W, gh = geo?.h || H, hFace = geo ? geo.max * 0.8 : 0;
@@ -392,6 +406,20 @@ export function litParams(P, base, geo) {
     ambS = (1 + (fit.amb[0] - 1) * k) * (1 - 0.6 * (P.lightFg || 0) / 100);
     ambB = (1 + (fit.amb[1] - 1) * k) * (1 - 0.7 * (P.lightBg || 0) / 100);
   }
+  // 舊版（臉本來就打得很平的照片）：調整 › 閃光燈只開它的時候，燈照全強度算，最後在 gl.js 照滑桿跟原圖混合；相機閃光燈的燈照擬合的全強度算
+  const Fo = old && Fl?.cam ? Fl.old : null, style = Fo && !L ? Fo : null, flashOnly = old && ff && !L && !Fl;
+  if (old && ff) {
+    const q = flashOnly ? 1 : ff;
+    putFit(lights, FLASH_FIT_OLD, A, base, q);
+    ambS *= 1 + (FLASH_FIT_OLD.amb[0] - 1) * q; ambB *= 1 + (FLASH_FIT_OLD.amb[1] - 1) * q;
+  }
+  if (Fo) {
+    // 超過預設：燈只再亮一半的比例，主要靠臉上補得更多
+    const r = style ? 1 + 0.5 * Math.max(0, P.flashAmt / Fl.def - 1) : 1;
+    putFit(lights, Fo.fit, A, base, style ? r : P.flashAmt / 100);
+    const q = style ? 1 : P.flashAmt / 100;
+    ambS *= 1 + (Fo.fit.amb[0] - 1) * q; ambB *= 1 + (Fo.fit.amb[1] - 1) * q;
+  }
   let flash = null;
   if (Fl && !Fl.cam) {
     // CCD：一盞燈（相機閃光燈全部在 gl.js 算）
@@ -403,10 +431,17 @@ export function litParams(P, base, geo) {
     flash = { amt: k, retro: Fl.retro };
   }
   // 閃光燈（gl.js）：F [強度（跟原圖混合的比例）, 1 = 相機閃光燈, 0, 0]。相機閃光燈的滑桿在 Hypic 預設那格就是成品，超過再往外推一點
-  const fs = base.flashSt || FLASH_ST0, camOn = !!Fl?.cam;
+  // 舊版的臉上補平：O [混合比例, 補平多少, 目標亮度, 亮部保留顏色多少]、G [, 最多亮幾倍]、C 臉的範圍（橢圓）、
+  // X [頭頂頭髮壓暗多少, 脖子肩膀也補平（1）, 下巴影子多深, 0]
+  const sr = style ? 1 + 0.5 * Math.max(0, P.flashAmt / Fl.def - 1) : 1;
+  const flashO = style ? [Math.min(1, P.flashAmt / Fl.def), style.flat[0] * sr, style.flat[1], style.flat[2]] : flashOnly ? [ff, ...FLASH_FIT_OLD.flat] : null;
+  const flashG = [0, style ? style.dmax * Math.sqrt(sr) : FLASH_DMAX], flashT = style ? style.tint : FLASH_T;
+  const flashX = style ? [style.hair, style.skin ? 1 : 0, style.skin || 0, 0] : [0.25, 0, 0, 0];
+  const flashC = [A.x, A.y, 0.85 * A.Fpx / W, 0.95 * A.Fpx / H];
+  const fs = base.flashSt || FLASH_ST0, camOn = !old && !!Fl?.cam;
   const famt = camOn ? Math.min(1, P.flashAmt / Fl.def) * (1 + 0.6 * Math.max(0, P.flashAmt / Fl.def - 1)) : ff;
-  const flashF = camOn || ff ? [famt, camOn ? 1 : 0, 0, 0] : null;
-  const flashP = camOn ? FLASH_CAM : FLASH_ADJ, flashS = [fs.Lh, fs.Lb, 0, 0], flashCs = fs.cs, flashCast = fs.cast;
+  const flashF = !old && (camOn || ff) ? [famt, camOn ? 1 : 0, 0, 0] : null;
+  const flashP = camOn ? FLASH_CAM : FLASH_ADJ, flashS = [fs.Lh, fs.Lb, fs.Lm ?? 0.45, 0], flashCs = fs.cs, flashCast = fs.cast;
   const flashR = [FLASH_R * A.Fpx / W, FLASH_R * A.Fpx / H];
-  return { lit: { lights, ambS, ambB, bgDepth, thick: 1.3 * A.F, flashF, flashR, flashP, flashS, flashCs, flashCast, cap: L && LIGHT_CAP[L.id] }, flash };
+  return { lit: { lights, ambS, ambB, bgDepth, thick: 1.3 * A.F, flashF, flashR, flashP, flashS, flashCs, flashCast, flashO, flashG, flashC, flashT, flashX, cap: L && LIGHT_CAP[L.id] }, flash };
 }

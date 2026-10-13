@@ -250,7 +250,7 @@ function findFaces() {
     if (b === base && !f.length && landing && tab === 'beauty') { landing = false; showTab('filter'); }
     const seg = f.length ? await getSeg(b) : null;
     b.mask = f.length ? skinMask(f, b.canvas.width, b.canvas.height, seg) : null;
-    b.flashSt = seg && b.mask ? flashStats(b.canvas, seg, b.mask) : null;
+    b.flashSt = seg && b.mask ? flashStats(b.canvas, seg, b.mask, b.geoms[0]) : null;
     if (b === base) { R.setMask(b.mask); render(); if (tab === 'beauty' || tab === 'sticker' || tab === 'makeup' || tab === 'looks') showTab(tab); }
     return f;
   }).catch(e => { console.warn(e); b.faces = []; b.faceErr = true; if (b === base && (tab === 'beauty' || tab === 'makeup')) showTab(tab); return []; });
