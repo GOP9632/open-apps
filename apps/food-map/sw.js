@@ -1,6 +1,6 @@
 // app 本身：網路優先（改版馬上生效），網路太慢或斷線時用快取打開（資料在雲端或 localStorage）
 // 地圖、登入用的函式庫網址有固定版本號，內容不會變，存一次之後直接從手機裡拿
-const CACHE = 'food-map-v5';
+const CACHE = 'food-map-v6';
 const LIBS = 'food-map-libs-v1';
 const FILES = ['./', './index.html', './app.js', './config.js', './manifest.json', './icon.svg', './apple-touch-icon.png'];
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())));
@@ -13,7 +13,8 @@ self.addEventListener('fetch', e => {
     return;
   }
   if (url.origin !== location.origin) return;
-  const net = fetch(e.request).then(r => { if (r.ok) { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); } return r; });
+  // cache: 'no-cache' 讓瀏覽器每次都問伺服器有沒有新版（GitHub Pages 會叫手機快取 10 分鐘，不然改版要等很久才看得到）
+  const net = fetch(e.request, { cache: 'no-cache' }).then(r => { if (r.ok) { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); } return r; });
   const slow = new Promise(res => setTimeout(res, 2500)).then(() => caches.match(e.request, { ignoreSearch: true }));
   e.respondWith(Promise.race([net.catch(() => null), slow]).then(r => r || net).catch(() => caches.match(e.request, { ignoreSearch: true })));
 });
