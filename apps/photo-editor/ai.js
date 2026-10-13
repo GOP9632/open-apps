@@ -175,7 +175,7 @@ export function skinMask(faces, w, h, seg, img) {
   return c;
 }
 
-// 鬍子圖：皮膚裡比臉的膚色中位數暗很多、又有細紋理的地方（鬍子、鬍渣；陰影的那半邊臉是平滑的，不會被抓到）。
+// 鬍子圖：皮膚裡不比臉的膚色中位數亮、又有細紋理的地方（鬍子、鬍渣，淺色的也算；陰影的那半邊臉是平滑的，不會被抓到）。
 // 閃光燈照頭髮的方式處理這裡，不跟皮膚一起提亮。固定在長邊 512 算，結果放大回遮罩的大小
 function boxF(a, w, h, r) {
   const t = new Float32Array(a.length), o = new Float32Array(a.length), n = 2 * r + 1;
@@ -208,7 +208,7 @@ function beardMap(img, mask, mw, mh) {
   for (let i = 0; i < n; i++) D[i] = Math.abs(L[i] - b1[i]);
   const Lz = boxF(L, w, h, r), Tx = boxF(D, w, h, r), b = new Float32Array(n);
   const sm = (a, c, v) => { const t = Math.min(1, Math.max(0, (v - a) / (c - a))); return t * t * (3 - 2 * t); };
-  for (let i = 0; i < n; i++) b[i] = sk[i] * (1 - sm(0.45, 0.6, Lz[i] / Lm)) * sm(0.07, 0.12, Tx[i] / Math.max(Lz[i], 0.02));
+  for (let i = 0; i < n; i++) b[i] = sk[i] * (1 - sm(1.0, 1.2, Lz[i] / Lm)) * sm(0.07, 0.12, Tx[i] / Math.max(Lz[i], 0.02));
   const bb = boxF(b, w, h, 2), out = new Float32Array(mw * mh);
   for (let yy = 0; yy < mh; yy++) for (let xx = 0; xx < mw; xx++) {
     const fx = Math.min(w - 1, Math.max(0, (xx + 0.5) * w / mw - 0.5)), fy = Math.min(h - 1, Math.max(0, (yy + 0.5) * h / mh - 0.5));
