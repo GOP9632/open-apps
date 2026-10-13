@@ -63,6 +63,8 @@ const ICONS = {
   refresh: 'M3 12a9 9 0 0 1 15-6.7L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-15 6.7L3 16 M3 21v-5h5',
   list: 'M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01',
   link: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71 M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71',
+  home: 'M3 11l9-7 9 7 M5 10v10h5v-6h4v6h5V10',
+  info: 'M12 2a10 10 0 1 0 0 20 10 10 0 1 0 0-20z M12 16v-4 M12 8h.01',
   ticket: 'M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z M13 5v2 M13 17v2 M13 11v2',
 };
 const ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24"><path d="${ICONS[n]}"/></svg>`;
@@ -539,7 +541,7 @@ function placeCard(p, i = 0, nBranch = 1) {
   const d = S.pos && p.lat != null ? fmtKm(distKm(S.pos, p)) : '';
   const [t, e] = cat(p);
   const pick = S.sel && S.tab === 'list';
-  return `<div class="pcard ${pick ? (isMine(p) ? S.sel.has(p.id) ? 'picked' : '' : 'nopick') : ''}" style="--i:${i}" data-id="${p.id}" onclick="App.cardTap('${p.id}')">
+  return `<div class="pcard ${pick ? (isMine(p) ? S.sel.has(p.id) ? 'picked' : '' : 'nopick') : ''}" style="--i:${i}" data-id="${p.id}" onclick="App.cardTap('${p.id}', this)">
     <div class="ph">${photo(p)}${pick && isMine(p) ? `<span class="pick-dot">${ic('check')}</span>` : ''}
       <span class="badge ${p.status}">${p.status === 'been' ? `去過${p.rating ? ' ★' + p.rating : ''}` : '想去'}</span>
       ${d ? `<span class="dist">${d}</span>` : ''}
@@ -564,8 +566,10 @@ const Views = {
     const title = { list: ['美食收藏', n ? `${n} 間收藏・${S.places.filter(p => isMine(p) && p.status === 'been').length} 間去過` : '把想吃的店都存在這裡'], draw: ['今天吃什麼？', '選條件，交給運氣'], groups: ['美食群組', '跟朋友一起收藏、一起決定'], me: ['我的', ''] }[t] || ['', ''];
     if (t === 'groups' && S.group) return '';
     return `<div class="grow"><h1>${title[0]}</h1>${title[1] ? `<div class="sub">${title[1]}</div>` : ''}</div>
-      ${t === 'me' ? '' : `<button class="me-btn" onclick="App.tab('me')" aria-label="我的">${cloud() && S.me ? esc(initial(S.me.name)) : ic('user')}</button>`}`;
+      ${Views.home()}${t === 'me' ? '' : `<button class="me-btn" onclick="App.tab('me')" aria-label="我的">${cloud() && S.me ? esc(initial(S.me.name)) : ic('user')}</button>`}`;
   },
+  // 回入口網站（只有從入口打開時才看得到，見 ../portal-home.js）
+  home: () => `<a class="icon-btn portal-home" href="https://anthony-apps.netlify.app/" aria-label="回入口">${ic('home')}</a>`,
   list() {
     const list = visiblePlaces();
     if (!S.places.length) return `<div class="empty">
@@ -656,17 +660,17 @@ const Views = {
       const cards = left.slice(0, 3).map(id => S.places.find(x => x.id === id));
       return `${head}
         <div class="deck">${cards.map((p, i) => Views.swipeCard(p, i)).reverse().join('')}</div>
-        <div class="sbtns"><button class="sbtn no" onclick="App.swipe(false)" aria-label="跳過">${ic('x')}</button><button class="sbtn info" onclick="App.openPlace('${cards[0].id}')" aria-label="詳細">${ic('spark')}</button><button class="sbtn yes" onclick="App.swipe(true)" aria-label="想吃">${ic('heart')}</button></div>
-        <p class="muted" style="text-align:center;margin:8px 0 0">還有 ${left.length} 張・右滑想吃，左滑跳過</p>`;
+        <div class="sbtns"><button class="sbtn no" onclick="App.swipe(false)" aria-label="跳過">${ic('x')}</button><button class="sbtn info" onclick="App.openPlace('${cards[0].id}', false, $('#scard .ph'))" aria-label="詳細">${ic('info')}</button><button class="sbtn yes" onclick="App.swipe(true)" aria-label="想吃">${ic('heart')}</button></div>
+        <p class="muted" style="text-align:center;margin:8px 0 0">還有 ${left.length} 張・右滑想吃，左滑跳過，點照片看詳細</p>`;
     }
     const mem = S.members.filter(m => m.group_id === r.group_id);
     const res = Swipe.matches(r);
     const waiting = mem.filter(m => S.swipes.filter(s => s.round_id === r.id && s.user_id === m.user_id).length < r.place_ids.length);
     return `${head}
-      <div class="card" style="margin-top:16px;text-align:center">${waiting.length ? `<div style="font-size:30px">⏳</div><b>還在等 ${waiting.map(m => esc(nameOf(m.user_id))).join('、')}</b><div class="muted">滑完結果會自動更新</div>` : `<div style="font-size:30px">🎉</div><b>大家都滑完了！</b>`}
+      <div class="card" style="margin-top:16px;text-align:center">${waiting.length ? `<div style="font-size:30px">⏳</div><b>還在等 ${waiting.map(m => m.user_id === S.user.id ? '你' : esc(nameOf(m.user_id))).join('、')}</b><div class="muted">滑完結果會自動更新</div>` : `<div style="font-size:30px">🎉</div><b>大家都滑完了！</b>`}
         ${left.length ? `<div style="margin-top:12px"><button class="btn primary" onclick="S.showResult=false;S.animate=true;App.render()">繼續滑（還有 ${left.length} 張）</button></div>` : ''}</div>
       <div class="section-t">結果</div>
-      ${res.filter(x => x.likes).map((x, i) => `<div class="res ${x.all ? 'all' : ''}" style="--i:${i}" onclick="App.openPlace('${x.p.id}')">
+      ${res.filter(x => x.likes).map((x, i) => `<div class="res ${x.all ? 'all' : ''}" style="--i:${i}" onclick="App.openPlace('${x.p.id}', false, this.querySelector('.ph'))">
         <div class="ph">${photo(x.p)}</div>
         <div class="grow"><div style="font-weight:800">${x.all ? '💘 ' : ''}${esc(x.p.name)}</div><div class="muted">${x.likes}/${mem.length} 人想吃・${esc(x.who.map(nameOf).join('、'))}</div>
           <div class="bar"><i style="width:${x.likes / mem.length * 100}%"></i></div></div>
@@ -676,12 +680,13 @@ const Views = {
   swipeCard(p, i) {
     const [t, e] = cat(p);
     return `<div class="scard ${i === 0 ? 'top' : 'back' + i}" ${i === 0 ? 'id="scard"' : ''} data-id="${p.id}">
-      ${i === 0 ? '<div class="stamp like">想吃</div><div class="stamp nope">跳過</div>' : ''}
+      ${i === 0 ? '<div class="tint like"></div><div class="tint nope"></div><div class="stamp like">想吃</div><div class="stamp nope">跳過</div>' : ''}
       <div class="ph">${photo(p)}</div>
       <div class="cap">
         <div class="n">${esc(p.name)}${p.branch ? ` <span style="font-size:17px;opacity:.8">${esc(p.branch)}</span>` : ''}</div>
         <div class="m">${e} ${esc(p.cuisine || t)}${area(p) ? '・' + esc(area(p)) : ''}${S.pos && p.lat != null ? '・' + fmtKm(distKm(S.pos, p)) : ''}${(n => n > 1 ? `・${n} 間分店` : '')(branchesOf(p, S.places.filter(x => S.groupPlaces.some(g => g.place_id === x.id && g.group_id === S.rounds.find(r => r.id === S.round)?.group_id))).length)}</div>
         <div class="tags">${p.price ? `<span class="tag">${PRICES[p.price]}</span>` : ''}${(p.meals || []).map(m => `<span class="tag">${MEALS[m]}</span>`).join('')}${(p.tags || []).slice(0, 3).map(x => `<span class="tag">#${esc(x)}</span>`).join('')}</div>
+        ${(p.dishes || []).length ? `<div class="dish-line">${ic('star')}<span>必點 ${esc(p.dishes.slice(0, 3).join('・'))}</span></div>` : ''}
         ${p.note ? `<p>${esc(p.note)}</p>` : ''}
         <div class="by">${avatar(p.owner, 20)} ${esc(nameOf(p.owner))} 收藏${p.source_url ? `・<a href="${esc(p.source_url)}" target="_blank" rel="noopener" style="color:#fff;text-decoration:underline" onpointerdown="event.stopPropagation()">原始貼文</a>` : ''}</div>
       </div>
@@ -776,6 +781,8 @@ const MapView = {
     map.touchZoomRotate.disableRotation();
     map.on('zoom', () => $('#bigmap').classList.toggle('zoomed-out', map.getZoom() < 11.5));
     map.on('click', e => { if (!e.originalEvent.target.closest('.pin')) MapView.select(null); });
+    // 地圖版權說明預設收成一個 ⓘ，不要一打開就蓋住下面的店家卡片
+    map.once('load', () => { const a = document.querySelector('#bigmap .maplibregl-ctrl-attrib'); a?.classList.remove('maplibregl-compact-show'); a?.removeAttribute('open'); });
     // 標籤不用等地圖圖磚全部載完才放
   },
   pinEl(p) {
@@ -818,7 +825,7 @@ const MapView = {
     document.body.classList.toggle('no-cards', !sorted.length);
     const html = sorted.map(p => {
       const d = S.pos ? fmtKm(distKm(S.pos, p)) : '';
-      return `<div class="mcard ${MapView.sel === p.id ? 'sel' : ''}" data-id="${p.id}" onclick="App.openPlace('${p.id}')">
+      return `<div class="mcard ${MapView.sel === p.id ? 'sel' : ''}" data-id="${p.id}" onclick="App.openPlace('${p.id}', false, this.querySelector('.ph'))">
         <div class="ph">${photo(p)}</div>
         <div class="b"><div class="n">${esc(p.name)}</div><div class="m">${cat(p)[1]} ${esc(p.cuisine || cat(p)[0])}${p.price ? '・' + priceTag(p.price) : ''}</div><div class="m">${esc(area(p))}${d ? '・' + d : ''}</div>
           <div class="acts"><a class="btn primary" href="${mapsUrl(p)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${ic('nav')} 導航</a><span class="tag ${p.status === 'been' ? '' : 'hot'}" style="align-self:center">${p.status === 'been' ? '去過' : '想去'}</span></div></div>
@@ -864,7 +871,7 @@ const MapView = {
     if (pos && MapView.map) MapView.map.flyTo({ center: [pos.lng, pos.lat], zoom: 15, speed: 1.6 });
   },
   chrome() {
-    $('#maptop').innerHTML = `<div class="search">${ic('search')}<input id="q" class="grow" placeholder="搜尋地圖上的店" value="${esc(S.f.q)}" oninput="if(!event.isComposing)App.setF('q', this.value, true)" enterkeyhint="search"><button class="me-btn" onclick="App.tab('me')" aria-label="我的">${cloud() && S.me ? esc(initial(S.me.name)) : ic('user')}</button></div>${filterChips({ map: true })}`;
+    $('#maptop').innerHTML = `<div class="search">${ic('search')}<input id="q" class="grow" placeholder="搜尋地圖上的店" value="${esc(S.f.q)}" oninput="if(!event.isComposing)App.setF('q', this.value, true)" enterkeyhint="search">${Views.home().replace('icon-btn', 'icon-btn glass')}<button class="me-btn" onclick="App.tab('me')" aria-label="我的">${cloud() && S.me ? esc(initial(S.me.name)) : ic('user')}</button></div>${filterChips({ map: true })}`;
     $('#mapside').innerHTML = `<button class="icon-btn glass ${S.pos ? 'on' : ''}" id="locbtn" onclick="MapView.locate()" aria-label="我的位置">${ic('locate')}</button><button class="icon-btn glass" onclick="MapView.sync(true)" aria-label="看全部">${ic('refresh')}</button>`;
   },
   // 店家詳細、編輯用的小地圖
@@ -936,21 +943,24 @@ const Swipe = {
     const card = $('#scard'); if (!card) return;
     let x0 = null, y0 = 0, dx = 0, dy = 0, t0 = 0;
     const like = card.querySelector('.stamp.like'), nope = card.querySelector('.stamp.nope');
+    const tl = card.querySelector('.tint.like'), tn = card.querySelector('.tint.nope');
     const back = document.querySelector('.scard.back1');
     card.onpointerdown = e => { x0 = e.clientX; y0 = e.clientY; t0 = performance.now(); card.setPointerCapture(e.pointerId); card.style.transition = 'none'; card.style.animation = 'none'; };
     card.onpointermove = e => {
       if (x0 == null) return;
       dx = e.clientX - x0; dy = e.clientY - y0;
       card.style.transform = `translate(${dx}px, ${dy * 0.35}px) rotate(${dx / 16}deg)`;
-      like.style.opacity = Math.max(0, Math.min(1, dx / 80)); nope.style.opacity = Math.max(0, Math.min(1, -dx / 80));
+      like.style.opacity = tl.style.opacity = Math.max(0, Math.min(1, dx / 80)); nope.style.opacity = tn.style.opacity = Math.max(0, Math.min(1, -dx / 80));
       if (back) { const k = Math.min(1, Math.abs(dx) / 140); back.style.transform = `translateY(${14 - 14 * k}px) scale(${.95 + .05 * k})`; }
     };
     card.onpointerup = () => {
       if (x0 == null) return; x0 = null;
       const v = Math.abs(dx) / Math.max(1, performance.now() - t0);
       card.style.transition = 'transform .3s var(--spring)';
-      if (Math.abs(dx) > 100 || (Math.abs(dx) > 40 && v > .6)) App.swipe(dx > 0);
-      else { card.style.transform = ''; like.style.opacity = nope.style.opacity = 0; if (back) { back.style.transition = 'transform .3s'; back.style.transform = ''; } }
+      // 沒怎麼動就放開 = 點一下：打開店家頁看詳細
+      if (Math.hypot(dx, dy) < 8 && performance.now() - t0 < 400) { App.openPlace(card.dataset.id, false, card.querySelector('.ph')); }
+      else if (Math.abs(dx) > 100 || (Math.abs(dx) > 40 && v > .6)) App.swipe(dx > 0);
+      else { card.style.transform = ''; like.style.opacity = nope.style.opacity = tl.style.opacity = tn.style.opacity = 0; if (back) { back.style.transition = 'transform .3s'; back.style.transform = ''; } }
       dx = dy = 0;
     };
   },
@@ -1201,40 +1211,89 @@ const App = {
   },
 
   // ----- 店家詳細／編輯 -----
-  openPlace(id) {
+  openPlace(id, keep, from) {
     const p = S.places.find(x => x.id === id); if (!p) return;
     const [t, e] = cat(p);
     const mine = isMine(p);
     const myGroups = S.groups.filter(g => S.groupPlaces.some(x => x.group_id === g.id && x.place_id === p.id));
     const shareText = `${p.name}${p.branch ? ' ' + p.branch : ''}\n${p.address || area(p)}\n${mapsUrl(p)}`;
-    App.sheet(`<div class="hero-ph">${photo(p)}<button class="icon-btn glass x" onclick="App.close()" aria-label="關閉">${ic('x')}</button></div>
-      <div class="d-name">${esc(p.name)}${p.branch ? `<small>${esc(p.branch)}</small>` : ''}</div>
-      <div class="d-meta">${e} ${esc(p.cuisine || t)}${area(p) ? '・' + esc(area(p)) : ''}${p.price ? '・' + PRICES[p.price] : ''}</div>
-      ${(br => br.length > 1 ? `<div class="branch-row"><div class="t">${ic('pin')} ${br.length} 間分店${S.pos ? '・由近到遠' : ''}</div><div class="chips">${br.map(b => `<span class="chip ${b.id === p.id ? 'on' : ''}" onclick="App.openPlace('${b.id}', true)">${esc(branchLabel(b))}${S.pos && b.lat != null ? ` <small>${fmtKm(distKm(S.pos, b))}</small>` : ''}</span>`).join('')}</div></div>` : '')(branchesOf(p))}
-      ${(p.meals || []).length || (p.tags || []).length ? `<div class="tags">${(p.meals || []).map(m => `<span class="tag hot">${MEALS[m]}</span>`).join('')}${(p.tags || []).map(x => `<span class="tag">#${esc(x)}</span>`).join('')}</div>` : ''}
-      ${(p.dishes || []).length ? `<div class="must"><div class="t">${ic('star')} 必點</div><div class="chips wrap">${p.dishes.map(x => `<span class="dish">${esc(x)}</span>`).join('')}</div></div>` : ''}
+    const dist = S.pos && p.lat != null ? fmtKm(distKm(S.pos, p)) : '';
+    const badge = mine ? p.status === 'been' ? `<span class="badge been">${ic('check')} 去過${p.rating ? ' ★' + p.rating : ''}</span>` : '' : `<span class="badge">${avatar(p.owner, 18)} ${esc(nameOf(p.owner))} 的收藏</span>`;
+    App.sheet(`<div class="d-bar"><div class="d-bar-in"><span class="t">${esc(p.name)}</span><button class="icon-btn" onclick="App.close()" aria-label="關閉">${ic('x')}</button></div></div>
+      <div class="hero-ph">${photo(p)}<div class="hero-cap">${badge}
+        <div class="d-name">${esc(p.name)}${p.branch ? `<small>${esc(p.branch)}</small>` : ''}</div>
+        <div class="d-meta">${[`${e} ${esc(p.cuisine || t)}`, esc(area(p)), p.price ? PRICES[p.price] : '', dist].filter(Boolean).join('<span class="dot">・</span>')}</div>
+      </div></div>
       <div class="acts">
         <a class="act primary" href="${mapsUrl(p)}" target="_blank" rel="noopener"><span class="ic">${ic('nav')}</span>導航</a>
         ${igEmbed(p.source_url) ? `<button class="act" onclick="Reel.show()"><span class="ic">${ic(isReel(p.source_url) ? 'play' : 'image')}</span>${isReel(p.source_url) ? '看影片' : '看貼文'}</button>` : p.source_url ? `<a class="act" href="${esc(p.source_url)}" target="_blank" rel="noopener"><span class="ic">${ic('ext')}</span>原始貼文</a>` : `<button class="act" onclick="App.copy(${esc(JSON.stringify(p.address || p.name))})"><span class="ic">${ic('copy')}</span>複製地址</button>`}
         <button class="act" onclick="App.shareOut(${esc(JSON.stringify(shareText))})"><span class="ic">${ic('share')}</span>分享</button>
         ${mine ? `<button class="act" onclick="App.editPlace('${p.id}')"><span class="ic">${ic('edit')}</span>編輯</button>` : `<button class="act" onclick="App.copyToMine('${p.id}')"><span class="ic">${ic('heart')}</span>收進我的</button>`}
       </div>
-      ${mine ? `<div style="margin-top:14px"><div class="seg"><button class="${p.status === 'want' ? 'on' : ''}" onclick="App.quick('${p.id}', {status:'want'})">想去</button><button class="${p.status === 'been' ? 'on' : ''}" onclick="App.quick('${p.id}', {status:'been'})">去過了</button></div>
+      ${mine ? `<div class="d-status"><div class="seg"><button class="${p.status === 'want' ? 'on' : ''}" onclick="App.quick('${p.id}', {status:'want'})">想去</button><button class="${p.status === 'been' ? 'on' : ''}" onclick="App.quick('${p.id}', {status:'been'})">去過了</button></div>
         ${p.status === 'been' ? `<div class="stars">${[1, 2, 3, 4, 5].map(n => `<button class="${(p.rating || 0) >= n ? 'on' : ''}" onclick="App.quick('${p.id}', {rating:${n}})" aria-label="${n} 星">${ic('star')}</button>`).join('')}</div>` : ''}</div>` : ''}
+      ${(br => br.length > 1 ? `<div class="branch-row"><div class="t">${ic('pin')} ${br.length} 間分店${S.pos ? '・由近到遠' : ''}</div><div class="chips">${br.map(b => `<span class="chip ${b.id === p.id ? 'on' : ''}" onclick="App.openPlace('${b.id}', true)">${esc(branchLabel(b))}${S.pos && b.lat != null ? ` <small>${fmtKm(distKm(S.pos, b))}</small>` : ''}</span>`).join('')}</div></div>` : '')(branchesOf(p))}
+      ${(p.dishes || []).length ? `<div class="must"><div class="t">${ic('star')} 必點</div><div class="chips wrap">${p.dishes.map(x => `<span class="dish">${esc(x)}</span>`).join('')}</div></div>` : ''}
+      ${(p.meals || []).length || (p.tags || []).length ? `<div class="tags">${(p.meals || []).map(m => `<span class="tag hot">${MEALS[m]}</span>`).join('')}${(p.tags || []).map(x => `<span class="tag">#${esc(x)}</span>`).join('')}</div>` : ''}
       <div class="info">
-        <div>${ic('pin')}<div class="grow">${esc(p.address || area(p) || '沒有地址')}${S.pos && p.lat != null ? `<div class="muted">距離你 ${fmtKm(distKm(S.pos, p))}${p.approx ? '・位置是大概的' : ''}</div>` : p.approx ? '<div class="muted">位置是大概的，可以在編輯裡修正</div>' : ''}</div></div>
+        <div>${ic('pin')}<div class="grow">${esc(p.address || area(p) || '沒有地址')}${dist ? `<div class="muted">距離你 ${dist}${p.approx ? '・位置是大概的' : ''}</div>` : p.approx ? '<div class="muted">位置是大概的，可以在編輯裡修正</div>' : ''}</div>${p.address ? `<button class="link-btn" onclick="App.copy(${esc(JSON.stringify(p.address))})">複製</button>` : ''}</div>
         ${p.hours ? `<div>${ic('clock')}<div class="grow" style="white-space:pre-wrap">${esc(p.hours)}</div></div>` : ''}
         ${p.note ? `<div>${ic('msg')}<div class="grow">${esc(p.note)}</div></div>` : ''}
-        ${!mine ? `<div>${ic('user')}<div class="grow">${esc(nameOf(p.owner))} 的收藏</div></div>` : ''}
       </div>
-      ${p.lat != null ? '<div id="mini" class="minimap"></div>' : mine ? '<p class="muted" style="margin-top:12px">還沒有地圖位置，到「編輯」裡點地圖就能補上。</p>' : ''}
+      ${p.lat != null ? `<a id="mini" class="minimap" href="${mapsUrl(p)}" target="_blank" rel="noopener" aria-label="在 Google 地圖打開"></a>` : mine ? '<p class="muted" style="margin-top:12px">還沒有地圖位置，到「編輯」裡點地圖就能補上。</p>' : ''}
+      ${p.source_url || p.source_text ? `<div class="post"><div class="post-h"><span class="src">${esc(srcName(p.source_url))}</span>${p.source_url ? `<a class="btn sm" href="${esc(p.source_url)}" target="_blank" rel="noopener">${ic('ext')} ${igEmbed(p.source_url) ? '在 IG 打開' : '看原始貼文'}</a>` : ''}</div>${igEmbed(p.source_url) ? `<div class="reel" data-src="${igEmbed(p.source_url)}"><div class="reel-ph">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : ''}<span class="reel-play">${ic('play')}</span><span class="reel-msg">影片載入中…</span></div></div>` : ''}${p.source_text ? `<p class="post-t" onclick="this.classList.toggle('open')">${esc(p.source_text)}</p>` : ''}</div>` : ''}
       ${mine && cloud() && S.groups.length ? `<div class="fgroup"><div class="t">分享到群組</div><div class="chips wrap">${S.groups.map(g => { const on = myGroups.includes(g); return `<span class="chip ${on ? 'on' : ''}" onclick="App.${on ? 'unshare' : 'share'}('${g.id}', ['${p.id}']).then(() => App.openPlace('${p.id}', true))">${on ? ic('check') : ic('users')} ${esc(g.name)}</span>`; }).join('')}</div></div>` : ''}
       ${mine && findDup(p) ? `<button class="dup-hint" onclick="App.dups('${p.id}')">${ic('layers')}<span class="grow">好像和「${esc(findDup(p).name)}」是同一間</span><b>整理</b></button>` : ''}
-      ${p.source_url || p.source_text ? `<div class="post"><div class="post-h"><span class="src">${esc(srcName(p.source_url))}</span>${p.source_url ? `<a class="btn sm" href="${esc(p.source_url)}" target="_blank" rel="noopener">${ic('ext')} ${igEmbed(p.source_url) ? '在 IG 打開' : '看原始貼文'}</a>` : ''}</div>${igEmbed(p.source_url) ? `<div class="reel" data-src="${igEmbed(p.source_url)}"><div class="reel-ph">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : ''}<span class="reel-play">${ic('play')}</span><span class="reel-msg">影片載入中…</span></div></div>` : ''}${p.source_text ? `<p class="post-t" onclick="this.classList.toggle('open')">${esc(p.source_text)}</p>` : ''}</div>` : ''}
-      ${mine ? `<button class="btn ghost danger block del-row" onclick="App.delPlace('${p.id}')">${ic('trash')} 刪除這間收藏</button>` : ''}`, { hero: true, keep: arguments[1] });
+      ${mine ? `<button class="btn ghost danger block del-row" onclick="App.delPlace('${p.id}')">${ic('trash')} 刪除這間收藏</button>` : ''}`, { cls: 'place', keep, zoom: !!from });
+    // 往下捲過照片，頂部出現店名列
+    const sh = $('#sheet .sheet');
+    sh.onscroll = () => { const hero = sh.querySelector('.hero-ph'); const on = !!hero && sh.scrollTop > hero.offsetHeight - 64; sh.querySelector('.d-bar')?.classList.toggle('on', on); sh.classList.toggle('scrolled', on); };
+    sh.onscroll();
+    if (!keep) { S.flyFrom = from && from.isConnected ? from : null; S.flyId = id; if (from) App.flyIn(from); }
     // 等抽屜滑上來再建小地圖，不然 iPhone 上滑動會卡一下
-    if (p.lat != null && !S.miniMap) setTimeout(async () => { const el = $('#mini'); if (el && !S.miniMap) S.miniMap = await MapView.mini(el, p, false); }, arguments[1] ? 0 : 430);
-    setTimeout(() => Reel.watch(), arguments[1] ? 0 : 450);
+    if (p.lat != null && !S.miniMap) setTimeout(async () => { const el = $('#mini'); if (el && !S.miniMap) S.miniMap = await MapView.mini(el, p, false); }, keep ? 0 : 480);
+    setTimeout(() => Reel.watch(), keep ? 0 : 500);
+  },
+  // 卡片照片放大成店家頁的大照片（像 App Store 的卡片），關掉時再縮回卡片
+  fly(fromRect, toRect, img, r0, r1, ms) {
+    const g = document.createElement('div'); g.className = 'fly';
+    g.append(img);
+    const box = r => ({ top: r.top + 'px', left: r.left + 'px', width: r.width + 'px', height: r.height + 'px' });
+    Object.assign(g.style, box(fromRect), { borderRadius: r0 });
+    document.body.append(g);
+    const a = g.animate([{ ...box(fromRect), borderRadius: r0 }, { ...box(toRect), borderRadius: r1 }], { duration: ms, easing: 'cubic-bezier(.2,.85,.25,1)', fill: 'forwards' });
+    return new Promise(res => { a.onfinish = a.oncancel = () => res(g); });
+  },
+  // 照片框本身沒有圓角時（滑卡、抽籤），用外框的圓角
+  radius(el) { const r = getComputedStyle(el).borderRadius; return parseFloat(r) ? r : getComputedStyle(el.parentNode).borderRadius; },
+  photoClone(el) {
+    const src = el.querySelector(':scope>img,:scope>.placeholder'); if (!src) return null;
+    const c = src.cloneNode(true); c.classList.remove('loading'); c.removeAttribute('loading'); c.removeAttribute('onload');
+    return c;
+  },
+  async flyIn(from) {
+    const hero = $('#sheet .hero-ph'), sh = $('#sheet .sheet');
+    const a = from.getBoundingClientRect(), img = App.photoClone(from), r0 = App.radius(from);
+    if (!hero || !img || a.bottom < 0 || a.top > innerHeight || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    // 抽屜還沒滑到定位，用 offsetTop 算照片最後的位置（不受 transform 影響）
+    const b = { top: hero.offsetTop + (sh.offsetParent === hero.offsetParent ? 0 : sh.offsetTop), left: hero.offsetLeft, width: hero.offsetWidth, height: hero.offsetHeight };
+    hero.classList.add('flying'); from.classList.add('lifted');
+    const g = await App.fly(a, b, img, r0, '28px 28px 0 0', 460);
+    hero.classList.remove('flying'); from.classList.remove('lifted');
+    requestAnimationFrame(() => g.remove());
+  },
+  flyOut(sh) {
+    const hero = sh.querySelector('.hero-ph');
+    let to = S.flyFrom;
+    if (to && !to.isConnected) to = document.querySelector(`.pcard[data-id="${S.flyId}"] .ph`);
+    S.flyFrom = null;
+    if (!hero || !to || sh.scrollTop > hero.offsetHeight * .6 || matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+    const a = hero.getBoundingClientRect(), b = to.getBoundingClientRect(), img = App.photoClone(hero);
+    if (!img || b.bottom < 0 || b.top > innerHeight) return false;
+    hero.classList.add('flying');
+    to.classList.add('lifted');
+    App.fly(a, b, img, '28px 28px 0 0', App.radius(to), 400).then(g => { to.classList.remove('lifted'); requestAnimationFrame(() => g.remove()); });
+    return true;
   },
   async quick(id, patch) {
     const p = S.places.find(x => x.id === id); if (!p) return;
@@ -1325,9 +1384,9 @@ const App = {
   },
 
   // ----- 選取多間一起刪 -----
-  cardTap(id) {
+  cardTap(id, el) {
     if (App._lp) { App._lp = false; return; }
-    if (!S.sel || S.tab !== 'list') return App.openPlace(id);
+    if (!S.sel || S.tab !== 'list') return App.openPlace(id, false, el?.querySelector('.ph'));
     const p = S.places.find(x => x.id === id); if (!p || !isMine(p)) return toast('朋友分享的店不能刪');
     buzz(5); S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id);
     App.pickPaint();
@@ -1474,7 +1533,7 @@ const App = {
     slot.classList.remove('flip'); slot.classList.add('win');
     buzz([15, 60, 25]); FX.confetti();
     d.recent = [pick.id, ...d.recent.filter(x => x !== pick.id)].slice(0, 10); save('food.draw', d);
-    slot.onclick = () => App.openPlace(pick.id);
+    slot.onclick = () => App.openPlace(pick.id, false, slot.querySelector('.ph'));
     cta.innerHTML = `<a class="btn primary big" href="${mapsUrl(pick)}" target="_blank" rel="noopener">${ic('nav')} 就這間</a><button class="btn big" onclick="App.doDraw('${pick.id}')">${ic('refresh')} 換一間</button>`;
   },
 
@@ -1611,13 +1670,20 @@ const App = {
     const pid = card.dataset.id, r = S.rounds.find(x => x.id === S.round);
     card.style.transition = 'transform .35s ease-in, opacity .35s';
     card.style.transform = `translate(${liked ? 600 : -600}px, 40px) rotate(${liked ? 28 : -28}deg)`; card.style.opacity = 0;
-    card.querySelector(`.stamp.${liked ? 'like' : 'nope'}`).style.opacity = 1;
+    card.querySelector(`.stamp.${liked ? 'like' : 'nope'}`).style.opacity = card.querySelector(`.tint.${liked ? 'like' : 'nope'}`).style.opacity = 1;
     const back = document.querySelector('.scard.back1'); if (back) { back.style.transition = 'transform .3s var(--ease)'; back.style.transform = 'none'; }
     const row = { round_id: r.id, user_id: S.user.id, place_id: pid, liked };
     S.swipes.push(row);
     // 先換下一張，存檔在背景跑，滑起來才不會卡
     DB.q(S.sb.from('swipes').upsert(row)).catch(e => { toast('沒存到，請再滑一次：' + e.message); S.swipes = S.swipes.filter(s => s !== row); App.render(); });
-    await sleep(260); App.render();
+    await sleep(260);
+    // 最後一張滑完，結果頁用進場動畫出來
+    if (document.querySelectorAll('.deck .scard').length === 1) S.animate = true;
+    App.render();
+    // 後面的卡往前遞補一格，新露出來的那張淡入，不要瞬間跳位
+    const b1 = $('.scard.back1'), b2 = $('.scard.back2');
+    b1?.animate([{ transform: 'translateY(28px) scale(.9)' }, { transform: 'translateY(14px) scale(.95)' }], { duration: 300, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    b2?.animate([{ opacity: 0, transform: 'translateY(40px) scale(.86)' }, { opacity: 1, transform: 'translateY(28px) scale(.9)' }], { duration: 320, easing: 'cubic-bezier(.2,.8,.2,1)' });
     if (liked) App.checkMatch(r, pid);
   },
   checkMatch(r, pid) {
@@ -1799,13 +1865,13 @@ const App = {
   },
 
   // ----- 抽屜、對話框 -----
-  sheet(html, { hero = false, keep = false } = {}) {
+  sheet(html, { cls = '', keep = false, zoom = false } = {}) {
     const old = $('#sheet .sheet');
     if (keep && old) {
       // 同一個抽屜更新內容（例如切換想去／去過），不要重播動畫，小地圖也直接搬過去不重建
       const mini = S.miniMap && old.querySelector('#mini');
       const reel = old.querySelector('.reel.on');
-      const st = old.scrollTop; old.className = `sheet still ${hero ? 'hero' : ''}`; old.innerHTML = `<div class="grab"></div>${html}`;
+      const st = old.scrollTop; old.className = `sheet still ${cls}`; old.innerHTML = `<div class="grab"></div>${html}`;
       const slot = old.querySelector('#mini');
       if (mini && slot) slot.replaceWith(mini); else { S.miniMap?.remove(); S.miniMap = null; }
       // 影片框也搬過去，保留量好的高度，畫面不會跳（iframe 搬動會重新載入）
@@ -1815,7 +1881,7 @@ const App = {
       App.dragSheet(); return;
     }
     S.miniMap?.remove(); S.miniMap = null;
-    $('#sheet').innerHTML = `<div class="sheet-bg" onclick="if(event.target===this)App.close()"><div class="sheet ${hero ? 'hero' : ''}" role="dialog"><div class="grab"></div>${html}</div></div>`;
+    $('#sheet').innerHTML = `<div class="sheet-bg ${zoom ? 'zoom' : ''}" onclick="if(event.target===this)App.close()"><div class="sheet ${cls}" role="dialog"><div class="grab"></div>${html}</div></div>`;
     document.body.style.overflow = 'hidden';
     requestAnimationFrame(() => requestAnimationFrame(() => $('.sheet-bg')?.classList.add('in')));
     App.dragSheet();
@@ -1843,7 +1909,13 @@ const App = {
   close() {
     S.miniMap?.remove(); S.miniMap = null;
     const bg = $('.sheet-bg'); if (!bg) return;
-    bg.classList.remove('in'); const sh = bg.querySelector('.sheet'); sh.style.transform = '';
+    const sh = bg.querySelector('.sheet');
+    // 店家頁：照片縮回原本的卡片，抽屜淡出
+    const dragged = !!sh.style.transform, flew = !!S.flyFrom && App.flyOut(sh);
+    // 往下拖關掉的就繼續往下滑走
+    bg.classList.toggle('zoom', flew && !dragged);
+    S.flyFrom = null;
+    bg.classList.remove('in'); sh.style.transform = '';
     document.body.style.overflow = '';
     setTimeout(() => {
       if ($('.sheet-bg') !== bg) return;
