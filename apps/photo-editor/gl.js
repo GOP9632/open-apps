@@ -457,7 +457,7 @@ void main(){
       // 正對鏡頭的面補滿、斜的面補少；相機閃光燈差得更多（Hypic 的臉比原圖更立體）
       float nz = mix(mix(0.55, 0.3, uFlashX.y), 1.0, smoothstep(mix(0.3, 0.4, uFlashX.y), mix(0.8, 0.9, uFlashX.y), N.z));
       // 補光的顏色：亮的臉照 Hypic 偏冷一點（少一點紅）；暗的地方跟著膚色走，不會被稀釋成灰綠色
-      vec3 sc0 = texture(uBlurS, uv).rgb, skinT = mix(vec3(1.0), sc0 / max(luma(sc0), 0.02), 0.3);
+      vec3 sc0 = texture(uBlurS, uv).rgb, skinT = mix(vec3(1.0), clamp(sc0 / max(luma(sc0), 0.02), 0.4, 1.6), 0.3);   // 顏色比例有上下限：很暗又很飽和的地方（藍色陰影的頭髮）不會被放大成一片藍
       vec3 tint = mix(skinT, uFlashT, smoothstep(0.34, 0.44, Ls));
       // 嘴唇（美白遮罩 0.4、磨皮遮罩 0）：補的量跟皮膚一樣，一半用乘的，保留唇色
       vec2 mk = texture(uMask, uv).rg;
@@ -475,6 +475,7 @@ void main(){
       // 底：調整 › 閃光燈用原圖（臉的亮度全由補光決定）；光影的相機、富士閃光燈用燈照過的結果（uFlashX.w = 1）
       wm = mix(wm, 1.0, uFlashX.y * eyeM); wa *= 1.0 - uFlashX.y * eyeM;   // 眼睛用乘的：眼白亮、瞳孔還是黑的
       vec3 fb = mix(col, lit, uFlashX.w);
+      wa *= mix(1.0, smoothstep(0.05, 0.3, max(mk.x, mk.y)), 1.0 - smoothstep(0.06, 0.15, luma(sc0)));   // 這一小塊很暗又不是皮膚（臉旁的深色頭髮）：是本來就深，不是陰影，少加光
       vec3 fill = dl > 0.0 ? fb * (1.0 + dl * k * wm / Ls) + tint * dl * k * wa : fb * (1.0 + max(dl, -0.03) * k / Ls);   // 本來就亮的地方最多暗一點點
       // 右邊太陽穴、右下顎這種朝右的面比原圖暗一點（Hypic ×0.85～0.9）；暗的地方（黑眼圈、上唇）倍率高一點
       float Sc = kC * (1.0 + 0.35 * lipM * smoothstep(0.45, 0.3, luma(sc0))) * clamp(pow(0.47 / max(luma(sc0), 0.1), 0.4), 0.85, 1.3) * (1.0 + 0.3 * smoothstep(-0.36, -0.22, fc.y) * (1.0 - smoothstep(-0.1, 0.15, fc.y)) * (1.0 - smoothstep(0.3, 0.5, abs(fc.x)))) * (1.0 - 0.5 * eyeM) * (1.0 - 0.4 * smoothstep(0.35, 0.6, abs(fc.x)) - 0.15 * smoothstep(0.2, 0.45, -fc.x) * smoothstep(0.35, 0.6, fc.y)) - 0.6 * smoothstep(0.3, 0.6, fc.x) * (1.0 - smoothstep(0.5, 0.8, N.z));
@@ -516,6 +517,11 @@ void main(){
         lit = mix(lit, mix(min(lit, max(sc, col)), lit * min(1.0, mt / max(m, 1e-3)), uFlashX.y), pw); }
       // 背景只會變暗
       lit = mix(min(lit, col), lit, pw);
+      // 調整 › 閃光燈、富士閃光燈加的光不會把某個顏色單獨推高：任何一個通道多出來的量，最多比亮度多出來的量再多 10（保持亮度、只收顏色）。
+      // 相機閃光燈照 Hypic 會把衣服、頭髮按比例提亮（紅衣服 R 加得多是正常的），不套這條
+      if (uFlashX.y < 0.5) { vec3 inc = lit - col; float li = luma(inc), ex = max(inc.r, max(inc.g, inc.b)) - li;
+        if (li > 0.0) { if (ex > 0.04) lit = col + li + (inc - li) * (0.04 / ex); }
+        else lit = col + min(inc, 0.04); }   // 整體變暗的地方（背景）不動它怎麼變暗，只是不讓哪個通道變亮
       // 燈是照全強度算的，這裡照滑桿跟原圖混合
       lit = mix(col, lit, uFlashF.x);
     }
