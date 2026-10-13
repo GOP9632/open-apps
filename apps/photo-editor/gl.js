@@ -450,45 +450,74 @@ void main(){
       // 臉：照附近皮膚的平均亮度（七成）和這一點周圍的亮度（三成）決定補多少（暗的那側補多、亮的那側幾乎不補），有上限（uFlashG.y）
       vec2 fc = (uv - uFlashC.xy) / uFlashC.zw;
       float Ls = max(mix(sl / sw, luma(texture(uBlurS, uv).rgb), 0.3), 0.02), dl = min(uFlashF.y * (uFlashF.z - Ls), uFlashG.y);
+      // 相機閃光燈：下巴下面的脖子補少一點，脖子不會比下巴亮（Hypic 也是暗的）
+      float neck = uFlashX.y * smoothstep(0.85, 0.97, fc.y) * (1.0 - smoothstep(0.35, 0.6, abs(fc.x))) * (1.0 - smoothstep(0.3, 0.4, Ls));   // 只有本來就在影子裡的暗脖子
+      dl *= 1.0 - 0.4 * neck;
       // 閃光燈從鏡頭打過來：正對鏡頭的面補滿，下顎、臉頰外側、鼻翼這些斜的面補少，輪廓的陰影留著
-      float nz = mix(0.55, 1.0, smoothstep(0.3, 0.8, N.z));
+      // 正對鏡頭的面補滿、斜的面補少；相機閃光燈差得更多（Hypic 的臉比原圖更立體）
+      float nz = mix(mix(0.55, 0.3, uFlashX.y), 1.0, smoothstep(mix(0.3, 0.4, uFlashX.y), mix(0.8, 0.9, uFlashX.y), N.z));
       // 補光的顏色：亮的臉照 Hypic 偏冷一點（少一點紅）；暗的地方跟著膚色走，不會被稀釋成灰綠色
       vec3 sc0 = texture(uBlurS, uv).rgb, skinT = mix(vec3(1.0), sc0 / max(luma(sc0), 0.02), 0.3);
       vec3 tint = mix(skinT, uFlashT, smoothstep(0.34, 0.44, Ls));
       // 嘴唇（美白遮罩 0.4、磨皮遮罩 0）：補的量跟皮膚一樣，一半用乘的，保留唇色
       vec2 mk = texture(uMask, uv).rg;
-      float lipM = smoothstep(0.2, 0.35, mk.y) * (1.0 - smoothstep(0.05, 0.2, mk.x)) * step(0.0, fc.y);
+      float lipM = smoothstep(0.2, 0.35, mk.y) * (1.0 - smoothstep(mix(0.05, 0.3, uFlashX.y), mix(0.2, 0.6, uFlashX.y), mk.x)) * step(0.0, fc.y);   // 相機閃光燈連唇邊一起算，下唇不會蒙白
       // 眼睛（亮眼遮罩：眼眶裡的眼白、虹膜、瞳孔）完全不補，眼珠不會變灰；眼皮照常補，不會多一圈黑眼圈
-      float eye = 1.0 - smoothstep(0.2, 0.6, texture(uMask2, uv).b);
+      float eyeM = smoothstep(0.2, 0.6, texture(uMask2, uv).b), eye = 1.0 - mix(1.0, 0.45, uFlashX.y) * eyeM;   // 相機閃光燈補得多，眼睛也亮一點，眼下不會多一圈落差
       // 額頭上半、下巴補得比臉中間少一點（Hypic 也是）
-      float k = nz * eye * (1.0 - 0.3 * (1.0 - 0.6 * uFlashX.y) * smoothstep(0.3, 0.65, fc.y) - 0.3 * (1.0 - smoothstep(-0.65, -0.35, fc.y)));
+      float k = nz * eye * (1.0 - 0.3 * smoothstep(0.3, 0.65, fc.y) - 0.3 * (1.0 - smoothstep(-0.65, -0.35, fc.y)));
+      // 相機閃光燈：Hypic 的結果幾乎是原圖乘上一張平滑的倍率（額頭 G ×1.46、R ×1.28），亮的鼻子、嘴唇跟著亮，
+      // 臉的明暗還在（不像補平那樣變成面具）。倍率正面高、側面低，光從左邊一點來：右半臉低一點
+      float kC = mix(0.35, 1.0, smoothstep(0.3, 0.85, mix(N.z, sqrt(max(1.0 - N.x * N.x, 0.0)), smoothstep(0.84, 0.9, fc.y)))) * (1.0 - 0.15 * clamp(fc.x, -0.8, 0.8)) * (1.0 - 0.12 * smoothstep(0.3, 0.7, fc.y) - 0.2 * (1.0 - smoothstep(-0.65, -0.35, fc.y)));
       // 眼睛以上比附近皮膚暗很多的地方（眉毛、瀏海；看這一點周圍一小塊）是本來的顏色深，不是陰影：加的白光跟著變少，只用乘的稍微提亮，不會變灰。眼睛以下（暗側臉頰、鬍渣）照常補，補光才平均
-      float wa = mix(1.0, smoothstep(0.6, 0.95, mix(L0, luma(texture(uBlurS, uv).rgb), 0.7) / Ls), 1.0 - smoothstep(-0.3, -0.22, fc.y)) * (1.0 - 0.5 * lipM);
-      float wm = mix(0.3, 1.0, lipM) * (1.0 - wa) * (1.0 - smoothstep(0.75, 0.92, max(col.r, max(col.g, col.b))));   // 唇上的高光不再乘亮，不會爆白
+      float wa = mix(1.0, smoothstep(0.6, 0.95, mix(L0, luma(texture(uBlurS, uv).rgb), 0.7) / Ls), max(1.0 - smoothstep(-0.3, -0.22, fc.y), uFlashX.y * smoothstep(0.1, 0.2, fc.y))) * (1.0 - mix(0.5, 0.6, uFlashX.y) * lipM);   // 嘴唇多用乘的，保持飽和
+      float wm = mix(0.3, mix(1.0, 0.8, uFlashX.y), lipM) * (1.0 - wa) * (1.0 - smoothstep(0.75, 0.92, max(col.r, max(col.g, col.b))));   // 唇上的高光不再乘亮，不會爆白
       // 底：調整 › 閃光燈用原圖（臉的亮度全由補光決定）；光影的相機、富士閃光燈用燈照過的結果（uFlashX.w = 1）
+      wm = mix(wm, 1.0, uFlashX.y * eyeM); wa *= 1.0 - uFlashX.y * eyeM;   // 眼睛用乘的：眼白亮、瞳孔還是黑的
       vec3 fb = mix(col, lit, uFlashX.w);
       vec3 fill = dl > 0.0 ? fb * (1.0 + dl * k * wm / Ls) + tint * dl * k * wa : fb * (1.0 + max(dl, -0.03) * k / Ls);   // 本來就亮的地方最多暗一點點
-      fill = mix(fill, fb, max(lipM, uFlashX.y) * smoothstep(0.78, 0.9, max(col.r, max(col.g, col.b))));   // 唇上（相機閃光燈是全部）本來就很亮的反光不補，不會到 255
+      // 右邊太陽穴、右下顎這種朝右的面比原圖暗一點（Hypic ×0.85～0.9）；暗的地方（黑眼圈、上唇）倍率高一點
+      float Sc = kC * clamp(pow(0.47 / max(luma(sc0), 0.1), 0.4), 0.85, 1.3) * (1.0 + 0.3 * smoothstep(-0.36, -0.22, fc.y) * (1.0 - smoothstep(-0.1, 0.15, fc.y)) * (1.0 - smoothstep(0.3, 0.5, abs(fc.x)))) * (1.0 - 0.5 * eyeM) * (1.0 - 0.4 * smoothstep(0.35, 0.6, abs(fc.x)) - 0.15 * smoothstep(0.2, 0.45, -fc.x) * smoothstep(0.35, 0.6, fc.y)) - 0.6 * smoothstep(0.3, 0.6, fc.x) * (1.0 - smoothstep(0.5, 0.8, N.z));
+      // 顏色：臉中間加的光偏白（G、B 倍率高，去紅），越往兩側越只是變亮；嘴唇去紅少一半，保持飽和
+      vec3 gC = vec3(0.3) * Sc + vec3(0.0, 0.1, 0.13) * (1.7 - 0.7 * smoothstep(0.1, 0.4, abs(fc.x))) * (1.0 - 0.6 * smoothstep(0.35, 0.6, fc.y)) * (1.0 - 0.6 * lipM) * max(Sc, 0.0);
+      fill = mix(fill, fb * (1.0 + gC * (uFlashG.y / 0.25)), uFlashX.y);
+      fill = mix(fill, fb, mix(lipM, smoothstep(0.86, 0.96, max(col.r, max(col.g, col.b))), uFlashX.y) * smoothstep(0.78, 0.9, max(col.r, max(col.g, col.b))));   // 唇上本來就很亮的反光不補，不會到 255
       // 臉的範圍：上半臉只補皮膚（瀏海、頭髮不補；用附近的平均，額頭不會補得一塊一塊），鼻子到下巴連鬍子一起補，脖子補少一點；邊緣拉長，看不出一圈
-      float face = (1.0 - smoothstep(0.75, 1.2, length(fc))) * mix(smoothstep(0.25, 0.7, sg / 17.0), 1.0, smoothstep(-0.05, 0.15, fc.y)) * (1.0 - 0.6 * smoothstep(0.6, 1.0, fc.y));
-      face *= mix(1.0, smoothstep(0.05, 0.3, max(mk.x, mk.y)), uFlashX.y);   // 相機閃光燈補得多：臉旁邊的頭髮（不是皮膚）不補，不會蒙一層灰
+      float face = (1.0 - smoothstep(0.75, 1.2, length(fc))) * mix(smoothstep(0.25, 0.7, sg / 17.0), 1.0, smoothstep(-0.05, 0.15, fc.y)) * (1.0 - 0.6 * (1.0 - uFlashX.y) * smoothstep(0.6, 1.0, fc.y));
+      face *= mix(1.0, smoothstep(0.05, 0.3, max(max(mk.x, mk.y), eyeM)), uFlashX.y);   // 相機閃光燈補得多：臉旁邊的頭髮（不是皮膚）不補，不會蒙一層灰
       // 臉以外：露出的皮膚（脖子、肩膀）照燈的結果；衣服、頭髮只會跟著變暗，不加光、不褪色
       lit = mix(lit, col * (luma(lit) / max(L0, 0.02)), smoothstep(0.5, 0.8, L0) * uFlashF.w * pw);
       // 頭頂的頭髮跟 Hypic 一樣再壓暗一點
       float hairZ = (1.0 - smoothstep(1.2, 1.5, length(fc))) * (1.0 - smoothstep(-0.4, -0.1, fc.y));
-      // 相機閃光燈（uFlashX.y = 1）：脖子、肩膀也用臉的補平（不用燈），下巴底下留一塊影子（uFlashX.z）
-      float chinSh = smoothstep(0.76, 0.82, length(fc)) * (1.0 - smoothstep(0.88, 1.0, length(fc))) * smoothstep(0.4, 0.6, fc.y) * (1.0 - smoothstep(0.35, 0.6, abs(fc.x)));   // 沿著下巴底下一圈，比原圖還暗一點
-      fill = mix(fill, fb * 0.88, chinSh * uFlashX.z);
-      float dB = min(1.2 * uFlashF.y * (uFlashF.z - Ls), 1.3 * uFlashG.y);   // 身上不照臉的上下遞減，補得比臉多一點（Hypic 肩膀、胸口很亮）
-      vec3 fillB = dB > 0.0 ? fb * (1.0 + dB * nz * wm / Ls) + tint * dB * nz * wa : fill;
-      vec3 skin = mix(lit, mix(fillB, fb * 0.88, chinSh * uFlashX.z), uFlashX.y);
-      vec3 body = mix(col * min(1.0, luma(lit) / max(L0, 0.02)) * (1.0 - uFlashX.x * hairZ), skin, mk.y);
+      // 相機閃光燈（uFlashX.y = 1）：脖子、肩膀也用臉的補平（不用燈）。閃光燈在鏡頭上面一點，下顎底下本來就有的
+      // 那條暗影會變得很深、很細（Hypic 157 → 76 → 137）：下巴下面一帶，比附近暗的地方不補，還照暗的比例再壓深
+      vec2 dv = vec2(0.0, 0.075 * uFlashC.w), dh = vec2(0.03 * uFlashC.z, 0.0);   // 跟上下各約 0.07 臉寬的地方比；左右取 5 點平均，影子才不會一塊一塊
+      vec2 us = uv + vec2(0.0, 0.025 * uFlashC.w);   // 看下面一點的地方：影子貼著下顎、往上移一點（Hypic 的比原圖的暗影高）
+      float rr = 0.0;
+      for (int j = -2; j <= 2; j++) {
+        vec2 q = us + dh * float(j);
+        rr += luma(texture(uBlurS, q).rgb) / max(0.5 * (luma(texture(uBlurS, q - dv).rgb) + luma(texture(uBlurS, q + dv).rgb)), 0.02);
+      }
+      rr /= 5.0;
+      // 只在下巴正下方一圈的皮膚上（衣領、脖子的皺摺、肩膀不算）
+      float chinZ = smoothstep(0.66, 0.76, length(fc)) * (1.0 - smoothstep(0.83, 0.89, length(fc))) * smoothstep(0.45, 0.6, fc.y) * (1.0 - smoothstep(0.22, 0.42, abs(fc.x))) * smoothstep(0.3, 0.6, mk.y);
+      float sk = uFlashX.y * uFlashX.z * chinZ * smoothstep(0.95, 0.88, rr);
+      vec3 shd = fb * pow(clamp(rr, 0.3, 1.0), 5.0);
+      // 光從左上來：右下顎那一側比原圖再暗一點（Hypic 174 → 158）
+      fill = mix(fill, shd, sk) * (1.0 - 0.2 * uFlashX.y * smoothstep(0.15, 0.5, fc.x) * smoothstep(0.42, 0.65, fc.y));
+      float dB = min(uFlashF.y * (uFlashF.z + 0.08 - Ls), 0.85 * uFlashG.y) * (1.0 - 0.45 * neck);   // 身上不照臉的上下遞減；目標亮一點（Hypic 肩膀、胸口很亮），上限低一點（暗的脖子不會發光）
+      vec3 fillB = mix(dB > 0.0 ? fb * (1.0 + dB * nz * wm / Ls) + tint * dB * nz * wa : fill, shd, sk);
+      vec3 skin = mix(lit, fillB, uFlashX.y);
+      // 衣服、頭髮：調整 › 閃光燈只會變暗；相機閃光燈照燈的結果，最多亮 1.25 倍（Hypic 頭髮有反光）
+      // 皮膚的範圍用附近的平均收邊，脖子和衣服之間不會有一道硬邊
+      vec3 body = mix(col * min(mix(1.0, 1.25, uFlashX.y), luma(lit) / max(L0, 0.02)) * (1.0 - uFlashX.x * hairZ), skin, mk.y * mix(1.0, smoothstep(0.2, 0.7, sg / 17.0), uFlashX.y));
       lit = mix(lit, mix(body, fill, face), pw);
       // 超過 214 的部分慢慢收到 237 以下（存 JPEG 時顏色還會再往外衝一點），紅色通道不會被推到 255（本來就比較亮的不動）
-      // 相機閃光燈補得多：很鮮豔的地方（嘴唇）收得早一點，存 JPEG 時紅色才不會被推到 255
-      { float mx = max(col.r, max(col.g, col.b)), kn = 0.84 - uFlashX.y * (0.12 * (mx - min(col.r, min(col.g, col.b))) / max(mx, 0.02) + 0.06 * lipM);
+      { float mx = max(col.r, max(col.g, col.b)), kn = 0.84;
         vec3 e = max(lit - kn, 0.0), sc = kn + 0.09 * (1.0 - exp(-e / 0.09));
-        lit = mix(lit, min(lit, max(sc, col)), pw); }
+        // 相機閃光燈：三個通道一起等比例收，嘴唇不會因為只收紅色而變白、偏紫
+        float m = max(lit.r, max(lit.g, lit.b)), mt = max(0.84 + 0.09 * (1.0 - exp(-max(m - 0.84, 0.0) / 0.09)), mx);
+        lit = mix(lit, mix(min(lit, max(sc, col)), lit * min(1.0, mt / max(m, 1e-3)), uFlashX.y), pw); }
       // 背景只會變暗
       lit = mix(min(lit, col), lit, pw);
       // 燈是照全強度算的，這裡照滑桿跟原圖混合
