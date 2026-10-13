@@ -567,7 +567,9 @@ void main(){
     vec3 hair, bg, cl;
     if (uFlashF.y > 0.5) {
       // 相機閃光燈：頭髮、衣服、背景只照比例稍微變亮
-      hair = col * uFP[2].x; bg = col * uFP[3].x + uFP[3].y; cl = col * uFP[4].x + uFP[4].y;
+      // 背景比臉亮很多（室內開燈拍）時 Hypic 會把背景、衣服壓暗；背景比臉暗時稍微提亮
+      float rb = clamp(uFS.y / max(Lh, 1e-3) - 1.0, -0.5, 1.0);
+      hair = col * uFP[2].x; bg = col * (uFP[3].x + uFP[3].z * rb) + uFP[3].y; cl = col * (uFP[4].x + uFP[4].z * rb) + uFP[4].y;
     } else {
       // 調整 › 閃光燈：頭髮變暗去色，背景、衣服往中間亮度收、去色
       hair = uFP[2].x * (L + uFP[2].y * ch);

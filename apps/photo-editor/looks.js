@@ -7,6 +7,7 @@
 // 拿回 AI 處理過的整張圖疊在最底層。這裡只做本機那一半：每個風格是自己調的參數組合，
 // 「智慧優化」照片條件自動算，照片不上傳。
 import { filterFn } from './filters.js';
+import { xtData } from './xt.js';
 import { LOOKS as MK_LOOKS } from './makeup.js';
 
 const mkIdx = name => MK_LOOKS.findIndex(l => l.name === name);
@@ -34,8 +35,14 @@ export const LOOKS = [
   { id: 'filmday', name: '底片日常', cat: 'scene', set: { filter: 'film', filterAmt: 75, fade: 12, grain: 22, vignette: 12 } },
   { id: 'night', name: '夜景', cat: 'scene', set: { filter: 'night', filterAmt: 70, shadows: 20, highlights: -20, contrast: 8, sharpen: 15 } },
   { id: 'bw', name: '黑白質感', cat: 'scene', set: { filter: 'bw', filterAmt: 100, contrast: 20, grain: 20, vignette: 20 } },
+  // 醒圖同款：醒圖專業版一鍵出片同名風格的顏色。拿醒圖套在 3 張公開照片（2 張人像、1 張風景）的成品，
+  // 用濾鏡的顏色模型（xt.js）擬合，皮膚另一套；權重在 xt/ 的「📸一鍵出片」分類。
+  // 清透晴天、夕陽鎏金、藍調時刻、長焦特寫醒圖會換背景、天空或裁切，不是調色做得到的，沒放
+  ...['單反相機', 'Pocket3', '富士閃光', '富士街景', '水漾藍調', '山野墨綠', '美食暖調'].map((n, i) => ({ id: 'xt' + i, name: n, cat: 'xt', xt: n })),
 ];
-const CATS = [['all', '全部'], ['face', '人像'], ['scene', '生活風景']];
+const CATS = [['all', '全部'], ['face', '人像'], ['scene', '生活風景'], ['xt', '醒圖同款']];
+const XT_CAT = '📸一鍵出片';
+const xtId = name => { const d = xtData(), it = d?.items.find(x => x.name === name && d.cats[x.cat] === XT_CAT); return it ? it.id : null; };
 
 // 一鍵出片會動到的參數：換風格時先全部歸零，才不會越疊越多
 const KEYS = [...new Set(LOOKS.flatMap(l => Object.keys(l.set || {})).concat(['temp', 'tint', 'exposure', 'contrast', 'highlights', 'shadows', 'saturation', 'sharpen', 'mk', 'mkLook', 'mkLookAmt']))];
@@ -74,6 +81,7 @@ export function autoTune(src) {
 // 風格在這張照片上的完整參數（強度 100）
 function fullSet(L, base) {
   if (L.auto) return (base.autoSet ||= autoTune(base.canvas));
+  if (L.xt) return { filter: xtId(L.xt) || 'none', filterAmt: 100 };
   return L.set;
 }
 
@@ -140,8 +148,11 @@ export function tabLooks(box, api) {
     if (!off && api.needSeg()) api.findPerson();
   };
   box.append(api.item({ label: '原圖', icon: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>', on: !P.look, onclick: () => pick(null) }));
-  LOOKS.filter(L => cat === 'all' || L.cat === cat || L.cat === 'all').forEach(L => {
-    const t = base.lookThumbs[L.id] ||= lookThumb(base.canvas, fullSet(L, base));
+  // 「全部」不放醒圖同款（美食暖調跟生活風景的同名）
+  LOOKS.filter(L => cat === 'all' ? L.cat !== 'xt' : L.cat === cat || L.cat === 'all').forEach(L => {
+    // 醒圖同款的濾鏡還沒載入時先不存縮圖
+    const t = base.lookThumbs[L.id] || lookThumb(base.canvas, fullSet(L, base));
+    if (!L.xt || xtData()) base.lookThumbs[L.id] = t;
     box.append(api.item({ label: L.name, cls: 'ft', on: P.look === L.id, style: `background-image:url(${t})`, onclick: () => pick(L) }));
   });
   const L = LOOKS.find(x => x.id === P.look);
