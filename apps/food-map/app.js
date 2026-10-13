@@ -534,7 +534,7 @@ const Views = {
         <p>在 IG、Threads、TikTok 看到想吃的，複製連結貼過來，AI 會幫你找出店名、地址和分類。</p>
         <div class="steps"><div><b>1</b>在貼文按「分享」→「複製連結」</div><div><b>2</b>回來按下方的 ＋</div><div><b>3</b>確認店家，收藏完成 🎉</div></div>
         <button class="btn primary big" onclick="App.openAdd()">${ic('plus')} 新增第一間</button></div>`;
-    return `<div class="search">${ic('search')}<input id="q" placeholder="搜尋店名、地區、料理、標籤" value="${esc(S.f.q)}" oninput="App.setF('q', this.value, true)" enterkeyhint="search"></div>
+    return `<div class="search">${ic('search')}<input id="q" placeholder="搜尋店名、地區、料理、標籤" value="${esc(S.f.q)}" oninput="if(!event.isComposing)App.setF('q', this.value, true)" enterkeyhint="search"></div>
       ${filterChips()}
       ${!S.sel && (S.dups = dupGroups()).length ? `<button class="dup-banner" onclick="App.dups()"><span class="ic">${ic('layers')}</span><span class="grow"><b>有 ${S.dups.length} 組可能重複的店</b><small>點這裡比對，合併成一間或刪掉多的</small></span>${ic('next')}</button>` : ''}
       <div class="count-line"><span>${S.sel ? '點卡片選要刪掉的店' : `${brands(list).length} 間${brands(list).length < list.length ? `・${list.length} 個地點` : ''}${S.f.sort === 'near' ? '・由近到遠' : ''}`}</span>${S.sel ? `<button class="link-btn" onclick="App.pickAll()">${list.filter(isMine).every(p => S.sel.has(p.id)) ? '全部取消' : '全選'}</button>` : list.some(isMine) ? `<button class="link-btn" onclick="App.pick()">選取</button>` : ''}</div>
@@ -825,7 +825,7 @@ const MapView = {
     if (pos && MapView.map) MapView.map.flyTo({ center: [pos.lng, pos.lat], zoom: 15, speed: 1.6 });
   },
   chrome() {
-    $('#maptop').innerHTML = `<div class="search">${ic('search')}<input id="q" class="grow" placeholder="搜尋地圖上的店" value="${esc(S.f.q)}" oninput="App.setF('q', this.value, true)" enterkeyhint="search"><button class="me-btn" onclick="App.tab('me')" aria-label="我的">${cloud() && S.me ? esc(initial(S.me.name)) : ic('user')}</button></div>${filterChips({ map: true })}`;
+    $('#maptop').innerHTML = `<div class="search">${ic('search')}<input id="q" class="grow" placeholder="搜尋地圖上的店" value="${esc(S.f.q)}" oninput="if(!event.isComposing)App.setF('q', this.value, true)" enterkeyhint="search"><button class="me-btn" onclick="App.tab('me')" aria-label="我的">${cloud() && S.me ? esc(initial(S.me.name)) : ic('user')}</button></div>${filterChips({ map: true })}`;
     $('#mapside').innerHTML = `<button class="icon-btn glass ${S.pos ? 'on' : ''}" id="locbtn" onclick="MapView.locate()" aria-label="我的位置">${ic('locate')}</button><button class="icon-btn glass" onclick="MapView.sync(true)" aria-label="看全部">${ic('refresh')}</button>`;
   },
   // 店家詳細、編輯用的小地圖
@@ -988,7 +988,17 @@ const App = {
     const y = window.scrollY;
     const main = $('#main');
     main.classList.toggle('enter', !!S.animate);
-    main.innerHTML = onRound ? Views.round() : Views[S.tab]();
+    // 正在搜尋框打字（注音、拼音選字中）時，搜尋框本身不能換掉，不然選字會被打斷、只剩注音：只更新下面的結果
+    const q = document.activeElement?.id === 'q' && main.contains(document.activeElement) ? document.activeElement.closest('.search') : null;
+    const html = onRound ? Views.round() : Views[S.tab]();
+    if (q && q.parentNode === main && !S.animate) {
+      const tmp = document.createElement('div'); tmp.innerHTML = html;
+      if (tmp.firstElementChild?.matches('.search')) {
+        tmp.firstElementChild.remove();
+        while (q.nextSibling) q.nextSibling.remove();
+        main.append(...tmp.childNodes);
+      } else main.innerHTML = html;
+    } else main.innerHTML = html;
     S.animate = false;
     if (onRound) Swipe.bind();
     if (S.keepScroll) window.scrollTo(0, y);
@@ -1009,8 +1019,7 @@ const App = {
       clearTimeout(App._qt);
       App._qt = setTimeout(() => {
         if (S.tab === 'map') { MapView.sync(false); return; }
-        const el = $('#q'), pos = el?.selectionStart;
-        S.keepScroll = true; App.render(); const n = $('#q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); }
+        S.keepScroll = true; App.render();
       }, 180);
     } else {
       buzz(5); S.keepScroll = true;
@@ -1832,6 +1841,8 @@ document.addEventListener('keydown', e => {
   addEventListener('touchend', () => { clearTimeout(t); t = null; setTimeout(() => { App._lp = false; }, 400); }, { passive: true });
   addEventListener('contextmenu', e => { if (e.target.closest?.('.pcard') && S.tab === 'list') e.preventDefault(); });
 }
+// 注音、拼音選字中的 input 不搜尋（oninput 裡跳過），選好字才搜尋
+addEventListener('compositionend', e => { if (e.target.id === 'q') App.setF('q', e.target.value, true); });
 addEventListener('scroll', () => $('#top').classList.toggle('scrolled', scrollY > 8), { passive: true });
 
 (async () => {
