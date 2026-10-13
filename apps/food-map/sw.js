@@ -6,7 +6,12 @@ const LIBS = 'food-map-libs-v1';
 const FILES = ['./', './index.html', './app.js', './config.js', './manifest.json', './icon.svg', './apple-touch-icon.png', '../portal-home.js'];
 // 會影響畫面的檔案：這幾個變了才算有新版
 const CODE = /\/(index\.html|app\.js|config\.js|portal-home\.js)?$/;
-self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())));
+// 登入用的函式庫也一起先存好（從入口預先安裝時，第一次點進來就不用等它下載）
+const LIB_FILES = ['https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.109.0/dist/umd/supabase.js'];
+self.addEventListener('install', e => e.waitUntil(Promise.all([
+  caches.open(CACHE).then(c => c.addAll(FILES)),
+  caches.open(LIBS).then(c => Promise.all(LIB_FILES.map(u => c.match(u).then(hit => hit || c.add(u))))).catch(() => {}),
+]).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('food-map') && k !== CACHE && k !== LIBS).map(k => caches.delete(k)))).then(() => self.clients.claim())));
 const notify = () => self.clients.matchAll({ type: 'window' }).then(cs => cs.forEach(c => c.postMessage({ type: 'food-map-update' })));
 self.addEventListener('fetch', e => {
