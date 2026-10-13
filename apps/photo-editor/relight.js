@@ -295,14 +295,14 @@ const FLASH_R = 0.2, FLASH_DMAX = 0.2;
 // 臉上補的光的顏色（亮度 1）：Hypic 強度 100 額頭多出來的 +34,+49,+45，中性偏冷，所以會少一點紅
 const FLASH_T = [0.73, 1.08, 0.99];
 
-// 一組擬合的燈（LIGHT_FIT 的格式）放進 lights：g 亮度倍數、s 範圍倍數、bl 柔焦、sp 高光倍數、ox／oy 位移、col 改顏色
+// 一組擬合的燈（LIGHT_FIT 的格式）放進 lights：g 亮度倍數、s 範圍倍數、bl 柔焦、sp 高光倍數、ox／oy 位移、col 改顏色、gls 高光指數
 function putFit(lights, fit, A, base, k, o = {}) {
-  const { g = k, s = 1, bl = 1, sp = 1, ox = 0, oy = 0, col } = o;
+  const { g = k, s = 1, bl = 1, sp = 1, ox = 0, oy = 0, col, gls = 36 } = o;
   fit.l.forEach((f, i) => {
     const [, , z, sig, Ip, Ib, Jp, Jb, dr, Sp] = f, q = fitXY(A, base, f), c = f.slice(-3);
     lights.push({
       pos: [q.x + ox, q.y + oy, z * A.F, sig * A.F * s], col: col ? col(c, i) : c, par: [Ip * g, Ib * g, Jp * g, Jb * g],
-      dir: [dr / bl, Sp * sp * k, f.length > 13 ? f[10] : 1, f.length > 13 ? f[11] : 0], ext: [36, f.length > 15 ? 1 + (f[12] - 1) / bl : 1, 0, 1],
+      dir: [dr / bl, Sp * sp * k, f.length > 13 ? f[10] : 1, f.length > 13 ? f[11] : 0], ext: [gls, f.length > 15 ? 1 + (f[12] - 1) / bl : 1, 0, 1],
     });
   });
 }
@@ -340,6 +340,8 @@ export function litParams(P, base, geo) {
     const lum = L.lum ? (P.lightBri ?? 50) / 50 : 1;
     const s = 0.5 + (P.lightDist ?? 50) / 100;
     const sp = L.spec ? (P.lightSpec ?? L.spec) / L.spec : 1;
+    // 光澤：Hypic 滑桿 0~100 對應高光指數 0~400，預設是樣式資料第 9 欄 ÷4（36 → 9）；越大高光越小越亮
+    const gls = L.spec ? Math.max(1, 4 * (P.lightGloss ?? L.l[0][8] / 4)) : 36;
     const bl = 1 + (P.lightBlur || 0) / 25;
     // 顏色滑桿：照滑桿移動的量，把擬合出來的顏色往新顏色推
     let dc = [0, 0, 0];
@@ -347,7 +349,7 @@ export function litParams(P, base, geo) {
     const home = lightHome(L, base), ox = (P.lightX ?? home.x) - home.x, oy = (P.lightY ?? home.y) - home.y;
     const picks = L.pick && seed ? pickLights(L, seed) : null;
     putFit(lights, fit, A, base, k, {
-      g: k * lum / s, s: s * bl, bl, sp, ox, oy,
+      g: k * lum / s, s: s * bl, bl, sp, ox, oy, gls,
       col: (c, i) => {
         const m = (c[0] + c[1] + c[2]) / 3;
         c = c.map((v, j) => Math.max(0, v + dc[j] * Math.max(m, 0.3)));

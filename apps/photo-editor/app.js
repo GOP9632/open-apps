@@ -38,7 +38,7 @@ const P0 = {
   chin: 0, dark: 0, fold: 0, eyeb: 0, teeth: 0, slimL: 0, slimR: 0, eyesL: 0, eyesR: 0,
   bg: 'keep', bgColor: '#ffffff',
   oneTap: -1, oneAmt: 100,
-  light: '', lightAmt: 100, lightBri: 50, lightCol: null, lightDist: 50, lightSpec: null, lightBlur: 0, lightFg: 0, lightBg: 0, lightX: null, lightY: null, lightSeed: 0, flash: '', flashAmt: 60,
+  light: '', lightAmt: 100, lightBri: 50, lightCol: null, lightDist: 50, lightSpec: null, lightGloss: null, lightBlur: 0, lightFg: 0, lightBg: 0, lightX: null, lightY: null, lightSeed: 0, flash: '', flashAmt: 60,
   blur: 0, blurStyle: 'classic', blurSize: 55, fx: '', fxAmt: 80, ov: '', ovAmt: 80, ex: 'lake', bgImg: 'beach', bgBlur: 30, frame: '',
   ...HAIR_P0,
   bgProtect: 1, // 背景保護：變形時背景不跟著彎
@@ -612,7 +612,7 @@ const keysOn = keys => () => keys.some(k => JSON.stringify(P[k]) !== JSON.string
 const tabKeys = {
   adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...TONE, ...WRINKLE]), aiskin: keysOf([...AI_FACE, ...AI_BODY]), sculpt: Object.keys(SC_P0), reshape: ['liq'],
   body: Object.keys(BODY_P0), hair: Object.keys(HAIR_P0), makeup: ['mk', 'mkLook', 'mkLookAmt'], filter: ['filter', 'filterAmt'],
-  light: ['light', 'lightAmt', 'lightBri', 'lightCol', 'lightDist', 'lightSpec', 'lightBlur', 'lightFg', 'lightBg', 'lightX', 'lightY', 'lightSeed', 'flash', 'flashAmt'],
+  light: ['light', 'lightAmt', 'lightBri', 'lightCol', 'lightDist', 'lightSpec', 'lightGloss', 'lightBlur', 'lightFg', 'lightBg', 'lightX', 'lightY', 'lightSeed', 'flash', 'flashAmt'],
   fun: ['blur', 'blurStyle', 'blurSize', 'fx', 'fxAmt', 'ov', 'ovAmt', 'ex', ...Object.keys(POP_P0)], frame: ['frame'], cutout: ['bg', 'bgColor', 'bgImg', 'bgBlur'],
 };
 const TAB_RESET = Object.fromEntries(Object.entries(tabKeys).map(([t, keys]) => [t, { on: keysOn(keys), reset: () => toP0(keys) }]));
@@ -1063,11 +1063,11 @@ function tabShape(box) {
 
 // ---------- 光影：打光、閃光燈（relight.js） ----------
 // 照 Hypic 的打光面板：上面一排分類（自然光、單色光、多色），13 個樣式；燈可以在照片上拖。
-// 每個樣式只出現它有的滑桿（亮度、距離、顏色、高光），柔焦、前景暗、背景暗每個樣式都有
+// 每個樣式只出現它有的滑桿（亮度、距離、顏色、高光；有高光的才有光澤），柔焦、前景暗、背景暗每個樣式都有
 let lightSec = 'nat', lightParam = 'lightBri';
 const lightSliders = L => [
   L.lum && ['lightBri', '亮度', 0, 100, 50], ['lightDist', '距離', 0, 100, 50],
-  L.seg && ['lightCol', '顏色', 0, 100, Math.round(L.cdef * 100)], L.spec && ['lightSpec', '高光', 0, 100, L.spec],
+  L.seg && ['lightCol', '顏色', 0, 100, Math.round(L.cdef * 100)], L.spec && ['lightSpec', '高光', 0, 100, L.spec], L.spec && ['lightGloss', '光澤', 0, 100, L.l[0][8] / 4],
   ['lightBlur', '柔焦', 0, 100, 0], ['lightFg', '前景暗', 0, 100, 0], ['lightBg', '背景暗', 0, 100, 0],
 ].filter(Boolean);
 // 立體深度圖：人像遮罩或臉換了才重算
@@ -1105,7 +1105,7 @@ function tabLight(box) {
     label: L.name, icon: I.bulb, on: P.light === L.id, set: P.light === L.id,
     style: `color:rgb(${(L.l[0].slice(3, 6)).join(',')})`,
     onclick: () => {
-      if (P.light !== L.id) Object.assign(P, { lightX: null, lightY: null, lightCol: null, lightSpec: null, lightSeed: 0 });
+      if (P.light !== L.id) Object.assign(P, { lightX: null, lightY: null, lightCol: null, lightSpec: null, lightGloss: null, lightSeed: 0 });
       P.light = L.id; need(); render(); commit(); showTab('light');
     },
   })));
