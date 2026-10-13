@@ -170,9 +170,11 @@ const srcName = u => /instagram\.com/.test(u) ? 'Instagram 貼文' : /threads\.(
 // 有貼文連結、但缺照片或必點菜色的店，回原始貼文補一次（每個連結只補一次）
 const needsEnrich = p => isMine(p) && /^https?:\/\//.test(p.source_url || '') && !/google\.|goo\.gl/.test(p.source_url) && (!p.photo || !(p.dishes || []).length) && !load('food.enriched', {})[p.id + '|' + p.source_url];
 
+// 已經顯示過的照片：重畫時直接顯示，不再從透明淡入（不然每次重畫整頁照片都會閃一下）
+const SHOWN = new Set();
 function photo(p) {
   const [, e, c] = cat(p);
-  if (p.photo) return `<img src="${esc(p.photo)}" alt="" loading="lazy" decoding="async" class="loading" onload="this.classList.remove('loading')" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'placeholder',style:'background:linear-gradient(150deg,${c},${c}bb)',innerHTML:'<span class=pe>${e}</span>'}))">`;
+  if (p.photo) return `<img src="${esc(p.photo)}" alt="" loading="lazy" decoding="async" class="${SHOWN.has(p.photo) ? '' : 'loading'}" onload="this.classList.remove('loading');SHOWN.add(this.getAttribute('src'))" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'placeholder',style:'background:linear-gradient(150deg,${c},${c}bb)',innerHTML:'<span class=pe>${e}</span>'}))">`;
   return `<div class="placeholder" style="background:linear-gradient(150deg,${c} 0%,${c}c0 100%)"><span class="pe">${e}</span></div>`;
 }
 
@@ -233,18 +235,19 @@ const DB = {
     if (!S.user) return;
     const sb = S.sb;
     const [pl, gr, gm, gp, rd] = await Promise.all([
-      sb.from('places').select('*').order('created_at', { ascending: false }),
-      sb.from('groups').select('*').order('created_at'),
-      sb.from('group_members').select('*'),
-      sb.from('group_places').select('*'),
-      sb.from('swipe_rounds').select('*').order('created_at', { ascending: false }).limit(50),
+      // 每一個都要固定排序：順序不固定的話，資料沒變也會被當成有變，整頁重畫、照片閃一下
+      sb.from('places').select('*').order('created_at', { ascending: false }).order('id'),
+      sb.from('groups').select('*').order('created_at').order('id'),
+      sb.from('group_members').select('*').order('group_id').order('user_id'),
+      sb.from('group_places').select('*').order('group_id').order('place_id'),
+      sb.from('swipe_rounds').select('*').order('created_at', { ascending: false }).order('id').limit(50),
     ]);
     for (const r of [pl, gr, gm, gp, rd]) if (r.error) throw r.error;
     S.places = pl.data; S.groups = gr.data; S.members = gm.data; S.groupPlaces = gp.data; S.rounds = rd.data;
     const ids = [...new Set([S.user.id, ...S.members.map(m => m.user_id), ...S.places.map(p => p.owner)])];
     const rids = S.rounds.map(r => r.id);
     // 名字和滑卡紀錄同時讀，少等一輪
-    const [pr, sw] = await Promise.all([sb.from('profiles').select('*').in('id', ids), rids.length ? sb.from('swipes').select('*').in('round_id', rids) : null]);
+    const [pr, sw] = await Promise.all([sb.from('profiles').select('*').in('id', ids).order('id'), rids.length ? sb.from('swipes').select('*').in('round_id', rids).order('round_id').order('user_id').order('place_id') : null]);
     S.profiles = Object.fromEntries((pr.data || []).map(p => [p.id, p]));
     if (!S.profiles[S.user.id]) {
       // 這個帳號在跑 schema.sql 之前就存在（和其他 app 共用的 Supabase）
@@ -774,7 +777,7 @@ const MapView = {
     const box = $('#mapcards');
     const sorted = S.pos ? list.slice().sort((a, b) => distKm(S.pos, a) - distKm(S.pos, b)) : list;
     document.body.classList.toggle('no-cards', !sorted.length);
-    box.innerHTML = sorted.map(p => {
+    const html = sorted.map(p => {
       const d = S.pos ? fmtKm(distKm(S.pos, p)) : '';
       return `<div class="mcard ${MapView.sel === p.id ? 'sel' : ''}" data-id="${p.id}" onclick="App.openPlace('${p.id}')">
         <div class="ph">${photo(p)}</div>
@@ -782,6 +785,9 @@ const MapView = {
           <div class="acts"><a class="btn primary" href="${mapsUrl(p)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${ic('nav')} 導航</a><span class="tag ${p.status === 'been' ? '' : 'hot'}" style="align-self:center">${p.status === 'been' ? '去過' : '想去'}</span></div></div>
       </div>`;
     }).join('');
+    // 內容一樣就不重建，不然卡片照片會閃、滑到一半的位置會跳回去
+    const key = html.replace(/class="loading"/g, 'class=""');
+    if (key !== MapView._cardsKey || !box.children.length) { box.innerHTML = html; MapView._cardsKey = key; }
     // 卡片滑到哪一張，地圖就跟到那間
     clearTimeout(MapView._st);
     box.onscroll = () => {
@@ -1587,7 +1593,9 @@ const App = {
       clearTimeout(t);
       t = setTimeout(async () => {
         const before = new Set(S.rounds.flatMap(r => Swipe.matches(r).filter(x => x.all).map(x => r.id + x.p.id)));
-        await DB.loadAll(); S.keepScroll = true;
+        const now = await DB.loadAll().catch(() => null);
+        if (!now || now === App._sig) return;
+        App._sig = now; S.keepScroll = true;
         const swiping = $('#scard') && $('#scard').style.transform;
         if (!$('.sheet-bg') && !swiping && S.tab !== 'map') App.render();
         for (const r of S.rounds) for (const x of Swipe.matches(r)) if (x.all && !before.has(r.id + x.p.id) && !$('#overlay .overlay')) App.matchShow(x);
