@@ -1,5 +1,5 @@
 import { Renderer } from './gl.js';
-import { FILTERS, bakeLUT, thumb, filterFn, skinFilterFn } from './filters.js';
+import { FILTERS, bakeLUT, thumb, filterFn, skinFilterFn, hairFilterFn } from './filters.js';
 import { loadXT, xtData, xtItem } from './xt.js';
 import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor } from './ai.js';
 import { COVERS, COVER_CATS, coverPixels } from './coverface.js';
@@ -249,7 +249,7 @@ function findFaces() {
     if (b === base) { R.setMask2(b.mask2); render(); }
     if (b === base && !f.length && landing && tab === 'beauty') { landing = false; showTab('filter'); }
     const seg = f.length ? await getSeg(b) : null;
-    b.mask = f.length ? skinMask(f, b.canvas.width, b.canvas.height, seg) : null;
+    b.mask = f.length ? skinMask(f, b.canvas.width, b.canvas.height, seg, b.canvas) : null;
     b.flashSt = seg && b.mask ? flashStats(b.canvas, seg, b.mask, b.geoms[0]) : null;
     if (b === base) { R.setMask(b.mask); render(); if (tab === 'beauty' || tab === 'sticker' || tab === 'makeup' || tab === 'looks') showTab(tab); }
     return f;
@@ -313,9 +313,9 @@ function render() {
   raf = requestAnimationFrame(() => {
     raf = 0;
     const lut = gradeOn(P) ? getGradeLut() : P.filter === 'none' ? null : getLut(P.filter);
-    // 皮膚另外一套顏色要用皮膚遮罩，還沒找過臉就先找
-    if (lut?.skin && !base.facesP) findFaces();
-    R.setLut(lut?.c, lut?.skin);
+    // 皮膚、頭髮另外一套顏色要用皮膚遮罩和分類圖，還沒找過臉就先找
+    if ((lut?.skin || lut?.hair) && !base.facesP) findFaces();
+    R.setLut(lut?.c, lut?.skin, lut?.hair);
     draw();
     paintPop();
     if (curFrame()?.live) paintFrame();
@@ -473,22 +473,22 @@ let gradeLut = null, gradeLutKey = '';
 function getGradeLut() {
   const k = gradeKey(P) + '|' + P.filter + '|' + P.filterAmt;
   if (k !== gradeLutKey) {
-    gradeLutKey = k; const sk = skinFilterFn(P.filter);
-    gradeLut = lutPair(bakeLUT(gradeFn(P, filterFn(P.filter))), sk && bakeLUT(gradeFn(P, sk)));
+    gradeLutKey = k; const sk = skinFilterFn(P.filter), hr = hairFilterFn(P.filter);
+    gradeLut = lutPair(bakeLUT(gradeFn(P, filterFn(P.filter))), sk && bakeLUT(gradeFn(P, sk)), hr && bakeLUT(gradeFn(P, hr)));
   }
   return gradeLut;
 }
-// 一般顏色和皮膚那套拼成一張 1024×512（沒有皮膚那套就兩邊一樣）
-function lutPair(a, b) {
-  const c = document.createElement('canvas'); c.width = 1024; c.height = 512;
-  const x = c.getContext('2d'); x.drawImage(a, 0, 0); x.drawImage(b || a, 512, 0);
-  return { c, skin: !!b };
+// 一般顏色、皮膚那套、頭髮那套拼成一張 1536×512（沒有的那套就放一般顏色）
+function lutPair(a, b, h) {
+  const c = document.createElement('canvas'); c.width = 1536; c.height = 512;
+  const x = c.getContext('2d'); x.drawImage(a, 0, 0); x.drawImage(b || a, 512, 0); x.drawImage(h || a, 1024, 0);
+  return { c, skin: !!b, hair: !!h };
 }
 function getLut(id) {
   if (!lutCache.has(id)) {
     const fn = filterFn(id); if (!fn) return null;
-    const sk = skinFilterFn(id);
-    lutCache.set(id, lutPair(bakeLUT(fn), sk && bakeLUT(sk)));
+    const sk = skinFilterFn(id), hr = hairFilterFn(id);
+    lutCache.set(id, lutPair(bakeLUT(fn), sk && bakeLUT(sk), hr && bakeLUT(hr)));
   }
   return lutCache.get(id);
 }

@@ -5,7 +5,7 @@
 //   2. 暗、中、亮三段 × 8 個色相：色度（偏離灰色的量）怎麼變、亮度怎麼變
 //   3. 依亮度（9 點）的色度變化
 // 權重存在 xt/filters.bin（int16，每個濾鏡一個縮放值），名稱、分類、預設強度在 xt/filters.json。
-// 醒圖很多濾鏡對皮膚另外調一套顏色，那套的權重在 xt/skin.bin（同樣的模型）。
+// 醒圖很多濾鏡對皮膚另外調一套顏色，那套的權重在 xt/skin.bin（同樣的模型）；一鍵出片的風格頭髮也另外一套，同樣放在 skin.bin。
 // 少數像熱感應、只留膚色那種顏色會突然跳的濾鏡（像素黃、數字彩虹、鎏金…），上面的模型跟不上，
 // 另外加一張「色相 × 亮度 × 鮮豔度」的格子（12×9×5，格子之間線性內插），權重在 xt/special.bin。
 
@@ -28,7 +28,7 @@ export function loadXT() {
     const sp = meta.sp, n = meta.items.length;
     data = {
       cats: meta.cats,
-      items: [...meta.items.map(([name, cat, p, def, skin], i) => ({ id: 'xt' + i, name, cat, p, def, skin })),
+      items: [...meta.items.map(([name, cat, p, def, skin, hair], i) => ({ id: 'xt' + i, name, cat, p, def, skin, hair })),
         ...(sp?.items || []).map(([name, cat, p, def, skin], i) => ({ id: 'xt' + (n + i), name, cat, p, def, skin, sp: true }))],
       w: deq(buf, meta.scale), ws: deq(sbuf, meta.skinScale),
       wx: sp ? deq(xbuf, sp.scale, sp.feat) : null, nfx: sp?.feat, grid: sp?.grid,
@@ -40,10 +40,10 @@ export function loadXT() {
 export const xtData = () => data;
 export const xtItem = id => data && id?.startsWith('xt') ? data.items[+id.slice(2)] : null;
 
-// 一個濾鏡的顏色函式 (r,g,b) → [r,g,b]，數值 0～1；skin 為 true 時是皮膚那套（沒有就回傳 null）
-export function xtFn(id, skin) {
-  const it = xtItem(id); if (!it || (skin && !(it.skin >= 0))) return null;
-  const W = it.sp ? data.wx : skin ? data.ws : data.w, base = (skin ? it.skin : it.p) * (it.sp ? data.nfx : NF) * 3;
+// 一個濾鏡的顏色函式 (r,g,b) → [r,g,b]，數值 0～1；part 是 'skin' 或 'hair' 時是皮膚、頭髮那套（沒有就回傳 null）
+export function xtFn(id, part) {
+  const it = xtItem(id), k = part ? it?.[part] : 0; if (!it || (part && !(k >= 0))) return null;
+  const W = it.sp ? data.wx : part ? data.ws : data.w, base = (part ? k : it.p) * (it.sp ? data.nfx : NF) * 3;
   const [NH, NL, NC] = data.grid || [0, 0, 0];
   const out = [0, 0, 0];
   return (r, g, b) => {

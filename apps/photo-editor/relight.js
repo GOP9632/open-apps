@@ -305,12 +305,15 @@ const FLASH_EVEN = [0.6, 0.72];
 // 而且背景要比臉亮很多（背景 ÷ 臉上皮膚亮部，室內開燈拍）才用舊版：白背景攝影棚那種（評審第 3 輪第 9 張，1.09）
 // 舊版會把背景壓得太暗。同樣在 FLASH_BG 之間漸進
 const FLASH_BG = [1.2, 1.35];
+// 公式本身也一樣：平整度在 FLASH_FLAT 之間，皮膚從「壓平明暗」漸進到「照原本明暗按比例提亮」（gl.js 的 uFS.w）。
+// 8 張公開測試照都在 0.59 以下，不受影響；平光的臉（評審的 A、第 9 張）用壓平會變成一片面具
+const FLASH_FLAT = [0.6, 0.72];
 // 臉只看得到一邊（側臉、半邊在畫面外）時左右比算不出來，當作一般的 0.85（公開測試照的中間值）
 const FLASH_LR0 = 0.85;
 const FLASH_FIT_OLD = { amb: [0.5, 0.648], l: [[0.126,1.459,2.53,0.856,0.168,0.0,0.382,0.508,0.632,0.0,0.794,1.478,0.67,0.642,0.581],[-0.218,-0.096,8.0,1.387,0.687,0.154,0.0,0.022,0.212,0.0,0.447,0.184,0.936,1.233,1.215],[0.193,-1.034,2.176,0.83,0.404,0.208,0.0,0.041,1.0,0.0,0.652,1.112,0.888,0.992,1.182]], flat: [1.5, 0.58, 0.5] };
 const FLASH_DMAX = 0.2, FLASH_T = [0.73, 1.08, 0.99];
-const FLASH_ADJ = [0.724, 0.342, 0.377, 0.175, 1.235, 0.893, 0.63, 0.284, 0.587, 0.242, 0.23, -0.006, 0.495, 0.859, 0.136, -0.741, 0, 0.922, 0.427, 0, 0.12, 0.55, 1, 0, 1, 1, 0, 0];
-const FLASH_CAM = [0.697, 0.317, 0.439, 0.235, 1.268, 0.886, 0.606, 0.272, 0.915, 0, 0, 0, 1.03, 0.012, 0, 0, 0.959, 0.065, 0, 0, -0.094, 1.468, 1, 0.39, 0.844, 1.001, 0.115, 0];
+const FLASH_ADJ = [0.751, 0.444, 0.557, 0.133, 1.186, 0.924, 0.837, 0.065, 0.611, 0.206, 0.218, -0.011, 0.493, 0.856, 0.131, -0.737, -0.038, 0.959, 0.6, 0, 0, 1.1, 1, 0.053, 1.041, 0.882, 0.269, 0];
+const FLASH_CAM = [0.728, 0.466, 0.667, 0.23, 1.293, 0.848, 0.592, 0.289, 0.922, 0, 0, 0, 1.018, 0.017, 0, 0, 0.969, 0.057, 0, 0, 0, 1, 1, 0.321, 0.848, 1.187, 0.127, 0];
 const FLASH_ST0 = { Lh: 0.65, Lm: 0.45, cs: [1.3, 0.94, 0.7], Lb: 0.5, cast: [0, 0, 0] };
 
 // 一組擬合的燈（LIGHT_FIT 的格式）放進 lights：g 亮度倍數、s 範圍倍數、bl 柔焦、sp 高光倍數、ox／oy 位移、col 改顏色、gls 高光指數
@@ -454,7 +457,7 @@ export function litParams(P, base, geo) {
   const famt = camOn ? Math.min(1, P.flashAmt / Fl.def) * (1 + 0.6 * Math.max(0, P.flashAmt / Fl.def - 1)) : ffN;
   // F [強度, 1 = 相機閃光燈, 0, 舊版佔多少]
   const flashF = neu && (camOn || ffN) ? [famt, camOn ? 1 : 0, 0, wo] : null;
-  const flashP = camOn ? FLASH_CAM : FLASH_ADJ, flashS = [fs.Lh, fs.Lb, fs.Lm ?? 0.45, 0], flashCs = fs.cs, flashCast = fs.cast;
+  const flashP = camOn ? FLASH_CAM : FLASH_ADJ, flashS = [fs.Lh, fs.Lb, fs.Lm ?? 0.45, st ? ss(st.even, FLASH_FLAT) : 0], flashCs = fs.cs, flashCast = fs.cast;
   const flashR = [FLASH_R * A.Fpx / W, FLASH_R * A.Fpx / H];
   return { lit: { lights, ambS, ambB, bgDepth, thick: 1.3 * A.F, flashF, flashR, flashP, flashS, flashCs, flashCast, flashO, flashG, flashC, flashT, flashX, cap: L && LIGHT_CAP[L.id] }, flash };
 }
