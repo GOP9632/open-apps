@@ -112,7 +112,7 @@ const avg = (pts, ids) => ids.reduce((s, i) => ({ x: s.x + pts[i].x / ids.length
 //   - 磨皮：臉 1 倍、臉以外的皮膚 0.5 倍（醒圖），眼睛、眉毛、嘴巴、鼻孔不磨
 //   - 美白：眉毛 0.6、眼睛 0.2、嘴巴 0.4 倍（美圖），避免眼白、嘴唇被洗白
 //   B 通道 = 嘴巴裡面（白牙用）
-export function skinMask(faces, w, h, seg) {
+export function skinMask(faces, w, h, seg, img) {
   const mw = seg ? seg.w : Math.max(1, Math.round(w * Math.min(1, 512 / Math.max(w, h))));
   const mh = seg ? seg.h : Math.max(1, Math.round(h * Math.min(1, 512 / Math.max(w, h))));
   const kx = mw / w, ky = mh / h, r = Math.max(2, Math.round(mw / 110));
@@ -157,21 +157,65 @@ export function skinMask(faces, w, h, seg) {
     d[i * 4 + 3] = 255;
   }
   ctx.putImageData(out, 0, 0);
-  // 閃光燈用的分類圖（gl.js 放進 uSeg 的 G、B）：G = 0.5 + 0.5 ×（頭髮 − 五官）、B = 皮膚（挖掉五官）
-  //   五官 = 眼睛、眉毛、嘴唇、鼻孔、牙齒。頭髮和五官幾乎不會重疊，所以共用一個通道
+  // 閃光燈用的分類圖（gl.js 放進 uSeg 的 G、B、A）：G = 0.5 + 0.5 ×（頭髮 − 五官）、B = 皮膚（挖掉五官）、
+  //   A = 1 − 0.5 × 鬍子（beardMap）。五官 = 眼睛、眉毛、嘴唇、鼻孔、牙齒。頭髮和五官幾乎不會重疊，所以共用一個通道
   if (seg) {
+    const bd = img ? beardMap(img, c, mw, mh) : null;
     const k2 = document.createElement('canvas'); k2.width = mw; k2.height = mh;
     const x2 = k2.getContext('2d'), o2 = x2.createImageData(mw, mh), e = o2.data;
     for (let i = 0; i < mw * mh; i++) {
       const sk = seg.skin[i], ft = Math.min(1, sk * (1 - holeS[i]) + teeth[i]);
       e[i * 4 + 1] = (0.5 + 0.5 * (Math.min(1, seg.hair[i]) - ft)) * 255;
       e[i * 4 + 2] = sk * holeS[i] * 255;
-      e[i * 4 + 3] = 255;
+      e[i * 4 + 3] = 255 - (bd ? bd[i] * 127 : 0);
     }
     x2.putImageData(o2, 0, 0);
     c.cls = k2;
   }
   return c;
+}
+
+// 鬍子圖：皮膚裡比臉的膚色中位數暗很多、又有細紋理的地方（鬍子、鬍渣；陰影的那半邊臉是平滑的，不會被抓到）。
+// 閃光燈照頭髮的方式處理這裡，不跟皮膚一起提亮。固定在長邊 512 算，結果放大回遮罩的大小
+function boxF(a, w, h, r) {
+  const t = new Float32Array(a.length), o = new Float32Array(a.length), n = 2 * r + 1;
+  for (let y = 0; y < h; y++) {
+    let s = 0; const row = y * w;
+    for (let k = -r - 1; k < r; k++) s += a[row + Math.min(w - 1, Math.max(0, k))];
+    for (let x = 0; x < w; x++) { s += a[row + Math.min(w - 1, x + r)] - a[row + Math.max(0, x - r - 1)]; t[row + x] = s / n; }
+  }
+  for (let x = 0; x < w; x++) {
+    let s = 0;
+    for (let k = -r - 1; k < r; k++) s += t[Math.min(h - 1, Math.max(0, k)) * w + x];
+    for (let y = 0; y < h; y++) { s += t[Math.min(h - 1, y + r) * w + x] - t[Math.max(0, y - r - 1) * w + x]; o[y * w + x] = s / n; }
+  }
+  return o;
+}
+function beardMap(img, mask, mw, mh) {
+  const k = 512 / Math.max(mw, mh), w = Math.max(1, Math.round(mw * k)), h = Math.max(1, Math.round(mh * k));
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(img, 0, 0, w, h); const d = x.getImageData(0, 0, w, h).data;
+  x.clearRect(0, 0, w, h); x.drawImage(mask, 0, 0, w, h); const m = x.getImageData(0, 0, w, h).data;
+  const n = w * h, L = new Float32Array(n), sk = new Float32Array(n), ls = [];
+  for (let i = 0; i < n; i++) {
+    L[i] = (0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2]) / 255; sk[i] = m[i * 4] / 255;
+    if (sk[i] > 0.5) ls.push(L[i]);
+  }
+  if (ls.length <= 50) return null;
+  ls.sort((a, b) => a - b); const Lm = ls[ls.length >> 1];
+  const r = Math.max(1, Math.round(Math.max(w, h) * 0.008)), b1 = boxF(L, w, h, 1), D = new Float32Array(n);
+  for (let i = 0; i < n; i++) D[i] = Math.abs(L[i] - b1[i]);
+  const Lz = boxF(L, w, h, r), Tx = boxF(D, w, h, r), b = new Float32Array(n);
+  const sm = (a, c, v) => { const t = Math.min(1, Math.max(0, (v - a) / (c - a))); return t * t * (3 - 2 * t); };
+  for (let i = 0; i < n; i++) b[i] = sk[i] * (1 - sm(0.45, 0.6, Lz[i] / Lm)) * sm(0.07, 0.12, Tx[i] / Math.max(Lz[i], 0.02));
+  const bb = boxF(b, w, h, 2), out = new Float32Array(mw * mh);
+  for (let yy = 0; yy < mh; yy++) for (let xx = 0; xx < mw; xx++) {
+    const fx = Math.min(w - 1, Math.max(0, (xx + 0.5) * w / mw - 0.5)), fy = Math.min(h - 1, Math.max(0, (yy + 0.5) * h / mh - 0.5));
+    const x0 = Math.floor(fx), y0 = Math.floor(fy), x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1), ax = fx - x0, ay = fy - y0;
+    out[yy * mw + xx] = (bb[y0 * w + x0] * (1 - ax) + bb[y0 * w + x1] * ax) * (1 - ay) + (bb[y1 * w + x0] * (1 - ax) + bb[y1 * w + x1] * ax) * ay;
+  }
+  return out;
 }
 
 // 第二張遮罩：R = 黑眼圈、G = 法令紋、B = 眼睛（亮眼）
