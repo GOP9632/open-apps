@@ -1092,9 +1092,9 @@ function tabLight(box) {
     box.append(item({ label: '不閃光', icon: I.off, on: !P.flash, onclick: () => { P.flash = ''; render(); commit(); showTab('light'); } }));
     FLASHES.forEach(F => box.append(item({
       label: F.name, icon: I.flash, on: P.flash === F.id, set: P.flash === F.id,
-      onclick: () => { P.flash = F.id; need(); render(); commit(); showTab('light'); },
+      onclick: () => { if (P.flash !== F.id && F.def) P.flashAmt = F.def; P.flash = F.id; need(); render(); commit(); showTab('light'); },
     })));
-    if (P.flash) setSlider('閃光', 0, 100, P.flashAmt, v => { P.flashAmt = v; render(); });
+    if (P.flash) setSlider('閃光', 0, 100, P.flashAmt, v => { P.flashAmt = v; render(); }, FLASHES.find(F => F.id === P.flash)?.def ?? 60);
     else hideSlider();
     $('#note').textContent = '模擬開閃光燈拍的照片：臉亮、背景暗、後面有影子。醒圖的閃光燈是上傳到雲端用 AI 算，這裡全部在手機上算。';
     return;

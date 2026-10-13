@@ -266,10 +266,13 @@ export function lightList(L, seed) {
   return L.l;
 }
 
-// 閃光燈：燈在鏡頭上面一點，離人大約 6 個臉寬；背景在人後面 3.5 個臉寬，所以暗很多，影子投在背景上
+// 閃光燈：相機閃光燈、富士閃光燈照 Hypic「AI 打光」同名樣式的成品（def 是 Hypic 的預設強度，成品就是那個強度）。
+//   相機閃光燈：燈和壓暗（fit）、臉上補光（flat：補平多少、目標亮度、亮部保留顏色；dmax 上限；tint 顏色）、頭頂頭髮壓暗（hair）。
+//   CCD 還是舊的：燈在鏡頭上面一點，離人大約 6 個臉寬，再加偏冷、暈光、雜訊
 export const FLASHES = [
-  { id: 'direct', name: '直閃', I: 1.05, ambS: 0.4, ambB: 0.3, spec: 0.7, soft: 0.5, wrap: 0, retro: 0 },
-  { id: 'softf', name: '柔閃', I: 0.7, ambS: 0.6, ambB: 0.5, spec: 0.25, soft: 5, wrap: 0.4, retro: 0 },
+  { id: 'direct', name: '相機閃光燈', def: 60, fit: { amb: [0.3, 0.32], l: [[0.462,3.624,5.453,3.193,0.0,0.015,1.197,0.798,0.223,0.0,0.434,0.236,1.598,1.14,0.988],[-1.734,0.105,7.228,3.497,0.345,0.115,0.195,0.0,0.06,0.0,0.15,-0.002,1.015,0.831,0.774],[-0.027,-1.591,4.159,7.978,0.537,0.524,0.131,0.0,1.0,0.082,0.184,0.603,1.014,1.003,0.966]] }, flat: [1.5, 0.61, 0.5], dmax: 0.25, tint: [1.06, 0.96, 0.9], hair: 0.4, skin: 1.0 },
+  // 富士閃光燈的成品跟「調整 › 閃光燈」強度 60 幾乎一樣（13 個區域差 ≤4），所以直接用它：滑桿 50 = 調整 60
+  { id: 'softf', name: '富士閃光燈', def: 50, adj: 1.2 },
   { id: 'ccd', name: 'CCD', I: 1.2, ambS: 0.35, ambB: 0.22, spec: 0.8, soft: 0.5, wrap: 0, retro: 1 },
 ];
 
@@ -316,7 +319,9 @@ export function lightPosOf(L, P, base) {
 
 // 參數 → gl.js 要的 fx.lit、fx.flash
 export function litParams(P, base, geo) {
-  const L = LIGHTS.find(x => x.id === P.light), Fl = FLASHES.find(x => x.id === P.flash), ff = Math.max(0, P.flashFill || 0) / 100;
+  const L = LIGHTS.find(x => x.id === P.light), F0 = FLASHES.find(x => x.id === P.flash);
+  // adj：這個樣式就是調整 › 閃光燈換個強度
+  const Fl = F0?.adj ? null : F0, ff = Math.max(0, P.flashFill || 0, F0?.adj ? Math.min(100, P.flashAmt * F0.adj) : 0) / 100;
   if (!L && !Fl && !ff) return {};
   const A = lightAnchor(base, geo), W = base.canvas.width, H = base.canvas.height;
   const gw = geo?.w || W, gh = geo?.h || H, hFace = geo ? geo.max * 0.8 : 0;
@@ -358,7 +363,7 @@ export function litParams(P, base, geo) {
     ambB = (1 + (fit.amb[1] - 1) * k) * (1 - 0.7 * (P.lightBg || 0) / 100);
   }
   // 調整 › 閃光燈只開它的時候：燈照全強度算，最後在 gl.js 照滑桿跟原圖混合（Hypic 的滑桿就是這樣）
-  const flashOnly = ff && !L && !Fl;
+  const style = Fl?.fit && !L ? Fl : null, flashOnly = ff && !L && !Fl;
   if (ff) {
     // Hypic 是雲端重打光。燈和壓暗對照強度 100 擬合，負責顏色（少一點紅、背景偏冷）；
     // 人的亮度由 gl.js 的補平決定，所以臉暗的照片補多、本來就亮的照片不會過曝
@@ -367,7 +372,14 @@ export function litParams(P, base, geo) {
     ambS *= 1 + (FLASH_FIT.amb[0] - 1) * q; ambB *= 1 + (FLASH_FIT.amb[1] - 1) * q;
   }
   let flash = null;
-  if (Fl) {
+  if (Fl?.fit) {
+    // 相機閃光燈：燈照擬合的全強度算，gl.js 再照「滑桿 ÷ Hypic 預設強度」跟原圖混合（預設那格就是 Hypic 的成品）
+    // 超過預設：燈只再亮一半的比例，主要靠臉上補得更多（gl.js 有上限和高光收邊），不會整張爆白
+    const r = style ? 1 + 0.5 * Math.max(0, P.flashAmt / style.def - 1) : 1;
+    putFit(lights, Fl.fit, A, base, style ? r : P.flashAmt / 100);
+    const q = style ? 1 : P.flashAmt / 100;
+    ambS *= 1 + (Fl.fit.amb[0] - 1) * q; ambB *= 1 + (Fl.fit.amb[1] - 1) * q;
+  } else if (Fl) {
     const k = P.flashAmt / 100;
     // 燈在照片正中間上方（相機的位置），不跟著臉
     put(0.5, 0.42 - 0.5 * A.F / gh, 6 * A.F, [0.97, 0.99, 1.03], Fl.I * k, [Fl.wrap, Fl.spec * k, Fl.soft, 1]);
@@ -376,9 +388,14 @@ export function litParams(P, base, geo) {
     flash = { amt: k, retro: Fl.retro };
   }
   // 閃光燈補平（gl.js）：F [混合比例, 補平多少, 目標亮度, 亮部保留顏色多少]、G [, 最多亮幾倍]、R 取樣半徑
-  const fl = FLASH_FIT.flat, flashF = flashOnly ? [ff, ...fl] : null, flashG = [0, FLASH_DMAX];
+  // 樣式：滑桿到預設之前跟原圖混合，超過預設時臉上補平多補（補多少、上限照比例放大）
+  const sr = style ? 1 + 0.5 * Math.max(0, P.flashAmt / style.def - 1) : 1;
+  const flashF = style ? [Math.min(1, P.flashAmt / style.def), style.flat[0] * sr, style.flat[1], style.flat[2]] : flashOnly ? [ff, ...FLASH_FIT.flat] : null;
+  const flashG = [0, style ? style.dmax * Math.sqrt(sr) : FLASH_DMAX], flashT = style ? style.tint : FLASH_T;
+  // X：頭頂頭髮壓暗多少、脖子肩膀也用補平（1）、下巴影子多深、臉上補光的底用燈照過的結果（1）還是原圖（0）
+  const flashX = style ? [style.hair, style.skin ? 1 : 0, style.skin || 0, 0] : [0.25, 0, 0, 0];
   // 臉的範圍（橢圓，照片 0~1）：補平只做在臉上
   const flashC = [A.x, A.y, 0.85 * A.Fpx / W, 0.95 * A.Fpx / H];
   const flashR = [FLASH_R * A.Fpx / W, FLASH_R * A.Fpx / H];
-  return { lit: { lights, ambS, ambB, bgDepth, thick: 1.3 * A.F, flashF, flashG, flashC, flashR, flashT: FLASH_T, cap: L && LIGHT_CAP[L.id] }, flash };
+  return { lit: { lights, ambS, ambB, bgDepth, thick: 1.3 * A.F, flashF, flashG, flashC, flashR, flashT, flashX, cap: L && LIGHT_CAP[L.id] }, flash };
 }
