@@ -111,11 +111,9 @@ uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大 2 骨架收
 uniform vec2 uW3[${MAX_WARPS}]; // 頭的傾斜 cos、sin（收窄：最強的位置、範圍）
 uniform float uExposure, uBright, uContrast, uSat, uTemp, uTint, uHigh, uShadow, uSharp, uVig, uGrain, uFade;
 uniform float uVib, uStruct, uTexture, uLSense, uBack;
-uniform vec4 uFlashF;
-uniform vec2 uFlashR, uLCap, uFlashG;
-uniform vec4 uFlashC;
-uniform vec3 uFlashT;
-uniform vec4 uFlashX;
+uniform vec4 uFlashF, uFS, uFP[5];
+uniform vec2 uFlashR, uLCap;
+uniform vec3 uFCs, uFCast;
 uniform float uSmoothAmt, uWhite, uLutAmt, uHasLut, uLutSkin;
 uniform float uDark, uFold, uEyeB, uTeeth;
 // 打光、閃光燈：最多 8 盞燈（閃光燈也算一盞）
@@ -437,95 +435,51 @@ void main(){
       // 本來就亮的地方剩下的空間少，加的量跟著變少，永遠不會到 255
       lit += hr * (1.0 - exp(-dc / hr)) - d;
     }
-    if (uFlashF.x > 0.0) {
-      // 調整 › 閃光燈：臉上的皮膚看附近皮膚的平均亮度補平，暗的那側補多、本來就亮的那側收一點，
-      // 像從相機打一盞平光。用附近的平均而不是單一像素，鬍子、眉毛這種本來就深的地方不會被洗白
-      float sw = 0.0, sl = 0.0, sg = 0.0;
-      for (int j = 0; j < 17; j++) {
-        float ring = j == 0 ? 0.0 : (j < 9 ? 1.0 : 2.0), an = float(j) * 0.785398 + (j < 9 ? 0.0 : 0.3927);
-        vec2 q = uv + ring * uFlashR * vec2(cos(an), sin(an));
-        float w = texture(uMask, q).r + 0.15;
-        sl += luma(texture(uBlurS, q).rgb) * w; sw += w; sg += texture(uMask, q).g;
-      }
-      // 臉：照附近皮膚的平均亮度（七成）和這一點周圍的亮度（三成）決定補多少（暗的那側補多、亮的那側幾乎不補），有上限（uFlashG.y）
-      vec2 fc = (uv - uFlashC.xy) / uFlashC.zw;
-      float Ls = max(mix(sl / sw, luma(texture(uBlurS, uv).rgb), 0.3), 0.02), dl = min(uFlashF.y * (uFlashF.z - Ls), uFlashG.y);
-      // 相機閃光燈：下巴下面的脖子補少一點，脖子不會比下巴亮（Hypic 也是暗的）
-      float neck = uFlashX.y * smoothstep(0.85, 0.97, fc.y) * (1.0 - smoothstep(0.35, 0.6, abs(fc.x))) * (1.0 - smoothstep(0.3, 0.4, Ls));   // 只有本來就在影子裡的暗脖子
-      dl *= 1.0 - 0.4 * neck;
-      // 閃光燈從鏡頭打過來：正對鏡頭的面補滿，下顎、臉頰外側、鼻翼這些斜的面補少，輪廓的陰影留著
-      // 正對鏡頭的面補滿、斜的面補少；相機閃光燈差得更多（Hypic 的臉比原圖更立體）
-      float nz = mix(mix(0.55, 0.3, uFlashX.y), 1.0, smoothstep(mix(0.3, 0.4, uFlashX.y), mix(0.8, 0.9, uFlashX.y), N.z));
-      // 補光的顏色：亮的臉照 Hypic 偏冷一點（少一點紅）；暗的地方跟著膚色走，不會被稀釋成灰綠色
-      vec3 sc0 = texture(uBlurS, uv).rgb, skinT = mix(vec3(1.0), clamp(sc0 / max(luma(sc0), 0.02), 0.4, 1.6), 0.3);   // 顏色比例有上下限：很暗又很飽和的地方（藍色陰影的頭髮）不會被放大成一片藍
-      vec3 tint = mix(skinT, uFlashT, smoothstep(0.34, 0.44, Ls));
-      // 嘴唇（美白遮罩 0.4、磨皮遮罩 0）：補的量跟皮膚一樣，一半用乘的，保留唇色
-      vec2 mk = texture(uMask, uv).rg;
-      float lipM = smoothstep(0.2, 0.35, mk.y) * (1.0 - smoothstep(mix(0.05, 0.3, uFlashX.y), mix(0.2, 0.6, uFlashX.y), mk.x)) * step(0.0, fc.y);   // 相機閃光燈連唇邊一起算，下唇不會蒙白
-      // 眼睛（亮眼遮罩：眼眶裡的眼白、虹膜、瞳孔）完全不補，眼珠不會變灰；眼皮照常補，不會多一圈黑眼圈
-      float eyeM = smoothstep(0.2, 0.6, texture(uMask2, uv).b), eye = 1.0 - mix(1.0, 0.45, uFlashX.y) * eyeM;   // 相機閃光燈補得多，眼睛也亮一點，眼下不會多一圈落差
-      // 額頭上半、下巴補得比臉中間少一點（Hypic 也是）
-      float k = nz * eye * (1.0 - 0.3 * smoothstep(0.3, 0.65, fc.y) - 0.3 * (1.0 - smoothstep(-0.65, -0.35, fc.y)));
-      // 相機閃光燈：Hypic 的結果幾乎是原圖乘上一張平滑的倍率（額頭 G ×1.46、R ×1.28），亮的鼻子、嘴唇跟著亮，
-      // 臉的明暗還在（不像補平那樣變成面具）。倍率正面高、側面低，光從左邊一點來：右半臉低一點
-      float kC = mix(0.35, 1.0, smoothstep(0.3, 0.85, mix(N.z, sqrt(max(1.0 - N.x * N.x, 0.0)), smoothstep(0.84, 0.9, fc.y)))) * (1.0 - 0.15 * clamp(fc.x, -0.8, 0.8)) * (1.0 - 0.12 * smoothstep(0.3, 0.7, fc.y) - 0.2 * (1.0 - smoothstep(-0.65, -0.35, fc.y)));
-      // 眼睛以上比附近皮膚暗很多的地方（眉毛、瀏海；看這一點周圍一小塊）是本來的顏色深，不是陰影：加的白光跟著變少，只用乘的稍微提亮，不會變灰。眼睛以下（暗側臉頰、鬍渣）照常補，補光才平均
-      float wa = mix(1.0, smoothstep(0.6, 0.95, mix(L0, luma(texture(uBlurS, uv).rgb), 0.7) / Ls), max(1.0 - smoothstep(-0.3, -0.22, fc.y), uFlashX.y * smoothstep(0.1, 0.2, fc.y))) * (1.0 - mix(0.5, 0.6, uFlashX.y) * lipM);   // 嘴唇多用乘的，保持飽和
-      float wm = mix(0.3, mix(1.0, 0.8, uFlashX.y), lipM) * (1.0 - wa) * (1.0 - smoothstep(0.75, 0.92, max(col.r, max(col.g, col.b))));   // 唇上的高光不再乘亮，不會爆白
-      // 底：調整 › 閃光燈用原圖（臉的亮度全由補光決定）；光影的相機、富士閃光燈用燈照過的結果（uFlashX.w = 1）
-      wm = mix(wm, 1.0, uFlashX.y * eyeM); wa *= 1.0 - uFlashX.y * eyeM;   // 眼睛用乘的：眼白亮、瞳孔還是黑的
-      vec3 fb = mix(col, lit, uFlashX.w);
-      wa *= mix(1.0, smoothstep(0.05, 0.3, max(mk.x, mk.y)), 1.0 - smoothstep(0.06, 0.15, luma(sc0)));   // 這一小塊很暗又不是皮膚（臉旁的深色頭髮）：是本來就深，不是陰影，少加光
-      vec3 fill = dl > 0.0 ? fb * (1.0 + dl * k * wm / Ls) + tint * dl * k * wa : fb * (1.0 + max(dl, -0.03) * k / Ls);   // 本來就亮的地方最多暗一點點
-      // 右邊太陽穴、右下顎這種朝右的面比原圖暗一點（Hypic ×0.85～0.9）；暗的地方（黑眼圈、上唇）倍率高一點
-      float Sc = kC * (1.0 + 0.35 * lipM * smoothstep(0.45, 0.3, luma(sc0))) * clamp(pow(0.47 / max(luma(sc0), 0.1), 0.4), 0.85, 1.3) * (1.0 + 0.3 * smoothstep(-0.36, -0.22, fc.y) * (1.0 - smoothstep(-0.1, 0.15, fc.y)) * (1.0 - smoothstep(0.3, 0.5, abs(fc.x)))) * (1.0 - 0.5 * eyeM) * (1.0 - 0.4 * smoothstep(0.35, 0.6, abs(fc.x)) - 0.15 * smoothstep(0.2, 0.45, -fc.x) * smoothstep(0.35, 0.6, fc.y)) - 0.6 * smoothstep(0.3, 0.6, fc.x) * (1.0 - smoothstep(0.5, 0.8, N.z));
-      // 顏色：臉中間加的光偏白（G、B 倍率高，去紅），越往兩側越只是變亮；嘴唇去紅少一半，保持飽和
-      vec3 gC = vec3(0.3) * Sc + vec3(0.0, 0.1, 0.13) * (1.7 - 0.7 * smoothstep(0.1, 0.4, abs(fc.x))) * (1.0 - 0.6 * smoothstep(0.35, 0.6, fc.y)) * (1.0 - 0.6 * lipM * smoothstep(0.3, 0.45, luma(sc0))) * max(Sc, 0.0);
-      fill = mix(fill, fb * (1.0 + gC * (uFlashG.y / 0.25)), uFlashX.y);
-      fill = mix(fill, fb, mix(lipM, smoothstep(0.86, 0.96, max(col.r, max(col.g, col.b))), uFlashX.y) * smoothstep(0.78, 0.9, max(col.r, max(col.g, col.b))));   // 唇上本來就很亮的反光不補，不會到 255
-      // 臉的範圍：上半臉只補皮膚（瀏海、頭髮不補；用附近的平均，額頭不會補得一塊一塊），鼻子到下巴連鬍子一起補，脖子補少一點；邊緣拉長，看不出一圈
-      float face = (1.0 - smoothstep(0.75, 1.2, length(fc))) * mix(smoothstep(0.25, 0.7, sg / 17.0), 1.0, smoothstep(-0.05, 0.15, fc.y)) * (1.0 - 0.6 * (1.0 - uFlashX.y) * smoothstep(0.6, 1.0, fc.y));
-      face *= mix(1.0, smoothstep(0.05, 0.3, max(max(mk.x, mk.y), eyeM)), uFlashX.y);   // 相機閃光燈補得多：臉旁邊的頭髮（不是皮膚）不補，不會蒙一層灰
-      // 臉以外：露出的皮膚（脖子、肩膀）照燈的結果；衣服、頭髮只會跟著變暗，不加光、不褪色
-      lit = mix(lit, col * (luma(lit) / max(L0, 0.02)), smoothstep(0.5, 0.8, L0) * uFlashF.w * pw);
-      // 頭頂的頭髮跟 Hypic 一樣再壓暗一點
-      float hairZ = (1.0 - smoothstep(1.2, 1.5, length(fc))) * (1.0 - smoothstep(-0.4, -0.1, fc.y));
-      // 相機閃光燈（uFlashX.y = 1）：閃光燈在鏡頭上面一點，下顎在脖子上投一條細細的影子，沿著整條下顎（Hypic 157 → 76 → 137）。
-      // 用臉的遮罩找下顎：上面一點是臉、這裡已經是脖子的皮膚，就是下顎正下方。遮罩本身是模糊過的，影子邊緣自然羽化
-      vec2 dv = vec2(0.0, 0.055 * uFlashC.w);
-      vec2 us = uv - 0.65 * dv;   // 遮罩的臉比下顎高一點：整個往下移，影子貼著下顎
-      vec2 inw = vec2(-sign(fc.x) * 0.12 * uFlashC.z, 0.0) * smoothstep(0.25, 0.5, abs(fc.x));   // 下顎兩側是斜的：往臉中間也看一點
-      float mkS = texture(uMask, us).r, faceUp = max(0.5 * (texture(uMask, us - dv).r + texture(uMask, us - 0.6 * dv).r), texture(uMask, us - 0.6 * dv + inw).r);
-      float sk = uFlashX.y * uFlashX.z * smoothstep(0.62, 0.85, faceUp) * (1.0 - smoothstep(0.58, 0.78, mkS)) * smoothstep(0.05, 0.3, mkS) * smoothstep(0.03, 0.2, mk.x)
-               * smoothstep(0.3, 0.5, fc.y) * (1.0 - smoothstep(0.8, 1.0, abs(fc.x)));
-      // 影子照原圖的比例壓暗，最多到原本的五到七成（不會變成黑帶）；G、B 壓得多一點，保留膚色，不會變灰
-      vec3 shd = fb * (1.0 - vec3(0.27, 0.42, 0.52));
-      // 光從左上來：右下顎那一側比原圖再暗一點（Hypic 174 → 158）
-      fill = mix(fill, shd, sk) * (1.0 - 0.2 * uFlashX.y * smoothstep(0.15, 0.5, fc.x) * smoothstep(0.42, 0.65, fc.y));
-      float dB = min(uFlashF.y * (uFlashF.z + 0.08 - Ls), 0.85 * uFlashG.y) * (1.0 - 0.45 * neck);   // 身上不照臉的上下遞減；目標亮一點（Hypic 肩膀、胸口很亮），上限低一點（暗的脖子不會發光）
-      vec3 fillB = mix(dB > 0.0 ? fb * (1.0 + dB * nz * wm / Ls) + tint * dB * nz * wa : fill, shd, sk);
-      vec3 skin = mix(lit, fillB, uFlashX.y);
-      // 衣服、頭髮：調整 › 閃光燈只會變暗；相機閃光燈照燈的結果，最多亮 1.25 倍（Hypic 頭髮有反光）
-      // 皮膚的範圍用附近的平均收邊，脖子和衣服之間不會有一道硬邊
-      vec3 body = mix(col * min(mix(1.0, 1.25, uFlashX.y), luma(lit) / max(L0, 0.02)) * (1.0 - uFlashX.x * hairZ), skin, mk.y * mix(1.0, smoothstep(0.2, 0.7, sg / 17.0), uFlashX.y));
-      lit = mix(lit, mix(body, fill, face), pw);
-      // 超過 214 的部分慢慢收到 237 以下（存 JPEG 時顏色還會再往外衝一點），紅色通道不會被推到 255（本來就比較亮的不動）
-      { float mx = max(col.r, max(col.g, col.b)), kn = 0.84;
-        vec3 e = max(lit - kn, 0.0), sc = kn + 0.09 * (1.0 - exp(-e / 0.09));
-        // 相機閃光燈：三個通道一起等比例收，嘴唇不會因為只收紅色而變白、偏紫
-        float m = max(lit.r, max(lit.g, lit.b)), mt = max(0.84 + 0.09 * (1.0 - exp(-max(m - 0.84, 0.0) / 0.09)), mx);
-        lit = mix(lit, mix(min(lit, max(sc, col)), lit * min(1.0, mt / max(m, 1e-3)), uFlashX.y), pw); }
-      // 背景只會變暗
-      lit = mix(min(lit, col), lit, pw);
-      // 調整 › 閃光燈、富士閃光燈加的光不會把某個顏色單獨推高：任何一個通道多出來的量，最多比亮度多出來的量再多 10（保持亮度、只收顏色）。
-      // 相機閃光燈照 Hypic 會把衣服、頭髮按比例提亮（紅衣服 R 加得多是正常的），不套這條
-      if (uFlashX.y < 0.5) { vec3 inc = lit - col; float li = luma(inc), ex = max(inc.r, max(inc.g, inc.b)) - li;
-        if (li > 0.0) { if (ex > 0.04) lit = col + li + (inc - li) * (0.04 / ex); }
-        else lit = col + min(inc, 0.04); }   // 整體變暗的地方（背景）不動它怎麼變暗，只是不讓哪個通道變亮
-      // 燈是照全強度算的，這裡照滑桿跟原圖混合
-      lit = mix(col, lit, uFlashF.x);
-    }
     col = clamp(lit, 0.0, 1.0);
+  }
+
+  // 閃光燈（調整 › 閃光燈、光影 › 相機閃光燈）：照 Hypic 在 8 張公開測試照上的成品擬合（relight.js 的 FLASH_ADJ、FLASH_CAM）。
+  // Hypic 是雲端 AI 整張重畫，這裡把皮膚、五官、頭髮、衣服、背景分開，各用一條公式近似它的成品，最後照滑桿跟原圖混合
+  //   uSeg：R = 人像；有分類圖（uFlashF.z = 1）時 G = 0.5 + 0.5 ×（頭髮 − 五官）、B = 皮膚（挖掉五官）
+  //   uFS：臉上皮膚亮度（第 90 百分位）、背景平均亮度；uFCs：臉上皮膚的顏色比例；uFCast：背景色偏
+  if (uFlashF.x > 0.0) {
+    bool cls = uFlashF.z > 0.5;
+    vec3 sg = texture(uSeg, uv).rgb;
+    float ps = sg.r, wsk = cls ? sg.b : texture(uMask, uv).r, wh = cls ? max(2.0 * sg.g - 1.0, 0.0) : 0.0, wf = cls ? max(1.0 - 2.0 * sg.g, 0.0) : 0.0;
+    // 附近皮膚（含五官）的平均亮度：兩圈 17 點
+    float sl = 0.0, sw = 0.0;
+    for (int j = 0; j < 17; j++) {
+      float ring = j == 0 ? 0.0 : (j < 9 ? 1.0 : 2.0), an = float(j) * 0.785398 + (j < 9 ? 0.0 : 0.3927);
+      vec2 q = uv + ring * uFlashR * vec2(cos(an), sin(an));
+      vec3 sq = texture(uSeg, q).rgb;
+      float w = (cls ? sq.b + max(1.0 - 2.0 * sq.g, 0.0) : texture(uMask, q).r) + 0.02;
+      sl += luma(texture(uBlurS, q).rgb) * w; sw += w;
+    }
+    float Lh = uFS.x, L = luma(col), Lbl = max(sl / sw, 1e-3);
+    vec3 ch = col - L;
+    float sh = clamp(Lbl / Lh, 1e-3, 1.5), det = clamp(L / Lbl, 1e-3, 3.0);
+    // 皮膚：附近的明暗壓平（g）、細節留一部分（g2）；顏色往標準膚色拉（k），保留一點原本的顏色變化（ss）
+    float Lb0 = uFP[0].x * pow(Lh / 0.65, uFP[0].w) * pow(sh, uFP[0].y);
+    vec3 C = vec3(uFP[1].x, 1.0, uFP[1].y); C /= luma(C);
+    vec3 cs = uFCs, Ct = cs * pow(C / cs, vec3(uFP[1].z)); Ct /= luma(Ct);
+    vec3 cp = clamp(Ct + uFP[1].w * (col / max(L, 1e-3) - cs), 0.05, 3.0);
+    vec3 skin = Lb0 * pow(det, uFP[0].z) * cp;
+    // 五官（眼睛、眉毛、嘴唇、牙齒）：跟皮膚一樣變亮，但暗的地方照原本的明暗（瞳孔、嘴巴裡還是黑的），亮的（眼白、牙齒）收一點不爆白；
+    // 顏色大部分跟皮膚一樣往自然膚色拉，留一點原本的（嘴唇淡淡的粉紅，不會變橘紅）
+    vec3 feat = Lb0 * (det > 1.0 ? pow(det, 0.7) : det) * clamp(mix(cp, col / max(L, 1e-3), 0.25), 0.05, 3.0);
+    vec3 hair, bg, cl;
+    if (uFlashF.y > 0.5) {
+      // 相機閃光燈：頭髮、衣服、背景只照比例稍微變亮
+      hair = col * uFP[2].x; bg = col * uFP[3].x + uFP[3].y; cl = col * uFP[4].x + uFP[4].y;
+    } else {
+      // 調整 › 閃光燈：頭髮變暗去色，背景、衣服往中間亮度收、去色
+      hair = uFP[2].x * (L + uFP[2].y * ch);
+      bg = vec3(uFP[3].x + uFP[3].y * L + uFP[3].z * uFS.y + uFP[3].w * Lh) + uFP[2].z * (ch - uFP[2].w * uFCast);
+      cl = vec3(uFP[4].x + uFP[4].y * L) + uFP[4].z * ch;
+    }
+    float wo = clamp(1.0 - wsk - wf - wh, 0.0, 1.0);
+    vec3 F = (wsk * skin + wf * feat + wh * hair + wo * mix(bg, cl, ps)) / max(wsk + wf + wh + wo, 1e-3);
+    col = clamp(mix(col, clamp(F, 0.0, 1.0), uFlashF.x), 0.0, 1.0);
   }
 
   if (uFAmt > 0.0) {
@@ -818,8 +772,28 @@ export class Renderer {
     this.pass(this.pCopy, this.fbL[0], this.fbL[0].w, this.fbL[0].h, this.fbM[0].t); gl.drawArrays(gl.TRIANGLES, 0, 3);
     this.gauss(this.fbL, 3);
   }
-  setMask(src) { src ? this.upload(this.tMask, src) : this.blank(this.tMask, 0); }
-  setSeg(src) { src ? this.upload(this.tSeg, src) : this.blank(this.tSeg, 255); this.blurs(); this.bkKey = ''; }
+  // 美顏遮罩（ai.js skinMask）；它帶的閃光燈分類圖（cls）跟人像一起放進 uSeg
+  setMask(src) {
+    src ? this.upload(this.tMask, src) : this.blank(this.tMask, 0);
+    const c = src?.cls || null;
+    if (c !== this.cls) { this.cls = c; if (this.segSrc) this.upSeg(); }
+  }
+  setSeg(src) { this.segSrc = src || null; this.upSeg(); this.blurs(); this.bkKey = ''; }
+  // uSeg：R = 人像；有分類圖時 G、B 放分類圖的 G、B（頭髮和五官、皮膚，見 ai.js）。
+  // 主畫面的貼圖單元已經用滿 16 個（iPhone 的上限），所以分類圖不另外佔一個
+  upSeg() {
+    const s = this.segSrc;
+    this.hasCls = false;
+    if (!s) return this.blank(this.tSeg, 255);
+    if (!this.cls) return this.upload(this.tSeg, s);
+    const w = s.width, h = s.height, c = document.createElement('canvas'); c.width = w; c.height = h;
+    const x = c.getContext('2d', { willReadFrequently: true });
+    x.drawImage(s, 0, 0); const im = x.getImageData(0, 0, w, h), d = im.data;
+    x.drawImage(this.cls, 0, 0, w, h); const k = x.getImageData(0, 0, w, h).data;
+    for (let i = 0; i < d.length; i += 4) { d[i + 1] = k[i + 1]; d[i + 2] = k[i + 2]; d[i + 3] = 255; }
+    x.putImageData(im, 0, 0);
+    this.upload(this.tSeg, c); this.hasCls = true;
+  }
   // 散景：短邊最多 720 像素算一次，參數沒變就不重算。bk：{ style 0~5, r 光斑半徑（佔短邊的比例）}
   bokeh(bk) {
     const key = [bk.style, bk.r.toFixed(4), this.w, this.h].join('|');
@@ -892,7 +866,10 @@ export class Renderer {
     const lp = new Float32Array(32), lr = new Float32Array(32), le = new Float32Array(32), ld = new Float32Array(32), lc = new Float32Array(24);
     ls.forEach((l, i) => { lp.set(l.pos, i * 4); lr.set(l.par, i * 4); le.set(l.ext || [36, 1, 0, 0], i * 4); ld.set(l.dir || [0, 0, 0, 0], i * 4); lc.set(l.col, i * 3); });
     gl.uniform1i(u.uLn, ls.length); gl.uniform4fv(u.uLPos, lp); gl.uniform4fv(u.uLPar, lr); gl.uniform4fv(u.uLExt, le); gl.uniform4fv(u.uLDir, ld); gl.uniform3fv(u.uLCol, lc);
-    gl.uniform1f(u.uLAmbS, L?.ambS ?? 1); gl.uniform1f(u.uLAmbB, L?.ambB ?? 1); gl.uniform1f(u.uBgDepth, L?.bgDepth ?? 0); gl.uniform1f(u.uThick, L?.thick ?? 1e4); gl.uniform4fv(u.uFlashF, L?.flashF || [0, 0, 0, 0]); gl.uniform2fv(u.uFlashR, L?.flashR || [0, 0]); gl.uniform2fv(u.uFlashG, L?.flashG || [0, 1]); gl.uniform4fv(u.uFlashC, L?.flashC || [0, 0, 1, 1]); gl.uniform3fv(u.uFlashT, L?.flashT || [1, 1, 1]); gl.uniform4fv(u.uFlashX, L?.flashX || [0, 0, 0, 0]); gl.uniform2fv(u.uLCap, L?.cap || [0, 0]);
+    gl.uniform1f(u.uLAmbS, L?.ambS ?? 1); gl.uniform1f(u.uLAmbB, L?.ambB ?? 1); gl.uniform1f(u.uBgDepth, L?.bgDepth ?? 0); gl.uniform1f(u.uThick, L?.thick ?? 1e4); const ff = L?.flashF;
+    gl.uniform4fv(u.uFlashF, ff ? [ff[0], ff[1], this.hasCls ? 1 : 0, 0] : [0, 0, 0, 0]); gl.uniform2fv(u.uFlashR, L?.flashR || [0, 0]);
+    if (ff) { gl.uniform4fv(u.uFP, L.flashP); gl.uniform4fv(u.uFS, L.flashS); gl.uniform3fv(u.uFCs, L.flashCs); gl.uniform3fv(u.uFCast, L.flashCast); }
+     gl.uniform2fv(u.uLCap, L?.cap || [0, 0]);
     const g = this.geo;
     gl.uniform1f(u.uHasGeo, g ? 1 : 0); gl.uniform1f(u.uGeoMax, g ? g.max : 0); gl.uniform2f(u.uGeoTex, 1 / (g?.w || 1), 1 / (g?.h || 1));
     gl.uniform4fv(u.uHaze, L?.haze || [0, 0, 1, 0]); gl.uniform3fv(u.uHazeCol, L?.hazeCol || [1, 1, 1]);

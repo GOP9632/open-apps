@@ -157,6 +157,20 @@ export function skinMask(faces, w, h, seg) {
     d[i * 4 + 3] = 255;
   }
   ctx.putImageData(out, 0, 0);
+  // 閃光燈用的分類圖（gl.js 放進 uSeg 的 G、B）：G = 0.5 + 0.5 ×（頭髮 − 五官）、B = 皮膚（挖掉五官）
+  //   五官 = 眼睛、眉毛、嘴唇、鼻孔、牙齒。頭髮和五官幾乎不會重疊，所以共用一個通道
+  if (seg) {
+    const k2 = document.createElement('canvas'); k2.width = mw; k2.height = mh;
+    const x2 = k2.getContext('2d'), o2 = x2.createImageData(mw, mh), e = o2.data;
+    for (let i = 0; i < mw * mh; i++) {
+      const sk = seg.skin[i], ft = Math.min(1, sk * (1 - holeS[i]) + teeth[i]);
+      e[i * 4 + 1] = (0.5 + 0.5 * (Math.min(1, seg.hair[i]) - ft)) * 255;
+      e[i * 4 + 2] = sk * holeS[i] * 255;
+      e[i * 4 + 3] = 255;
+    }
+    x2.putImageData(o2, 0, 0);
+    c.cls = k2;
+  }
   return c;
 }
 
