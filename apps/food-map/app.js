@@ -650,7 +650,7 @@ const Views = {
     const mine = new Set(S.swipes.filter(s => s.round_id === r.id && s.user_id === S.user.id).map(s => s.place_id));
     const left = r.place_ids.filter(id => !mine.has(id) && S.places.some(p => p.id === id));
     const total = r.place_ids.length;
-    const head = `<div class="round-top"><button class="icon-btn" onclick="App.openRound(null)" aria-label="返回">${ic('back')}</button><div class="t">${esc(r.title || '一起決定吃什麼')}</div><button class="icon-btn" onclick="S.showResult=${!S.showResult};App.render()" aria-label="結果">${ic(S.showResult ? 'x' : 'list')}</button></div>
+    const head = `<div class="round-top"><button class="icon-btn" onclick="App.openRound(null)" aria-label="返回">${ic('back')}</button><div class="t">${esc(r.title || '一起決定吃什麼')}</div><button class="icon-btn" onclick="S.showResult=${!S.showResult};S.animate=true;App.render()" aria-label="結果">${ic(S.showResult ? 'x' : 'list')}</button></div>
       <div class="prog"><i style="width:${(total - left.length) / total * 100}%"></i></div>`;
     if (left.length && !S.showResult) {
       const cards = left.slice(0, 3).map(id => S.places.find(x => x.id === id));
@@ -664,7 +664,7 @@ const Views = {
     const waiting = mem.filter(m => S.swipes.filter(s => s.round_id === r.id && s.user_id === m.user_id).length < r.place_ids.length);
     return `${head}
       <div class="card" style="margin-top:16px;text-align:center">${waiting.length ? `<div style="font-size:30px">⏳</div><b>還在等 ${waiting.map(m => esc(nameOf(m.user_id))).join('、')}</b><div class="muted">滑完結果會自動更新</div>` : `<div style="font-size:30px">🎉</div><b>大家都滑完了！</b>`}
-        ${left.length ? `<div style="margin-top:12px"><button class="btn primary" onclick="S.showResult=false;App.render()">繼續滑（還有 ${left.length} 張）</button></div>` : ''}</div>
+        ${left.length ? `<div style="margin-top:12px"><button class="btn primary" onclick="S.showResult=false;S.animate=true;App.render()">繼續滑（還有 ${left.length} 張）</button></div>` : ''}</div>
       <div class="section-t">結果</div>
       ${res.filter(x => x.likes).map((x, i) => `<div class="res ${x.all ? 'all' : ''}" style="--i:${i}" onclick="App.openPlace('${x.p.id}')">
         <div class="ph">${photo(x.p)}</div>
@@ -1027,6 +1027,8 @@ const App = {
     const y = window.scrollY;
     const main = $('#main');
     main.classList.toggle('enter', !!S.animate);
+    // 不是換頁的重畫（同步、定位、補照片…）不重播卡片進場動畫，不然整頁會閃
+    main.classList.toggle('still', !S.animate);
     // 正在搜尋框打字（注音、拼音選字中）時，搜尋框本身不能換掉，不然選字會被打斷、只剩注音：只更新下面的結果
     const q = document.activeElement?.id === 'q' && main.contains(document.activeElement) ? document.activeElement.closest('.search') : null;
     const html = onRound ? Views.round() : Views[S.tab]();
@@ -1803,7 +1805,7 @@ const App = {
       // 同一個抽屜更新內容（例如切換想去／去過），不要重播動畫，小地圖也直接搬過去不重建
       const mini = S.miniMap && old.querySelector('#mini');
       const reel = old.querySelector('.reel.on');
-      const st = old.scrollTop; old.className = `sheet ${hero ? 'hero' : ''}`; old.innerHTML = `<div class="grab"></div>${html}`;
+      const st = old.scrollTop; old.className = `sheet still ${hero ? 'hero' : ''}`; old.innerHTML = `<div class="grab"></div>${html}`;
       const slot = old.querySelector('#mini');
       if (mini && slot) slot.replaceWith(mini); else { S.miniMap?.remove(); S.miniMap = null; }
       // 影片框也搬過去，保留量好的高度，畫面不會跳（iframe 搬動會重新載入）
