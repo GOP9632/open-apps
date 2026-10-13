@@ -42,6 +42,7 @@ const ICONS = {
   ext: 'M15 3h6v6 M10 14 21 3 M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6',
   back: 'M15 18l-6-6 6-6',
   next: 'M9 18l6-6-6-6',
+  play: 'M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z',
   star: 'M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z',
   check: 'M20 6 9 17l-5-5',
   image: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M9 7a2 2 0 1 0 0 4 2 2 0 1 0 0-4z M21 15l-3.09-3.09a2 2 0 0 0-2.82 0L6 21',
@@ -167,6 +168,44 @@ const avatar = (id, size) => `<span class="avatar" style="background:${AV_COLORS
 // 貼文推薦的菜色：去掉空白和重複，最多 8 個
 const cleanDishes = a => [...new Set((Array.isArray(a) ? a : []).map(x => String(x || '').trim()).filter(x => x && x.length <= 30))].slice(0, 8);
 const srcName = u => /instagram\.com/.test(u) ? 'Instagram 貼文' : /threads\.(net|com)/.test(u) ? 'Threads 貼文' : /tiktok\.com/.test(u) ? 'TikTok 影片' : /google\.|goo\.gl/.test(u) ? 'Google 地圖' : u ? (() => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return '來源'; } })() : '貼文內容';
+// IG 貼文／Reels：用 IG 官方嵌入在店家頁裡直接播（不下載影片）
+const igEmbed = u => { const m = (u || '').match(/instagram\.com\/(?:[\w.]+\/)?(reels?|p|tv)\/([\w-]+)/); return m ? `https://www.instagram.com/${m[1].startsWith('reel') ? 'reel' : 'p'}/${m[2]}/embed/` : ''; };
+const isReel = u => /instagram\.com\/(?:[\w.]+\/)?(reels?|tv)\//.test(u || '');
+const Reel = {
+  // 影片框捲到附近才載入 IG 嵌入（店家頁打開不會變慢，也不會每間都吃流量）
+  watch() {
+    const sh = $('#sheet .sheet'); if (!sh) return;
+    for (const el of sh.querySelectorAll('.reel:not(.on)')) {
+      if (!window.IntersectionObserver) { Reel.load(el); continue; }
+      const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) { io.disconnect(); Reel.load(el); } }, { root: sh, rootMargin: '600px 0px' });
+      io.observe(el);
+    }
+  },
+  load(el) {
+    if (el.classList.contains('on')) return; el.classList.add('on');
+    const f = document.createElement('iframe');
+    f.src = el.dataset.src; f.title = 'Instagram 影片';
+    f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; f.allowFullscreen = true;
+    f.setAttribute('scrolling', 'no');
+    // IG 量好高度會傳訊息過來；萬一沒傳，載完 1.5 秒後也直接顯示
+    f.onload = () => setTimeout(() => el.classList.add('ready'), 1500);
+    clearTimeout(el._t); el._t = setTimeout(() => { if (!el.classList.contains('ready')) el.classList.add('fail'); }, 12000);
+    el.append(f);
+  },
+  // 「看影片」按鈕：捲到影片
+  show() {
+    const el = $('#sheet .reel'); if (!el) return;
+    buzz(8); Reel.load(el);
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+};
+addEventListener('message', e => {
+  if (!/^https:\/\/(www\.)?instagram\.com$/.test(e.origin)) return;
+  let d = e.data; try { if (typeof d === 'string') d = JSON.parse(d); } catch { return; }
+  const f = [...document.querySelectorAll('.reel iframe')].find(f => f.contentWindow === e.source); if (!f) return;
+  const el = f.parentNode;
+  if (d?.type === 'MEASURE' && d.details?.height > 100) { el.style.height = Math.ceil(d.details.height) + 'px'; el.classList.add('ready'); el.classList.remove('fail'); }
+});
 // 有貼文連結、但缺照片或必點菜色的店，回原始貼文補一次（每個連結只補一次）
 const needsEnrich = p => isMine(p) && /^https?:\/\//.test(p.source_url || '') && !/google\.|goo\.gl/.test(p.source_url) && (!p.photo || !(p.dishes || []).length) && !load('food.enriched', {})[p.id + '|' + p.source_url];
 
@@ -1165,7 +1204,7 @@ const App = {
       ${(p.dishes || []).length ? `<div class="must"><div class="t">${ic('star')} 必點</div><div class="chips wrap">${p.dishes.map(x => `<span class="dish">${esc(x)}</span>`).join('')}</div></div>` : ''}
       <div class="acts">
         <a class="act primary" href="${mapsUrl(p)}" target="_blank" rel="noopener"><span class="ic">${ic('nav')}</span>導航</a>
-        ${p.source_url ? `<a class="act" href="${esc(p.source_url)}" target="_blank" rel="noopener"><span class="ic">${ic('ext')}</span>原始貼文</a>` : `<button class="act" onclick="App.copy(${esc(JSON.stringify(p.address || p.name))})"><span class="ic">${ic('copy')}</span>複製地址</button>`}
+        ${igEmbed(p.source_url) ? `<button class="act" onclick="Reel.show()"><span class="ic">${ic(isReel(p.source_url) ? 'play' : 'image')}</span>${isReel(p.source_url) ? '看影片' : '看貼文'}</button>` : p.source_url ? `<a class="act" href="${esc(p.source_url)}" target="_blank" rel="noopener"><span class="ic">${ic('ext')}</span>原始貼文</a>` : `<button class="act" onclick="App.copy(${esc(JSON.stringify(p.address || p.name))})"><span class="ic">${ic('copy')}</span>複製地址</button>`}
         <button class="act" onclick="App.shareOut(${esc(JSON.stringify(shareText))})"><span class="ic">${ic('share')}</span>分享</button>
         ${mine ? `<button class="act" onclick="App.editPlace('${p.id}')"><span class="ic">${ic('edit')}</span>編輯</button>` : `<button class="act" onclick="App.copyToMine('${p.id}')"><span class="ic">${ic('heart')}</span>收進我的</button>`}
       </div>
@@ -1180,10 +1219,11 @@ const App = {
       ${p.lat != null ? '<div id="mini" class="minimap"></div>' : mine ? '<p class="muted" style="margin-top:12px">還沒有地圖位置，到「編輯」裡點地圖就能補上。</p>' : ''}
       ${mine && cloud() && S.groups.length ? `<div class="fgroup"><div class="t">分享到群組</div><div class="chips wrap">${S.groups.map(g => { const on = myGroups.includes(g); return `<span class="chip ${on ? 'on' : ''}" onclick="App.${on ? 'unshare' : 'share'}('${g.id}', ['${p.id}']).then(() => App.openPlace('${p.id}', true))">${on ? ic('check') : ic('users')} ${esc(g.name)}</span>`; }).join('')}</div></div>` : ''}
       ${mine && findDup(p) ? `<button class="dup-hint" onclick="App.dups('${p.id}')">${ic('layers')}<span class="grow">好像和「${esc(findDup(p).name)}」是同一間</span><b>整理</b></button>` : ''}
-      ${p.source_url || p.source_text ? `<div class="post"><div class="post-h"><span class="src">${esc(srcName(p.source_url))}</span>${p.source_url ? `<a class="btn sm" href="${esc(p.source_url)}" target="_blank" rel="noopener">${ic('ext')} 看原始貼文</a>` : ''}</div>${p.source_text ? `<p class="post-t" onclick="this.classList.toggle('open')">${esc(p.source_text)}</p>` : ''}</div>` : ''}
+      ${p.source_url || p.source_text ? `<div class="post"><div class="post-h"><span class="src">${esc(srcName(p.source_url))}</span>${p.source_url ? `<a class="btn sm" href="${esc(p.source_url)}" target="_blank" rel="noopener">${ic('ext')} ${igEmbed(p.source_url) ? '在 IG 打開' : '看原始貼文'}</a>` : ''}</div>${igEmbed(p.source_url) ? `<div class="reel" data-src="${igEmbed(p.source_url)}"><div class="reel-ph">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : ''}<span class="reel-play">${ic('play')}</span><span class="reel-msg">影片載入中…</span></div></div>` : ''}${p.source_text ? `<p class="post-t" onclick="this.classList.toggle('open')">${esc(p.source_text)}</p>` : ''}</div>` : ''}
       ${mine ? `<button class="btn ghost danger block del-row" onclick="App.delPlace('${p.id}')">${ic('trash')} 刪除這間收藏</button>` : ''}`, { hero: true, keep: arguments[1] });
     // 等抽屜滑上來再建小地圖，不然 iPhone 上滑動會卡一下
     if (p.lat != null && !S.miniMap) setTimeout(async () => { const el = $('#mini'); if (el && !S.miniMap) S.miniMap = await MapView.mini(el, p, false); }, arguments[1] ? 0 : 430);
+    setTimeout(() => Reel.watch(), arguments[1] ? 0 : 450);
   },
   async quick(id, patch) {
     const p = S.places.find(x => x.id === id); if (!p) return;
@@ -1753,9 +1793,13 @@ const App = {
     if (keep && old) {
       // 同一個抽屜更新內容（例如切換想去／去過），不要重播動畫，小地圖也直接搬過去不重建
       const mini = S.miniMap && old.querySelector('#mini');
+      const reel = old.querySelector('.reel.on');
       const st = old.scrollTop; old.className = `sheet ${hero ? 'hero' : ''}`; old.innerHTML = `<div class="grab"></div>${html}`;
       const slot = old.querySelector('#mini');
       if (mini && slot) slot.replaceWith(mini); else { S.miniMap?.remove(); S.miniMap = null; }
+      // 影片框也搬過去，保留量好的高度，畫面不會跳（iframe 搬動會重新載入）
+      const rs = old.querySelector('.reel');
+      if (reel && rs && rs.dataset.src === reel.dataset.src) { reel.classList.remove('ready'); rs.replaceWith(reel); }
       old.scrollTop = st;
       App.dragSheet(); return;
     }

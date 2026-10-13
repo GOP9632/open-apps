@@ -268,6 +268,22 @@ body.no-cards .maplibregl-ctrl-bottom-left,body.no-cards .maplibregl-ctrl-bottom
 .post-t{white-space:pre-wrap;font-size:14px;line-height:1.6;color:var(--text2);margin:10px 0 0;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer;position:relative}
 .post-t:not(.open)::after{content:'點一下看全文';position:absolute;right:0;bottom:0;padding-left:28px;background:linear-gradient(90deg,transparent,var(--panel) 24px);color:var(--accent-text);font-weight:700;font-size:13px}
 .post-t.open{-webkit-line-clamp:unset;display:block}
+/* IG 影片：官方嵌入，捲到附近才載入，量好高度後淡入 */
+.reel{position:relative;margin:12px -6px 0;aspect-ratio:9/15.5;border-radius:16px;overflow:hidden;background:var(--bg2);box-shadow:inset 0 0 0 1px var(--line);transition:height .35s var(--ease);scroll-margin-top:14px}
+.reel[style*=height]{aspect-ratio:auto}
+.reel iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#fff;opacity:0;transition:opacity .4s}
+.reel.ready iframe{opacity:1}
+.reel-ph{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#fff;transition:opacity .4s}
+.reel-ph img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:blur(18px) brightness(.7);transform:scale(1.15)}
+.reel-ph:not(:has(img)){color:var(--muted)}
+.reel-play{position:relative;width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,.22);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}
+.reel-play .i{width:28px;height:28px;fill:currentColor;stroke:none;margin-left:3px}
+.reel.on:not(.ready) .reel-play{animation:breathe 1.4s ease-in-out infinite}
+@keyframes breathe{50%{transform:scale(.9);opacity:.7}}
+.reel-msg{position:relative;font-size:13px;font-weight:700;opacity:.9}
+.reel.fail .reel-msg{font-size:0}
+.reel.fail .reel-msg::after{content:'影片載不出來，點上面「在 IG 打開」看';font-size:13px}
+.reel.ready .reel-ph{opacity:0;pointer-events:none}
 .pc-dish{font-size:12.5px;font-weight:700;color:var(--accent-text);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pc-dish.muted{font-weight:500;color:var(--muted)}
 .dish-line{font-size:13px;font-weight:700;color:var(--accent-text);margin-top:4px;display:flex;gap:4px;align-items:center}
