@@ -298,13 +298,19 @@ export function lightAnchor(base, geo) {
 //        頭髮 ×4, 背景 ×4, 衣服 ×4, 鬍子亮度 a + b × 原本亮度、1 = tl 用膚色中位數、tl2 再跟著膚色亮部,
 //        膚色另一種算法「原本的顏色 × 暖色倍率」的 R、B 倍率和混多少, 0]（調整和相機各一組，用法見 gl.js）
 const FLASH_R = 0.2;
-// 舊版（燈和壓暗照 Hypic 強度 100 的成品擬合，格式同 LIGHT_FIT，臉上再補平）。只對答案那張自拍準，
-// 換到白背景的照片會把背景壓得太暗（評審第 3 輪，第 9 張），所以現在不用了，留著等評審確認新公式後再刪
-const FLASH_OLD = false;
+// 臉本來就打得很平、很正面（暗部 ÷ 亮部 × 左右亮度比）的照片，Hypic 幾乎只是整體提亮，
+// 公式反而會把下顎影子、肩膀弄錯，所以改用舊版：燈和壓暗照 Hypic 強度 100 的成品擬合（格式同 LIGHT_FIT），臉上再補平。
+// 平整度在 FLASH_EVEN 之間漸進：低於 [0] 全用公式、高於 [1] 全用舊版，中間兩個成品照比例混合（不會差一點點就整個變樣）
+const FLASH_EVEN = [0.6, 0.72];
+// 而且背景要比臉亮很多（背景 ÷ 臉上皮膚亮部，室內開燈拍）才用舊版：白背景攝影棚那種（評審第 3 輪第 9 張，1.09）
+// 舊版會把背景壓得太暗。同樣在 FLASH_BG 之間漸進
+const FLASH_BG = [1.2, 1.35];
+// 臉只看得到一邊（側臉、半邊在畫面外）時左右比算不出來，當作一般的 0.85（公開測試照的中間值）
+const FLASH_LR0 = 0.85;
 const FLASH_FIT_OLD = { amb: [0.5, 0.648], l: [[0.126,1.459,2.53,0.856,0.168,0.0,0.382,0.508,0.632,0.0,0.794,1.478,0.67,0.642,0.581],[-0.218,-0.096,8.0,1.387,0.687,0.154,0.0,0.022,0.212,0.0,0.447,0.184,0.936,1.233,1.215],[0.193,-1.034,2.176,0.83,0.404,0.208,0.0,0.041,1.0,0.0,0.652,1.112,0.888,0.992,1.182]], flat: [1.5, 0.58, 0.5] };
 const FLASH_DMAX = 0.2, FLASH_T = [0.73, 1.08, 0.99];
-const FLASH_ADJ = [0.659, 0.25, 0.657, 0.098, 1.237, 0.884, 0.707, 0.357, 0.64, 0.221, 0.451, -0.001, 0.334, 0.753, 0.084, -0.461, -0.001, 0.923, 0.427, 0, 0.152, -0.145, 1.0, 0.342, 0.03, 1.035, 0.01, 0];
-const FLASH_CAM = [0.698, 0.415, 0.767, 0.208, 1.332, 0.877, 0.584, 0.274, 0.881, 0, 0, 0, 1.022, -0.013, -0.384, 0, 0.949, 0.016, -0.962, 0, -0.029, 1.216, 1, 0.342, 0.836, 1.087, 0.157, 0];
+const FLASH_ADJ = [0.724, 0.342, 0.377, 0.175, 1.235, 0.893, 0.63, 0.284, 0.587, 0.242, 0.23, -0.006, 0.495, 0.859, 0.136, -0.741, 0, 0.922, 0.427, 0, 0.12, 0.55, 1, 0, 1, 1, 0, 0];
+const FLASH_CAM = [0.697, 0.317, 0.439, 0.235, 1.268, 0.886, 0.606, 0.272, 0.915, 0, 0, 0, 1.03, 0.012, 0, 0, 0.959, 0.065, 0, 0, -0.094, 1.468, 1, 0.39, 0.844, 1.001, 0.115, 0];
 const FLASH_ST0 = { Lh: 0.65, Lm: 0.45, cs: [1.3, 0.94, 0.7], Lb: 0.5, cast: [0, 0, 0] };
 
 // 一組擬合的燈（LIGHT_FIT 的格式）放進 lights：g 亮度倍數、s 範圍倍數、bl 柔焦、sp 高光倍數、ox／oy 位移、col 改顏色、gls 高光指數
@@ -338,20 +344,24 @@ export function flashStats(canvas, seg, mask, geom) {
   const d = x.getImageData(0, 0, w, h).data;
   x.drawImage(mask, 0, 0, w, h);
   const mk = x.getImageData(0, 0, w, h).data;
-  const Ls = [], cs = [0, 0, 0], cast = [0, 0, 0];
+  const Ls = [], cs = [0, 0, 0], cast = [0, 0, 0], cx = geom ? geom.cx * w / canvas.width : w / 2, lr = [0, 0, 0, 0];
   let nb = 0, Lb = 0;
   for (let i = 0; i < w * h; i++) {
     const r = d[i * 4] / 255, g = d[i * 4 + 1] / 255, b = d[i * 4 + 2] / 255, L = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     if (seg.skin[i] > 0.6 && mk[i * 4] > 204) {
       Ls.push(L); const q = Math.max(L, 1e-3); cs[0] += r / q; cs[1] += g / q; cs[2] += b / q;
+      const k = i % w < cx ? 0 : 2; lr[k] += L; lr[k + 1]++;
     }
     if (seg.bg[i] > 0.7) { nb++; Lb += L; cast[0] += r - L; cast[1] += g - L; cast[2] += b - L; }
   }
   if (Ls.length < 50) return null;
   Ls.sort((a, b) => a - b);
-  const Lh = Math.max(0.1, Ls[Math.floor(Ls.length * 0.9)]);
+  const Lh = Math.max(0.1, Ls[Math.floor(Ls.length * 0.9)]), a = lr[0] / Math.max(lr[1], 1), b = lr[2] / Math.max(lr[3], 1);
+  const lrR = lr[1] >= 20 && lr[3] >= 20 ? Math.min(a, b) / Math.max(a, b, 1e-3) : FLASH_LR0;
   return {
     Lh, Lm: Ls[Math.floor(Ls.length * 0.5)], cs: cs.map(v => v / Ls.length),
+    // 臉的光有多平：暗部（第 10 百分位）÷ 亮部 × 左右兩半平均亮度的比
+    even: Ls[Math.floor(Ls.length * 0.1)] / Lh * lrR,
     Lb: nb > 100 ? Lb / nb : 0.5, cast: nb > 100 ? cast.map(v => v / nb) : [0, 0, 0],
   };
 }
@@ -359,8 +369,10 @@ export function flashStats(canvas, seg, mask, geom) {
 // 參數 → gl.js 要的 fx.lit、fx.flash
 export function litParams(P, base, geo) {
   const L = LIGHTS.find(x => x.id === P.light), F0 = FLASHES.find(x => x.id === P.flash);
-  // wo：舊版佔多少（0～1，gl.js 會把兩個成品照比例混合）；目前一律用新公式
-  const wo = FLASH_OLD ? 1 : 0, old = wo > 0, neu = wo < 1;
+  // wo：舊版佔多少（見 FLASH_EVEN、FLASH_BG）。同時開打光時不混（混合要用打光前的顏色），照中間值二選一
+  const st = base.flashSt, ss = (v, [a, b]) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const w = st ? ss(st.even, FLASH_EVEN) * ss(st.Lb / st.Lh, FLASH_BG) : 0;
+  const wo = L ? (w >= 0.5 ? 1 : 0) : w, old = wo > 0, neu = wo < 1;
   // adj：這個樣式就是調整 › 閃光燈換個強度（舊版、公式各自的倍數）
   const Fl = F0?.adj ? null : F0, adjF = m => Math.max(0, P.flashFill || 0, F0?.adj ? Math.min(100, P.flashAmt * m) : 0) / 100;
   const ff = adjF(F0?.adjOld), ffN = adjF(F0?.adj);
