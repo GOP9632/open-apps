@@ -547,19 +547,22 @@ void main(){
       vec2 q = uv + ring * uFlashR * vec2(cos(an), sin(an));
       vec3 sq = texture(uSeg, q).rgb;
       float w = (cls ? sq.b + max(1.0 - 2.0 * sq.g, 0.0) : texture(uMask, q).r) + 0.02;
-      sl += luma(texture(uBlurS, q).rgb) * w; sw += w;
+      vec3 bq = texture(uBlurS, q).rgb;
+      sl += mix(luma(bq), (bq.r + bq.g + bq.b) / 3.0, uFP[5].z) * w; sw += w;
     }
-    float Lh = uFS.x, L = luma(col), Lbl = max(sl / sw, 1e-3);
+    // 明暗用亮度和 RGB 平均照 uFP[5].z 混合：藍光、冷光照到的地方亮度權重低，只看亮度會被當成很暗的陰影
+    float Lh = uFS.x, L = luma(col), Lv = mix(L, (col.r + col.g + col.b) / 3.0, uFP[5].z), Lbl = max(sl / sw, 1e-3);
     vec3 ch = col - L;
-    float sh = clamp(Lbl / Lh, 1e-3, 1.5), det = clamp(L / Lbl, 1e-3, 3.0);
+    float sh = clamp(Lbl / Lh, 1e-3, 1.5), det = clamp(Lv / Lbl, 1e-3, 3.0);
     // 很暗的陰影（脖子、背光那側的臉）Hypic 會提亮兩三倍：附近亮度比例有下限 uFP[4].w（平滑的取大）
     sh = pow(pow(sh, 4.0) + pow(uFP[4].w, 4.0), 0.25);
     // 細節分兩層：中等大小的起伏（g2）和毛孔、鬍渣那種很細的紋理（uFP[6].w，跟小模糊圖比）
-    float Lbs = max(luma(texture(uBlurS, uv).rgb), 1e-3), detM = clamp(Lbs / Lbl, 1e-3, 3.0), hf = clamp(L / Lbs, 0.2, 3.0);
+    vec3 bs = texture(uBlurS, uv).rgb;
+    float Lbs = max(mix(luma(bs), (bs.r + bs.g + bs.b) / 3.0, uFP[5].z), 1e-3), detM = clamp(Lbs / Lbl, 1e-3, 3.0), hf = clamp(Lv / Lbs, 0.2, 3.0);
     // 皮膚：附近的明暗壓平（g）、細節留一部分（g2）；顏色往標準膚色拉（k），保留一點原本的顏色變化（ss）
     // 平光臉（uFS.w）本來就沒什麼明暗，三個都往 1 拉：每一點照原本的亮度按比例提亮，臉才不會變成一片面具
     vec3 gk = mix(vec3(uFP[0].y, uFP[0].z, uFP[1].w), vec3(1.0), uFS.w);
-    float Lb0 = uFP[0].x * pow(uFP[5].z > 0.5 ? uFS.z / 0.45 : Lh / 0.65, uFP[0].w) * pow(Lh / 0.65, uFP[5].w) * pow(sh, gk.x);
+    float Lb0 = uFP[0].x * pow(uFS.z / 0.45, uFP[0].w) * pow(Lh / 0.65, uFP[5].w) * pow(sh, gk.x);
     vec3 C = vec3(uFP[1].x, 1.0, uFP[1].y); C /= luma(C);
     vec3 cs = uFCs, Ct = cs * pow(C / cs, vec3(uFP[1].z)); Ct /= luma(Ct);
     vec3 cp = clamp(Ct + gk.z * (col / max(L, 1e-3) - cs), 0.05, 3.0);
