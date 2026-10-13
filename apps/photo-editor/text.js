@@ -1,5 +1,5 @@
 // 文字：排版和繪製都在這裡，畫面預覽和存檔用同一支程式畫，所以看到的就是存下來的
-// 選項照醒圖（Hypic）文字面板：範本、字型、樣式（粗體、斜體、底線）、顏色、描邊、
+// 選項照醒圖（Hypic）文字面板：範本、字型、樣式（粗體、斜體、底線）、顏色、描邊、字體效果（花字）、
 // 陰影（不透明度、模糊、角度、位移）、背景、字距、行距、對齊、彎曲（曲線、位移）、不透明度
 // 範本和字型都是自己設計或開源授權（SIL OFL）的，沒有用醒圖的素材
 
@@ -31,8 +31,14 @@ export const T0 = {
   bg: 0, bgColor: '#000000',
   ls: 0, lh: 0, vert: false,                 // 字距、行距、直書
   curve: 0, curveOff: 0,                     // 彎曲：曲線 -100~100、位移 -100~100
+  fx: '', fxColor: '#ff5c8a', fxAmt: 50,     // 字體效果（花字）：種類、顏色、強度
   tpl: null,
 };
+
+// 字體效果（花字）：雙層描邊、立體、鏤空、故障、外框光
+export const TEXT_FX = [
+  ['double', '雙層描邊'], ['3d', '立體'], ['hollow', '鏤空'], ['glitch', '故障'], ['halo', '外框光'],
+];
 // 舊版存的文字（stroke 是 true/false、op 是 0~1）補成新格式
 export function upgradeText(t) {
   const o = { ...T0, ...t };
@@ -62,6 +68,12 @@ export const TEMPLATES = [
   { id: 'script', name: '花體', set: { color: '#ffffff', stroke: 0, shadow: 60, shadowBlur: 30, shadowDist: 8, font: 10, bold: false } },
   { id: 'soft', name: '柔光', set: { color: '#ffffff', stroke: 0, shadow: 90, shadowColor: '#ffffff', shadowBlur: 60, shadowDist: 0, bold: false, font: 1 } },
   { id: 'mint', name: '薄荷', set: { color: '#ffffff', stroke: 45, strokeColor: '#38d9a9', shadow: 50, shadowColor: '#087f5b', shadowBlur: 0, shadowDist: 25, font: 3 } },
+  { id: 'candy', name: '糖果', set: { color: '#ffffff', color2: '#ffd6e7', stroke: 25, strokeColor: '#ff5c8a', fx: 'double', fxColor: '#ffffff', fxAmt: 45, font: 3 } },
+  { id: 'block', name: '立體', set: { color: '#ffe066', stroke: 15, strokeColor: '#1c1c1c', fx: '3d', fxColor: '#e8590c', fxAmt: 55, font: 6 } },
+  { id: 'comic', name: '漫畫', set: { color: '#ffffff', stroke: 25, strokeColor: '#1c1c1c', fx: '3d', fxColor: '#1c1c1c', fxAmt: 35, font: 9 } },
+  { id: 'outline', name: '鏤空', set: { color: '#ffffff', stroke: 8, fx: 'hollow', font: 6 } },
+  { id: 'glitch', name: '故障', set: { color: '#ffffff', stroke: 0, fx: 'glitch', fxAmt: 50, font: 6 } },
+  { id: 'halo', name: '光圈', set: { color: '#ffffff', stroke: 0, fx: 'halo', fxColor: '#ffd43b', fxAmt: 60, font: 3 } },
 ];
 // 套範本：先回到預設樣式再蓋上範本，保留文字內容、位置、大小、角度
 export function applyTemplate(t, tp) {
@@ -159,7 +171,8 @@ export function pad(t, fs) {
   const st = t.stroke ? fs * t.stroke / 250 : 0;
   const sh = t.shadow ? fs * (t.shadowDist / 100 * 0.3 + t.shadowBlur / 100 * 0.6) : 0;
   const bg = t.bg ? fs * 0.35 : 0;
-  return Math.max(st, bg) + sh + 2;
+  const a = t.fxAmt / 100, fx = t.fx === 'double' ? st + fs * (0.02 + a * 0.12) : t.fx === '3d' ? st + fs * a * 0.2 : t.fx === 'glitch' ? fs * a * 0.08 : t.fx === 'halo' ? st + fs * (0.08 + a * 0.2) : 0;
+  return Math.max(st, bg, fx) + sh + 2;
 }
 
 const hexA = (hex, a) => {
@@ -183,7 +196,9 @@ export function drawText(ctx, t, fs, L = layout(ctx, t, fs)) {
     ctx.fillStyle = hexA(t.bgColor, t.bg / 100);
     ctx.beginPath(); ctx.roundRect(b.x - p, b.y - p * 0.6, b.w + p * 2, b.h + p * 1.2, fs * 0.25); ctx.fill();
   }
-  const sw = t.stroke ? fs * t.stroke / 250 : 0, sc = t.strokeColor || autoStroke(t.color);
+  // 鏤空：只畫描邊（沒有描邊就用細的字色描邊）
+  const hollow = t.fx === 'hollow';
+  const sw = t.stroke ? fs * t.stroke / 250 : hollow ? fs * 0.03 : 0, sc = t.strokeColor || (hollow ? t.color : autoStroke(t.color));
   const fill = () => {
     if (!t.color2) return t.color;
     const g = ctx.createLinearGradient(0, -fs / 2, 0, fs / 2);
@@ -207,7 +222,7 @@ export function drawText(ctx, t, fs, L = layout(ctx, t, fs)) {
   };
   const ulw = Math.max(1, fs * 0.07);
   const paint = (withStroke, withFill) => each(g => {
-    if (withStroke) { ctx.lineWidth = sw * 2; ctx.strokeText(g.ch, 0, 0); }
+    if (withStroke) { ctx.lineWidth = hollow ? sw : sw * 2; ctx.strokeText(g.ch, 0, 0); }
     if (withFill) { ctx.fillStyle = withFill === true ? fill() : withFill; ctx.fillText(g.ch, 0, 0); }
   });
   // 第一遍：陰影（連描邊一起投影）。字本身畫到畫面外，只把投影移回來，
@@ -226,9 +241,41 @@ export function drawText(ctx, t, fs, L = layout(ctx, t, fs)) {
     paint(!!sw, c); under(ulw + sw * 2);
     ctx.restore();
   }
-  // 第二遍：描邊在下、填色在上
+  // 字體效果：都畫在描邊下面
+  const a = t.fxAmt / 100;
+  if (t.fx === 'double') {
+    // 雙層描邊：描邊外面再包一層
+    const w2 = sw + fs * (0.02 + a * 0.12);
+    ctx.strokeStyle = t.fxColor; ctx.lineWidth = w2 * 2;
+    each(g => ctx.strokeText(g.ch, 0, 0)); under(ulw + w2 * 2);
+  } else if (t.fx === '3d') {
+    // 立體：往右下疊很多層，越後面的層越深一點，看起來像厚度
+    const d = fs * a * 0.2, n = Math.max(1, Math.min(80, Math.ceil(d * k)));
+    for (let i = n; i >= 1; i--) {
+      const o = d * i / n / Math.SQRT2;
+      ctx.save(); ctx.translate(o, o);
+      ctx.strokeStyle = t.fxColor; ctx.fillStyle = t.fxColor;
+      paint(!!sw, t.fxColor);
+      ctx.restore();
+    }
+  } else if (t.fx === 'glitch') {
+    // 故障：青、洋紅兩份往左右錯開
+    const o = fs * a * 0.08;
+    [[-o, '#00e5ff'], [o, '#ff2bd6']].forEach(([dx, c]) => {
+      ctx.save(); ctx.translate(dx, 0); ctx.globalAlpha *= 0.85; ctx.strokeStyle = c;
+      paint(!!sw, c); ctx.restore();
+    });
+  } else if (t.fx === 'halo') {
+    // 外框光：描邊外面一圈柔和的光
+    const w2 = sw + fs * (0.04 + a * 0.1);
+    ctx.save(); ctx.strokeStyle = t.fxColor; ctx.lineWidth = w2 * 2;
+    ctx.shadowColor = t.fxColor; ctx.shadowBlur = fs * (0.08 + a * 0.2) * k;
+    each(g => ctx.strokeText(g.ch, 0, 0));
+    ctx.restore();
+  }
+  // 第二遍：描邊在下、填色在上（鏤空不填色）
   if (sw) { ctx.strokeStyle = sc; paint(true, false); under(ulw + sw * 2); }
-  paint(false, true);
+  if (!hollow) paint(false, true);
   ctx.strokeStyle = t.color; under(ulw);
   ctx.restore();
 }

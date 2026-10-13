@@ -17,7 +17,7 @@ import { WarpField } from './warpfield.js';
 import { RESHAPE, liqDab, liqMoves, liqRadius } from './reshape.js';
 import { tabDoodle, doodleInput } from './doodle.js';
 import { tabBeautyBrush, beautyBrushInput } from './beautybrush.js';
-import { FONTS, T0, TEXT_COLORS, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
+import { FONTS, T0, TEXT_COLORS, TEXT_FX, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
 import { initCollage, openCollage } from './collage.js';
 import { CATS as TPL_CATS } from './templates.js';
 import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightPosOf, lightGrad } from './relight.js';
@@ -2015,9 +2015,9 @@ function tabCutout(box) {
 }
 
 // ---------- 文字 ----------
-// 面板照醒圖文字工具：範本、字型、樣式、描邊、陰影、背景、彎曲、排列、圖層
+// 面板照醒圖文字工具：範本、字型、樣式、描邊、效果、陰影、背景、彎曲、排列、圖層
 let txSec = 'tpl', txSub = {};
-const TX_SECS = [['tpl', '範本'], ['font', '字型'], ['style', '樣式'], ['stroke', '描邊'], ['shadow', '陰影'], ['bg', '背景'], ['curve', '彎曲'], ['arrange', '排列'], ['layer', '圖層']];
+const TX_SECS = [['tpl', '範本'], ['font', '字型'], ['style', '樣式'], ['stroke', '描邊'], ['fx', '效果'], ['shadow', '陰影'], ['bg', '背景'], ['curve', '彎曲'], ['arrange', '排列'], ['layer', '圖層']];
 // 範本縮圖：用同一支繪製程式畫一個「Aa」
 const tplThumbs = new Map();
 function tplThumb(tp) {
@@ -2077,7 +2077,7 @@ function tabText(box) {
   const redo = () => { drawTexts(); commit(); showTab('text'); };
   const isSet = {
     tpl: !!t.tpl, font: t.font > 0, style: t.italic || t.under || !t.bold || t.op < 100 || !!t.color2, stroke: t.stroke > 0,
-    shadow: t.shadow > 0, bg: t.bg > 0, curve: !!t.curve, arrange: t.align !== 'center' || !!t.ls || !!t.lh || t.vert, layer: false,
+    fx: !!t.fx, shadow: t.shadow > 0, bg: t.bg > 0, curve: !!t.curve, arrange: t.align !== 'center' || !!t.ls || !!t.lh || t.vert, layer: false,
   };
   cats.append(item({ label: '完成', icon: '完成', cls: 'wide', onclick: () => { selText = -1; drawTexts(); showTab('text'); } }));
   TX_SECS.forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: txSec === k, set: isSet[k], onclick: () => { txSec = k; showTab('text'); } })));
@@ -2112,6 +2112,12 @@ function tabText(box) {
     const auto = item({ label: '自動', icon: '自動', cls: 'wide', on: !t.strokeColor, onclick: () => { t.strokeColor = null; if (!t.stroke) t.stroke = 30; redo(); } });
     swatches(box, t.strokeColor, c => { t.strokeColor = c; if (!t.stroke) t.stroke = 30; }, [auto]);
     setSlider('寬度', 0, 100, t.stroke, v => { t.stroke = v; drawTexts(); });
+  } else if (txSec === 'fx') {
+    box.append(item({ label: '無', icon: I.off, on: !t.fx, onclick: () => { t.fx = ''; redo(); } }));
+    TEXT_FX.forEach(([id, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: t.fx === id, onclick: () => { t.fx = id; redo(); } })));
+    if (t.fx && t.fx !== 'hollow' && t.fx !== 'glitch') swatches(box, t.fxColor, c => { t.fxColor = c; });
+    if (t.fx && t.fx !== 'hollow') setSlider(t.fx === '3d' ? '厚度' : t.fx === 'glitch' ? '錯開' : '寬度', 0, 100, t.fxAmt, v => { t.fxAmt = v; drawTexts(); });
+    $('#note').textContent = t.fx === 'hollow' ? '鏤空只留描邊，描邊顏色、寬度到「描邊」調。' : '花字效果畫在描邊下面，可以跟描邊、陰影一起用。';
   } else if (txSec === 'shadow') {
     if (!t.shadow) { t.shadow = 60; drawTexts(); }
     subSliders(box, 'shadow', [['shadow', '不透明度', 0, 100], ['shadowBlur', '模糊', 0, 100], ['shadowAngle', '角度', -180, 180], ['shadowDist', '位移', 0, 100]], t);
