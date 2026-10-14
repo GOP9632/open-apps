@@ -23,7 +23,7 @@ struct SwipeTab: View {
                     }
                 }
                 .frame(maxHeight: .infinity)
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 20).padding(.top, 8)
 
                 HStack(spacing: 28) {
                     RoundBtn(icon: "xmark", color: .red) { fling(false) }
@@ -92,7 +92,8 @@ struct SwipeTab: View {
 struct SwipeCard: View {
     let place: Place
     var body: some View {
-        PhotoView(place: place, px: 1000)
+        Color.clear.aspectRatio(3 / 4.2, contentMode: .fit)
+            .overlay { PhotoView(place: place, px: 1000) }
             .overlay(alignment: .bottomLeading) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(place.name).font(.system(size: 28, weight: .heavy))
@@ -105,7 +106,6 @@ struct SwipeCard: View {
             }
             .clipShape(.rect(cornerRadius: 28))
             .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
-            .aspectRatio(3 / 4.2, contentMode: .fit)
     }
 }
 

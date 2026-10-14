@@ -4,7 +4,8 @@ import MapKit
 // 地圖：用 iPhone 內建的 Apple 地圖（免費、不用額外載入函式庫），下面一排卡片，滑到哪張地圖就跟到哪間
 struct MapTab: View {
     @Environment(Store.self) private var store
-    @State private var pos: MapCameraPosition = .userLocation(fallback: .region(MKCoordinateRegion(center: .init(latitude: 25.0418, longitude: 121.5436), latitudinalMeters: 9000, longitudinalMeters: 9000)))
+    // 一打開先框住所有收藏的店（不跳到目前位置），想看自己在哪按右上角的定位鈕
+    @State private var pos: MapCameraPosition = .region(MKCoordinateRegion(center: .init(latitude: 25.0418, longitude: 121.5436), latitudinalMeters: 9000, longitudinalMeters: 9000))
     @State private var sel: String?
     @State private var loc = CLLocationManager()
     @State private var fitted = false
@@ -51,8 +52,13 @@ struct MapTab: View {
         .onAppear {
             loc.requestWhenInUseAuthorization()
             // 第一次打開先把所有收藏的店框進畫面
-            if !fitted, let b = bounds { fitted = true; pos = .region(b) }
+            fit()
         }
+        .onChange(of: list.count) { fit() }
+    }
+
+    private func fit() {
+        if !fitted, let b = bounds { fitted = true; pos = .region(b) }
     }
 
     private var bounds: MKCoordinateRegion? {
