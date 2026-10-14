@@ -19,14 +19,7 @@ struct SwipeTab: View {
                         }
                     }
                     ForEach(Array(deck.prefix(3).enumerated()).reversed(), id: \.element.id) { i, p in
-                        SwipeCard(place: p)
-                            .overlay(alignment: .topLeading) { stamp("想吃", .green).opacity(i == 0 ? Double(max(0, drag.width / 80)) : 0).rotationEffect(.degrees(-12)).padding(24) }
-                            .overlay(alignment: .topTrailing) { stamp("跳過", .red).opacity(i == 0 ? Double(max(0, -drag.width / 80)) : 0).rotationEffect(.degrees(12)).padding(24) }
-                            .offset(i == 0 ? CGSize(width: drag.width, height: drag.height * 0.35) : CGSize(width: 0, height: CGFloat(i) * 14 - (i == 1 ? min(14, abs(drag.width) / 10) : 0)))
-                            .scaleEffect(i == 0 ? 1 : 1 - CGFloat(i) * 0.05 + (i == 1 ? min(0.05, abs(drag.width) / 2800) : 0))
-                            .rotationEffect(.degrees(i == 0 ? drag.width / 16 : 0))
-                            .gesture(i == 0 ? gesture : nil)
-                            .zIndex(Double(3 - i))
+                        card(p, at: i)
                     }
                 }
                 .frame(maxHeight: .infinity)
@@ -43,6 +36,27 @@ struct SwipeTab: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .onAppear { if deck.isEmpty && liked.isEmpty { reset() } }
+    }
+
+    // 拆成獨立函式，避免編譯器型別推斷逾時
+    @ViewBuilder
+    private func card(_ p: Place, at i: Int) -> some View {
+        let top = i == 0
+        let likeOpacity: Double = top ? Double(max(0, drag.width / 80)) : 0
+        let skipOpacity: Double = top ? Double(max(0, -drag.width / 80)) : 0
+        let lift: CGFloat = i == 1 ? min(14, abs(drag.width) / 10) : 0
+        let offset: CGSize = top ? CGSize(width: drag.width, height: drag.height * 0.35) : CGSize(width: 0, height: CGFloat(i) * 14 - lift)
+        let grow: CGFloat = i == 1 ? min(0.05, abs(drag.width) / 2800) : 0
+        let scale: CGFloat = top ? 1 : 1 - CGFloat(i) * 0.05 + grow
+        let angle: Double = top ? Double(drag.width / 16) : 0
+        SwipeCard(place: p)
+            .overlay(alignment: .topLeading) { stamp("想吃", .green).opacity(likeOpacity).rotationEffect(.degrees(-12)).padding(24) }
+            .overlay(alignment: .topTrailing) { stamp("跳過", .red).opacity(skipOpacity).rotationEffect(.degrees(12)).padding(24) }
+            .offset(offset)
+            .scaleEffect(scale)
+            .rotationEffect(.degrees(angle))
+            .gesture(gesture, including: top ? .all : .subviews)
+            .zIndex(Double(3 - i))
     }
 
     private var gesture: some Gesture {
