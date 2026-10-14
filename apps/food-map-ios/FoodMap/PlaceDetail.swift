@@ -1,12 +1,19 @@
 import SwiftUI
 import MapKit
 
-// 店家頁（這個試用版只看不改，資料一樣跟網頁版同步）
+// 店家頁：自己的店可以改想去／去過、星等、分享到群組、編輯、刪除；朋友的店只能看
 struct PlaceDetail: View {
     let place: Place
     @Environment(\.openURL) private var openURL
+    @Environment(\.dismiss) private var dismiss
+    @Environment(Store.self) private var store
+    @State private var editing = false
+    @State private var deleting = false
 
     var body: some View {
+        // 永遠顯示最新的那份（剛改的狀態、別台裝置改的都會跟上）
+        let place = store.place(self.place.id) ?? self.place
+        let mine = store.isMine(place)
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Color.clear.aspectRatio(4 / 4.2, contentMode: .fit)
@@ -34,6 +41,9 @@ struct PlaceDetail: View {
                         .buttonStyle(PressStyle())
                 }
                 .padding(.horizontal, 16)
+
+                if mine { mineBox(place) }
+                else if let o = place.owner { Label("\(store.name(o)) 的收藏", systemImage: "person.crop.circle").font(.subheadline).foregroundStyle(.secondary).padding(.horizontal, 16) }
 
                 if let d = place.dishes, !d.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
@@ -68,6 +78,60 @@ struct PlaceDetail: View {
         .background(Color.bg)
         .ignoresSafeArea(edges: .top)
         .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            if mine {
+                Menu {
+                    Button("編輯", systemImage: "pencil") { editing = true }
+                    Button("刪除", systemImage: "trash", role: .destructive) { deleting = true }
+                } label: { Image(systemName: "ellipsis.circle.fill").symbolRenderingMode(.hierarchical).font(.title2) }
+            }
+        }
+        .sheet(isPresented: $editing) { EditSheet(place: place) }
+        .confirmationDialog("刪除「\(place.name)」？", isPresented: $deleting, titleVisibility: .visible) {
+            Button("刪除", role: .destructive) { dismiss(); Task { await store.delete(place) } }
+        }
+    }
+
+    // 自己的店：想去／去過、星等、分享到哪些群組
+    private func mineBox(_ place: Place) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Picker("狀態", selection: Binding(get: { place.status ?? "want" }, set: { v in
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                var p = place; p.status = v
+                if v == "want" { p.rating = nil }
+                Task { await store.save(p) }
+            })) {
+                Text("想去").tag("want")
+                Text("去過").tag("been")
+            }
+            .pickerStyle(.segmented)
+            if place.been {
+                HStack {
+                    Text("好吃嗎？").font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Stars(value: place.rating) { r in var p = place; p.rating = r; Task { await store.save(p) } }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            if !store.groups.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("分享到群組").font(.subheadline.weight(.semibold))
+                    Flow(spacing: 8) {
+                        ForEach(store.groups) { g in
+                            let on = store.shared(place.id, g.id)
+                            Chip(text: (on ? "✓ " : "") + g.name, on: on) {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                Task { if on { await store.unshare(g.id, place.id) } else { await store.share(g.id, [place.id]) } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(Color.panel, in: .rect(cornerRadius: 18))
+        .padding(.horizontal, 16)
+        .animation(.snappy, value: place.been)
     }
 }
 

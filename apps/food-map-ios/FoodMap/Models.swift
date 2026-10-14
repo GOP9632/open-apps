@@ -77,3 +77,38 @@ extension Color {
         self.init(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(Color(hex: dark)) : UIColor(Color(hex: light)) })
     }
 }
+
+// 群組和滑卡：food.groups、group_members、group_places、swipe_rounds、swipes、profiles（叫 FoodGroup 是因為 SwiftUI 已經有 Group）
+struct FoodGroup: Codable, Identifiable, Hashable {
+    let id: String
+    var name: String
+    var invite_code: String
+    var owner: String
+    var created_at: String?
+}
+struct Member: Codable, Hashable { let group_id: String; let user_id: String }
+struct GroupPlace: Codable, Hashable { let group_id: String; let place_id: String }
+struct Round: Codable, Identifiable, Hashable {
+    let id: String
+    let group_id: String
+    var created_by: String?
+    var title: String
+    var place_ids: [String]
+    var created_at: String?
+}
+struct SwipeRow: Codable, Hashable { let round_id: String; var user_id: String; let place_id: String; var liked: Bool }
+struct Profile: Codable, Hashable { let id: String; var name: String }
+
+let MEALS: [(String, String)] = [("breakfast", "早餐"), ("lunch", "午餐"), ("tea", "下午茶"), ("dinner", "晚餐"), ("night", "宵夜")]
+
+// 跟網頁版一樣：同一家的分店只算一家（去掉「XX店」「XX分店」後比對店名）
+func brandOf(_ p: Place) -> String {
+    func nk(_ s: String) -> String {
+        var t = s.lowercased().precomposedStringWithCompatibilityMapping
+        t = t.replacingOccurrences(of: #"[\s\-_.,，。、・·'’"「」『』()（）【】\[\]|｜/&＆!！?？~～:：#＃@]+"#, with: "", options: .regularExpression)
+        return t.replacingOccurrences(of: #"(本店|總店|旗艦店)$"#, with: "", options: .regularExpression)
+    }
+    let stripped = p.name.replacingOccurrences(of: #"[\s・·\-–|｜(（]+([^\s・·\-–|｜(（]{1,12}?(?:分店|店|門市|館))[)）]?$"#, with: "", options: .regularExpression)
+    let k = nk(stripped)
+    return k.isEmpty ? nk(p.name) : k
+}

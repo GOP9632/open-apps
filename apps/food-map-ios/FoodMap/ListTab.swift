@@ -4,6 +4,7 @@ import SwiftUI
 struct ListTab: View {
     @Environment(Store.self) private var store
     @Namespace private var zoom
+    @State private var adding = false
 
     var body: some View {
         @Bindable var store = store
@@ -17,6 +18,7 @@ struct ListTab: View {
                             NavigationLink(value: p) { PlaceCard(place: p) }
                                 .buttonStyle(PressStyle())
                                 .matchedTransitionSource(id: p.id, in: zoom) { $0.clipShape(.rect(cornerRadius: 18)) }
+                                .contextMenu { if store.isMine(p) { menu(p) } }
                         }
                     }
                     .padding(.horizontal, 16)
@@ -31,6 +33,10 @@ struct ListTab: View {
                 PlaceDetail(place: p).navigationTransition(.zoom(sourceID: p.id, in: zoom))
             }
             .overlay { if store.places.isEmpty && store.loading { ProgressView() } }
+            .toolbar {
+                Button { adding = true } label: { Image(systemName: "plus.circle.fill").font(.title2).symbolRenderingMode(.multicolor) }
+            }
+            .sheet(isPresented: $adding) { AddSheet() }
         }
         .onAppear(perform: markPaint)
         .onChange(of: store.places.count) { markPaint() }
@@ -40,6 +46,15 @@ struct ListTab: View {
         if store.firstPaintMs == nil, !store.places.isEmpty {
             store.firstPaintMs = Int(Date().timeIntervalSince(Store.launchedAt) * 1000)
         }
+    }
+
+    // 長按卡片：直接改想去／去過、刪除
+    @ViewBuilder private func menu(_ p: Place) -> some View {
+        Button(p.been ? "改成想去" : "改成去過", systemImage: p.been ? "heart" : "checkmark.circle") {
+            var n = p; n.status = p.been ? "want" : "been"; if !n.been { n.rating = nil }
+            Task { await store.save(n) }
+        }
+        Button("刪除", systemImage: "trash", role: .destructive) { Task { await store.delete(p) } }
     }
 
     private var chips: some View {
