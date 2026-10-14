@@ -101,7 +101,9 @@ enum Supa {
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.httpBody = try JSONEncoder().encode(["key": qk, "input": input])
         r.timeoutInterval = 60
-        let (d, _) = try await URLSession.shared.data(for: r)
+        let (d, res) = try await URLSession.shared.data(for: r)
+        let code = (res as? HTTPURLResponse)?.statusCode ?? 0
+        guard code == 200 else { throw Fail(msg: "雲端暫時出錯（\(code)），請再試一次") }
         return String(data: d, encoding: .utf8) ?? ""
     }
 }

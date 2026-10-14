@@ -8,13 +8,15 @@ struct ListTab: View {
 
     var body: some View {
         @Bindable var store = store
+        // 篩選結果一次算好（每打一個字只算一次）
+        let visible = store.visible
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     chips
-                    Text("\(store.visible.count) 間").font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 16)
+                    Text("\(visible.count) 間").font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 16)
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 16) {
-                        ForEach(store.visible) { p in
+                        ForEach(visible) { p in
                             NavigationLink(value: p) { PlaceCard(place: p) }
                                 .buttonStyle(PressStyle())
                                 .matchedTransitionSource(id: p.id, in: zoom) { $0.clipShape(.rect(cornerRadius: 18)) }
@@ -35,6 +37,7 @@ struct ListTab: View {
             .overlay { if store.places.isEmpty && store.loading { ProgressView() } }
             .toolbar {
                 Button { adding = true } label: { Image(systemName: "plus.circle.fill").font(.title2).symbolRenderingMode(.multicolor) }
+                    .accessibilityLabel("新增店家")
             }
             .sheet(isPresented: $adding) { AddSheet() }
         }

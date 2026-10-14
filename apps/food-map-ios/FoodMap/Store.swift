@@ -59,7 +59,7 @@ struct Snapshot: Codable {
     var visible: [Place] {
         places.filter { p in
             (cat.isEmpty || p.category == cat) && (status.isEmpty || p.status == status) &&
-            (q.isEmpty || [p.name, p.branch ?? "", p.address ?? "", p.city ?? "", p.district ?? "", p.cuisine ?? "", p.note ?? "", (p.tags ?? []).joined(separator: " ")].joined(separator: " ").localizedCaseInsensitiveContains(q))
+            (q.isEmpty || [p.name, p.branch ?? "", p.address ?? "", p.city ?? "", p.district ?? "", p.cuisine ?? "", p.note ?? "", (p.tags ?? []).joined(separator: " ")].joined(separator: " ").localizedStandardContains(q))
         }
     }
 
@@ -115,6 +115,21 @@ struct Snapshot: Codable {
             self.error = error.localizedDescription
             if Supa.session == nil { loggedIn = false }
         }
+    }
+
+    // 滑卡頁每幾秒只拿這一輪的滑卡紀錄和成員（不用整份重抓），有新朋友加入才整份同步
+    @MainActor func syncRound(_ r: Round) async {
+        do {
+            async let sw = Supa.select("swipes", "select=round_id,user_id,place_id,liked&round_id=eq.\(r.id)&order=user_id,place_id", as: [SwipeRow].self)
+            async let gm = Supa.select("group_members", "select=group_id,user_id&group_id=eq.\(r.group_id)&order=user_id", as: [Member].self)
+            let (s, m) = try await (sw, gm)
+            let keep = pendingSwipes.filter { p in p.round_id == r.id && !s.contains { $0.user_id == p.user_id && $0.place_id == p.place_id } }
+            let nsw = (swipes.filter { $0.round_id != r.id } + s + keep).sorted { ($0.round_id, $0.user_id, $0.place_id) < ($1.round_id, $1.user_id, $1.place_id) }
+            if nsw != swipes { swipes = nsw }
+            let nm = (members.filter { $0.group_id != r.group_id } + m).sorted { ($0.group_id, $0.user_id) < ($1.group_id, $1.user_id) }
+            if nm != members { members = nm }
+            if m.contains(where: { profiles[$0.user_id] == nil }) { await sync() }
+        } catch {}
     }
 
     private static func loadSwipes(_ rids: [String]) async throws -> [SwipeRow] {

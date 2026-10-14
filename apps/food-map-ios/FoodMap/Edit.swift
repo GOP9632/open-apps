@@ -171,11 +171,15 @@ struct Stars: View {
     var size: CGFloat = 26
     let set: (Int?) -> Void
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             ForEach(1...5, id: \.self) { i in
-                Image(systemName: i <= (value ?? 0) ? "star.fill" : "star")
-                    .font(.system(size: size)).foregroundStyle(i <= (value ?? 0) ? Color(hex: 0xfab005) : .secondary)
-                    .onTapGesture { UIImpactFeedbackGenerator(style: .light).impactOccurred(); set(value == i ? nil : i) }
+                Button { UIImpactFeedbackGenerator(style: .light).impactOccurred(); set(value == i ? nil : i) } label: {
+                    Image(systemName: i <= (value ?? 0) ? "star.fill" : "star")
+                        .font(.system(size: size)).foregroundStyle(i <= (value ?? 0) ? Color(hex: 0xfab005) : .secondary)
+                        .frame(width: 44, height: 44).contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(i) 顆星")
             }
         }
     }

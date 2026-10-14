@@ -19,8 +19,8 @@ struct SwipeDeck: View {
             .padding(.horizontal, 20).padding(.top, 8)
 
             HStack(spacing: 28) {
-                RoundBtn(icon: "xmark", color: .red) { fling(false) }
-                RoundBtn(icon: "heart.fill", color: .accent2) { fling(true) }
+                RoundBtn(icon: "xmark", color: .red) { fling(false) }.accessibilityLabel("跳過")
+                RoundBtn(icon: "heart.fill", color: .accent2) { fling(true) }.accessibilityLabel("想吃")
             }
             .padding(.bottom, 16)
         }
@@ -64,8 +64,10 @@ struct SwipeDeck: View {
         guard let top = deck.first, !busy else { return }
         busy = true
         UIImpactFeedbackGenerator(style: like ? .medium : .light).impactOccurred()
-        withAnimation(.easeIn(duration: 0.28)) { drag = CGSize(width: like ? 700 : -700, height: drag.height + 40) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
+        // 飛出去的動畫真的結束才換下一張，不會閃
+        withAnimation(.easeIn(duration: 0.28)) {
+            drag = CGSize(width: like ? 700 : -700, height: drag.height + 40)
+        } completion: {
             var t = Transaction(); t.disablesAnimations = true
             withTransaction(t) { drag = .zero; onSwipe(top, like) }
             busy = false

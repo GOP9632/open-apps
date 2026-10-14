@@ -69,7 +69,8 @@ struct PlaceDetail: View {
                         Marker(place.name, coordinate: c).tint(place.cat.color)
                     }
                     .frame(height: 190).clipShape(.rect(cornerRadius: 18)).allowsHitTesting(false)
-                    .onTapGesture { if let u = place.mapsURL { openURL(u) } }
+                    // 地圖本身不接手勢（避免跟捲動打架），上面疊一層透明的來接「點一下開 Google 地圖」
+                    .overlay { Color.clear.contentShape(.rect).onTapGesture { if let u = place.mapsURL { openURL(u) } } }
                     .padding(.horizontal, 16)
                 }
             }
@@ -84,6 +85,7 @@ struct PlaceDetail: View {
                     Button("編輯", systemImage: "pencil") { editing = true }
                     Button("刪除", systemImage: "trash", role: .destructive) { deleting = true }
                 } label: { Image(systemName: "ellipsis.circle.fill").symbolRenderingMode(.hierarchical).font(.title2) }
+                .accessibilityLabel("更多")
             }
         }
         .sheet(isPresented: $editing) { EditSheet(place: place) }

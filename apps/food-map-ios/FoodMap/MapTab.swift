@@ -10,9 +10,11 @@ struct MapTab: View {
     @State private var loc = CLLocationManager()
     @State private var fitted = false
 
-    private var list: [Place] { store.visible.filter { $0.lat != nil && $0.lng != nil } }
+    private var points: [Place] { store.visible.filter { $0.lat != nil && $0.lng != nil } }
 
     var body: some View {
+        // 有座標的店一次算好，下面每個地方共用
+        let list = points
         NavigationStack {
             ZStack(alignment: .bottom) {
                 Map(position: $pos, selection: $sel) {
@@ -47,7 +49,7 @@ struct MapTab: View {
                 .padding(.bottom, 10)
             }
             .navigationDestination(for: Place.self) { PlaceDetail(place: $0) }
-            .toolbar(.hidden, for: .navigationBar)
+            .toolbarVisibility(.hidden, for: .navigationBar)
         }
         .onAppear {
             loc.requestWhenInUseAuthorization()
@@ -62,7 +64,7 @@ struct MapTab: View {
     }
 
     private var bounds: MKCoordinateRegion? {
-        let ps = list; guard !ps.isEmpty else { return nil }
+        let ps = points; guard !ps.isEmpty else { return nil }
         let la = ps.map { $0.lat! }, lo = ps.map { $0.lng! }
         return MKCoordinateRegion(center: .init(latitude: (la.min()! + la.max()!) / 2, longitude: (lo.min()! + lo.max()!) / 2),
                                   span: .init(latitudeDelta: max(0.02, (la.max()! - la.min()!) * 1.3), longitudeDelta: max(0.02, (lo.max()! - lo.min()!) * 1.3)))

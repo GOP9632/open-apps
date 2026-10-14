@@ -34,6 +34,7 @@ struct GroupsTab: View {
                     Button("建立群組", systemImage: "plus") { ask(.create) }
                     Button("輸入邀請碼", systemImage: "ticket") { ask(.join) }
                 } label: { Image(systemName: "plus.circle.fill").font(.title3) }
+                .accessibilityLabel("新增群組")
             }
             .refreshable { await store.sync() }
             .navigationDestination(for: FoodGroup.self) { GroupView(gid: $0.id, path: $path) }
@@ -169,6 +170,7 @@ struct GroupView: View {
                 Text("邀請碼 \(g.invite_code)")
                 Button(g.owner == store.me ? "刪除群組" : "退出群組", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) { leaving = true }
             } label: { Image(systemName: "ellipsis.circle") }
+                .accessibilityLabel("更多")
         }
         .confirmationDialog(g.owner == store.me ? "刪除「\(g.name)」？所有成員都會看不到這個群組。" : "退出「\(g.name)」？", isPresented: $leaving, titleVisibility: .visible) {
             Button(g.owner == store.me ? "刪除" : "退出", role: .destructive) { Task { await store.leave(g); dismiss() } }
@@ -349,7 +351,7 @@ struct RoundView: View {
                 try? await Task.sleep(for: .seconds(5))
                 guard let r = store.rounds.first(where: { $0.id == rid }) else { continue }
                 let before = Set(store.matches(r).filter(\.all).map(\.id))
-                await store.sync()
+                await store.syncRound(r)
                 if match == nil, let m = store.matches(r).first(where: { $0.all && !before.contains($0.id) }) { celebrate(m) }
             }
         }
