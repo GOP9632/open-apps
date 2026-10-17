@@ -215,6 +215,9 @@ create policy "自己滑" on food.swipes for insert
   with check (user_id = auth.uid() and exists (select 1 from food.swipe_rounds r where r.id = round_id and food.is_member(r.group_id)));
 drop policy if exists "改自己的選擇" on food.swipes;
 create policy "改自己的選擇" on food.swipes for update using (user_id = auth.uid());
+-- 滑卡「上一張」：可以刪掉自己滑的那筆
+drop policy if exists "刪自己的選擇" on food.swipes;
+create policy "刪自己的選擇" on food.swipes for delete using (user_id = auth.uid());
 
 -- 新專案預設不一定開放資料表給登入的使用者，明確開放（實際能看到哪些資料由上面的 RLS 決定）
 grant usage on schema food to anon, authenticated, service_role;
