@@ -384,7 +384,7 @@ struct RoundView: View {
             else { ContentUnavailableView("這輪滑卡不見了", systemImage: "rectangle.stack") }
         }
         .navigationDestination(item: $detail) { PlaceDetail(place: $0) }
-        .overlay { if let m = match { MatchView(match: m) { withAnimation(.snappy(duration: 0.28)) { match = nil } } .transition(.opacity) } }
+        .overlay { if let m = match { MatchView(match: m) { withAnimation(.snappy) { match = nil } } .transition(.opacity) } }
         // 朋友滑的結果每幾秒拿一次，有新配對就跳出來
         .task {
             while !Task.isCancelled {
@@ -425,7 +425,7 @@ struct RoundView: View {
         .navigationBarTitleDisplayMode(.inline)
         .backButton()
         .toolbar {
-            if !todo.isEmpty { Button(showResult ? "繼續滑" : "看結果") { withAnimation(.snappy(duration: 0.28)) { showResult.toggle() } } }
+            if !todo.isEmpty { Button(showResult ? "繼續滑" : "看結果") { withAnimation(.snappy) { showResult.toggle() } } }
             if store.canDelete(r) {
                 Menu {
                     Button("刪除這輪", systemImage: "trash", role: .destructive) { dropping = true }
@@ -442,7 +442,7 @@ struct RoundView: View {
     private func undo(_ r: Round) {
         guard let pid = history.popLast() else { return }
         Haptic.light()
-        withAnimation(.snappy(duration: 0.28)) { showResult = false }
+        withAnimation(.snappy) { showResult = false }
         Task { await store.unswipe(r, pid) }
     }
 

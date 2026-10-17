@@ -39,7 +39,7 @@ struct Root: View {
                         TabBar().transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
-                .animation(.snappy(duration: 0.28), value: store.barHidden)
+                .animation(.snappy, value: store.barHidden)
                 .onChange(of: store.tab) { _, t in opened.insert(t) }
                 .task {
                     await store.sync()
@@ -53,7 +53,7 @@ struct Root: View {
                 // 朋友傳來的邀請連結 https://anthony-apps.netlify.app/join?code=XXXX 直接在 App 裡加入
                 .onOpenURL { url in
                     guard url.path.hasPrefix("/join"), let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "code" })?.value else { return }
-                    Task { if await store.join(code) != nil { withAnimation(.snappy(duration: 0.28)) { store.tab = 2 } } }
+                    Task { if await store.join(code) != nil { withAnimation(.snappy) { store.tab = 2 } } }
                 }
                 .overlay { CoachOverlay().ignoresSafeArea() }
                 .fullScreenCover(isPresented: $store.showIG) { IGTutorial() }
@@ -77,8 +77,8 @@ struct Root: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .accessibilityAddTraits(.isButton)
                 .onAppear { AccessibilityNotification.Announcement(t).post() }
-                .task(id: t) { try? await Task.sleep(for: .seconds(act == nil ? 2.6 : 4)); withAnimation(.snappy(duration: 0.28)) { if store.toast == t { store.toast = nil; store.toastAction = nil } } }
-                .onTapGesture { withAnimation(.snappy(duration: 0.28)) { store.toast = nil } }
+                .task(id: t) { try? await Task.sleep(for: .seconds(act == nil ? 2.6 : 4)); withAnimation(.snappy) { if store.toast == t { store.toast = nil; store.toastAction = nil } } }
+                .onTapGesture { withAnimation(.snappy) { store.toast = nil } }
             }
         }
         // 手感量測浮層（「我的」版本號連點 5 下打開）

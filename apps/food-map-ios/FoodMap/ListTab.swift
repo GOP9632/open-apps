@@ -54,7 +54,7 @@ struct ListTab: View {
                         if store.mine.isEmpty { empty } else {
                             VStack(spacing: 12) {
                                 Text("沒有符合的店").font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
-                                Button("清除篩選") { withAnimation(.snappy(duration: 0.28)) { store.listF = Filter() } }.buttonStyle(ChunkyStyle(radius: 14))
+                                Button("清除篩選") { withAnimation(.snappy) { store.listF = Filter() } }.buttonStyle(ChunkyStyle(radius: 14))
                             }
                             .frame(maxWidth: .infinity).padding(.top, 40)
                         }
@@ -151,7 +151,7 @@ struct StarterCard: View {
             ("從 IG 收藏第一間", mine.contains { ($0.source_url ?? "").contains("instagram.com") }, { store.igFromCoach = false; store.showIG = true }),
             ("標一間去過，給星星", mine.contains { $0.been && $0.rating != nil }, { open(mine.first { !$0.been } ?? mine.first) }),
             ("收藏 10 間", mine.count >= 10, add),
-            ("邀一個朋友進群組", store.groups.contains { store.membersOf($0.id).count >= 2 }, { withAnimation(.snappy(duration: 0.28)) { store.tab = 2 } }),
+            ("邀一個朋友進群組", store.groups.contains { store.membersOf($0.id).count >= 2 }, { withAnimation(.snappy) { store.tab = 2 } }),
         ]
         let done = tasks.filter { $0.1 }.count
         if !hidden && done < tasks.count && !mine.isEmpty {
@@ -159,7 +159,7 @@ struct StarterCard: View {
                 HStack {
                     Text("收藏起步：完成 \(done) / \(tasks.count)").font(.system(size: 16, weight: .heavy)).foregroundStyle(Color.ink)
                     Spacer()
-                    Button { withAnimation(.snappy(duration: 0.28)) { hidden = true } } label: {
+                    Button { withAnimation(.snappy) { hidden = true } } label: {
                         Image(systemName: "xmark").font(.system(size: 13, weight: .bold)).foregroundStyle(Color.ink.opacity(0.4)).frame(width: 44, height: 32).contentShape(.rect)
                     }
                     .accessibilityLabel("收起收藏起步")

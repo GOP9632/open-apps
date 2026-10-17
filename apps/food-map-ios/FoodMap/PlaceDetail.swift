@@ -127,7 +127,7 @@ struct PlaceDetail: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .candy(24)
-        .animation(.snappy(duration: 0.28), value: place.been)
+        .animation(.snappy, value: place.been)
     }
 
     // 同一家的分店：由近到遠，📍 是現在選的這間
@@ -140,7 +140,7 @@ struct PlaceDetail: View {
                         let d = store.distance(b).map { " " + fmtDistance($0) } ?? ""
                         Chip(text: (b.id == id ? "📍 " : "") + branchLabel(b) + d, on: b.id == id, color: .accent) {
                             Haptic.light()
-                            withAnimation(.snappy(duration: 0.28)) { picked = b.id }
+                            withAnimation(.snappy) { picked = b.id }
                         }
                     }
                 }
@@ -264,7 +264,7 @@ struct StatusToggle: View {
         }
         .buttonStyle(PressStyle())
         .accessibilityAddTraits(on ? .isSelected : [])
-        .animation(.snappy(duration: 0.28), value: on)
+        .animation(.snappy, value: on)
     }
 }
 

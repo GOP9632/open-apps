@@ -209,7 +209,7 @@ struct Snapshot: Codable {
     }
 
     @MainActor func say(_ s: String, action: (label: String, run: () -> Void)? = nil) {
-        withAnimation(.snappy(duration: 0.28)) { toast = s; toastAction = action }
+        withAnimation(.snappy) { toast = s; toastAction = action }
     }
 
     // 忘記密碼：寄重設密碼的信
@@ -257,7 +257,7 @@ struct Snapshot: Codable {
     @MainActor func add(_ p: Place) async -> Bool {
         do {
             let d = try await Supa.write("POST", "places", body: p.row)
-            if let back = try JSONDecoder().decode([Place].self, from: d).first { withAnimation(.snappy(duration: 0.28)) { places.insert(back, at: 0) } }
+            if let back = try JSONDecoder().decode([Place].self, from: d).first { withAnimation(.snappy) { places.insert(back, at: 0) } }
             saveCache()
             return true
         } catch { say("新增失敗：" + error.localizedDescription); return false }
@@ -268,13 +268,13 @@ struct Snapshot: Codable {
         let at = places.firstIndex { $0.id == p.id } ?? 0
         let shares = groupPlaces.filter { $0.place_id == p.id }
         undoable.insert(p.id)
-        withAnimation(.snappy(duration: 0.28)) {
+        withAnimation(.snappy) {
             places.removeAll { $0.id == p.id }
             groupPlaces.removeAll { $0.place_id == p.id }
         }
         say("已刪除 \(p.name)", action: ("復原", { [weak self] in
             guard let self, self.undoable.remove(p.id) != nil else { return }
-            withAnimation(.snappy(duration: 0.28)) {
+            withAnimation(.snappy) {
                 self.places.insert(p, at: min(at, self.places.count))
                 self.groupPlaces += shares
                 self.toast = nil
@@ -285,7 +285,7 @@ struct Snapshot: Codable {
             guard undoable.remove(p.id) != nil, loggedIn else { return }
             do { try await Supa.write("DELETE", "places", query: "id=eq.\(p.id)"); saveCache() }
             catch {
-                withAnimation(.snappy(duration: 0.28)) { places.insert(p, at: min(at, places.count)); groupPlaces += shares }
+                withAnimation(.snappy) { places.insert(p, at: min(at, places.count)); groupPlaces += shares }
                 say("刪除失敗：" + error.localizedDescription)
             }
         }
@@ -358,7 +358,7 @@ struct Snapshot: Codable {
 
     @MainActor func delete(_ p: Place) async {
         let before = places, shares = groupPlaces
-        withAnimation(.snappy(duration: 0.28)) {
+        withAnimation(.snappy) {
             places.removeAll { $0.id == p.id }
             groupPlaces.removeAll { $0.place_id == p.id }
         }
@@ -491,7 +491,7 @@ struct Snapshot: Codable {
 
     @MainActor func deleteRound(_ r: Round) async {
         let before = rounds, sw = swipes
-        withAnimation(.snappy(duration: 0.28)) {
+        withAnimation(.snappy) {
             rounds.removeAll { $0.id == r.id }
             swipes.removeAll { $0.round_id == r.id }
         }
@@ -515,7 +515,7 @@ struct Snapshot: Codable {
     // 「上一張」：收回自己剛滑的那張
     @MainActor func unswipe(_ r: Round, _ pid: String) async {
         guard let me, let row = swipes.first(where: { $0.round_id == r.id && $0.user_id == me && $0.place_id == pid }) else { return }
-        withAnimation(.snappy(duration: 0.28)) { swipes.removeAll { $0 == row } }
+        withAnimation(.snappy) { swipes.removeAll { $0 == row } }
         do { try await Supa.write("DELETE", "swipes", query: "round_id=eq.\(r.id)&user_id=eq.\(me)&place_id=eq.\(pid)"); saveCache() }
         catch { swipes.append(row); say("收回失敗：" + error.localizedDescription) }
     }

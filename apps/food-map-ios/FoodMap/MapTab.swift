@@ -82,7 +82,7 @@ struct MapTab: View {
                         Spacer()
                         Button {
                             Haptic.light()
-                            withAnimation(.smooth(duration: 0.35)) { pos = .userLocation(fallback: pos) }
+                            withAnimation(.smooth(duration: 0.5)) { pos = .userLocation(fallback: pos) }
                         } label: { CircleIcon(icon: "location.fill") }
                         .buttonStyle(PressStyle())
                         .accessibilityLabel("我的位置")
@@ -128,8 +128,8 @@ struct MapTab: View {
         }
         guard let win = pool.randomElement() else { return }
         pins.drawn = win.id
-        // 先讓地圖上 5 根圖釘輪流快速跳一下（約半秒），最後選中抽到的那根
-        let hoppers = near.places.filter { $0.id != win.id && $0.id != pins.sel }.shuffled().prefix(5)
+        // 先讓地圖上 6–8 根圖釘輪流跳一下（按下去的那一刻第一根就跳），最後選中抽到的那根
+        let hoppers = near.places.filter { $0.id != win.id && $0.id != pins.sel }.shuffled().prefix(Int.random(in: 6...8))
         guard !reduce, !hoppers.isEmpty else {
             Haptic.success()
             pins.select(win.id)
@@ -140,9 +140,10 @@ struct MapTab: View {
             for p in hoppers {
                 pins.hops[p.id, default: 0] += 1
                 Haptic.tick()
-                try? await Task.sleep(for: .seconds(0.09))
+                try? await Task.sleep(for: .seconds(0.15))
                 if Task.isCancelled { return }
             }
+            try? await Task.sleep(for: .seconds(0.12))
             guard pins.drawWin == win.id else { return }
             pins.drawWin = nil; pins.drawTask = nil
             Haptic.success()
@@ -165,7 +166,7 @@ struct MapTab: View {
         }
         selfMoved = true
         let span = shownRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
-        withAnimation(.smooth(duration: 0.35)) { pos = .region(MKCoordinateRegion(center: c, span: span)) }
+        withAnimation(.smooth(duration: 0.55)) { pos = .region(MKCoordinateRegion(center: c, span: span)) }
     }
 
     private func scopePill(_ gname: String?) -> some View {
@@ -188,7 +189,7 @@ struct MapTab: View {
             .buttonStyle(PressStyle())
             .accessibilityLabel("地圖要看誰的收藏，現在是" + (gname ?? "我的收藏"))
             if store.mapGroup != nil {
-                Button { withAnimation(.snappy(duration: 0.28)) { store.mapGroup = nil } } label: {
+                Button { withAnimation(.snappy) { store.mapGroup = nil } } label: {
                     Image(systemName: "xmark").font(.system(size: 13, weight: .heavy)).foregroundStyle(Color.ink)
                         .frame(width: 36, height: 36).background(.white, in: .circle).shadow(color: .black.opacity(0.12), radius: 4, y: 1)
                         .frame(width: 44, height: 44).contentShape(.rect)
@@ -301,7 +302,7 @@ struct NearbySheet: View {
             }
         }
         // 換成大卡片時從下面彈上來（有一點點回彈）
-        .animation(reduce ? .easeOut(duration: 0.25) : .spring(response: 0.32, dampingFraction: 0.75), value: picked?.id)
+        .animation(reduce ? .easeOut(duration: 0.25) : .spring(response: 0.45, dampingFraction: 0.68), value: picked?.id)
         // 底下留位置給浮著的分頁列，底色一路鋪到螢幕最下面
         .padding(.bottom, 82)
         .background(UnevenRoundedRectangle(topLeadingRadius: 26, topTrailingRadius: 26).fill(Color.bg).shadow(color: .black.opacity(0.12), radius: 12, y: -2).ignoresSafeArea(edges: .bottom))
@@ -457,7 +458,7 @@ struct FoodPin: View {
             .background(alignment: .bottom) {
                 Ellipse().fill(.black.opacity(0.28)).frame(width: 22, height: 7)
                     .scaleEffect(x: on ? 1.6 : 1, y: 1).opacity(on ? 0.55 : 1).offset(y: 3)
-                    .animation(.smooth(duration: 0.25), value: on)
+                    .animation(.smooth(duration: 0.3), value: on)
             }
             // 深色店名小牌子，從圖釘下面彈出來
             .overlay(alignment: .bottom) {
@@ -471,16 +472,16 @@ struct FoodPin: View {
                     }
                 }
                 .offset(y: 32)
-                .animation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.3, dampingFraction: 0.6), value: on)
+                .animation(reduce ? .easeOut(duration: 0.25) : .spring(response: 0.38, dampingFraction: 0.55), value: on)
                 .allowsHitTesting(false)
             }
             .opacity(faded ? 0.5 : 1)
-            .animation(.easeOut(duration: 0.18), value: faded)
+            .animation(.snappy(duration: 0.25), value: faded)
             .onAppear { if on { up = true; sx = 1.35; sy = 1.35; lift = -10 } }
             .onChange(of: on) { _, v in v ? select() : deselect() }
             .onChange(of: hop) {
-                withAnimation(.spring(response: 0.16, dampingFraction: 0.5)) { hopping = true } completion: {
-                    withAnimation(.spring(response: 0.22, dampingFraction: 0.6)) { hopping = false }
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.5)) { hopping = true } completion: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { hopping = false }
                 }
             }
     }
@@ -509,16 +510,16 @@ struct FoodPin: View {
         up = true
         if reduce { withAnimation(.easeOut(duration: 0.25)) { sx = 1.35; sy = 1.35; lift = -10 }; return }
         // 手指按下時已經壓扁過了（PinPress），放開直接彈高放大（有回彈）
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.58)) { sx = 1.35; sy = 1.35; lift = -10 }
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.55)) { sx = 1.35; sy = 1.35; lift = -10 }
     }
 
     // 換選別間：這根縮回去時先縮過頭一點再彈回原大小
     private func deselect() {
         up = false
         if reduce { withAnimation(.easeOut(duration: 0.25)) { sx = 1; sy = 1; lift = 0 }; return }
-        withAnimation(.easeIn(duration: 0.1)) { sx = 0.9; sy = 0.9; lift = 0 } completion: {
+        withAnimation(.easeIn(duration: 0.12)) { sx = 0.9; sy = 0.9; lift = 0 } completion: {
             guard !up else { return }
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.5)) { sx = 1; sy = 1 }
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.5)) { sx = 1; sy = 1 }
         }
     }
 }
@@ -686,7 +687,7 @@ struct ScopeSheet: View {
         let on = store.mapGroup == id
         return Button {
             Haptic.light()
-            withAnimation(.snappy(duration: 0.28)) { store.mapGroup = id }
+            withAnimation(.snappy) { store.mapGroup = id }
             dismiss()
         } label: {
             HStack(spacing: 12) {

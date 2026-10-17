@@ -44,14 +44,14 @@ extension Store {
         mapF = Filter(); mapGroup = nil
         mapPath = []; tab = 0
         coachFrames = [:]
-        withAnimation(.snappy(duration: 0.28)) { coachIndex = 0; coach = s }
+        withAnimation(.snappy) { coachIndex = 0; coach = s }
     }
 
     @MainActor func advanceCoach() {
         Haptic.light()
         if coachStep == .been { mapPath = [] }
         guard coachIndex + 1 < coach.count else { endCoach(); return }
-        withAnimation(.snappy(duration: 0.28)) { coachIndex += 1 }
+        withAnimation(.snappy) { coachIndex += 1 }
         if coachStep == .been, let p = coachPlace {
             // 進到那間店的店家頁，等畫面停好再量「去過」的位置
             coachFrames[.been] = nil
@@ -61,7 +61,7 @@ extension Store {
 
     @MainActor func endCoach() {
         if coachStep == .been { mapPath = [] }
-        withAnimation(.snappy(duration: 0.28)) { coach = []; coachIndex = 0 }
+        withAnimation(.snappy) { coach = []; coachIndex = 0 }
         UserDefaults.standard.set(true, forKey: "coachDone")
     }
 
@@ -103,7 +103,7 @@ struct CoachOverlay: View {
             .task(id: step) {
                 ready = nil
                 try? await Task.sleep(for: .milliseconds(step == .been ? 650 : 350))
-                withAnimation(.snappy(duration: 0.28)) { ready = step }
+                withAnimation(.snappy) { ready = step }
             }
             .transition(.opacity)
         }
@@ -112,7 +112,7 @@ struct CoachOverlay: View {
     private func tapTarget(_ s: CoachStep) {
         switch s {
         case .add: store.coachShowIG()
-        case .groups: store.endCoach(); withAnimation(.snappy(duration: 0.28)) { store.tab = 2 }
+        case .groups: store.endCoach(); withAnimation(.snappy) { store.tab = 2 }
         default: store.advanceCoach()
         }
     }
@@ -192,7 +192,7 @@ struct Spotlight: View {
             return below ? -(hole.maxY + 22) : -(hole.minY - 22 - d.height)
         }
         .offset(x: left)
-        .animation(.snappy(duration: 0.28), value: hole)
+        .animation(.snappy, value: hole)
     }
 
     private func arrow(x: CGFloat, up: Bool) -> some View {
@@ -278,7 +278,7 @@ struct IGTutorial: View {
         // 面板滑上來停好才圈
         .task(id: step) {
             try? await Task.sleep(for: .milliseconds(step == 0 ? 300 : 450))
-            withAnimation(.snappy(duration: 0.28)) { ready = step }
+            withAnimation(.snappy) { ready = step }
         }
         .environment(\.colorScheme, .light)
     }

@@ -93,7 +93,7 @@ struct FilterChips: View {
     private func tap(_ g: () -> Void) {
         Haptic.light()
         Perf.shared.mark("篩選")
-        withAnimation(.snappy(duration: 0.28)) { g() }
+        withAnimation(.snappy) { g() }
     }
 }
 
@@ -184,7 +184,7 @@ struct SprinkleBar: View {
             }
         }
         .frame(height: 8)
-        .animation(.snappy(duration: 0.28), value: progress)
+        .animation(.snappy, value: progress)
     }
 }
 
