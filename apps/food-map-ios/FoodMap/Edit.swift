@@ -8,6 +8,8 @@ struct AddSheet: View {
     @State private var busy = false
     @State private var result: String?
     @State private var manual = false
+    @State private var been = false
+    @State private var rating: Int?
     @FocusState private var focus: Bool
 
     var body: some View {
@@ -22,6 +24,20 @@ struct AddSheet: View {
                         .buttonBorderShape(.capsule).labelStyle(.titleAndIcon)
                     Spacer()
                     Button("自己填") { manual = true }.font(.subheadline.weight(.semibold))
+                }
+                // 已經吃過的店也能收：選「去過」，順手給星星
+                Picker("", selection: $been.animation(.snappy)) {
+                    Text("想去").tag(false)
+                    Text("去過了").tag(true)
+                }
+                .pickerStyle(.segmented)
+                if been {
+                    HStack {
+                        Text("好吃嗎？").font(.subheadline).foregroundStyle(.secondary)
+                        Spacer()
+                        Stars(value: rating, size: 22) { rating = $0 }
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 Button(action: go) {
                     HStack(spacing: 8) {
@@ -46,7 +62,11 @@ struct AddSheet: View {
             .navigationTitle("新增店家").navigationBarTitleDisplayMode(.inline)
             .toolbar { Button(result == nil ? "取消" : "完成") { dismiss() } }
             .sheet(isPresented: $manual) {
-                EditSheet(place: Place(id: UUID().uuidString, name: input.hasPrefix("http") ? "" : input), isNew: true) { dismiss() }
+                EditSheet(place: {
+                    var p = Place(id: UUID().uuidString, name: input.hasPrefix("http") ? "" : input)
+                    if been { p.status = "been"; p.rating = rating }
+                    return p
+                }(), isNew: true) { dismiss() }
             }
         }
         .onAppear { focus = true }
@@ -55,7 +75,7 @@ struct AddSheet: View {
     private func go() {
         focus = false; busy = true
         Task {
-            let r = await store.quickAdd(input.trimmingCharacters(in: .whitespacesAndNewlines))
+            let r = await store.quickAdd(input.trimmingCharacters(in: .whitespacesAndNewlines), been: been, rating: been ? rating : nil)
             UINotificationFeedbackGenerator().notificationOccurred(r.hasPrefix("已收藏") ? .success : .warning)
             withAnimation(.snappy) { result = r; busy = false }
             if r.hasPrefix("已收藏") { input = "" }
@@ -84,6 +104,20 @@ struct EditSheet: View {
                         ForEach(Cat.order, id: \.self) { k in Text("\(Cat.all[k]!.emoji) \(Cat.all[k]!.name)").tag(k) }
                     }
                     TextField("料理（例如：拉麵、韓式）", text: str(\.cuisine))
+                }
+                Section {
+                    Picker("狀態", selection: Binding(get: { place.status ?? "want" }, set: { place.status = $0; if $0 != "been" { place.rating = nil } })) {
+                        Text("想去").tag("want")
+                        Text("去過了").tag("been")
+                    }
+                    .pickerStyle(.segmented)
+                    if place.status == "been" {
+                        HStack {
+                            Text("好吃嗎？")
+                            Spacer()
+                            Stars(value: place.rating, size: 22) { place.rating = $0 }
+                        }
+                    }
                 }
                 Section("地點") {
                     TextField("縣市", text: str(\.city))

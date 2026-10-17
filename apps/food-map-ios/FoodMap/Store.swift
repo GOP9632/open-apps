@@ -204,12 +204,20 @@ struct Snapshot: Codable {
     }
 
     // 貼連結或店名 → 雲端 AI 找出店家直接存好（跟 IG 分享捷徑同一個功能）
-    @MainActor func quickAdd(_ input: String) async -> String {
+    // been = true：收藏的是已經去過的店，存好後直接標成去過（rating 可以是 nil）
+    @MainActor func quickAdd(_ input: String, been: Bool = false, rating: Int? = nil) async -> String {
         do {
             let k: String
             if let quickKey { k = quickKey } else { k = try await Supa.rpc("quick_key", ["reset": .b(false)], as: String.self); quickKey = k }
+            let before = Set(mine.map(\.id))
             let r = try await Supa.quickAdd(key: k, input: input)
             await sync()
+            if been {
+                for var p in mine where !before.contains(p.id) {
+                    p.status = "been"; p.rating = rating
+                    await save(p)
+                }
+            }
             await fillCoords()
             return r.isEmpty ? "收藏失敗，請再試一次" : r
         } catch { return "收藏失敗：" + error.localizedDescription }
