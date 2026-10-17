@@ -189,7 +189,8 @@ struct SprinkleBar: View {
             }
         }
         .frame(height: 8)
-        .animation(.snappy, value: progress)
+        // 進度用彈簧長到新長度
+        .animation(.spring(response: 0.45, dampingFraction: 0.65), value: progress)
     }
 }
 

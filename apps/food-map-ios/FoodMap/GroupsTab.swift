@@ -420,7 +420,18 @@ struct RoundView: View {
                 VStack(spacing: 8) {
                     SprinkleBar(progress: r.place_ids.isEmpty ? 0 : Double(r.place_ids.count - todo.count) / Double(r.place_ids.count))
                     HStack {
-                        HStack(spacing: -8) { ForEach(mem, id: \.self) { Avatar(name: store.name($0), id: $0, size: 28) } }
+                        // 20 秒內在這一輪滑過的朋友：頭像旁邊三個點在跳
+                        TimelineView(.periodic(from: .now, by: 2)) { t in
+                            let live = Set(store.swipes.filter { $0.round_id == r.id && $0.user_id != store.me && ($0.at.map { t.date.timeIntervalSince($0) < 20 } ?? false) }.map(\.user_id))
+                            HStack(spacing: 6) {
+                                ForEach(mem, id: \.self) { u in
+                                    Avatar(name: store.name(u), id: u, size: 28)
+                                        .overlay(alignment: .bottomTrailing) { if live.contains(u) { TypingDots().offset(x: 10, y: 4) } }
+                                        .padding(.trailing, live.contains(u) ? 10 : -14)
+                                }
+                            }
+                            .padding(.trailing, 14)
+                        }
                         Spacer()
                         Text("還有 \(todo.count) 張").font(.footnote.weight(.bold)).foregroundStyle(Color.ink.opacity(0.5))
                     }
@@ -516,6 +527,11 @@ struct MatchView: View {
     let match: Store.Match
     let close: () -> Void
     @State private var pop = false
+    // 按讚的人從左右兩邊飛到中間撞在一起 → 愛心炸開 → 店家照片放大
+    @State private var met = false
+    @State private var heart = false
+    @State private var burst = 0
+    @Environment(\.accessibilityReduceMotion) private var reduce
 
     var body: some View {
         ZStack {
@@ -524,9 +540,21 @@ struct MatchView: View {
                 PhotoView(place: match.place, px: 500).frame(width: 170, height: 170).clipShape(.circle)
                     .overlay(Circle().strokeBorder(Color.grad, lineWidth: 6))
                     .scaleEffect(pop ? 1 : 0.6)
+                    .opacity(pop || reduce ? 1 : 0.4)
                 Text("配對成功！").font(.system(size: 34, weight: .black)).foregroundStyle(.white)
                 Text("大家都想吃 **\(match.place.name)**").foregroundStyle(.white.opacity(0.9))
-                HStack(spacing: -8) { ForEach(match.who, id: \.self) { Avatar(name: store.name($0), id: $0, size: 36) } }
+                ZStack {
+                    HStack(spacing: -8) {
+                        ForEach(Array(match.who.enumerated()), id: \.element) { i, u in
+                            Avatar(name: store.name(u), id: u, size: 36)
+                                .offset(x: met || reduce ? 0 : (i % 2 == 0 ? -220 : 220))
+                        }
+                    }
+                    Text("❤️").font(.system(size: 34))
+                        .scaleEffect(heart ? 1 : 0.1).opacity(heart ? 1 : 0)
+                        .offset(y: -34)
+                    Confetti(shot: burst).allowsHitTesting(false)
+                }
                 Button { if let u = (store.branchesOf(match.place).first ?? match.place).navURL(NavApp.saved ?? .google) { openURL(u) } } label: {
                     Label("就去這間", systemImage: "location.fill").font(.headline).frame(width: 240, height: 52)
                         .background(.white, in: .capsule).foregroundStyle(.black)
@@ -537,7 +565,35 @@ struct MatchView: View {
                 }
             }
         }
-        .onAppear { withAnimation(.spring(response: 0.45, dampingFraction: 0.55)) { pop = true } }
+        .onAppear {
+            if reduce { withAnimation(.easeOut(duration: 0.2)) { pop = true; heart = true }; Haptic.success(); return }
+            withAnimation(.easeIn(duration: 0.45)) { met = true } completion: {
+                Haptic.success()
+                burst += 1
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.45)) { heart = true }
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.55)) { pop = true }
+            }
+        }
+    }
+}
+
+// 正在滑的朋友：三個點輪流上下跳（每點差 0.15 秒、跳 3pt）
+struct TypingDots: View {
+    @Environment(\.accessibilityReduceMotion) private var reduce
+    var body: some View {
+        TimelineView(.animation(paused: reduce)) { t in
+            let s = t.date.timeIntervalSinceReferenceDate
+            HStack(spacing: 2.5) {
+                ForEach(0..<3, id: \.self) { i in
+                    Circle().fill(Color.ink.opacity(0.7)).frame(width: 4.5, height: 4.5)
+                        .offset(y: reduce ? 0 : -3 * max(0, sin((s - Double(i) * 0.15) * 2 * .pi / 0.9)))
+                }
+            }
+            .padding(.horizontal, 5).frame(height: 13)
+            .background(.white, in: .capsule)
+            .shadow(color: .black.opacity(0.15), radius: 2, y: 1)
+        }
+        .accessibilityLabel("正在滑")
     }
 }
 

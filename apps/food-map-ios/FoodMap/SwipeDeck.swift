@@ -10,6 +10,9 @@ struct SwipeDeck: View {
     @State private var drag: CGSize = .zero
     // 正在飛走的卡（複本），飛完自己消失
     @State private var flying: [Flying] = []
+    // 拖過門檻的一半：印章蓋下去（true 想吃、false 跳過）
+    @State private var armed: Bool?
+    @Environment(\.accessibilityReduceMotion) private var reduce
 
     struct Flying: Identifiable {
         let id = UUID()
@@ -48,8 +51,6 @@ struct SwipeDeck: View {
     @ViewBuilder
     private func card(_ p: Place, at i: Int) -> some View {
         let top = i == 0
-        let likeOpacity: Double = top ? Double(max(0, drag.width / 80)) : 0
-        let skipOpacity: Double = top ? Double(max(0, -drag.width / 80)) : 0
         let lift: CGFloat = i == 1 ? min(14, abs(drag.width) / 10) : 0
         let offset: CGSize = top ? CGSize(width: drag.width, height: drag.height * 0.35) : CGSize(width: 0, height: CGFloat(i) * 14 - lift)
         let grow: CGFloat = i == 1 ? min(0.05, abs(drag.width) / 2800) : 0
@@ -57,8 +58,13 @@ struct SwipeDeck: View {
         // 後面兩張歪一點，像一疊隨手放的卡
         let angle: Double = top ? Double(drag.width / 16) : (i == 1 ? -3 : 3)
         SwipeCard(place: p)
-            .overlay(alignment: .topLeading) { stamp("想吃！", .sprMint).opacity(likeOpacity).rotationEffect(.degrees(-12)).padding(24) }
-            .overlay(alignment: .topTrailing) { stamp("跳過", .sprPink).opacity(skipOpacity).rotationEffect(.degrees(12)).padding(24) }
+            // 印章：拖過一半時從 1.6 倍蓋下去，拖回來就抬起淡掉
+            .overlay(alignment: .topLeading) {
+                if top && armed == true { stamp("想吃！", .sprMint).rotationEffect(.degrees(-12)).padding(24).transition(stampIn) }
+            }
+            .overlay(alignment: .topTrailing) {
+                if top && armed == false { stamp("跳過", .sprPink).rotationEffect(.degrees(12)).padding(24).transition(stampIn) }
+            }
             .offset(offset)
             .scaleEffect(scale)
             .rotationEffect(.degrees(angle))
@@ -68,13 +74,24 @@ struct SwipeDeck: View {
             .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.9)), removal: .identity))
     }
 
+    private var stampIn: AnyTransition {
+        reduce ? .opacity : .asymmetric(insertion: .scale(scale: 1.6).combined(with: .opacity), removal: .scale(scale: 1.15).combined(with: .opacity))
+    }
+
     private var gesture: some Gesture {
         DragGesture()
-            .onChanged { drag = $0.translation }
+            .onChanged {
+                drag = $0.translation
+                let side: Bool? = drag.width > 50 ? true : drag.width < -50 ? false : nil
+                if side != armed {
+                    if side != nil { Haptic.medium() }
+                    withAnimation(.easeOut(duration: 0.15)) { armed = side }
+                }
+            }
             .onEnded { v in
                 let fast = abs(v.predictedEndTranslation.width) > 260
                 if abs(v.translation.width) > 100 || fast { fling(v.translation.width > 0) }
-                else { withAnimation(.spring(response: 0.35, dampingFraction: 0.65)) { drag = .zero } }
+                else { withAnimation(.spring(response: 0.35, dampingFraction: 0.65)) { drag = .zero; armed = nil } }
             }
     }
 
@@ -84,7 +101,7 @@ struct SwipeDeck: View {
         // 這張交給飛走的複本，從手指放開的位置接著飛
         flying.append(Flying(place: top, from: drag, like: like))
         var t = Transaction(); t.disablesAnimations = true
-        withTransaction(t) { drag = .zero }
+        withTransaction(t) { drag = .zero; armed = nil }
         // 下一張用彈簧從歪歪的位置轉正、放大到最上面，馬上可以拖
         withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) { onSwipe(top, like) }
     }

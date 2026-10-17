@@ -82,16 +82,12 @@ struct AddSheet: View {
         }
     }
 
+    // 按下去視窗就關：AI 在背景找，收藏頁上面有一張「找店中」卡、地圖上有一個膠囊，找到會翻成真的卡
     private func go() {
-        focus = false; busy = true
-        Task {
-            let r = await store.quickAdd(input.trimmingCharacters(in: .whitespacesAndNewlines), been: been, rating: been ? rating : nil)
-            let ok = r.hasPrefix("已收藏")
-            ok ? Haptic.success() : Haptic.warning()
-            // 存好了就直接關掉，結果用下面的小訊息告訴他；沒存到才留在這裡讓他改
-            if ok { dismiss(); store.say(r); return }
-            withAnimation(.snappy) { result = r; busy = false }
-        }
+        focus = false
+        Haptic.light()
+        store.startAdd(input.trimmingCharacters(in: .whitespacesAndNewlines), been: been, rating: been ? rating : nil)
+        dismiss()
     }
 }
 
@@ -215,18 +211,48 @@ extension Place {
 struct Stars: View {
     let value: Int?
     var size: CGFloat = 26
+    var animated = false     // 店家頁：出現時五顆星依序彈出，點第 N 顆時 1 到 N 依序亮起
     let set: (Int?) -> Void
+    @State private var lit: Int?
+    @State private var shown = false
+    @State private var run: Task<Void, Never>?
+    @Environment(\.accessibilityReduceMotion) private var reduce
+
     var body: some View {
+        let v = lit ?? value ?? 0
+        let pop = animated && !reduce
         HStack(spacing: 0) {
             ForEach(1...5, id: \.self) { i in
-                Button { Haptic.light(); set(value == i ? nil : i) } label: {
-                    Image(systemName: i <= (value ?? 0) ? "star.fill" : "star")
-                        .font(.system(size: size)).foregroundStyle(i <= (value ?? 0) ? Color(hex: 0xfab005) : .secondary)
+                Button { tap(i) } label: {
+                    Image(systemName: i <= v ? "star.fill" : "star")
+                        .font(.system(size: size)).foregroundStyle(i <= v ? Color(hex: 0xfab005) : .secondary)
+                        .scaleEffect(lit == i ? 1.25 : 1)
                         .frame(width: 44, height: 44).contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(i) 顆星")
+                .scaleEffect(pop && !shown ? 0.2 : 1)
+                .opacity(animated && !shown ? 0 : 1)
+                .animation(pop ? .spring(response: 0.3, dampingFraction: 0.55).delay(Double(i - 1) * 0.04) : .easeOut(duration: 0.2), value: shown)
             }
+        }
+        .onAppear { shown = true }
+    }
+
+    private func tap(_ i: Int) {
+        let n = value == i ? nil : i
+        guard animated, !reduce, let n else { Haptic.light(); set(n); return }
+        Haptic.light()
+        run?.cancel()
+        run = Task {
+            for k in 1...n {
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.5)) { lit = k }
+                if k > 1 { Haptic.tick() }
+                try? await Task.sleep(for: .milliseconds(40))
+                if Task.isCancelled { return }
+            }
+            set(n)
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) { lit = nil }
         }
     }
 }

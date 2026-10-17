@@ -23,6 +23,10 @@ struct Root: View {
     @Environment(\.scenePhase) private var phase
     // 去過的分頁才建（第一次打開只建地圖），之後留著，切回來還在原來的位置
     @State private var opened: Set<Int> = [0]
+    // 刪除時卡片縮小飛到訊息條（卡片和訊息條左邊的小照片共用）
+    @Namespace private var toastNS
+    // 冷啟動：啟動畫面的甜甜圈咬一口再放大淡掉（減少動態時不播）
+    @State private var bite = !UIAccessibility.isReduceMotionEnabled
 
     var body: some View {
         @Bindable var store = store
@@ -65,8 +69,14 @@ struct Root: View {
         .overlay(alignment: .bottom) {
             if let t = store.toast {
                 let act = store.toastAction
-                HStack(spacing: 14) {
+                HStack(spacing: 10) {
+                    if let p = store.toastPlace {
+                        PhotoView(place: p, px: 120).frame(width: 30, height: 30).clipShape(.rect(cornerRadius: 8))
+                            .matchedGeometryEffect(id: "del-" + p.id, in: toastNS)
+                    }
+                    if let i = store.toastIcon { ToastGlyph(icon: i).id(t) }
                     Text(t).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
+                        .padding(.trailing, act == nil ? 0 : 4)
                     if let act {
                         Button(act.label) { act.run() }.font(.subheadline.weight(.heavy)).foregroundStyle(Color.sprYellow)
                     }
@@ -81,6 +91,10 @@ struct Root: View {
                 .onTapGesture { withAnimation(.snappy) { store.toast = nil } }
             }
         }
+        .environment(\.toastNS, toastNS)
+        // 卡片飛去店家頁的那張照片
+        .overlay { HeroLayer().ignoresSafeArea() }
+        .overlay { if bite { LaunchBite(on: $bite) } }
         // 手感量測浮層（「我的」版本號連點 5 下打開）
         .overlay { PerfHUD() }
         .task {
@@ -97,11 +111,93 @@ struct Root: View {
     // 四個分頁疊在一起，只顯示目前這個（切換不重建，捲到哪、地圖看到哪都留著）
     @ViewBuilder private func page<V: View>(_ i: Int, @ViewBuilder _ v: () -> V) -> some View {
         if opened.contains(i) || store.tab == i {
-            v().opacity(store.tab == i ? 1 : 0)
-                // 換頁直接切過去，不做兩頁同時畫的淡入淡出（下面的橘色膠囊照樣滑過去）
-                .animation(nil, value: store.tab)
+            v().environment(\.heroTab, i)
+                .opacity(store.tab == i ? 1 : 0)
+                .offset(y: store.tab == i ? 0 : 8)
+                // 換頁：新的一頁從下面 8pt 淡入往上（0.15 秒），舊的直接藏起來，不做兩頁同時畫的交叉淡入
+                .animation(store.tab == i ? .easeOut(duration: 0.15) : nil, value: store.tab)
                 .allowsHitTesting(store.tab == i)
                 .accessibilityHidden(store.tab != i)
+        }
+    }
+}
+
+// 分頁按鈕：按下圖示縮到 0.85 並輕震；放開（按到了）由上面的 keyframe 彈到 1.15 再回 1
+private struct TabPress: ButtonStyle {
+    func makeBody(configuration c: Configuration) -> some View {
+        c.label
+            .scaleEffect(c.isPressed ? 0.85 : 1)
+            .animation(c.isPressed ? .easeOut(duration: 0.08) : nil, value: c.isPressed)
+            .onChange(of: c.isPressed) { _, d in if d { Haptic.light() } }
+    }
+}
+
+// 冷啟動：跟啟動畫面同一個甜甜圈，先咬一口（0.25 秒）再放大淡掉（0.35 秒）；底下的地圖已經畫好，點擊直接穿過
+private struct LaunchBite: View {
+    @Binding var on: Bool
+    @State private var bite: CGFloat = 0
+    @State private var gone = false
+    var body: some View {
+        ZStack {
+            Color("LaunchBg")
+            Image("Logo").resizable().frame(width: 100, height: 100).clipShape(.rect(cornerRadius: 24))
+                .mask {
+                    Rectangle().overlay(alignment: .topTrailing) {
+                        Circle().frame(width: bite * 2, height: bite * 2).offset(x: bite * 0.45, y: -bite * 0.45).blendMode(.destinationOut)
+                    }
+                    .compositingGroup()
+                }
+                .scaleEffect(gone ? 2.2 : 1)
+        }
+        .ignoresSafeArea()
+        .opacity(gone ? 0 : 1)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.25)) { bite = 30 } completion: {
+                withAnimation(.easeIn(duration: 0.35)) { gone = true } completion: { on = false }
+            }
+        }
+    }
+}
+
+// 訊息條左邊的勾勾（已收藏）、垃圾桶（已刪除）：0.25 秒畫出來
+private struct ToastGlyph: View {
+    let icon: ToastIcon
+    @State private var t: CGFloat = 0
+    var body: some View {
+        Group {
+            if icon == .check { CheckShape().trim(from: 0, to: t).stroke(Color.sprMint, style: .init(lineWidth: 3, lineCap: .round, lineJoin: .round)) }
+            else { TrashShape().trim(from: 0, to: t).stroke(Color.sprYellow, style: .init(lineWidth: 2.2, lineCap: .round, lineJoin: .round)) }
+        }
+        .frame(width: 18, height: 18)
+        .onAppear { withAnimation(.easeOut(duration: 0.25)) { t = 1 } }
+        .accessibilityHidden(true)
+    }
+}
+
+struct CheckShape: Shape {
+    func path(in r: CGRect) -> Path {
+        Path { p in
+            p.move(to: CGPoint(x: r.minX + r.width * 0.1, y: r.midY + r.height * 0.05))
+            p.addLine(to: CGPoint(x: r.minX + r.width * 0.4, y: r.maxY - r.height * 0.15))
+            p.addLine(to: CGPoint(x: r.maxX - r.width * 0.05, y: r.minY + r.height * 0.2))
+        }
+    }
+}
+
+private struct TrashShape: Shape {
+    func path(in r: CGRect) -> Path {
+        let w = r.width, h = r.height
+        return Path { p in
+            // 蓋子、把手、桶身、兩條線
+            p.move(to: CGPoint(x: r.minX + w * 0.1, y: r.minY + h * 0.22)); p.addLine(to: CGPoint(x: r.maxX - w * 0.1, y: r.minY + h * 0.22))
+            p.move(to: CGPoint(x: r.minX + w * 0.38, y: r.minY + h * 0.22)); p.addLine(to: CGPoint(x: r.minX + w * 0.38, y: r.minY + h * 0.08))
+            p.addLine(to: CGPoint(x: r.maxX - w * 0.38, y: r.minY + h * 0.08)); p.addLine(to: CGPoint(x: r.maxX - w * 0.38, y: r.minY + h * 0.22))
+            p.move(to: CGPoint(x: r.minX + w * 0.2, y: r.minY + h * 0.3)); p.addLine(to: CGPoint(x: r.minX + w * 0.27, y: r.maxY - h * 0.05))
+            p.addLine(to: CGPoint(x: r.maxX - w * 0.27, y: r.maxY - h * 0.05)); p.addLine(to: CGPoint(x: r.maxX - w * 0.2, y: r.minY + h * 0.3))
+            p.move(to: CGPoint(x: r.minX + w * 0.42, y: r.minY + h * 0.42)); p.addLine(to: CGPoint(x: r.minX + w * 0.42, y: r.maxY - h * 0.2))
+            p.move(to: CGPoint(x: r.maxX - w * 0.42, y: r.minY + h * 0.42)); p.addLine(to: CGPoint(x: r.maxX - w * 0.42, y: r.maxY - h * 0.2))
         }
     }
 }
@@ -110,6 +206,8 @@ struct Root: View {
 struct TabBar: View {
     @Environment(Store.self) private var store
     @Namespace private var ns
+    // 放開時圖示彈到 1.15 再回 1
+    @State private var bounce = [0, 0, 0, 0]
     private let items = [("地圖", "map.fill"), ("收藏", "heart.fill"), ("群組", "person.3.fill"), ("我的", "person.fill")]
 
     var body: some View {
@@ -118,10 +216,18 @@ struct TabBar: View {
                 let on = store.tab == i
                 Button {
                     Perf.shared.mark("換分頁")
+                    bounce[i] += 1
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { store.tab = i }
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: items[i].1).font(.system(size: 17, weight: .bold))
+                            .keyframeAnimator(initialValue: 1.0, trigger: bounce[i]) { v, s in v.scaleEffect(s) } keyframes: { _ in
+                                KeyframeTrack {
+                                    MoveKeyframe(0.85)
+                                    CubicKeyframe(1.15, duration: 0.12)
+                                    SpringKeyframe(1, duration: 0.3, spring: .init(response: 0.3, dampingRatio: 0.5))
+                                }
+                            }
                         if on { Text(items[i].0).font(.system(size: 15, weight: .heavy)).fixedSize() }
                     }
                     .foregroundStyle(on ? .white : .white.opacity(0.55))
@@ -131,7 +237,7 @@ struct TabBar: View {
                     }
                     .contentShape(.capsule)
                 }
-                .buttonStyle(PressStyle(haptic: true))
+                .buttonStyle(TabPress())
                 .accessibilityLabel(items[i].0)
                 .accessibilityAddTraits(on ? .isSelected : [])
                 .coachAnchor(.groups, on: i == 2)

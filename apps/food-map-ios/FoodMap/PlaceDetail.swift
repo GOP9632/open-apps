@@ -13,6 +13,12 @@ struct PlaceDetail: View {
     @State private var askNav = false
     // 選到的分店（預設是點進來的那間）；想去／去過、導航、地址都跟著它
     @State private var picked: String?
+    @State private var hero = Hero.shared
+    @State private var scroll = ScrollY()
+    @State private var dishesIn = false
+    @State private var backed = false
+    @Environment(\.heroTab) private var tab
+    @Environment(\.accessibilityReduceMotion) private var reduce
 
     var body: some View {
         // 永遠顯示最新的那份（剛改的狀態、別台裝置改的都會跟上）
@@ -34,9 +40,17 @@ struct PlaceDetail: View {
             .padding(.horizontal, 14)
             .padding(.bottom, 30)
         }
+        // 往下拉超過頂端時大圖放大、往上滑時大圖慢一半（只有大圖跟著重畫）
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in scroll.y = y }
+        .coordinateSpace(.named("pd"))
         .background(Color.bg)
         .toolbarVisibility(.hidden, for: .navigationBar)
-        .onAppear { Perf.shared.mark("進店家頁") }
+        .onAppear {
+            Perf.shared.mark("進店家頁")
+            if !dishesIn { withAnimation { dishesIn = true } }
+        }
+        // 從左邊滑回（沒按返回鍵）：不飛回去
+        .onDisappear { if !backed { Hero.shared.left(self.place.id) } }
         .sheet(isPresented: $editing) { EditSheet(place: place) }
         .confirmationDialog("用哪個地圖導航？", isPresented: $askNav, titleVisibility: .visible) {
             ForEach(NavApp.allCases, id: \.self) { a in
@@ -51,6 +65,8 @@ struct PlaceDetail: View {
     // 回上一頁：地圖分頁的頁面記在 store.mapPath，直接從那裡退一頁（dismiss 在地圖那邊沒反應）
     private func back() {
         Perf.shared.mark("返回")
+        backed = true
+        Hero.shared.flyBack(store.place(self.place.id) ?? self.place, tab: tab)
         if store.tab == 0, !store.mapPath.isEmpty { store.mapPath.removeLast() } else { dismiss() }
     }
 
@@ -75,9 +91,22 @@ struct PlaceDetail: View {
     }
 
     private func photo(_ place: Place) -> some View {
-        Color.clear.aspectRatio(1, contentMode: .fit)
-            .overlay { PlaceMedia(place: place) }
-            .clipShape(.rect(cornerRadius: 28))
+        Stretchy(scroll: scroll) {
+            Color.clear.aspectRatio(1, contentMode: .fit)
+                .overlay { PlaceMedia(place: place) }
+                .clipShape(.rect(cornerRadius: 28))
+                // 卡片飛過來的時候先藏著，落地才換成真的
+                .opacity(hero.hiding == self.place.id ? 0 : 1)
+        }
+        // 量大圖最後的位置（推頁是橫向滑進來，所以 x 用頁面裡的、y 用螢幕上的）
+        .onGeometryChange(for: CGRect.self) { g in
+            let a = g.frame(in: .global), b = g.frame(in: .named("pd"))
+            return CGRect(x: b.minX, y: a.minY, width: a.width, height: a.height)
+        } action: { r in
+            if backed { return }
+            Hero.shared.land(store.place(self.place.id) ?? self.place, tab: tab, target: r)
+            Hero.shared.detailMoved(self.place.id, r)
+        }
             .overlay(alignment: .bottomLeading) {
                 Text("\(place.cat.emoji) \(place.cat.name)").font(.footnote.weight(.heavy)).foregroundStyle(.white)
                     .padding(.horizontal, 11).frame(height: 30).background(place.cat.color, in: .capsule)
@@ -88,14 +117,19 @@ struct PlaceDetail: View {
     private func info(_ place: Place, mine: Bool, branches: [Place]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
+                // 換分店：店名往上推出、新的從下面進來
                 Text(place.name).font(.system(size: 26, weight: .black)).foregroundStyle(Color.ink)
+                    .id(place.id).transition(.push(from: .bottom))
                 if branches.count > 1 {
                     branchChips(branches, on: place.id)
                 } else if let b = place.branch, !b.isEmpty {
                     Text(b).font(.headline).foregroundStyle(Color.ink.opacity(0.7))
                 }
                 let meta = [place.cuisine ?? "", place.area, place.price.flatMap { PRICES[$0] } ?? ""].filter { !$0.isEmpty }
-                if !meta.isEmpty { Text(meta.joined(separator: " · ")).font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5)) }
+                if !meta.isEmpty {
+                    Text(meta.joined(separator: " · ")).font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
+                        .contentTransition(.interpolate)
+                }
             }
             if mine {
                 StatusToggle(place: place)
@@ -103,8 +137,9 @@ struct PlaceDetail: View {
                     HStack {
                         Text("好吃嗎？").font(.subheadline.weight(.bold)).foregroundStyle(Color.ink)
                         Spacer()
-                        Stars(value: place.rating) { r in var p = place; p.rating = r; Task { await store.save(p) } }
+                        Stars(value: place.rating, animated: true) { r in var p = place; p.rating = r; Task { await store.save(p) } }
                     }
+                    // 切到去過：星星列展開，五顆星依序彈出
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             } else if let o = place.owner {
@@ -127,7 +162,7 @@ struct PlaceDetail: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .candy(24)
-        .animation(.snappy, value: place.been)
+        .animation(reduce ? .easeOut(duration: 0.2) : .easeOut(duration: 0.3), value: place.been)
     }
 
     // 同一家的分店：由近到遠，📍 是現在選的這間
@@ -184,6 +219,10 @@ struct PlaceDetail: View {
                     let c = Color.sprinkles[i % Color.sprinkles.count]
                     Text(t).font(.subheadline.weight(.heavy)).padding(.horizontal, 12).frame(height: 34)
                         .background(c.opacity(0.15), in: .capsule).foregroundStyle(c.mix(with: .black, by: 0.15))
+                        // 第一次出現時從 0.6 倍依序彈到原大（跟推頁同時開始）
+                        .scaleEffect(dishesIn || reduce ? 1 : 0.6)
+                        .opacity(dishesIn ? 1 : 0)
+                        .animation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.6).delay(Double(i) * 0.04), value: dishesIn)
                 }
             }
         }
@@ -234,16 +273,22 @@ struct PlaceDetail: View {
 // 想去／去過切換：想去是粉紅、去過是薄荷綠。「去過」是教學第三步要圈的地方
 struct StatusToggle: View {
     @Environment(Store.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduce
     let place: Place
+    @Namespace private var ns
+    @State private var burst = 0
 
     var body: some View {
         HStack(spacing: 6) {
             seg("♥ 想去", "want", .sprPink)
             seg("✓ 去過", "been", .sprMint)
+                .overlay { Confetti(shot: burst).allowsHitTesting(false) }
                 .coachAnchor(.been, on: store.coachStep == .been && store.coachPlace?.id == place.id && store.tab == 0)
         }
         .padding(5)
         .background(Color.bg2, in: .rect(cornerRadius: 16))
+        // 色塊滑到另一邊
+        .animation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.8), value: place.status)
     }
 
     private func seg(_ t: String, _ v: String, _ c: Color) -> some View {
@@ -252,19 +297,21 @@ struct StatusToggle: View {
             guard !on else { return }
             Haptic.medium()
             Perf.shared.mark("想去/去過")
+            if v == "been" && !reduce { burst += 1 }
             var p = place; p.status = v
             if v == "want" { p.rating = nil }
             Task { await store.save(p) }
         } label: {
             Text(t).font(.system(size: 16, weight: .heavy))
                 .frame(maxWidth: .infinity).frame(height: 42)
-                .background(on ? c : .clear, in: .rect(cornerRadius: 12))
+                .background {
+                    if on { RoundedRectangle(cornerRadius: 12).fill(c).matchedGeometryEffect(id: "seg", in: ns) }
+                }
                 .foregroundStyle(on ? .white : Color.ink.opacity(0.45))
                 .contentShape(.rect)
         }
         .buttonStyle(PressStyle())
         .accessibilityAddTraits(on ? .isSelected : [])
-        .animation(.snappy, value: on)
     }
 }
 
@@ -295,15 +342,26 @@ struct MiniMap: View {
     var body: some View {
         Color.bg2
             .overlay {
-                if let img { Image(uiImage: img).resizable().scaledToFill().transition(.opacity) }
+                // 換分店：新舊截圖交叉淡入
+                if let img { Image(uiImage: img).resizable().scaledToFill().id(ObjectIdentifier(img)).transition(.opacity) }
             }
-            // 圖釘尖端對準店的位置（畫面正中央）
-            .overlay { PinGlyph(place: place).offset(y: -25) }
+            // 圖釘尖端對準店的位置（畫面正中央）；換分店時從上面掉到新位置
+            .overlay {
+                PinGlyph(place: place)
+                    .keyframeAnimator(initialValue: PinDrop(), trigger: "\(coord.latitude),\(coord.longitude)") { v, d in
+                        v.scaleEffect(x: d.sx, y: d.sy, anchor: .bottom).offset(y: d.y)
+                    } keyframes: { _ in
+                        KeyframeTrack(\.y) { MoveKeyframe(-40); CubicKeyframe(0, duration: 0.25) }
+                        KeyframeTrack(\.sx) { MoveKeyframe(1); LinearKeyframe(1, duration: 0.25); LinearKeyframe(1.1, duration: 0.06); SpringKeyframe(1, duration: 0.3, spring: .init(response: 0.3, dampingRatio: 0.5)) }
+                        KeyframeTrack(\.sy) { MoveKeyframe(1); LinearKeyframe(1, duration: 0.25); LinearKeyframe(0.8, duration: 0.06); SpringKeyframe(1, duration: 0.3, spring: .init(response: 0.3, dampingRatio: 0.5)) }
+                    }
+                    .offset(y: -25)
+            }
             .clipped()
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .task(id: key) {
                 guard width > 0 else { return }
-                if let c = Self.cache.object(forKey: key as NSString) { img = c; return }
+                if let c = Self.cache.object(forKey: key as NSString) { withAnimation(.easeOut(duration: 0.2)) { img = c }; return }
                 let o = MKMapSnapshotter.Options()
                 o.region = MKCoordinateRegion(center: coord, latitudinalMeters: 700, longitudinalMeters: 700)
                 o.size = CGSize(width: width, height: 190)
@@ -330,3 +388,25 @@ struct PinGlyph: View {
         .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
     }
 }
+
+// 店家頁捲到哪（只有大圖看它，捲動時整頁不用重畫）
+@Observable final class ScrollY { var y: CGFloat = 0 }
+
+// 大圖：往下拉超過頂端時以底部為錨點放大，往上滑時用一半的速度捲
+private struct Stretchy<C: View>: View {
+    let scroll: ScrollY
+    let content: C
+    @State private var h: CGFloat = 360
+    @Environment(\.accessibilityReduceMotion) private var reduce
+    init(scroll: ScrollY, @ViewBuilder content: () -> C) { self.scroll = scroll; self.content = content() }
+    var body: some View {
+        let y = reduce ? 0 : scroll.y
+        content
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h = max($0, 1) }
+            .scaleEffect(y < 0 ? 1 - y / h : 1, anchor: .bottom)
+            .offset(y: y > 0 ? min(y, h) * 0.5 : 0)
+    }
+}
+
+// 小地圖圖釘落下：位移和壓扁
+struct PinDrop { var y: CGFloat = 0; var sx: CGFloat = 1; var sy: CGFloat = 1 }

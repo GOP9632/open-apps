@@ -94,7 +94,12 @@ final class TouchClock: UIGestureRecognizer, UIGestureRecognizerDelegate {
     }
 
     override func touchesBegan(_ t: Set<UITouch>, with e: UIEvent) {
-        MainActor.assumeIsolated { Perf.shared.touched(true) }
+        MainActor.assumeIsolated {
+            Perf.shared.touched(true)
+            let p = t.first?.location(in: nil)
+            // 卡片長大變店家頁：記下手指按在哪，才知道是哪張卡
+            if let p { Hero.shared.touchDown(p) }
+        }
     }
 
     override func touchesEnded(_ t: Set<UITouch>, with e: UIEvent) {

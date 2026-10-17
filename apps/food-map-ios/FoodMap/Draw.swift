@@ -340,36 +340,12 @@ struct DrawPanel: View {
     private func section<C: View>(_ title: String, @ViewBuilder _ c: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.system(size: 14, weight: .heavy)).foregroundStyle(Color.ink.opacity(0.5))
-            FlowRow { c() }
+            Flow { c() }
         }
     }
 
     private func chip(_ t: String, _ on: Bool, color: Color = .accent, _ act: @escaping () -> Void) -> some View {
         Chip(text: t, on: on, color: color) { Haptic.tick(); withAnimation(.snappy) { act() } }
-    }
-}
-
-// 自動換行的一排膠囊
-struct FlowRow: Layout {
-    var spacing: CGFloat = 8
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let w = proposal.width ?? 360
-        var x: CGFloat = 0, y: CGFloat = 0, line: CGFloat = 0
-        for s in subviews {
-            let z = s.sizeThatFits(.unspecified)
-            if x > 0, x + z.width > w { x = 0; y += line + spacing; line = 0 }
-            x += z.width + spacing; line = max(line, z.height)
-        }
-        return CGSize(width: w, height: y + line)
-    }
-    func placeSubviews(in b: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = b.minX, y = b.minY, line: CGFloat = 0
-        for s in subviews {
-            let z = s.sizeThatFits(.unspecified)
-            if x > b.minX, x + z.width > b.maxX { x = b.minX; y += line + spacing; line = 0 }
-            s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(z))
-            x += z.width + spacing; line = max(line, z.height)
-        }
     }
 }
 
@@ -477,6 +453,7 @@ struct DrawCards: View {
         FlipCard(angle: up.contains(p.id) ? 0 : 180) {
             VStack(alignment: .leading, spacing: 6) {
                 PhotoView(place: p, px: 300).frame(width: 108, height: 108).clipShape(.rect(cornerRadius: 12))
+                    .heroSource(p, radius: 12)
                 Text(p.name).font(.system(size: 13.5, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Spacer(minLength: 0)

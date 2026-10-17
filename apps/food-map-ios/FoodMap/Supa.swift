@@ -163,6 +163,25 @@ import Security
         return (try? JSONDecoder().decode(R.self, from: d))?.video.flatMap(URL.init(string:))
     }
 
+    // App 裡的新增：一樣的雲端函式，多帶 format:"json"，直接回存好的那幾筆（不用整份重新同步）
+    // 回傳（訊息、存好的店）；雲端回的不是 JSON 就只有訊息
+    static func quickAddJSON(key qk: String, input: String) async throws -> (String, [Place]) {
+        var r = URLRequest(url: URL(string: "\(url.absoluteString)/functions/v1/quick-add")!)
+        r.httpMethod = "POST"
+        r.setValue(key, forHTTPHeaderField: "apikey")
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.httpBody = try JSONEncoder().encode(["key": qk, "input": input, "format": "json"])
+        r.timeoutInterval = 60
+        let (d, res) = try await URLSession.shared.data(for: r)
+        let code = (res as? HTTPURLResponse)?.statusCode ?? 0
+        struct R: Decodable { let message: String?; let places: [Place]? }
+        if let j = try? JSONDecoder().decode(R.self, from: d), j.message != nil || j.places != nil {
+            return (j.message ?? "", j.places ?? [])
+        }
+        guard code == 200 else { throw Fail(msg: "雲端暫時出錯（\(code)），請再試一次") }
+        return (String(data: d, encoding: .utf8) ?? "", [])
+    }
+
     // 分享捷徑用的同一個雲端函式：貼一個連結或一段文字，AI 找出店家直接存好，回一行結果
     static func quickAdd(key qk: String, input: String) async throws -> String {
         var r = URLRequest(url: URL(string: "\(url.absoluteString)/functions/v1/quick-add")!)

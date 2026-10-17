@@ -30,6 +30,15 @@ struct Snapshot: Codable {
     var toast: String?
     // 訊息右邊的按鈕（例如刪除後的「復原」）
     var toastAction: (label: String, run: () -> Void)?
+    // 訊息左邊畫出來的勾勾或垃圾桶；刪除時還有那間的小照片（卡片縮小飛過去）
+    var toastIcon: ToastIcon?
+    var toastPlace: Place?
+    // 新增時 AI 在背景找店（收藏頁上面一張「找店中」卡、地圖上一個膠囊）
+    var pendingAdds: [PendingAdd] = []
+    // 剛出現的新店（回到前景同步到的、AI 剛找到的）：卡片亮框 1 秒
+    var freshIds: Set<String> = []
+    // 看過哪些店（存在手機裡），同步回來多出來的就是新的
+    @ObservationIgnored private var seenIds: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "seenIds") ?? [])
     var loading = false
     // 分頁：0 地圖（打開就在這）、1 收藏、2 群組、3 我的
     var tab = 0
@@ -171,6 +180,7 @@ struct Snapshot: Codable {
             }
             saveCache()
             warmPhotos()
+            noteNew()
             if quickKey == nil { await loadQuickKey() }
             syncMs = Int(Date().timeIntervalSince(t) * 1000)
             error = nil
@@ -234,7 +244,7 @@ struct Snapshot: Codable {
     // 滑卡頁每幾秒只拿這一輪的滑卡紀錄和成員（不用整份重抓），有新朋友加入才整份同步
     @MainActor func syncRound(_ r: Round) async {
         do {
-            async let sw = Supa.select("swipes", "select=round_id,user_id,place_id,liked&round_id=eq.\(r.id)&order=user_id,place_id", as: [SwipeRow].self)
+            async let sw = Supa.select("swipes", "select=round_id,user_id,place_id,liked,created_at&round_id=eq.\(r.id)&order=user_id,place_id", as: [SwipeRow].self)
             async let gm = Supa.select("group_members", "select=group_id,user_id&group_id=eq.\(r.group_id)&order=user_id", as: [Member].self)
             let (s, m) = try await (sw, gm)
             let keep = pendingSwipes.filter { p in p.round_id == r.id && !s.contains { $0.user_id == p.user_id && $0.place_id == p.place_id } }
@@ -248,7 +258,7 @@ struct Snapshot: Codable {
 
     private static func loadSwipes(_ rids: [String]) async throws -> [SwipeRow] {
         if rids.isEmpty { return [] }
-        return try await Supa.select("swipes", "select=round_id,user_id,place_id,liked&round_id=in.(\(rids.joined(separator: ",")))&order=round_id,user_id,place_id", as: [SwipeRow].self)
+        return try await Supa.select("swipes", "select=round_id,user_id,place_id,liked,created_at&round_id=in.(\(rids.joined(separator: ",")))&order=round_id,user_id,place_id", as: [SwipeRow].self)
     }
 
     @MainActor func signIn(_ email: String, _ pw: String) async {
@@ -279,8 +289,83 @@ struct Snapshot: Codable {
         try? FileManager.default.removeItem(at: cacheFile)
     }
 
-    @MainActor func say(_ s: String, action: (label: String, run: () -> Void)? = nil) {
-        withAnimation(.snappy) { toast = s; toastAction = action }
+    @MainActor func say(_ s: String, icon: ToastIcon? = nil, place: Place? = nil, action: (label: String, run: () -> Void)? = nil) {
+        withAnimation(.snappy(duration: 0.35)) { toast = s; toastAction = action; toastIcon = icon; toastPlace = place }
+    }
+
+    // 同步回來多了新店：卡片亮框、圖釘下次出現時落下
+    private func noteNew() {
+        let ids = Set(mine.map(\.id))
+        let new = seenIds.isEmpty ? [] : ids.subtracting(seenIds)
+        if !new.isEmpty { markFresh(new) }
+        if ids != seenIds { seenIds = ids; UserDefaults.standard.set(Array(ids), forKey: "seenIds") }
+    }
+
+    func markFresh(_ ids: Set<String>) {
+        seenIds.formUnion(ids)
+        UserDefaults.standard.set(Array(seenIds), forKey: "seenIds")
+        PinState.fresh.formUnion(ids)
+        withAnimation(.snappy) { freshIds.formUnion(ids) }
+        Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            withAnimation(.easeOut(duration: 0.4)) { freshIds.subtract(ids) }
+        }
+    }
+
+    // ----- 新增：AI 在背景找店，視窗先關 -----
+
+    func startAdd(_ text: String, been: Bool, rating: Int?) {
+        let a = PendingAdd(text: text, been: been, rating: rating)
+        withAnimation(.snappy) { pendingAdds.insert(a, at: 0) }
+        Task { await runAdd(a.id) }
+    }
+
+    func retryAdd(_ id: UUID) {
+        guard let i = pendingAdds.firstIndex(where: { $0.id == id }) else { return }
+        withAnimation(.snappy) { pendingAdds[i].state = .finding }
+        Task { await runAdd(id) }
+    }
+
+    func dropAdd(_ id: UUID) { withAnimation(.snappy) { pendingAdds.removeAll { $0.id == id } } }
+
+    private func runAdd(_ id: UUID) async {
+        guard let a = pendingAdds.first(where: { $0.id == id }) else { return }
+        func set(_ st: PendingAdd.State) {
+            if let i = pendingAdds.firstIndex(where: { $0.id == id }) { withAnimation(.snappy) { pendingAdds[i].state = st } }
+        }
+        do {
+            let k: String
+            if let quickKey { k = quickKey } else { k = try await Supa.rpc("quick_key", ["reset": .b(false)], as: String.self); quickKey = k }
+            let before = Set(places.map(\.id))
+            let (msg, rows) = try await Supa.quickAddJSON(key: k, input: a.text)
+            var new = rows.filter { !before.contains($0.id) }
+            if new.isEmpty, msg.hasPrefix("已收藏") {
+                // 雲端回的不是 JSON（舊版）：整份同步再看多了哪幾間
+                await sync()
+                new = mine.filter { !before.contains($0.id) }
+            } else if !new.isEmpty {
+                withAnimation(.snappy) { places.insert(contentsOf: new, at: 0) }
+                saveCache()
+            }
+            guard msg.hasPrefix("已收藏") || !new.isEmpty else {
+                // 全部都之前收藏過：卡片收掉，訊息說一聲
+                if msg.hasPrefix("之前收藏過") { Haptic.light(); dropAdd(id); say(msg); return }
+                Haptic.warning(); set(.failed(msg.isEmpty ? "找不到這間店" : msg)); return
+            }
+            Haptic.success()
+            markFresh(Set(new.map(\.id)))
+            set(.done(new.map(\.id)))
+            say(msg.isEmpty ? "已收藏" : msg, icon: .check)
+            Task {
+                try? await Task.sleep(for: .seconds(1.6))
+                dropAdd(id)
+            }
+            for var p in new where a.been { p.status = "been"; p.rating = a.rating; await save(p) }
+            await fillCoords(new.map(\.id))
+        } catch {
+            Haptic.warning()
+            set(.failed("收藏失敗：" + error.localizedDescription))
+        }
     }
 
     // 忘記密碼：寄重設密碼的信
@@ -339,16 +424,17 @@ struct Snapshot: Codable {
         let at = places.firstIndex { $0.id == p.id } ?? 0
         let shares = groupPlaces.filter { $0.place_id == p.id }
         undoable.insert(p.id)
-        withAnimation(.snappy) {
+        withAnimation(.snappy(duration: 0.35)) {
             places.removeAll { $0.id == p.id }
             groupPlaces.removeAll { $0.place_id == p.id }
         }
-        say("已刪除 \(p.name)", action: ("復原", { [weak self] in
+        say("已刪除 \(p.name)", icon: .trash, place: p, action: ("復原", { [weak self] in
             guard let self, self.undoable.remove(p.id) != nil else { return }
-            withAnimation(.snappy) {
+            // 從訊息條左邊的小照片彈回原位
+            withAnimation(.snappy(duration: 0.35)) {
                 self.places.insert(p, at: min(at, self.places.count))
                 self.groupPlaces += shares
-                self.toast = nil
+                self.toast = nil; self.toastPlace = nil
             }
         }))
         Task {
@@ -609,6 +695,17 @@ struct Snapshot: Codable {
         let done = Set(swipes.filter { $0.round_id == r.id && $0.user_id == me }.map(\.place_id))
         return r.place_ids.filter { !done.contains($0) }.compactMap { self.place($0) }
     }
+}
+
+enum ToastIcon: Equatable { case check, trash }
+
+struct PendingAdd: Identifiable, Equatable {
+    let id = UUID()
+    var text: String
+    var been: Bool
+    var rating: Int?
+    var state: State = .finding
+    enum State: Equatable { case finding, done([String]), failed(String) }
 }
 
 struct Filter: Equatable {

@@ -105,7 +105,18 @@ struct Round: Codable, Identifiable, Hashable {
     var place_ids: [String]
     var created_at: String?
 }
-struct SwipeRow: Codable, Hashable { let round_id: String; var user_id: String; let place_id: String; var liked: Bool }
+struct SwipeRow: Codable, Hashable {
+    let round_id: String; var user_id: String; let place_id: String; var liked: Bool
+    var created_at: String? = nil     // 什麼時候滑的（朋友正在滑時頭像旁邊跳三個點）
+
+    var at: Date? {
+        guard let s = created_at, s.count >= 19 else { return nil }
+        return SwipeRow.fmt.date(from: String(s.prefix(19)))
+    }
+    private static let fmt: DateFormatter = {
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = TimeZone(identifier: "UTC"); f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"; return f
+    }()
+}
 struct Profile: Codable, Hashable { let id: String; var name: String }
 
 let MEALS: [(String, String)] = [("breakfast", "早餐"), ("lunch", "午餐"), ("tea", "下午茶"), ("dinner", "晚餐"), ("night", "宵夜")]
