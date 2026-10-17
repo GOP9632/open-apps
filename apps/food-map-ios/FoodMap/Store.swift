@@ -336,6 +336,19 @@ struct Snapshot: Codable {
         } catch { say("失敗：" + error.localizedDescription); return nil }
     }
 
+    // 刪掉一輪滑卡（連同大家滑的紀錄、配對結果）；只有開這輪的人能刪
+    func canDelete(_ r: Round) -> Bool { r.created_by == me }
+
+    @MainActor func deleteRound(_ r: Round) async {
+        let before = rounds, sw = swipes
+        withAnimation(.snappy) {
+            rounds.removeAll { $0.id == r.id }
+            swipes.removeAll { $0.round_id == r.id }
+        }
+        do { try await Supa.write("DELETE", "swipe_rounds", query: "id=eq.\(r.id)"); saveCache() }
+        catch { rounds = before; swipes = sw; say("刪除失敗：" + error.localizedDescription) }
+    }
+
     // 先換下一張，存檔在背景跑，滑起來才不會卡
     @MainActor func swipe(_ r: Round, _ pid: String, liked: Bool) {
         guard let me else { return }

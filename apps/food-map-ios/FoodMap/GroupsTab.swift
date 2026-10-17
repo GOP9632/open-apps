@@ -102,6 +102,7 @@ struct GroupView: View {
     @State private var newRound = false
     @State private var picking = false
     @State private var leaving = false
+    @State private var dropping: Round?
 
     var body: some View {
         if let g = store.groups.first(where: { $0.id == gid }) { content(g) }
@@ -139,6 +140,11 @@ struct GroupView: View {
                         Text("滑卡").font(.headline).padding(.horizontal, 16)
                         ForEach(rounds) { r in
                             NavigationLink(value: r) { RoundRow(round: r) }.buttonStyle(PressStyle()).padding(.horizontal, 16)
+                                .contextMenu {
+                                    if store.canDelete(r) {
+                                        Button("刪除這輪", systemImage: "trash", role: .destructive) { dropping = r }
+                                    }
+                                }
                         }
                     }
                 }
@@ -180,6 +186,9 @@ struct GroupView: View {
             Button(g.owner == store.me ? "刪除" : "退出", role: .destructive) { Task { await store.leave(g); dismiss() } }
         }
         .refreshable { await store.sync() }
+        .confirmationDialog("刪除「\(dropping?.title ?? "")」？大家滑的紀錄和配對結果都會一起刪掉。", isPresented: Binding(get: { dropping != nil }, set: { if !$0 { dropping = nil } }), titleVisibility: .visible) {
+            Button("刪除", role: .destructive) { if let r = dropping { Task { await store.deleteRound(r) } } }
+        }
         .sheet(isPresented: $newRound) {
             NewRoundSheet(gid: gid) { r in newRound = false; path.append(r) }
         }
@@ -341,6 +350,8 @@ struct RoundView: View {
     @State private var showResult = false
     @State private var detail: Place?
     @State private var match: Store.Match?
+    @State private var dropping = false
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Group {
@@ -388,6 +399,15 @@ struct RoundView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if !todo.isEmpty { Button(showResult ? "繼續滑" : "看結果") { withAnimation(.snappy) { showResult.toggle() } } }
+            if store.canDelete(r) {
+                Menu {
+                    Button("刪除這輪", systemImage: "trash", role: .destructive) { dropping = true }
+                } label: { Image(systemName: "ellipsis.circle") }
+                .accessibilityLabel("更多")
+            }
+        }
+        .confirmationDialog("刪除這輪滑卡？大家滑的紀錄和配對結果都會一起刪掉。", isPresented: $dropping, titleVisibility: .visible) {
+            Button("刪除", role: .destructive) { dismiss(); Task { await store.deleteRound(r) } }
         }
     }
 

@@ -131,26 +131,15 @@ struct Spotlight: View {
     var onTarget: () -> Void
     var onButton: () -> Void
     var onSkip: () -> Void
-    @State private var pulse = false
-
     var body: some View {
         GeometryReader { g in
             let o = g.frame(in: .global).origin
             let hole = rect?.offsetBy(dx: -o.x, dy: -o.y).insetBy(dx: -8, dy: -8)
             let r = hole.map { min(22, min($0.width, $0.height) / 2) } ?? 0
             ZStack(alignment: .topLeading) {
-                // 暗色底，挖掉要按的地方；點暗的地方不會穿過去按到下面
-                Color.black.opacity(0.62)
-                    .mask {
-                        ZStack(alignment: .topLeading) {
-                            Rectangle()
-                            if let hole {
-                                RoundedRectangle(cornerRadius: r).frame(width: hole.width, height: hole.height)
-                                    .offset(x: hole.minX, y: hole.minY).blendMode(.destinationOut)
-                            }
-                        }
-                        .compositingGroup()
-                    }
+                // 暗色底挖一個洞：用一個「外框減掉洞」的形狀直接畫，不用遮罩合成，每一格都很省
+                Dim(hole: hole, radius: r)
+                    .fill(Color.black.opacity(0.62), style: FillStyle(eoFill: true))
                     .contentShape(.rect)
                     .onTapGesture {}
 
@@ -159,9 +148,9 @@ struct Spotlight: View {
                         .frame(width: hole.width, height: hole.height)
                         .offset(x: hole.minX, y: hole.minY)
                         .allowsHitTesting(false)
-                    RoundedRectangle(cornerRadius: r + 4).strokeBorder(Color.sprYellow.opacity(pulse ? 0 : 0.8), lineWidth: 3)
+                    // 一閃一閃的外圈和手指自己管動畫，不會讓整層每一格重算
+                    PulseRing(radius: r + 4)
                         .frame(width: hole.width + 8, height: hole.height + 8)
-                        .scaleEffect(pulse ? 1.18 : 1)
                         .offset(x: hole.minX - 4, y: hole.minY - 4)
                         .allowsHitTesting(false)
                     // 點圈起來的地方 = 照教學做了
@@ -172,8 +161,8 @@ struct Spotlight: View {
                         .accessibilityLabel(title)
                         .accessibilityAddTraits(.isButton)
                     if button == nil {
-                        Text("👆").font(.system(size: 34))
-                            .offset(x: hole.maxX - 20, y: hole.maxY - 22 + (pulse ? 6 : 0))
+                        Finger()
+                            .offset(x: hole.maxX - 20, y: hole.maxY - 22)
                             .allowsHitTesting(false)
                     }
                 }
@@ -182,7 +171,6 @@ struct Spotlight: View {
             }
         }
         .ignoresSafeArea()
-        .onAppear { withAnimation(.easeInOut(duration: 1).repeatForever(autoreverses: false)) { pulse = true } }
     }
 
     @ViewBuilder private func bubble(in size: CGSize, hole: CGRect?) -> some View {
@@ -231,6 +219,32 @@ struct Spotlight: View {
         .padding(18)
         .background(.white, in: .rect(cornerRadius: 22))
         .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
+    }
+}
+
+// 整個螢幕減掉洞（奇偶填色就會空出洞）
+struct Dim: Shape {
+    let hole: CGRect?
+    let radius: CGFloat
+    func path(in r: CGRect) -> Path {
+        var p = Path(r)
+        if let hole { p.addRoundedRect(in: hole, cornerSize: CGSize(width: radius, height: radius), style: .continuous) }
+        return p
+    }
+}
+
+struct PulseRing: View {
+    let radius: CGFloat
+    var body: some View {
+        RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Color.sprYellow, lineWidth: 3)
+            .phaseAnimator([false, true]) { v, on in v.scaleEffect(on ? 1.18 : 1).opacity(on ? 0 : 0.8) } animation: { on in on ? .easeOut(duration: 0.9) : nil }
+    }
+}
+
+struct Finger: View {
+    var body: some View {
+        Text("👆").font(.system(size: 34))
+            .phaseAnimator([false, true]) { v, down in v.offset(y: down ? 6 : 0) } animation: { _ in .easeInOut(duration: 0.5) }
     }
 }
 
