@@ -223,12 +223,11 @@ struct PlaceDetail: View {
     }
 
     private func map(_ place: Place, _ c: CLLocationCoordinate2D) -> some View {
-        Map(initialPosition: .region(MKCoordinateRegion(center: c, latitudinalMeters: 700, longitudinalMeters: 700))) {
-            Annotation(place.name, coordinate: c, anchor: .bottom) { FoodPin(place: place, on: false) }.annotationTitles(.hidden)
-        }
-        .frame(height: 190).clipShape(.rect(cornerRadius: 24)).allowsHitTesting(false)
-        // 地圖本身不接手勢（避免跟捲動打架），上面疊一層透明的來接「點一下開 Google 地圖」
-        .overlay { Color.clear.contentShape(.rect).onTapGesture { if let u = place.mapsURL { openURL(u) } } }
+        // 截一張地圖圖片（不建一整個可互動的地圖，推頁時不會頓）；點一下開 Google 地圖
+        MiniMap(place: place, coord: c)
+            .frame(height: 190).clipShape(.rect(cornerRadius: 24))
+            .contentShape(.rect)
+            .onTapGesture { if let u = place.mapsURL { openURL(u) } }
     }
 }
 
@@ -278,5 +277,56 @@ struct ActLabel: View {
         }
         .padding(.horizontal, -8)
         .frame(maxWidth: .infinity).frame(height: 64)
+    }
+}
+
+// 店家頁最下面的小地圖：MKMapSnapshotter 截圖，用「座標＋寬度＋深淺色」存在記憶體，第二次打開馬上有
+struct MiniMap: View {
+    let place: Place
+    let coord: CLLocationCoordinate2D
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.displayScale) private var scale
+    @State private var width: CGFloat = 0
+    @State private var img: UIImage?
+
+    private static let cache = NSCache<NSString, UIImage>()
+    private var key: String { "\(coord.latitude),\(coord.longitude)@\(Int(width))\(scheme == .dark ? "d" : "l")" }
+
+    var body: some View {
+        Color.bg2
+            .overlay {
+                if let img { Image(uiImage: img).resizable().scaledToFill().transition(.opacity) }
+            }
+            // 圖釘尖端對準店的位置（畫面正中央）
+            .overlay { PinGlyph(place: place).offset(y: -25) }
+            .clipped()
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            .task(id: key) {
+                guard width > 0 else { return }
+                if let c = Self.cache.object(forKey: key as NSString) { img = c; return }
+                let o = MKMapSnapshotter.Options()
+                o.region = MKCoordinateRegion(center: coord, latitudinalMeters: 700, longitudinalMeters: 700)
+                o.size = CGSize(width: width, height: 190)
+                o.pointOfInterestFilter = .excludingAll
+                o.traitCollection = UITraitCollection(traitsFrom: [UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light), UITraitCollection(displayScale: scale)])
+                guard let snap = try? await MKMapSnapshotter(options: o).start(), !Task.isCancelled else { return }
+                Self.cache.setObject(snap.image, forKey: key as NSString)
+                withAnimation(.easeOut(duration: 0.2)) { img = snap.image }
+            }
+    }
+}
+
+// 不能點的圖釘（店家頁小地圖用）：分類顏色的圓、白邊、食物圖示、下面小尖角
+struct PinGlyph: View {
+    let place: Place
+    var body: some View {
+        VStack(spacing: -3) {
+            Text(place.cat.emoji).font(.system(size: 21))
+                .frame(width: 44, height: 44)
+                .background(place.cat.color, in: .circle)
+                .overlay(Circle().strokeBorder(.white, lineWidth: 3))
+            Triangle().fill(.white).frame(width: 14, height: 10).rotationEffect(.degrees(180))
+        }
+        .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
     }
 }

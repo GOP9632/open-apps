@@ -43,6 +43,9 @@ struct PlaceMedia: View {
         .task(id: place.id) {
             stop()
             guard maybeVideo, let src = place.source_url else { return }
+            // 等推頁動畫跑完再去拿，不跟動畫搶
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
             var u: URL?
             do { u = try await Supa.reelVideo(src) } catch { print("[reel] 雲端拿影片網址失敗：\(error)") }
             // 雲端被 IG 擋（伺服器的網路常被擋）就用手機自己的網路再找一次

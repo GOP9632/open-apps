@@ -154,6 +154,8 @@ struct MapTab: View {
     private func picked(_ id: String?, _ list: [Place], _ proxy: MapProxy) {
         guard let id, let p = list.first(where: { $0.id == id }) else { return }
         Perf.shared.mark(pins.drawn == id ? "抽一間" : "點圖釘")
+        // 先把大卡片和店家頁要用的照片載好，點進去時第一幀就有
+        if let u = p.photoURL { Task { _ = await PhotoLoader.shared.load(u, 400); _ = await PhotoLoader.shared.load(u, 1200) } }
         let c = CLLocationCoordinate2D(latitude: p.lat!, longitude: p.lng!)
         if !reduce {
             spot.coord = c; spot.color = p.cat.color
@@ -532,7 +534,7 @@ private struct PinPhoto: View {
             .contentShape(.circle)
         .task(id: place.photo) {
             guard let u = place.photoURL else { return }
-            if let c = PhotoLoader.shared.cached(u, 160) { img = c; return }
+            if let c = PhotoLoader.shared.cached(u, 160) ?? PhotoLoader.shared.anySize(u) { img = c; return }
             let i = await PhotoLoader.shared.load(u, 160)
             withAnimation(.easeOut(duration: 0.25)) { img = i }
         }

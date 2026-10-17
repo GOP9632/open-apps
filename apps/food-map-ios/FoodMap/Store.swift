@@ -4,7 +4,7 @@ import CoreLocation
 
 // 存在手機裡的那一份（下次打開先畫這份，不用等網路）
 struct Snapshot: Codable {
-    var places: [Place] = []
+    var places: [Place] = [] { didSet { branchMemo = [:] } }
     var groups: [FoodGroup] = []
     var members: [Member] = []
     var groupPlaces: [GroupPlace] = []
@@ -58,6 +58,8 @@ struct Snapshot: Codable {
     // 目前位置（地圖頁拿到就放這），分店「由近到遠」用
     var here: CLLocation?
     @ObservationIgnored private var brandCache: [String: String] = [:]
+    // 分店清單：places 沒變就不重算（店家頁每次畫都要用）
+    @ObservationIgnored private var branchMemo: [String: [Place]] = [:]
     // 刪掉但還能復原的店（幾秒後才真的刪）
     @ObservationIgnored private var undoable: Set<String> = []
 
@@ -340,7 +342,11 @@ struct Snapshot: Codable {
     // 同一家的所有分店（自己的店在自己的收藏裡找；朋友的店在同一個人的收藏裡找）
     func branchesOf(_ p: Place) -> [Place] {
         let k = brand(p)
-        return nearFirst(places.filter { $0.owner == p.owner && brand($0) == k })
+        let mk = (p.owner ?? "") + "|" + k
+        if let m = branchMemo[mk] { return m }
+        let r = nearFirst(places.filter { $0.owner == p.owner && brand($0) == k })
+        branchMemo[mk] = r
+        return r
     }
 
     // 這間是不是已經在我的收藏（同名同分店）
