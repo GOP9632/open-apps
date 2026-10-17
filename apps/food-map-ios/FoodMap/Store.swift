@@ -29,7 +29,11 @@ struct Snapshot: Codable {
     var toast: String?
     var loading = false
     var tab = 0
-    var quickKey: String?
+    // 收藏碼同時放進 App Group，讓分享選單裡的 Bitemap 不用打開 App 也能收藏
+    var quickKey: String? {
+        didSet { Store.shared?.set(quickKey, forKey: "quickKey") }
+    }
+    static let shared = UserDefaults(suiteName: "group.io.github.gop9632.foodmap")
 
     // 篩選（和網頁版收藏頁一樣）
     var q = ""
@@ -109,6 +113,7 @@ struct Snapshot: Codable {
                 profiles[me] = p
             }
             saveCache()
+            if quickKey == nil { await loadQuickKey() }
             syncMs = Int(Date().timeIntervalSince(t) * 1000)
             error = nil
         } catch {
