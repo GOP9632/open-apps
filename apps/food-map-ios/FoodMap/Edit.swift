@@ -59,12 +59,15 @@ struct AddSheet: View {
             }
             .padding(16)
             .background(Color.bg)
-            // 等視窗彈上來（約 0.35 秒）再叫鍵盤，兩個動畫不搶；沒成功就再試幾次
+            // 等視窗彈上來（約 0.35 秒）再叫鍵盤，兩個動畫不搶。
+            // 在視窗裡 SwiftUI 的 focus 有時不生效，就直接叫最上層畫面裡的輸入框接手
             .task {
                 try? await Task.sleep(for: .milliseconds(350))
-                for _ in 0..<4 where !focus {
-                    focus = true
+                focus = true
+                for _ in 0..<4 {
                     try? await Task.sleep(for: .milliseconds(150))
+                    if focus { break }
+                    focusFirstInput()
                 }
             }
             .navigationTitle("新增店家").navigationBarTitleDisplayMode(.inline)
@@ -226,4 +229,17 @@ struct Stars: View {
             }
         }
     }
+}
+
+// 叫最上層畫面（現在開著的視窗）裡第一個輸入框接手鍵盤
+@MainActor func focusFirstInput() {
+    guard let w = UIApplication.shared.connectedScenes.compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first else { return }
+    var top = w.rootViewController
+    while let p = top?.presentedViewController { top = p }
+    func find(_ v: UIView) -> UIView? {
+        if v is UITextView || v is UITextField { return v }
+        for s in v.subviews { if let f = find(s) { return f } }
+        return nil
+    }
+    if let root = top?.view, let input = find(root) { input.becomeFirstResponder() }
 }
