@@ -22,15 +22,20 @@ struct MapTab: View {
     @State private var paneling = false
     @Environment(\.accessibilityReduceMotion) private var reduce
 
+    // 抽一間不跟篩選：抽中被篩掉的店，那根圖釘還是要畫出來
+    private func withExtra(_ l: [Place]) -> [Place] {
+        guard let x = pins.extra, !l.contains(where: { $0.id == x }),
+              let p = store.mapBase.first(where: { $0.id == x }), p.lat != nil, p.lng != nil else { return l }
+        return l + [p]
+    }
+
     private var points: [Place] { store.shown(store.mapF, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil } }
 
     var body: some View {
         @Bindable var store = store
         // 篩選結果只算一次；有座標的店下面每個地方共用
         let all = store.shown(store.mapF, in: store.mapBase)
-        var list = all.filter { $0.lat != nil && $0.lng != nil }
-        // 抽一間不跟篩選：抽中被篩掉的店，那根圖釘還是要畫出來
-        if let x = pins.extra, !list.contains(where: { $0.id == x }), let p = store.mapBase.first(where: { $0.id == x }), p.lat != nil, p.lng != nil { list.append(p) }
+        let list = withExtra(all.filter { $0.lat != nil && $0.lng != nil })
         let gname = store.mapGroupName
         let near = Nearby(list: list, here: store.here, region: shownRegion, total: all.count)
         let missing = all.count - list.count
