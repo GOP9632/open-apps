@@ -49,10 +49,12 @@ struct PlaceMedia: View {
             p.isMuted = muted
             looper = AVPlayerLooper(player: p, templateItem: item)
             video = u
-            // 影片真的能播了才把照片換掉，不會先黑一下
-            for await s in item.publisher(for: \.status).values {
-                if s == .readyToPlay { p.play(); withAnimation(.easeOut(duration: 0.3)) { player = p }; break }
-                if s == .failed { break }
+            p.play()
+            // 影片真的開始播了才把照片換掉，不會先黑一下。
+            // AVPlayerLooper 播的是複製出來的片段，原本那個 item 的狀態永遠不會變，所以要看播放器本身
+            for await s in p.publisher(for: \.timeControlStatus).values {
+                if s == .playing { withAnimation(.easeOut(duration: 0.3)) { player = p }; break }
+                if looper?.status == .failed { break }
             }
         }
         // 離開店家頁就停

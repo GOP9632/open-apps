@@ -43,14 +43,19 @@ struct PlaceDetail: View {
             }
         } message: { Text("之後可以在「我的」改") }
         .confirmationDialog("刪除「\(place.name)」？", isPresented: $deleting, titleVisibility: .visible) {
-            Button("刪除", role: .destructive) { dismiss(); store.deleteWithUndo(place) }
+            Button("刪除", role: .destructive) { back(); store.deleteWithUndo(place) }
         }
+    }
+
+    // 回上一頁：地圖分頁的頁面記在 store.mapPath，直接從那裡退一頁（dismiss 在地圖那邊沒反應）
+    private func back() {
+        if store.tab == 0, !store.mapPath.isEmpty { store.mapPath.removeLast() } else { dismiss() }
     }
 
     // 上面一排：返回、更多（不壓在照片上）
     private func top(_ place: Place, mine: Bool) -> some View {
         HStack {
-            Button { dismiss() } label: { CircleIcon(icon: "chevron.left") }
+            Button { back() } label: { CircleIcon(icon: "chevron.left") }
                 .buttonStyle(PressStyle()).accessibilityLabel("返回")
             Spacer()
             Menu {
