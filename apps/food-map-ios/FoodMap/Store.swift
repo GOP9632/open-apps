@@ -53,6 +53,8 @@ struct Snapshot: Codable {
     // 篩選：收藏頁和地圖各有一份，互不影響
     var listF = Filter()
     var mapF = Filter()
+    // 地圖看誰的收藏：nil = 我的收藏，否則是某個群組（只記這次打開，重開 App 回到我的收藏）
+    var mapGroup: String?
     // 目前位置（地圖頁拿到就放這），分店「由近到遠」用
     var here: CLLocation?
     @ObservationIgnored private var brandCache: [String: String] = [:]
@@ -82,8 +84,8 @@ struct Snapshot: Codable {
     func name(_ uid: String) -> String { profiles[uid]?.name ?? "?" }
 
     // 收藏頁和地圖只放自己的店；朋友的店只在群組裡看
-    func shown(_ f: Filter) -> [Place] {
-        mine.filter { p in
+    func shown(_ f: Filter, in base: [Place]? = nil) -> [Place] {
+        (base ?? mine).filter { p in
             (f.cat.isEmpty || p.category == f.cat) && (f.status.isEmpty || p.status == f.status) &&
             (f.q.isEmpty || [p.name, p.branch ?? "", p.address ?? "", p.city ?? "", p.district ?? "", p.cuisine ?? "", p.note ?? "", (p.tags ?? []).joined(separator: " ")].joined(separator: " ").localizedStandardContains(f.q))
         }
@@ -413,6 +415,10 @@ struct Snapshot: Codable {
         let ids = Set(groupPlaces.filter { $0.group_id == gid }.map(\.place_id))
         return places.filter { ids.contains($0.id) }
     }
+    // 地圖現在要畫的店：我的收藏，或選的群組裡大家分享的店
+    var mapBase: [Place] { mapGroup.map(placesIn) ?? mine }
+    var mapGroupName: String? { mapGroup.flatMap { g in groups.first { $0.id == g }?.name } }
+
     func membersOf(_ gid: String) -> [String] { members.filter { $0.group_id == gid }.map(\.user_id) }
     func roundsOf(_ gid: String) -> [Round] { rounds.filter { $0.group_id == gid } }
     func shared(_ pid: String, _ gid: String) -> Bool { groupPlaces.contains { $0.group_id == gid && $0.place_id == pid } }

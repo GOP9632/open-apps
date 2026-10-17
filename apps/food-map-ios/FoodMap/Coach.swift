@@ -41,7 +41,7 @@ extension Store {
         if coachPlace != nil { s.append(.been) }
         s.append(.groups)
         // 回到地圖、清掉篩選，圖釘才一定看得到
-        mapF = Filter()
+        mapF = Filter(); mapGroup = nil
         mapPath = []; tab = 0
         coachFrames = [:]
         withAnimation(.snappy) { coachIndex = 0; coach = s }

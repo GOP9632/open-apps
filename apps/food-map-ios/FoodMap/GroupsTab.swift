@@ -97,11 +97,13 @@ struct Avatar: View {
     let name: String, id: String
     var size: CGFloat = 32
     static let colors: [UInt32] = [0xff7a45, 0xf06595, 0x7950f2, 0x4c6ef5, 0x15aabf, 0x20c997, 0x40c057, 0xfab005]
+    // 每個人固定一個顏色（頭像、地圖上的「誰收的」標籤都用這個）
+    static func color(_ id: String) -> Color { Color(hex: colors[id.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xffff } % colors.count]) }
     var body: some View {
         Text(String(name.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased())
             .font(.system(size: size * 0.42, weight: .bold)).foregroundStyle(.white)
             .frame(width: size, height: size)
-            .background(Color(hex: Avatar.colors[id.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xffff } % Avatar.colors.count]), in: .circle)
+            .background(Avatar.color(id), in: .circle)
             .overlay(Circle().strokeBorder(Color.bg, lineWidth: 2))
     }
 }
