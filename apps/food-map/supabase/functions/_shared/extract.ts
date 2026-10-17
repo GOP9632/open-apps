@@ -74,7 +74,8 @@ async function instagram(url: string) {
     const cm = e.html.match(/class="Caption">([\s\S]*?)<div class="CaptionComments/);
     if (cm) caption = decode(cm[1].replace(/<br\s*\/?>/g, "\n").replace(/<a class="CaptionUsername"[^>]*>([^<]*)<\/a>/, "").replace(/<[^>]+>/g, "")).trim();
   }
-  return { caption, author, location, thumb: meta(page.html, "og:image") };
+  // og:image 是 IG 合成的預覽圖，Reels 會印一顆播放鍵上去；/media/ 會轉到同一張的原圖，沒有播放鍵
+  return { caption, author, location, thumb: `https://www.instagram.com/p/${m[2]}/media/?size=l`, thumbAlt: meta(page.html, "og:image") };
 }
 
 async function tiktok(url: string) {
@@ -173,6 +174,8 @@ export async function extract(body: { url?: string; text?: string; image?: strin
     const hit = places.length === 1 ? places[0] : places.find((p) => String(loc.name ?? "").includes(String(p.name)));
     if (hit && hit.lat == null) Object.assign(hit, { lat: loc.lat, lng: loc.lng, address: hit.address || loc.address || "" });
   }
-  const thumb = String(src.thumb ?? "");
-  return { source: { url: src.url, author: src.author ?? "", caption: String(src.caption ?? "").slice(0, 3000), thumb, thumbData: await inlineImage(thumb) }, places };
+  let thumb = String(src.thumb ?? "");
+  let thumbData = await inlineImage(thumb);
+  if (!thumbData && src.thumbAlt) thumbData = await inlineImage(thumb = String(src.thumbAlt));
+  return { source: { url: src.url, author: src.author ?? "", caption: String(src.caption ?? "").slice(0, 3000), thumb, thumbData }, places };
 }
