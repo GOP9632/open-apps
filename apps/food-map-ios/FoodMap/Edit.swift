@@ -188,7 +188,7 @@ struct EditSheet: View {
                 p.lat = c.latitude; p.lng = c.longitude; p.approx = false
             }
             let ok: Bool
-            if isNew { ok = await store.add(p) } else { await store.save(p); ok = true }
+            if isNew { ok = await store.add(p) } else { ok = await store.save(p) }
             busy = false
             if ok { UINotificationFeedbackGenerator().notificationOccurred(.success); dismiss(); done() }
         }

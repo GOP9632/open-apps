@@ -68,6 +68,8 @@ struct Root: View {
                 .background(Color.ink.opacity(0.92), in: .capsule)
                 .padding(.bottom, 96).padding(.horizontal, 24)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
+                .accessibilityAddTraits(.isButton)
+                .onAppear { AccessibilityNotification.Announcement(t).post() }
                 .task(id: t) { try? await Task.sleep(for: .seconds(act == nil ? 2.6 : 4)); withAnimation(.snappy) { if store.toast == t { store.toast = nil; store.toastAction = nil } } }
                 .onTapGesture { withAnimation(.snappy) { store.toast = nil } }
             }
@@ -142,7 +144,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     func application(_ app: UIApplication, handleEventsForBackgroundURLSession id: String, completionHandler: @escaping () -> Void) {
         guard id.hasPrefix(ShareUpload.prefix) else { completionHandler(); return }
-        ShareUpload.shared.finished[id] = completionHandler
+        ShareUpload.shared.setFinished(id, completionHandler)
         ShareUpload.shared.session(id)
     }
 

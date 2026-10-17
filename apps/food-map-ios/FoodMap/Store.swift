@@ -15,7 +15,7 @@ struct Snapshot: Codable {
 
 // 資料：上次讀到的先從手機裡拿出來畫（開 app 不用等網路），再到背景跟雲端同步
 // 改資料一律「畫面先變、背景存檔」，存失敗才改回來並告訴你
-@Observable final class Store {
+@MainActor @Observable final class Store {
     var places: [Place] = []
     var groups: [FoodGroup] = []
     var members: [Member] = []
@@ -63,6 +63,8 @@ struct Snapshot: Codable {
 
     // 剛滑的卡還在存的時候，同步回來的舊資料不能把它蓋掉（不然卡片會跳回來）
     @ObservationIgnored private var pendingSwipes: [SwipeRow] = []
+    // 同時只跑一次同步（打開 App 和切回前景常常一起來）
+    @ObservationIgnored private var syncing: Task<Void, Never>?
 
     private var cacheFile: URL { FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("snapshot.json") }
 
@@ -85,8 +87,10 @@ struct Snapshot: Codable {
     }
 
     private func apply(_ s: Snapshot) {
+        // 剛刪掉、還能復原的店，雲端還沒真的刪，同步回來不能讓它又冒出來
+        let ps = undoable.isEmpty ? s.places : s.places.filter { !undoable.contains($0.id) }
         // 沒變的就不要重設，畫面才不會整個重畫
-        if s.places != places { places = s.places }
+        if ps != places { places = ps }
         if s.groups != groups { groups = s.groups }
         if s.members != members { members = s.members }
         if s.groupPlaces != groupPlaces { groupPlaces = s.groupPlaces }
@@ -100,11 +104,19 @@ struct Snapshot: Codable {
     private func saveCache() {
         let s = Snapshot(places: places, groups: groups, members: members, groupPlaces: groupPlaces, rounds: rounds, swipes: swipes, profiles: Array(profiles.values))
         let f = cacheFile
-        DispatchQueue.global(qos: .utility).async { try? JSONEncoder().encode(s).write(to: f) }
+        DispatchQueue.global(qos: .utility).async { try? JSONEncoder().encode(s).write(to: f, options: .atomic) }
     }
 
     // 跟網頁版 loadAll 一樣：收藏、群組、成員、分享、滑卡輪次一起讀，再讀名字和滑卡紀錄
     @MainActor func sync() async {
+        if let t = syncing { return await t.value }
+        let t = Task { await syncNow() }
+        syncing = t
+        await t.value
+        syncing = nil
+    }
+
+    private func syncNow() async {
         guard loggedIn, let me else { return }
         loading = true; defer { loading = false }
         let t = Date()
@@ -122,6 +134,8 @@ struct Snapshot: Codable {
             async let pr = Supa.select("profiles", "select=id,name&id=in.(\(ids.joined(separator: ",")))&order=id", as: [Profile].self)
             async let sw = Store.loadSwipes(rids)
             (s.profiles, s.swipes) = try await (pr, sw)
+            // 同步途中登出或換帳號，就不要把舊資料寫回來
+            guard loggedIn, Supa.session?.user.id == me else { return }
             apply(s)
             if profiles[me] == nil {
                 // 帳號比美食收藏早建（和其他 app 共用的 Supabase），補一筆名字
@@ -180,7 +194,10 @@ struct Snapshot: Codable {
     }
 
     @MainActor func signOut() {
-        Supa.signOut(); loggedIn = false; apply(Snapshot()); quickKey = nil
+        Supa.signOut(); loggedIn = false
+        undoable = []; pendingSwipes = []
+        apply(Snapshot()); quickKey = nil
+        mapPath = []; depth = [0, 0, 0, 0]; tab = 0; coach = []; listF = Filter(); mapF = Filter()
         try? FileManager.default.removeItem(at: cacheFile)
     }
 
@@ -207,8 +224,8 @@ struct Snapshot: Codable {
     // ----- 收藏 -----
 
     // 改一間店（想去／去過、星等、編輯都走這裡）
-    @MainActor func save(_ p: Place) async {
-        guard let i = places.firstIndex(where: { $0.id == p.id }) else { return }
+    @discardableResult @MainActor func save(_ p: Place) async -> Bool {
+        guard let i = places.firstIndex(where: { $0.id == p.id }) else { return false }
         let old = places[i]
         var p = p
         p.updated_at = ISO8601DateFormatter().string(from: Date())
@@ -217,9 +234,11 @@ struct Snapshot: Codable {
             let d = try await Supa.write("PATCH", "places", query: "id=eq.\(p.id)", body: p.row)
             if let back = try? JSONDecoder().decode([Place].self, from: d).first, let j = places.firstIndex(where: { $0.id == p.id }) { places[j] = back }
             saveCache()
+            return true
         } catch {
             if let j = places.firstIndex(where: { $0.id == p.id }) { places[j] = old }
             say("沒存到：" + error.localizedDescription)
+            return false
         }
     }
 
@@ -252,7 +271,7 @@ struct Snapshot: Codable {
         }))
         Task {
             try? await Task.sleep(for: .seconds(4.2))
-            guard undoable.remove(p.id) != nil else { return }
+            guard undoable.remove(p.id) != nil, loggedIn else { return }
             do { try await Supa.write("DELETE", "places", query: "id=eq.\(p.id)"); saveCache() }
             catch {
                 withAnimation(.snappy) { places.insert(p, at: min(at, places.count)); groupPlaces += shares }

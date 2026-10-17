@@ -6,6 +6,7 @@ enum NavApp: String, CaseIterable {
     case apple, google
     var name: String { self == .apple ? "Apple 地圖" : "Google 地圖" }
 
+    // 跟「我的」頁的 @AppStorage("navApp") 是同一個設定
     static var saved: NavApp? {
         get { UserDefaults.standard.string(forKey: "navApp").flatMap(NavApp.init) }
         set { UserDefaults.standard.set(newValue?.rawValue, forKey: "navApp") }
@@ -17,10 +18,10 @@ extension Place {
 
     // Google 地圖的網址有裝 App 會直接開 App，沒裝就開網頁
     func navURL(_ app: NavApp) -> URL? {
-        let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let q = query.addingPercentEncoding(withAllowedCharacters: .queryValue) ?? ""
         switch app {
         case .apple:
-            if let lat, let lng { return URL(string: "https://maps.apple.com/?daddr=\(lat),\(lng)&q=\(name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")") }
+            if let lat, let lng { return URL(string: "https://maps.apple.com/?daddr=\(lat),\(lng)&q=\(name.addingPercentEncoding(withAllowedCharacters: .queryValue) ?? "")") }
             return URL(string: "https://maps.apple.com/?daddr=\(q)")
         case .google:
             return URL(string: "https://www.google.com/maps/dir/?api=1&destination=\(q)")
@@ -45,4 +46,22 @@ extension Place {
     let vc = UIActivityViewController(activityItems: items, applicationActivities: nil)
     vc.popoverPresentationController?.sourceView = top.view
     top.present(vc, animated: true)
+}
+
+extension CharacterSet {
+    // 網址參數的值：& + = ? # 也要編碼，不然「Bread & Butter」會被切斷
+    static let queryValue = CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&+=?#"))
+}
+
+// 店家頁把上方導覽列整條藏起來、換成自己的白色返回鈕，iOS 會順便關掉「從左邊往右滑回上一頁」。
+// 這裡把那個手勢接回來：只要不是在第一頁，就允許從左邊滑回去
+extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
+    override open func viewDidLoad() {
+        super.viewDidLoad()
+        interactivePopGestureRecognizer?.delegate = self
+    }
+
+    public func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        viewControllers.count > 1
+    }
 }

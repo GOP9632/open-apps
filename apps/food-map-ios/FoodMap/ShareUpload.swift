@@ -8,11 +8,18 @@ final class ShareUpload: NSObject, URLSessionDataDelegate {
     static let prefix = "io.github.gop9632.foodmap.share."
     static let shared = ShareUpload()
 
-    private var data: [Int: Data] = [:]
+    // 每個背景 session 的工作編號都從 1 開始，所以用「session 代號#編號」當 key
+    private var data: [String: Data] = [:]
     private var sessions: [String: URLSession] = [:]
     // App 被叫醒處理背景結果時，系統給的「處理完了」回呼
-    var finished: [String: () -> Void] = [:]
+    private var finished: [String: () -> Void] = [:]
     private let lock = NSLock()
+
+    func setFinished(_ id: String, _ f: @escaping () -> Void) {
+        lock.lock(); finished[id] = f; lock.unlock()
+    }
+
+    private func key(_ s: URLSession, _ t: URLSessionTask) -> String { "\(s.configuration.identifier ?? "")#\(t.taskIdentifier)" }
 
     // 分享擴充用：把要收藏的內容寫到共用資料夾，開一個背景上傳
     func send(key: String, input: String) throws {
@@ -42,11 +49,11 @@ final class ShareUpload: NSObject, URLSessionDataDelegate {
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive d: Data) {
-        lock.lock(); data[dataTask.taskIdentifier, default: Data()].append(d); lock.unlock()
+        lock.lock(); data[key(session, dataTask), default: Data()].append(d); lock.unlock()
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        lock.lock(); let d = data.removeValue(forKey: task.taskIdentifier) ?? Data(); lock.unlock()
+        lock.lock(); let d = data.removeValue(forKey: key(session, task)) ?? Data(); lock.unlock()
         if let p = task.taskDescription { try? FileManager.default.removeItem(atPath: p) }
         let code = (task.response as? HTTPURLResponse)?.statusCode ?? 0
         let line = String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -56,14 +63,14 @@ final class ShareUpload: NSObject, URLSessionDataDelegate {
         c.body = ok ? line : (error.map { "網路有問題：\($0.localizedDescription)" } ?? "雲端暫時出錯（\(code)），請再分享一次")
         c.sound = .default
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
-        NotificationCenter.default.post(name: .shareSaved, object: nil)
-        session.finishTasksAndInvalidate()
+        DispatchQueue.main.async { NotificationCenter.default.post(name: .shareSaved, object: nil) }
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         let id = session.configuration.identifier ?? ""
         lock.lock(); let f = finished.removeValue(forKey: id); sessions[id] = nil; lock.unlock()
-        DispatchQueue.main.async { f?() }
+        // 先告訴系統處理完了，再關掉這個 session
+        DispatchQueue.main.async { f?(); session.finishTasksAndInvalidate() }
     }
 }
 

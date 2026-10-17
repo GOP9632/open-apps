@@ -56,8 +56,15 @@ struct GroupsTab: View {
     private func ask(_ a: Ask) {
         text = ""
         // 剪貼簿裡有朋友傳的邀請碼或邀請連結，就直接幫他填好
-        if a == .join, UIPasteboard.general.hasStrings, let c = FoodGroup.code(in: UIPasteboard.general.string ?? "") { text = c }
+        // 先偷看剪貼簿裡是不是連結（不會跳「允許貼上」），是連結才讀出來，免得每次都問
         asking = a
+        guard a == .join, UIPasteboard.general.hasStrings else { return }
+        UIPasteboard.general.detectPatterns(for: [.probableWebURL]) { r in
+            guard case .success(let found) = r, found.contains(.probableWebURL) else { return }
+            DispatchQueue.main.async {
+                if text.isEmpty, let c = FoodGroup.code(in: UIPasteboard.general.string ?? "") { text = c }
+            }
+        }
     }
 
     private func go(_ a: Ask?) {
@@ -507,8 +514,10 @@ struct MatchView: View {
                     Label("就去這間", systemImage: "location.fill").font(.headline).frame(width: 240, height: 52)
                         .background(.white, in: .capsule).foregroundStyle(.black)
                 }
-                Button("繼續滑", action: close).font(.headline).foregroundStyle(.white).frame(width: 240, height: 48)
-                    .overlay(Capsule().strokeBorder(.white.opacity(0.6), lineWidth: 1.5))
+                Button(action: close) {
+                    Text("繼續滑").font(.headline).foregroundStyle(.white).frame(width: 240, height: 48)
+                        .overlay(Capsule().strokeBorder(.white.opacity(0.6), lineWidth: 1.5)).contentShape(.capsule)
+                }
             }
         }
         .onAppear { withAnimation(.spring(response: 0.45, dampingFraction: 0.55)) { pop = true } }
@@ -522,7 +531,7 @@ struct Flow: Layout {
         let w = proposal.width ?? .infinity
         var x: CGFloat = 0, y: CGFloat = 0, line: CGFloat = 0, widest: CGFloat = 0
         for v in subviews {
-            let s = v.sizeThatFits(.unspecified)
+            var s = v.sizeThatFits(.unspecified); s.width = Swift.min(s.width, w)
             if x > 0 && x + s.width > w { y += line + spacing; x = 0; line = 0 }
             x += s.width + spacing; line = Swift.max(line, s.height); widest = Swift.max(widest, x - spacing)
         }
@@ -531,7 +540,7 @@ struct Flow: Layout {
     func placeSubviews(in b: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         var x = b.minX, y = b.minY, line: CGFloat = 0
         for v in subviews {
-            let s = v.sizeThatFits(.unspecified)
+            var s = v.sizeThatFits(.unspecified); s.width = Swift.min(s.width, b.width)
             if x > b.minX && x + s.width > b.maxX { y += line + spacing; x = b.minX; line = 0 }
             v.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(s))
             x += s.width + spacing; line = Swift.max(line, s.height)

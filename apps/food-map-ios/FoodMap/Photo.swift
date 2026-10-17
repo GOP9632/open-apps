@@ -4,7 +4,8 @@ import UIKit
 // 照片：抓過的存在記憶體和磁碟（URLCache），在背景縮成顯示大小再解碼，滑動時主執行緒不用做事
 actor PhotoLoader {
     static let shared = PhotoLoader()
-    private let mem = NSCache<NSString, UIImage>()
+    // NSCache 本身可以多執行緒讀寫
+    private nonisolated(unsafe) let mem = NSCache<NSString, UIImage>()
     private var running: [String: Task<UIImage?, Never>] = [:]
     private let session: URLSession = {
         let c = URLSessionConfiguration.default

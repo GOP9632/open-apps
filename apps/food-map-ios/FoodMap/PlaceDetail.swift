@@ -228,6 +228,7 @@ struct StatusToggle: View {
                 .contentShape(.rect)
         }
         .buttonStyle(PressStyle())
+        .accessibilityAddTraits(on ? .isSelected : [])
         .animation(.snappy, value: on)
     }
 }

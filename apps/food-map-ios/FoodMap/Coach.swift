@@ -171,6 +171,8 @@ struct Spotlight: View {
             }
         }
         .ignoresSafeArea()
+        // 教學開著時，朗讀只讀教學這層，不會跑到下面
+        .accessibilityAddTraits(.isModal)
     }
 
     @ViewBuilder private func bubble(in size: CGSize, hole: CGRect?) -> some View {

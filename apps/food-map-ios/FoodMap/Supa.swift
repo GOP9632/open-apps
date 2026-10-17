@@ -1,8 +1,9 @@
 import Foundation
+import Security
 
 // 直接用 Supabase 的 REST API（不裝 SDK，編譯快、App 小）
 // 網址和 publishable key 跟網頁版 config.js 一樣，本來就是公開用的
-enum Supa {
+@MainActor enum Supa {
     static let url = URL(string: "https://ptocokzxpwwautnbbuup.supabase.co")!
     static let key = "sb_publishable_p_eT8zA9iEEITNyUFslSpQ_BU62SO9n"
 
@@ -13,14 +14,19 @@ enum Supa {
         var user: User
     }
     struct User: Codable { let id: String; let email: String? }
-    struct Fail: LocalizedError { let msg: String; var errorDescription: String? { msg } }
+    struct Fail: LocalizedError { let msg: String; var code = 0; var errorDescription: String? { msg } }
 
+    // 登入憑證放在 iPhone 的鑰匙圈（舊版放在一般設定裡的，第一次讀到就搬過去）
     static var session: Session? = {
+        if let d = Keychain.read() { return try? JSONDecoder().decode(Session.self, from: d) }
         guard let d = UserDefaults.standard.data(forKey: "food.session") else { return nil }
+        Keychain.write(d); UserDefaults.standard.removeObject(forKey: "food.session")
         return try? JSONDecoder().decode(Session.self, from: d)
     }() {
-        didSet { UserDefaults.standard.set(session.flatMap { try? JSONEncoder().encode($0) }, forKey: "food.session") }
+        didSet { Keychain.write(session.flatMap { try? JSONEncoder().encode($0) }) }
     }
+    // 同時好幾個請求都發現憑證過期，只換一次
+    private static var refreshing: Task<Session, Error>?
 
     static func signIn(email: String, password: String) async throws {
         session = try await auth("token?grant_type=password", ["email": email, "password": password])
@@ -70,18 +76,28 @@ enum Supa {
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.httpBody = try JSONEncoder().encode(body)
         let (d, res) = try await URLSession.shared.data(for: r)
-        guard (res as? HTTPURLResponse)?.statusCode == 200 else { throw Fail(msg: message(d, "登入失敗")) }
+        let code = (res as? HTTPURLResponse)?.statusCode ?? 0
+        guard code == 200 else { throw Fail(msg: message(d, "登入失敗"), code: code) }
         return try JSONDecoder().decode(Session.self, from: d)
     }
 
     // 憑證快過期就換新的（跟網頁版的 supabase-js 一樣）
+    // 換不到新憑證（太久沒開、在別處登出）就清掉，回到登入畫面
     static func fresh() async throws -> Session {
-        guard var s = session else { throw Fail(msg: "請先登入") }
-        if let exp = s.expires_at, exp - Date().timeIntervalSince1970 < 60 {
-            s = try await auth("token?grant_type=refresh_token", ["refresh_token": s.refresh_token])
-            session = s
+        guard let s = session else { throw Fail(msg: "請先登入") }
+        guard let exp = s.expires_at, exp - Date().timeIntervalSince1970 < 60 else { return s }
+        if let t = refreshing { return try await t.value }
+        let t = Task { try await auth("token?grant_type=refresh_token", ["refresh_token": s.refresh_token]) }
+        refreshing = t
+        defer { refreshing = nil }
+        do {
+            let n = try await t.value
+            session = n
+            return n
+        } catch let e as Fail where (400..<500).contains(e.code) {
+            session = nil
+            throw Fail(msg: "登入過期了，請重新登入")
         }
-        return s
     }
 
     // PostgREST 查詢，例如 select("places", "select=*&order=created_at.desc")
@@ -162,4 +178,21 @@ enum AnyCodable: Codable {
         }
     }
     init(from d: Decoder) throws { self = .null }
+}
+
+// 鑰匙圈：只存一筆登入憑證
+enum Keychain {
+    private static let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "io.github.gop9632.foodmap", kSecAttrAccount as String: "session"]
+
+    static func read() -> Data? {
+        var r: AnyObject?
+        let st = SecItemCopyMatching(q.merging([kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]) { $1 } as CFDictionary, &r)
+        return st == errSecSuccess ? r as? Data : nil
+    }
+
+    static func write(_ d: Data?) {
+        SecItemDelete(q as CFDictionary)
+        guard let d else { return }
+        SecItemAdd(q.merging([kSecValueData as String: d, kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock]) { $1 } as CFDictionary, nil)
+    }
 }

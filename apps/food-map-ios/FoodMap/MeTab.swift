@@ -8,7 +8,7 @@ struct MeTab: View {
     @State private var leaving = false
     @State private var advanced = false
     @State private var killing = false
-    @State private var nav = NavApp.saved
+    @AppStorage("navApp") private var nav: NavApp?
 
     var body: some View {
         NavigationStack {
@@ -31,7 +31,7 @@ struct MeTab: View {
                     }
                     box("設定") {
                         Menu {
-                            Picker("導航用", selection: Binding(get: { nav }, set: { nav = $0; NavApp.saved = $0 })) {
+                            Picker("導航用", selection: $nav) {
                                 Text("每次問我").tag(NavApp?.none)
                                 ForEach(NavApp.allCases, id: \.self) { Text($0.name).tag(NavApp?.some($0)) }
                             }
@@ -47,10 +47,11 @@ struct MeTab: View {
                             .padding(.horizontal, 12).padding(.vertical, 11)
                         }
                     }
-                    Button("登出") { leaving = true }
-                        .font(.headline).foregroundStyle(Color.sprPink)
-                        .frame(maxWidth: .infinity).frame(height: 50).candy(18)
-                        .buttonStyle(PressStyle())
+                    Button { leaving = true } label: {
+                        Text("登出").font(.headline).foregroundStyle(Color.sprPink)
+                            .frame(maxWidth: .infinity).frame(height: 50).candy(18).contentShape(.rect)
+                    }
+                    .buttonStyle(PressStyle())
                     // 很少用到的收在「進階」
                     DisclosureGroup(isExpanded: $advanced.animation(.snappy)) {
                         VStack(alignment: .leading, spacing: 16) {
@@ -63,10 +64,11 @@ struct MeTab: View {
                                     ProgressView().frame(maxWidth: .infinity).padding()
                                 }
                             }
-                            Button("刪除帳號") { killing = true }
-                                .font(.headline).foregroundStyle(.red)
-                                .frame(maxWidth: .infinity).frame(height: 50).candy(18)
-                                .buttonStyle(PressStyle())
+                            Button { killing = true } label: {
+                                Text("刪除帳號").font(.headline).foregroundStyle(.red)
+                                    .frame(maxWidth: .infinity).frame(height: 50).candy(18).contentShape(.rect)
+                            }
+                            .buttonStyle(PressStyle())
                         }
                         .padding(.top, 10)
                     } label: {

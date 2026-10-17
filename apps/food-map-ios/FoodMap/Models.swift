@@ -33,7 +33,7 @@ struct Place: Codable, Identifiable, Hashable {
     var area: String { [normCity(city), district ?? ""].filter { !$0.isEmpty }.joined(separator: " · ") }
     var mapsURL: URL? {
         let q = [name, branch ?? "", address?.isEmpty == false ? address! : normCity(city)].filter { !$0.isEmpty }.joined(separator: " ")
-        return URL(string: "https://www.google.com/maps/search/?api=1&query=" + (q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""))
+        return URL(string: "https://www.google.com/maps/search/?api=1&query=" + (q.addingPercentEncoding(withAllowedCharacters: .queryValue) ?? ""))
     }
 }
 

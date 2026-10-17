@@ -47,8 +47,10 @@ struct Chip: View {
                 .background(on ? color : color.opacity(0.13), in: .capsule)
                 .foregroundStyle(on ? .white : color)
                 .shadow(color: on ? color.mix(with: .black, by: 0.2) : .clear, radius: 0, y: 3)
+                .frame(minHeight: 44).contentShape(.rect)
         }
         .buttonStyle(PressStyle())
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 
@@ -98,7 +100,7 @@ struct SearchField<Trailing: View>: View {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField(prompt, text: $text).font(.body).submitLabel(.search)
             if !text.isEmpty {
-                Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
+                Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary).frame(width: 44, height: 44).contentShape(.rect) }
                     .accessibilityLabel("清除")
             }
             trailing()
@@ -122,6 +124,7 @@ struct AddButton: View {
             Image(systemName: "plus").font(.system(size: size * 0.5, weight: .heavy)).foregroundStyle(.white)
                 .frame(width: size, height: size)
                 .background(RoundedRectangle(cornerRadius: size * 0.32).fill(Color.accent).shadow(color: .accentDeep, radius: 0, y: 3))
+                .frame(minWidth: 44, minHeight: 44).contentShape(.rect)
         }
         .buttonStyle(PressStyle())
         .accessibilityLabel("新增店家")
@@ -133,7 +136,7 @@ struct CircleIcon: View {
     let icon: String
     var body: some View {
         Image(systemName: icon).font(.system(size: 17, weight: .bold)).foregroundStyle(Color.ink)
-            .frame(width: 42, height: 42)
+            .frame(width: 44, height: 44)
             .background(.white, in: .rect(cornerRadius: 14))
             .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
     }

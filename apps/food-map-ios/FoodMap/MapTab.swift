@@ -37,7 +37,6 @@ struct MapTab: View {
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
                 .mapControls { MapCompass() }
                 .onMapCameraChange(frequency: .continuous) { _ in pinFrame(proxy) }
-                .onMapCameraChange { _ in if here == nil { here = loc.location } }
                 .onChange(of: store.coachStep) { pinFrame(proxy) }
                 .onChange(of: sel) { _, id in
                     guard let p = list.first(where: { $0.id == id }) else { return }
@@ -92,6 +91,10 @@ struct MapTab: View {
             fit()
         }
         .onChange(of: list.count) { fit() }
+        // 拿到一次目前位置就好（剛允許定位也會馬上更新「附近」），不一直開著 GPS
+        .task {
+            do { for try await u in CLLocationUpdate.liveUpdates() { if let l = u.location { here = l; break } } } catch {}
+        }
     }
 
     // 教學第一步：量出那間店的圖釘在螢幕上的位置（圖釘的尖端就是店的座標）
