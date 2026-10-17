@@ -40,14 +40,17 @@ struct PhotoView: View {
     @State private var img: UIImage?
 
     var body: some View {
-        ZStack {
-            LinearGradient(colors: [place.cat.color, place.cat.color.opacity(0.75)], startPoint: .topLeading, endPoint: .bottomTrailing)
-            Text(place.cat.emoji).font(.system(size: 40))
-            if let img {
-                Image(uiImage: img).resizable().scaledToFill().transition(.opacity)
+        // 大小跟外面給的框一樣；照片填滿時超出框的部分裁掉，也不會擋到上面的按鈕
+        //（以前照片比框高，看不到的那截蓋住店家頁左上角的返回鍵，按了沒反應）
+        LinearGradient(colors: [place.cat.color, place.cat.color.opacity(0.75)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            .overlay { Text(place.cat.emoji).font(.system(size: 40)) }
+            .overlay {
+                if let img {
+                    Image(uiImage: img).resizable().scaledToFill().transition(.opacity)
+                }
             }
-        }
-        .clipped()
+            .clipped()
+            .contentShape(.rect)
         .task(id: place.photo) {
             guard let u = place.photoURL else { img = nil; return }
             if let c = PhotoLoader.shared.cached(u, px) { img = c; return }

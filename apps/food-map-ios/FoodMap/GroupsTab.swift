@@ -198,6 +198,7 @@ struct GroupView: View {
         .background(Color.bg)
         .navigationTitle(g.name)
         .navigationBarTitleDisplayMode(.inline)
+        .backButton()
         .toolbar {
             Menu {
                 Text("邀請碼 \(g.invite_code)")
@@ -422,6 +423,7 @@ struct RoundView: View {
         .background(Color.bg)
         .navigationTitle(r.title.isEmpty ? "一起決定吃什麼" : r.title)
         .navigationBarTitleDisplayMode(.inline)
+        .backButton()
         .toolbar {
             if !todo.isEmpty { Button(showResult ? "繼續滑" : "看結果") { withAnimation(.snappy) { showResult.toggle() } } }
             if store.canDelete(r) {

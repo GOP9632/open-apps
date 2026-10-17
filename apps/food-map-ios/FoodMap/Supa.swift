@@ -152,7 +152,9 @@ import Security
         r.httpBody = try JSONEncoder().encode(["url": source])
         r.timeoutInterval = 20
         let (d, res) = try await URLSession.shared.data(for: r)
-        guard (res as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        let code = (res as? HTTPURLResponse)?.statusCode ?? 0
+        print("[reel] reel-video \(code) \(String(decoding: d.prefix(160), as: UTF8.self))")
+        guard code == 200 else { return nil }
         struct R: Decodable { let video: String? }
         return (try? JSONDecoder().decode(R.self, from: d))?.video.flatMap(URL.init(string:))
     }

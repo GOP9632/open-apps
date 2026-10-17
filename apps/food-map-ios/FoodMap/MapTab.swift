@@ -20,6 +20,7 @@ struct MapTab: View {
     // 抽一間時跳一下的圖釘（每跳一次加一）
     @State private var hops: [String: Int] = [:]
     @State private var drawing = false
+    @State private var spot = BurstSpot()
     @Environment(\.accessibilityReduceMotion) private var reduce
 
     private var points: [Place] { store.shown(store.mapF, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil } }
@@ -46,7 +47,10 @@ struct MapTab: View {
                 }
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
                 .mapControls { MapCompass() }
-                .onMapCameraChange(frequency: .continuous) { _ in pinFrame(proxy) }
+                .onMapCameraChange(frequency: .continuous) { _ in
+                    pinFrame(proxy)
+                    if let c = spot.coord, Date() < spot.until { spot.at = proxy.convert(c, to: .global) }
+                }
                 .onMapCameraChange { c in
                     if selfMoved { selfMoved = false } else { shownRegion = c.region }
                 }
@@ -54,11 +58,20 @@ struct MapTab: View {
                 .onChange(of: sel) { _, id in
                     guard let p = list.first(where: { $0.id == id }) else { return }
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    // 光圈和糖粒：記下那根圖釘在螢幕上的位置，地圖移動的這一小段時間跟著更新
+                    if !reduce {
+                        let c = CLLocationCoordinate2D(latitude: p.lat!, longitude: p.lng!)
+                        spot.coord = c; spot.color = p.cat.color
+                        spot.at = proxy.convert(c, to: .global)
+                        spot.until = Date().addingTimeInterval(0.9)
+                        spot.shot += 1
+                    }
                     // 只把地圖移到那間，不改縮放
                     selfMoved = true
                     let span = shownRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
                     withAnimation(.smooth(duration: 0.55)) { pos = .region(MKCoordinateRegion(center: .init(latitude: p.lat!, longitude: p.lng!), span: span)) }
                 }
+                .overlay { PinBurst(spot: spot) }
             }
             .safeAreaInset(edge: .top, spacing: 0) {
                 VStack(spacing: 8) {
@@ -388,7 +401,6 @@ struct FoodPin: View {
     @State private var lift: CGFloat = 0
     @State private var up = false
     @State private var hopping = false
-    @State private var burst = 0
 
     var body: some View {
         let c = place.cat.color
@@ -429,7 +441,6 @@ struct FoodPin: View {
             .animation(reduce ? .easeOut(duration: 0.25) : .spring(response: 0.38, dampingFraction: 0.55), value: on)
             .allowsHitTesting(false)
         }
-        .overlay(alignment: .bottom) { PinBurst(color: c, trigger: burst) }
         .scaleEffect(faded ? 0.82 : 1, anchor: .bottom)
         .opacity(faded ? 0.5 : 1)
         .animation(.snappy(duration: 0.25), value: faded)
@@ -448,7 +459,6 @@ struct FoodPin: View {
         // 先壓扁，再彈高放大（有回彈）
         withAnimation(.easeOut(duration: 0.09)) { sx = 0.82; sy = 0.78 } completion: {
             guard up else { return }
-            burst += 1
             withAnimation(.spring(response: 0.42, dampingFraction: 0.55)) { sx = 1.35; sy = 1.35; lift = -10 }
         }
     }
@@ -469,10 +479,10 @@ private struct PinPhoto: View {
     let place: Place
     @State private var img: UIImage?
     var body: some View {
-        ZStack {
-            if let img { Image(uiImage: img).resizable().scaledToFill().transition(.opacity) }
-        }
-        .frame(width: 44, height: 44).clipShape(.circle)
+        Color.clear.frame(width: 44, height: 44)
+            .overlay { if let img { Image(uiImage: img).resizable().scaledToFill().transition(.opacity) } }
+            .clipShape(.circle)
+            .contentShape(.circle)
         .task(id: place.photo) {
             guard let u = place.photoURL else { return }
             if let c = PhotoLoader.shared.cached(u, 160) { img = c; return }
@@ -482,33 +492,46 @@ private struct PinPhoto: View {
     }
 }
 
-// 選到時放一次：從底下擴散的一圈光，和往外噴、往下掉的彩色糖粒
+// 選到時放一次的光圈和糖粒，畫在整張地圖上面（不放在圖釘裡，才不會被圖釘的框切掉一半）
+@Observable final class BurstSpot {
+    var at: CGPoint?                     // 選到那根圖釘尖端在螢幕上的位置（地圖移動時跟著更新）
+    var coord: CLLocationCoordinate2D?
+    var color: Color = .accent
+    var shot = 0
+    var until = Date.distantPast         // 光圈放完前，地圖移動才需要更新位置
+}
+
 private struct PinBurst: View {
-    let color: Color, trigger: Int
+    let spot: BurstSpot
     private static let dots: [Color] = ([0xff4f9a, 0x2ed3a0, 0x4da3ff, 0xffd23f, 0xff8a00, 0x8a5cf6, 0xff4f9a, 0x2ed3a0, 0x4da3ff, 0xffd23f] as [UInt32]).map { Color(hex: $0) }
 
     var body: some View {
-        Color.clear.frame(width: 320, height: 320)
-            .keyframeAnimator(initialValue: 1.0, trigger: trigger) { v, t in
-                v.overlay {
-                    if t < 1 {
-                        Canvas { ctx, size in draw(ctx, size, t) }
+        let at = spot.at, color = spot.color
+        GeometryReader { g in
+            let o = g.frame(in: .global).origin
+            Color.clear
+                .keyframeAnimator(initialValue: -1.0, trigger: spot.shot) { v, t in
+                    v.overlay {
+                        if t >= 0, t < 1, let at {
+                            // 圓頭的中心：圖釘高 51、圓心離底 29，放大 1.35 倍後約 39，再抬高 10
+                            Canvas { ctx, _ in Self.draw(ctx, CGPoint(x: at.x - o.x, y: at.y - o.y - 49), t, color) }
+                        }
+                    }
+                } keyframes: { _ in
+                    // 等圖釘壓扁完（0.09 秒）彈起來的那一刻才放
+                    KeyframeTrack {
+                        MoveKeyframe(-1.0)
+                        LinearKeyframe(-1.0, duration: 0.09)
+                        LinearKeyframe(0.0, duration: 0.001)
+                        LinearKeyframe(1.0, duration: 0.7)
                     }
                 }
-            } keyframes: { _ in
-                KeyframeTrack {
-                    MoveKeyframe(0.0)
-                    LinearKeyframe(1.0, duration: 0.7)
-                }
-            }
-            .offset(y: 160)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
-    private func draw(_ ctx: GraphicsContext, _ size: CGSize, _ t: Double) {
-        // 圓頭的中心：圖釘高 51、圓心離底 29，放大 1.35 倍後約 39，再抬高 10
-        let head = CGPoint(x: size.width / 2, y: size.height / 2 - 49)
+    private static func draw(_ ctx: GraphicsContext, _ head: CGPoint, _ t: Double, _ color: Color) {
         // 光圈：以圓頭為中心，0.65 秒從 0.6 倍放大到 3.2 倍並淡掉
         let rt = min(t / 0.93, 1), re = 1 - pow(1 - rt, 3)
         let r = 30 * (0.6 + 2.6 * re)
@@ -521,7 +544,7 @@ private struct PinBurst: View {
             let d = 34 + 20 * (Double(i) * 0.618).truncatingRemainder(dividingBy: 1)
             let rr = 24 + d * e   // 從圓頭邊緣往外飛
             let p = CGPoint(x: head.x + cos(a) * rr, y: head.y + sin(a) * rr + 36 * t * t)
-            ctx.fill(Path(ellipseIn: CGRect(x: p.x - 3.5, y: p.y - 3.5, width: 7, height: 7)), with: .color(Self.dots[i].opacity(1 - t)))
+            ctx.fill(Path(ellipseIn: CGRect(x: p.x - 3.5, y: p.y - 3.5, width: 7, height: 7)), with: .color(dots[i].opacity(1 - t)))
         }
     }
 }

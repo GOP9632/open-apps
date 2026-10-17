@@ -3,7 +3,6 @@ import SwiftUI
 // 收藏頁：「我的收藏 N 間」＋新增、搜尋、篩選，下面兩欄方形照片卡
 struct ListTab: View {
     @Environment(Store.self) private var store
-    @Namespace private var zoom
     @State private var adding = false
     @State private var path: [Place] = []
 
@@ -47,7 +46,6 @@ struct ListTab: View {
                             let p = g[0]
                             NavigationLink(value: p) { PlaceCard(place: p, branches: g) }
                                 .buttonStyle(PressStyle())
-                                .matchedTransitionSource(id: p.id, in: zoom) { $0.clipShape(.rect(cornerRadius: 22)) }
                                 .contextMenu { if store.isMine(p) { menu(p) } }
                         }
                     }
@@ -69,9 +67,8 @@ struct ListTab: View {
             .background(Color.bg)
             .toolbarVisibility(.hidden, for: .navigationBar)
             .refreshable { await store.sync() }
-            .navigationDestination(for: Place.self) { p in
-                PlaceDetail(place: p).navigationTransition(.zoom(sourceID: p.id, in: zoom))
-            }
+            // 跟地圖、群組一樣用一般的推入（放大轉場會把從左邊滑回當成往下拉關閉）
+            .navigationDestination(for: Place.self) { PlaceDetail(place: $0) }
             .overlay { if store.mine.isEmpty && store.loading { ProgressView() } }
             .sheet(isPresented: $adding) { AddSheet() }
         }

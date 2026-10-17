@@ -81,4 +81,9 @@ extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
     public func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
         viewControllers.count > 1
     }
+
+    // 從左邊滑的時候，先讓「滑回上一頁」判斷；不是從邊緣開始的，頁面才能上下捲（不會被當成往下滑）
+    public func gestureRecognizer(_ g: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+        g === interactivePopGestureRecognizer && viewControllers.count > 1
+    }
 }

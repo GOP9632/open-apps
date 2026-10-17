@@ -146,6 +146,26 @@ struct CircleIcon: View {
     }
 }
 
+// 有導覽列的頁面（群組、配對）左上角的返回鍵：跟店家頁一樣只有箭頭、深色，按了回上一頁
+struct BackButton: View {
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        Button { dismiss() } label: {
+            Image(systemName: "chevron.left").font(.system(size: 17, weight: .bold)).foregroundStyle(Color.ink)
+                .frame(width: 44, height: 44).contentShape(.rect)
+        }
+        .accessibilityLabel("返回")
+    }
+}
+
+extension View {
+    // 換掉系統的藍色「〈 上一頁」，整個 App 的返回鍵長一樣（從左邊滑回照樣可以）
+    func backButton() -> some View {
+        navigationBarBackButtonHidden(true)
+            .toolbar { ToolbarItem(placement: .topBarLeading) { BackButton() } }
+    }
+}
+
 // 糖粒進度條：已經滑過的部分是一段一段彩色糖粒
 struct SprinkleBar: View {
     let progress: Double
