@@ -29,11 +29,16 @@ struct ChunkyStyle: ButtonStyle {
 
 struct PressStyle: ButtonStyle {
     var haptic = false   // 手指一按下就輕震（不等放開）
+    var onPress: (() -> Void)? = nil   // 手指一按下就先做的事（例如先拿影片網址）
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(configuration.isPressed ? .easeOut(duration: 0.08) : .spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
-            .onChange(of: configuration.isPressed) { _, down in if haptic && down { Haptic.light() } }
+            .onChange(of: configuration.isPressed) { _, down in
+                guard down else { return }
+                if haptic { Haptic.light() }
+                onPress?()
+            }
     }
 }
 

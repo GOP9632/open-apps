@@ -17,6 +17,9 @@ struct MapTab: View {
     @State private var shownRegion: MKCoordinateRegion?
     @State private var selfMoved = false
     @State private var spot = BurstSpot()
+    @State private var drawer = Drawer.shared
+    @State private var show: DrawShow?
+    @State private var paneling = false
     @Environment(\.accessibilityReduceMotion) private var reduce
 
     private var points: [Place] { store.shown(store.mapF, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil } }
@@ -25,7 +28,9 @@ struct MapTab: View {
         @Bindable var store = store
         // 篩選結果只算一次；有座標的店下面每個地方共用
         let all = store.shown(store.mapF, in: store.mapBase)
-        let list = all.filter { $0.lat != nil && $0.lng != nil }
+        var list = all.filter { $0.lat != nil && $0.lng != nil }
+        // 抽一間不跟篩選：抽中被篩掉的店，那根圖釘還是要畫出來
+        if let x = pins.extra, !list.contains(where: { $0.id == x }), let p = store.mapBase.first(where: { $0.id == x }), p.lat != nil, p.lng != nil { list.append(p) }
         let gname = store.mapGroupName
         let near = Nearby(list: list, here: store.here, region: shownRegion, total: all.count)
         let missing = all.count - list.count
@@ -49,6 +54,7 @@ struct MapTab: View {
                 }
                 .onMapCameraChange { c in
                     if selfMoved { selfMoved = false } else { shownRegion = c.region }
+                    store.mapRegion = c.region
                 }
                 .onChange(of: store.coachStep) { pinFrame(proxy) }
                 // 選到一根圖釘：地圖移過去、放光圈（只有這個小觀察者看 sel，MapTab 本身不跟著重算）
@@ -88,11 +94,24 @@ struct MapTab: View {
                         .accessibilityLabel("我的位置")
                     }
                     .padding(.horizontal, 16)
-                    NearbySheet(near: near, pins: pins, list: list, group: gname) { draw(near) }
+                    NearbySheet(near: near, pins: pins, list: list, group: gname, draw: draw, panel: openPanel, choose: choose)
                 }
+            }
+            // 抽 3 間的卡片、轉盤蓋在地圖上
+            .overlay {
+                DrawStage(show: $show, reroll: { avoid, n in
+                    drawer.pick(store, drawer.candidates(store, drawCtx(), drawer.prefs), k: n, avoid: avoid)
+                }, hop: { p in pins.hops[p.id, default: 0] += 1 }, pick: { p in
+                    drawer.record(store, p)
+                    choose(p)
+                })
             }
             .toolbarVisibility(.hidden, for: .navigationBar)
             .navigationDestination(for: Place.self) { PlaceDetail(place: $0) }
+        }
+        .sheet(isPresented: $paneling) {
+            DrawPanel(ctx: drawCtx(), go: { draw() }, pickHistory: choose)
+                .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $adding) { AddSheet() }
         .sheet(isPresented: $noAddr) { NoAddressSheet() }
@@ -112,9 +131,8 @@ struct MapTab: View {
         }
     }
 
-    // 搜尋框下面的深色膠囊：現在看誰的收藏，點了換；群組時旁邊有 ✕ 回到我的收藏
-    // 抽一間：從地圖現在看到的店裡抽（跟著篩選和群組），同一家的分店只算一次、抽中離你最近的那間；再抽一次不會抽到同一家
-    private func draw(_ near: Nearby) {
+    // 抽一間：照存好的設定抽（範圍、分類、價位…長按 🎲 改）。同一家的分店只算一次、抽中離你最近的那間；再抽一次不會抽到同一家
+    private func draw() {
         // 跳的過程中再按一次：直接出結果
         if let win = pins.drawWin {
             pins.drawTask?.cancel(); pins.drawTask = nil; pins.drawWin = nil
@@ -122,33 +140,85 @@ struct MapTab: View {
             pins.select(win)
             return
         }
-        var pool = store.brands(near.places).map { $0[0] }
-        if pool.count > 1, let cur = pins.sel.flatMap({ id in pool.first { $0.id == id } }) {
-            pool.removeAll { store.brand($0) == store.brand(cur) }
-        }
-        guard let win = pool.randomElement() else { return }
-        pins.drawn = win.id
-        // 先讓地圖上 6–8 根圖釘輪流跳一下（按下去的那一刻第一根就跳），最後選中抽到的那根
-        let hoppers = near.places.filter { $0.id != win.id && $0.id != pins.sel }.shuffled().prefix(Int.random(in: 6...8))
-        guard !reduce, !hoppers.isEmpty else {
-            Haptic.success()
-            pins.select(win.id)
+        let pool = drawer.candidates(store, drawCtx(), drawer.prefs)
+        guard !pool.isEmpty else {
+            Haptic.warning()
+            store.say("沒有符合的店，改一下條件")
+            openPanel()
             return
         }
-        pins.drawWin = win.id
-        pins.drawTask = Task {
-            for p in hoppers {
-                pins.hops[p.id, default: 0] += 1
-                Haptic.tick()
-                try? await Task.sleep(for: .seconds(0.15))
-                if Task.isCancelled { return }
+        drawer.spin += 1
+        let avoid = pins.sel.flatMap { store.place($0) }.map { Set([store.brand($0)]) } ?? []
+        switch drawer.prefs.mode {
+        case .three:
+            Perf.shared.mark("抽 3 間")
+            Haptic.light()
+            show = DrawShow(mode: .three, places: drawer.pick(store, pool, k: 3, avoid: avoid))
+        case .wheel:
+            Haptic.light()
+            show = DrawShow(mode: .wheel, places: drawer.pick(store, pool, k: 8, avoid: avoid))
+        case .one:
+            guard let win = drawer.pick(store, pool, k: 1, avoid: avoid).first else { return }
+            drawer.record(store, win)
+            pins.drawn = win.id
+            reveal(win)
+            // 先讓地圖上 6–8 根圖釘輪流跳一下（按下去的那一刻第一根就跳），最後選中抽到的那根
+            let shown = shownRegion.map { r in pool.filter { abs($0.lat! - r.center.latitude) <= r.span.latitudeDelta / 2 && abs($0.lng! - r.center.longitude) <= r.span.longitudeDelta / 2 } } ?? pool
+            let hoppers = shown.filter { $0.id != win.id && $0.id != pins.sel }.shuffled().prefix(Int.random(in: 6...8))
+            guard !reduce, !hoppers.isEmpty else {
+                Haptic.success()
+                pins.select(win.id)
+                return
             }
-            try? await Task.sleep(for: .seconds(0.12))
-            guard pins.drawWin == win.id else { return }
-            pins.drawWin = nil; pins.drawTask = nil
-            Haptic.success()
-            pins.select(win.id)
+            pins.drawWin = win.id
+            pins.drawTask = Task {
+                for p in hoppers {
+                    pins.hops[p.id, default: 0] += 1
+                    Haptic.tick()
+                    try? await Task.sleep(for: .seconds(0.15))
+                    if Task.isCancelled { return }
+                }
+                try? await Task.sleep(for: .seconds(0.12))
+                guard pins.drawWin == win.id else { return }
+                pins.drawWin = nil; pins.drawTask = nil
+                Haptic.success()
+                pins.select(win.id)
+            }
         }
+    }
+
+    // 選中抽到的那間（被篩選篩掉的也畫出來）
+    private func choose(_ p: Place) {
+        guard store.mapBase.contains(where: { $0.id == p.id }), p.lat != nil, p.lng != nil else {
+            store.say("這間不在現在的地圖上"); return
+        }
+        reveal(p)
+        pins.drawn = p.id
+        pins.select(p.id)
+    }
+
+    // 被篩選篩掉的店也要能畫出那根圖釘
+    private func reveal(_ p: Place) {
+        if !store.shown(store.mapF, in: store.mapBase).contains(where: { $0.id == p.id }) { pins.extra = p.id }
+    }
+
+    private func openPanel() {
+        Perf.shared.mark("抽一間面板")
+        paneling = true
+    }
+
+    // 抽一間從哪些店抽：地圖現在看誰的收藏（不跟上面的篩選），地圖上看到的那些，距離從你的位置（沒有就地圖中心）算
+    private func drawCtx() -> Drawer.Ctx {
+        let base = store.mapBase
+        let r = shownRegion ?? store.mapRegion
+        let view = r.map { r in
+            base.filter { p in
+                guard let la = p.lat, let lo = p.lng else { return false }
+                return abs(la - r.center.latitude) <= r.span.latitudeDelta / 2 && abs(lo - r.center.longitude) <= r.span.longitudeDelta / 2
+            }
+        }
+        let center = r.map { CLLocation(latitude: $0.center.latitude, longitude: $0.center.longitude) }
+        return Drawer.Ctx(base: base, view: view, ref: store.here ?? center, refIsCenter: store.here == nil, onMap: true)
     }
 
     // 選到一根圖釘之後：光圈、量測、地圖移過去（不改縮放）
@@ -157,6 +227,7 @@ struct MapTab: View {
         Perf.shared.mark(pins.drawn == id ? "抽一間" : "點圖釘")
         // 先把大卡片和店家頁要用的照片載好，點進去時第一幀就有
         if let u = p.photoURL { Task { _ = await PhotoLoader.shared.load(u, 400); _ = await PhotoLoader.shared.load(u, 1200) } }
+        ReelCache.warm(p)
         let c = CLLocationCoordinate2D(latitude: p.lat!, longitude: p.lng!)
         if !reduce {
             spot.coord = c; spot.color = p.cat.color
@@ -169,6 +240,7 @@ struct MapTab: View {
         withAnimation(.smooth(duration: 0.55)) { pos = .region(MKCoordinateRegion(center: c, span: span)) }
     }
 
+    // 搜尋框下面的深色膠囊：現在看誰的收藏，點了換；群組時旁邊有 ✕ 回到我的收藏
     private func scopePill(_ gname: String?) -> some View {
         HStack(spacing: 8) {
             Button { scoping = true } label: {
@@ -259,6 +331,8 @@ struct NearbySheet: View {
     let list: [Place]
     var group: String? = nil
     var draw: (() -> Void)? = nil
+    var panel: () -> Void = {}
+    var choose: (Place) -> Void = { _ in }
     @Environment(\.accessibilityReduceMotion) private var reduce
 
     var body: some View {
@@ -268,7 +342,7 @@ struct NearbySheet: View {
         VStack(alignment: .leading, spacing: 10) {
             Capsule().fill(Color.ink.opacity(0.15)).frame(width: 38, height: 5).frame(maxWidth: .infinity).padding(.top, 8)
             if let p = picked {
-                PickedCard(place: p, saver: group == nil ? nil : p.owner, drawn: drawn, draw: draw) { pins.select(nil) }
+                PickedCard(place: p, saver: group == nil ? nil : p.owner, drawn: drawn, draw: draw, panel: panel, pickHistory: choose) { pins.select(nil) }
                     .id(p.id)
                     .transition(.asymmetric(insertion: .offset(y: 44).combined(with: .opacity), removal: .opacity))
             } else {
@@ -277,10 +351,8 @@ struct NearbySheet: View {
                         Text((group.map { "\($0) · " } ?? "") + near.title).font(.system(size: 19, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1)
                         Text(near.subtitle).font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.45)).lineLimit(1)
                         Spacer(minLength: 0)
-                        if let draw, !near.places.isEmpty {
-                            Chip(text: "🎲 抽一間", on: true, action: draw)
-                                .fixedSize()
-                                .accessibilityHint("從地圖上的店隨機挑一間")
+                        if let draw, !list.isEmpty {
+                            DiceChip(draw: draw, panel: panel)
                         }
                     }
                     .padding(.leading, 18).padding(.trailing, 12)
@@ -288,7 +360,7 @@ struct NearbySheet: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: 12) {
                                 ForEach(near.places) { p in
-                                    NavigationLink(value: p) { MapCard(place: p, on: false, saver: group == nil ? nil : p.owner) }.buttonStyle(PressStyle())
+                                    NavigationLink(value: p) { MapCard(place: p, on: false, saver: group == nil ? nil : p.owner) }.buttonStyle(PressStyle { ReelCache.warm(p) })
                                 }
                             }
                             .scrollTargetLayout()
@@ -317,16 +389,20 @@ struct PickedCard: View {
     var saver: String? = nil
     var drawn = false
     var draw: (() -> Void)? = nil
+    var panel: () -> Void = {}
+    var pickHistory: (Place) -> Void = { _ in }
     let close: () -> Void
     @State private var askNav = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // 這次抽過的店，點一個回到那間
+            if draw != nil { DrawHistory(tap: pickHistory).padding(.top, -2) }
             HStack(spacing: 8) {
                 Text(top).font(.system(size: 15, weight: .heavy)).foregroundStyle(Color.ink.opacity(0.55)).lineLimit(1)
                 Spacer(minLength: 0)
                 if let draw {
-                    Chip(text: drawn ? "🎲 再抽一次" : "🎲 抽一間", on: true, action: draw).fixedSize()
+                    DiceChip(text: drawn ? "再抽一次" : "抽一間", draw: draw, panel: panel)
                 }
                 Button(action: close) {
                     Image(systemName: "xmark").font(.system(size: 13, weight: .heavy)).foregroundStyle(Color.ink)
@@ -400,6 +476,7 @@ struct PickedCard: View {
     private(set) var sel: String?
     var drawn: String?                  // 抽一間抽中的那間（還選著它時，按鈕變「再抽一次」）
     var hops: [String: Int] = [:]       // 抽一間時跳一下的圖釘（每跳一次加一）
+    var extra: String?                  // 抽中但被篩選篩掉的店：照樣畫出圖釘（選別間就收掉）
     @ObservationIgnored var drawWin: String?     // 抽一間正在跳，最後會選中這根
     @ObservationIgnored var drawTask: Task<Void, Never>?
 
@@ -407,6 +484,7 @@ struct PickedCard: View {
         guard sel != id else { return }
         // 手動選別根或點空白處，就取消還在跳的抽一間
         if drawWin != nil, id != drawWin { drawTask?.cancel(); drawTask = nil; drawWin = nil }
+        if extra != nil, id != extra { extra = nil }
         sel = id
     }
 }

@@ -90,7 +90,8 @@ struct Root: View {
             TouchClock.install()
         }
         // 切回 App 時跟網頁版一樣重新同步一次
-        .onChange(of: phase) { _, p in if p == .active { Task { await store.sync() } } }
+        // 憑證快到期就先在背景換好，接下來的請求不用等
+        .onChange(of: phase) { _, p in if p == .active { Task { _ = try? await Supa.fresh(); await store.sync() } } }
     }
 
     // 四個分頁疊在一起，只顯示目前這個（切換不重建，捲到哪、地圖看到哪都留著）

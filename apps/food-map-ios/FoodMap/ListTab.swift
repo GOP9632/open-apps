@@ -5,6 +5,10 @@ struct ListTab: View {
     @Environment(Store.self) private var store
     @State private var adding = false
     @State private var path: [Place] = []
+    @State private var drawer = Drawer.shared
+    @State private var show: DrawShow?
+    @State private var paneling = false
+    @State private var long = false
 
     var body: some View {
         @Bindable var store = store
@@ -21,19 +25,27 @@ struct ListTab: View {
                             Text("\(groups.count) 家").font(.headline).foregroundStyle(Color.accent)
                         }
                         Spacer()
-                        // 抽一間：從現在篩出來的收藏裡抽，分店多的不會比較容易抽到，抽中離你最近的那間
-                        if !groups.isEmpty {
+                        // 抽一間：跟地圖同一份設定（長按改），這裡沒座標的店也抽得到；分店多的不會比較容易抽到，抽中離你最近的那間
+                        if !store.mine.isEmpty {
                             Button {
-                                Haptic.success()
-                                if let p = groups.randomElement()?.first { path = [p] }
+                                if long { long = false; return }
+                                draw()
                             } label: {
                                 Text("🎲").font(.system(size: 22))
+                                    .rotationEffect(.degrees(Double(drawer.spin) * 720))
+                                    .animation(.easeOut(duration: 0.5), value: drawer.spin)
                                     .frame(width: 42, height: 42)
                                     .background(RoundedRectangle(cornerRadius: 42 * 0.32).fill(Color.accent.opacity(0.13)))
                                     .frame(minWidth: 44, minHeight: 44).contentShape(.rect)
                             }
-                            .buttonStyle(PressStyle())
+                            .buttonStyle(PressStyle(haptic: true) { long = false })
+                            .simultaneousGesture(LongPressGesture(minimumDuration: 0.35).onEnded { _ in
+                                long = true
+                                Haptic.medium()
+                                openPanel()
+                            })
                             .accessibilityLabel("抽一間")
+                            .accessibilityHint("長按改設定")
                         }
                         AddButton(size: 42) { adding = true }
                     }
@@ -45,7 +57,7 @@ struct ListTab: View {
                         ForEach(groups, id: \.first!.id) { g in
                             let p = g[0]
                             NavigationLink(value: p) { PlaceCard(place: p, branches: g) }
-                                .buttonStyle(PressStyle())
+                                .buttonStyle(PressStyle { ReelCache.warm(p) })
                                 .contextMenu { if store.isMine(p) { menu(p) } }
                         }
                     }
@@ -70,11 +82,48 @@ struct ListTab: View {
             // 跟地圖、群組一樣用一般的推入（放大轉場會把從左邊滑回當成往下拉關閉）
             .navigationDestination(for: Place.self) { PlaceDetail(place: $0) }
             .overlay { if store.mine.isEmpty && store.loading { ProgressView() } }
+            // 抽中的卡片蓋在收藏頁上，點卡片進店家頁
+            .overlay {
+                DrawStage(show: $show, reroll: { avoid, n in
+                    drawer.pick(store, drawer.candidates(store, drawCtx, drawer.prefs), k: n, avoid: avoid)
+                }, pick: { p in
+                    drawer.record(store, p)
+                    path.append(p)
+                })
+            }
             .sheet(isPresented: $adding) { AddSheet() }
+            .sheet(isPresented: $paneling) {
+                DrawPanel(ctx: drawCtx, go: { draw() }, pickHistory: { path.append($0) })
+                    .presentationDetents([.medium, .large])
+            }
         }
         .onChange(of: path.count) { _, n in store.depth[1] = n }
         .onAppear(perform: markPaint)
         .onChange(of: store.places.count) { markPaint() }
+    }
+
+    // 收藏頁的抽一間：「地圖上看到的」在這裡當作全部，沒座標的店也算
+    private var drawCtx: Drawer.Ctx { Drawer.Ctx(base: store.mine, view: nil, ref: store.here, refIsCenter: false, onMap: false) }
+
+    private func openPanel() {
+        Perf.shared.mark("抽一間面板")
+        paneling = true
+    }
+
+    private func draw() {
+        let pool = drawer.candidates(store, drawCtx, drawer.prefs)
+        guard !pool.isEmpty else {
+            Haptic.warning()
+            store.say("沒有符合的店，改一下條件")
+            openPanel()
+            return
+        }
+        drawer.spin += 1
+        let m = drawer.prefs.mode
+        Perf.shared.mark(m == .three ? "抽 3 間" : "抽一間")
+        let ps = drawer.pick(store, pool, k: m == .three ? 3 : m == .wheel ? 8 : 1)
+        guard !ps.isEmpty else { return }
+        show = DrawShow(mode: m, places: ps)
     }
 
     private func markPaint() {

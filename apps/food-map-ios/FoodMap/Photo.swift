@@ -19,12 +19,55 @@ actor PhotoLoader {
     nonisolated func cached(_ url: URL, _ px: CGFloat) -> UIImage? { mem.object(forKey: "\(url.absoluteString)@\(Int(px))" as NSString) }
     nonisolated func anySize(_ url: URL) -> UIImage? { best.object(forKey: url.absoluteString as NSString) }
 
+    // 雲端每張照片另存一張 480px 小圖（…/<uuid>.jpg → …/<uuid>_s.jpg）；舊照片可能還沒有，失敗就記下來，這次開 App 不再試
+    private var noSmall: Set<String> = []
+
+    // 只有存在我們自己雲端（Supabase Storage）的照片才有小圖
+    private func trySmall(_ u: URL) -> Bool {
+        u.host()?.hasSuffix("supabase.co") == true && u.path.contains("/storage/") && !noSmall.contains(u.absoluteString)
+    }
+
+    nonisolated static func small(_ u: URL) -> URL {
+        guard var c = URLComponents(url: u, resolvingAgainstBaseURL: false) else { return u }
+        let ext = (c.path as NSString).pathExtension
+        c.path = String(c.path.dropLast(ext.isEmpty ? 0 : ext.count + 1)) + "_s.jpg"
+        return c.url ?? u
+    }
+
+    // 只抓進磁碟快取、不解碼（同步完在背景先把照片載好，之後打開就是讀手機裡的）
+    func prefetch(_ url: URL, small want: Bool) async {
+        let u = want && trySmall(url) ? Self.small(url) : url
+        let r = URLRequest(url: u)
+        if session.configuration.urlCache?.cachedResponse(for: r) != nil { return }
+        let ok = await fetch(r) != nil
+        if !ok, u != url { noSmall.insert(url.absoluteString); _ = await fetch(URLRequest(url: url)) }
+    }
+
+    private func fetch(_ r: URLRequest) async -> Data? {
+        guard let (d, res) = try? await session.data(for: r) else { return nil }
+        guard (res as? HTTPURLResponse)?.statusCode == 200 else {
+            // 404 也可能被快取，下次雲端補了小圖會拿不到，清掉
+            session.configuration.urlCache?.removeCachedResponse(for: r)
+            return nil
+        }
+        return d
+    }
+
+    // 拿照片的原始資料：500px 以下先拿小圖，沒有就拿原圖
+    private func data(_ url: URL, _ px: CGFloat) async -> Data? {
+        if px <= 500, trySmall(url) {
+            if let d = await fetch(URLRequest(url: Self.small(url))) { return d }
+            noSmall.insert(url.absoluteString)
+        }
+        return await fetch(URLRequest(url: url))
+    }
+
     func load(_ url: URL, _ px: CGFloat) async -> UIImage? {
         let k = "\(url.absoluteString)@\(Int(px))"
         if let i = mem.object(forKey: k as NSString) { return i }
         if let t = running[k] { return await t.value }
         let t = Task<UIImage?, Never> {
-            guard let (d, _) = try? await session.data(from: url), let img = UIImage(data: d) else { return nil }
+            guard let d = await data(url, px), let img = UIImage(data: d) else { return nil }
             let scale = px / max(img.size.width, img.size.height)
             let size = scale < 1 ? CGSize(width: img.size.width * scale, height: img.size.height * scale) : img.size
             return await img.byPreparingThumbnail(ofSize: size) ?? img

@@ -85,7 +85,8 @@ import Security
     // 換不到新憑證（太久沒開、在別處登出）就清掉，回到登入畫面
     static func fresh() async throws -> Session {
         guard let s = session else { throw Fail(msg: "請先登入") }
-        guard let exp = s.expires_at, exp - Date().timeIntervalSince1970 < 60 else { return s }
+        // 剩不到 10 分鐘就先換（回到前景時也會在背景先換好），請求不用等換憑證
+        guard let exp = s.expires_at, exp - Date().timeIntervalSince1970 < 600 else { return s }
         if let t = refreshing { return try await t.value }
         let t = Task { try await auth("token?grant_type=refresh_token", ["refresh_token": s.refresh_token]) }
         refreshing = t
@@ -97,6 +98,9 @@ import Security
         } catch let e as Fail where (400..<500).contains(e.code) {
             session = nil
             throw Fail(msg: "登入過期了，請重新登入")
+        } catch where exp - Date().timeIntervalSince1970 > 30 {
+            // 提早換沒換成（網路不好），舊的還能用就先用
+            return s
         }
     }
 
@@ -131,7 +135,7 @@ import Security
         let code = (res as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(code) else {
             let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
-            throw Fail(msg: (j?["message"] as? String) ?? "存檔失敗（\(code)）")
+            throw Fail(msg: (j?["message"] as? String) ?? "存檔失敗（\(code)）", code: code)
         }
         return d
     }
@@ -141,7 +145,7 @@ import Security
         return try JSONDecoder().decode(T.self, from: d)
     }
 
-    // IG Reel 的影片網址（IG 的網址會過期，所以每次打開店家頁都重新拿，不存）
+    // IG Reel 的影片網址（IG 的網址會過期，ReelCache 記到期前 5 分鐘）
     static func reelVideo(_ source: String) async throws -> URL? {
         let s = try await fresh()
         var r = URLRequest(url: URL(string: "\(url.absoluteString)/functions/v1/reel-video")!)

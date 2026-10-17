@@ -5,15 +5,9 @@ import Combine
 // 店家頁上面那張大圖：IG Reel 就直接在這裡播（靜音、重複播放），右下角喇叭開聲音；不是影片就是照片
 struct PlaceMedia: View {
     let place: Place
-    @State private var video: URL?
     @State private var muted = true
     @State private var player: AVPlayer?
     @State private var loop: NSObjectProtocol?
-
-    private var maybeVideo: Bool {
-        guard let s = place.source_url, s.contains("instagram.com") else { return false }
-        return s.contains("/reel/") || s.contains("/reels/") || s.contains("/p/")
-    }
 
     var body: some View {
         ZStack {
@@ -39,28 +33,32 @@ struct PlaceMedia: View {
                 .padding(10)
             }
         }
-        // 每次打開都重新拿影片網址（IG 的網址會過期）；拿不到就留著照片
+        // 選圖釘、抽中、按下卡片時已經先拿網址並開始緩衝的話直接用；沒有就現在拿。拿不到就留著照片
         .task(id: place.id) {
             stop()
-            guard maybeVideo, let src = place.source_url else { return }
-            // 等推頁動畫跑完再去拿，不跟動畫搶
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled else { return }
-            var u: URL?
-            do { u = try await Supa.reelVideo(src) } catch { print("[reel] 雲端拿影片網址失敗：\(error)") }
-            // 雲端被 IG 擋（伺服器的網路常被擋）就用手機自己的網路再找一次
-            if u == nil, !Task.isCancelled { u = await ReelFinder.find(src); print("[reel] 手機自己找：\(u == nil ? "沒有" : "有")") }
-            guard let u, !Task.isCancelled else { print("[reel] 這則沒有影片網址"); return }
+            guard ReelCache.maybeVideo(place), let src = place.source_url else { return }
+            var u: URL, p: AVPlayer
+            if let r = ReelCache.take(src) {
+                u = r.0; p = r.1
+                print("[reel] 用先緩衝好的播放器")
+            } else {
+                // 等推頁動畫跑完再去拿，不跟動畫搶
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled else { return }
+                guard let f = await ReelCache.url(src), !Task.isCancelled else { print("[reel] 這則沒有影片網址"); return }
+                u = f; p = ReelCache.player(f)
+            }
             print("[reel] 影片網址 \(u.host() ?? "")")
             try? AVAudioSession.sharedInstance().setCategory(.ambient)
             // 先直接串流；6 秒還沒能播（IG 的伺服器有時不給串流），就整支下載到手機再播
-            var p = makePlayer(u)
+            start(p)
             if !(await Self.waitReady(p)) {
                 guard !Task.isCancelled else { return }
                 print("[reel] 串流沒成功，改成先下載")
                 p.pause(); p.replaceCurrentItem(with: nil)
                 guard let local = await Self.download(u), !Task.isCancelled else { print("[reel] 下載失敗"); return }
-                p = makePlayer(local)
+                p = ReelCache.player(local)
+                start(p)
                 guard await Self.waitReady(p) else { return }
             }
             guard !Task.isCancelled else { p.pause(); return }
@@ -71,21 +69,14 @@ struct PlaceMedia: View {
         .onDisappear(perform: stop)
     }
 
-    // 建一個播放器：靜音、播完從頭再播，馬上開始載
-    private func makePlayer(_ u: URL) -> AVPlayer {
+    // 開始播：靜音、播完從頭再播
+    private func start(_ p: AVPlayer) {
         if let loop { NotificationCenter.default.removeObserver(loop) }
-        // 用一般瀏覽器的 User-Agent 去拿影片（有些 CDN 不理 AVPlayer 預設的）
-        let asset = AVURLAsset(url: u, options: ["AVURLAssetHTTPHeaderFieldsKey": ["User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"]])
-        let item = AVPlayerItem(asset: asset)
-        let p = AVPlayer(playerItem: item)
         p.isMuted = muted
-        p.actionAtItemEnd = .none
-        loop = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { _ in
+        loop = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: p.currentItem, queue: .main) { _ in
             p.seek(to: .zero); p.play()
         }
-        video = u
         p.play()
-        return p
     }
 
     // 每 0.25 秒看一次能不能播（不靠 KVO），每 2 秒記一次狀態，最多等 6 秒
@@ -112,7 +103,7 @@ struct PlaceMedia: View {
     // 整支影片下載到暫存資料夾（檔名要有 .mp4，播放器才認得）
     private static func download(_ u: URL) async -> URL? {
         var r = URLRequest(url: u)
-        r.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        r.setValue(ReelCache.ua, forHTTPHeaderField: "User-Agent")
         r.timeoutInterval = 30
         guard let (tmp, res) = try? await URLSession.shared.download(for: r) else { return nil }
         print("[reel] 下載 \((res as? HTTPURLResponse)?.statusCode ?? 0) \(res.expectedContentLength / 1024) KB")
@@ -125,9 +116,75 @@ struct PlaceMedia: View {
     private func stop() {
         player?.pause()
         if let loop { NotificationCenter.default.removeObserver(loop) }
-        player = nil; loop = nil; video = nil
+        player = nil; loop = nil
         muted = true
         try? AVAudioSession.sharedInstance().setCategory(.ambient)
+    }
+}
+
+// IG 影片網址記在記憶體（網址裡 oe= 是到期時間，離到期還有 5 分鐘以上就重用）；
+// 選到圖釘、抽中、按下卡片時先拿網址、建好播放器開始緩衝，進店家頁直接播
+@MainActor enum ReelCache {
+    private static var urls: [String: (url: URL, until: Date)] = [:]
+    private static var finding: [String: Task<URL?, Never>] = [:]
+    // 先緩衝好的播放器，最多留 2 個
+    private static var ready: [(src: String, url: URL, player: AVPlayer)] = []
+    static let ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+
+    static func maybeVideo(_ p: Place) -> Bool {
+        guard let s = p.source_url, s.contains("instagram.com") else { return false }
+        return s.contains("/reel/") || s.contains("/reels/") || s.contains("/p/")
+    }
+
+    static func url(_ src: String) async -> URL? {
+        if let c = urls[src], c.until.timeIntervalSinceNow > 300 { return c.url }
+        if let t = finding[src] { return await t.value }
+        let t = Task<URL?, Never> {
+            var u: URL?
+            do { u = try await Supa.reelVideo(src) } catch { print("[reel] 雲端拿影片網址失敗：\(error)") }
+            // 雲端被 IG 擋（伺服器的網路常被擋）就用手機自己的網路再找一次
+            if u == nil { u = await ReelFinder.find(src); print("[reel] 手機自己找：\(u == nil ? "沒有" : "有")") }
+            return u
+        }
+        finding[src] = t
+        let u = await t.value
+        finding[src] = nil
+        if let u { urls[src] = (u, expiry(u)) }
+        return u
+    }
+
+    // IG 網址的 oe= 是 16 進位的到期時間；看不懂就當 30 分鐘
+    private static func expiry(_ u: URL) -> Date {
+        if let oe = URLComponents(url: u, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "oe" })?.value,
+           let t = UInt64(oe, radix: 16) { return Date(timeIntervalSince1970: Double(t)) }
+        return Date().addingTimeInterval(1800)
+    }
+
+    static func warm(_ p: Place) {
+        guard maybeVideo(p), let src = p.source_url, !ready.contains(where: { $0.src == src }) else { return }
+        Task {
+            guard let u = await url(src), !ready.contains(where: { $0.src == src }) else { return }
+            ready.append((src, u, player(u)))
+            if ready.count > 2 { ready.removeFirst().player.replaceCurrentItem(with: nil) }
+        }
+    }
+
+    static func take(_ src: String) -> (URL, AVPlayer)? {
+        guard let i = ready.firstIndex(where: { $0.src == src }) else { return nil }
+        let r = ready.remove(at: i)
+        guard urls[src].map({ $0.until.timeIntervalSinceNow > 60 }) ?? false else { return nil }
+        return (r.url, r.player)
+    }
+
+    // 建播放器（還不播）：先緩衝 3 秒；用一般瀏覽器的 User-Agent 去拿影片（有些 CDN 不理 AVPlayer 預設的）
+    static func player(_ u: URL) -> AVPlayer {
+        let asset = AVURLAsset(url: u, options: ["AVURLAssetHTTPHeaderFieldsKey": ["User-Agent": ua]])
+        let item = AVPlayerItem(asset: asset)
+        item.preferredForwardBufferDuration = 3
+        let p = AVPlayer(playerItem: item)
+        p.isMuted = true
+        p.actionAtItemEnd = .none
+        return p
     }
 }
 

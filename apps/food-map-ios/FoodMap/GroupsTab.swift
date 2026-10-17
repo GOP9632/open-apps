@@ -44,12 +44,25 @@ struct GroupsTab: View {
             .navigationDestination(for: Round.self) { RoundView(rid: $0.id) }
             .navigationDestination(for: Place.self) { PlaceDetail(place: $0) }
             .onChange(of: path.count) { _, n in store.depth[2] = n }
+            .onChange(of: store.groupJump) { jump() }
+            .onAppear(perform: jump)
             .alert(asking == .join ? "輸入邀請碼" : "建立美食群組", isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } })) {
                 TextField(asking == .join ? "朋友傳給你的 8 碼" : "例如：大學同學吃貨團", text: $text)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                 Button("取消", role: .cancel) {}
                 Button(asking == .join ? "加入" : "建立") { go(asking) }
             }
+        }
+    }
+
+    // 抽一間丟過來的：先打開群組，那一輪開好了再推進去
+    private func jump() {
+        guard let j = store.groupJump, let g = store.groups.first(where: { $0.id == j.gid }) else { return }
+        store.groupJump = nil
+        if let rid = j.rid, let r = store.rounds.first(where: { $0.id == rid }) {
+            if path.count == 1 { path.append(r) } else { path = NavigationPath([g]); path.append(r) }
+        } else {
+            path = NavigationPath([g])
         }
     }
 
@@ -185,7 +198,7 @@ struct GroupView: View {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 16) {
                     ForEach(list) { p in
                         NavigationLink(value: p) { PlaceCard(place: p) }
-                            .buttonStyle(PressStyle())
+                            .buttonStyle(PressStyle { ReelCache.warm(p) })
                             .contextMenu {
                                 Button("從群組移除", systemImage: "minus.circle", role: .destructive) { Task { await store.unshare(gid, p.id) } }
                             }

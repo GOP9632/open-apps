@@ -1,6 +1,7 @@
 import SwiftUI
 import Observation
 import CoreLocation
+import MapKit
 
 // 存在手機裡的那一份（下次打開先畫這份，不用等網路）
 struct Snapshot: Codable {
@@ -16,7 +17,7 @@ struct Snapshot: Codable {
 // 資料：上次讀到的先從手機裡拿出來畫（開 app 不用等網路），再到背景跟雲端同步
 // 改資料一律「畫面先變、背景存檔」，存失敗才改回來並告訴你
 @MainActor @Observable final class Store {
-    var places: [Place] = [] { didSet { branchMemo = [:] } }
+    var places: [Place] = [] { didSet { branchMemo = [:]; hay = [:] } }
     var groups: [FoodGroup] = []
     var members: [Member] = []
     var groupPlaces: [GroupPlace] = []
@@ -35,6 +36,8 @@ struct Snapshot: Codable {
     // 地圖頁的店家頁（教學要能直接帶他進某一間）；其他分頁回報自己往裡走了幾層，走進去就收起下面的分頁列
     var mapPath: [Place] = []
     var depth = [0, 0, 0, 0]
+    // 抽一間丟到群組投票：群組頁直接打開這個群組（開好那一輪再推進去）
+    var groupJump: GroupJump?
     var barHidden: Bool { tab == 0 ? !mapPath.isEmpty : depth[tab] > 0 }
 
     // 教學（Coach.swift）：在真的畫面上把要按的東西圈起來
@@ -60,6 +63,13 @@ struct Snapshot: Codable {
     @ObservationIgnored private var brandCache: [String: String] = [:]
     // 分店清單：places 沒變就不重算（店家頁每次畫都要用）
     @ObservationIgnored private var branchMemo: [String: [Place]] = [:]
+    // 搜尋用的字串：每家店算一次（店名、分店、地址、料理、備註、標籤串起來），places 變了才重算
+    @ObservationIgnored private var hay: [String: String] = [:]
+    // 地圖現在看到的範圍（地圖頁停下來時更新），同步完先把這範圍裡的圖釘照片解碼好
+    @ObservationIgnored var mapRegion: MKCoordinateRegion?
+    @ObservationIgnored private var warming: Task<Void, Never>?
+    // 雲端還沒有 load_all（一次拿全部）就走舊的 7 個請求，這次開 App 不再試
+    @ObservationIgnored private var noLoadAll = false
     // 刪掉但還能復原的店（幾秒後才真的刪）
     @ObservationIgnored private var undoable: Set<String> = []
 
@@ -89,8 +99,15 @@ struct Snapshot: Codable {
     func shown(_ f: Filter, in base: [Place]? = nil) -> [Place] {
         (base ?? mine).filter { p in
             (f.cat.isEmpty || p.category == f.cat) && (f.status.isEmpty || p.status == f.status) &&
-            (f.q.isEmpty || [p.name, p.branch ?? "", p.address ?? "", p.city ?? "", p.district ?? "", p.cuisine ?? "", p.note ?? "", (p.tags ?? []).joined(separator: " ")].joined(separator: " ").localizedStandardContains(f.q))
+            (f.q.isEmpty || haystack(p).localizedStandardContains(f.q))
         }
+    }
+
+    private func haystack(_ p: Place) -> String {
+        if let h = hay[p.id] { return h }
+        let h = [p.name, p.branch ?? "", p.address ?? "", p.city ?? "", p.district ?? "", p.cuisine ?? "", p.note ?? "", (p.tags ?? []).joined(separator: " ")].joined(separator: " ")
+        hay[p.id] = h
+        return h
     }
 
     private func apply(_ s: Snapshot) {
@@ -129,18 +146,20 @@ struct Snapshot: Codable {
         let t = Date()
         do {
             _ = try await Supa.fresh()
-            async let pl = Supa.select("places", "select=*&order=created_at.desc,id", as: [Place].self)
-            async let gr = Supa.select("groups", "select=*&order=created_at,id", as: [FoodGroup].self)
-            async let gm = Supa.select("group_members", "select=group_id,user_id&order=group_id,user_id", as: [Member].self)
-            async let gp = Supa.select("group_places", "select=group_id,place_id&order=group_id,place_id", as: [GroupPlace].self)
-            async let rd = Supa.select("swipe_rounds", "select=id,group_id,created_by,title,place_ids,created_at&order=created_at.desc,id&limit=50", as: [Round].self)
             var s = Snapshot()
-            (s.places, s.groups, s.members, s.groupPlaces, s.rounds) = try await (pl, gr, gm, gp, rd)
-            let ids = Array(Set([me] + s.members.map(\.user_id) + s.places.compactMap(\.owner))).sorted()
-            let rids = s.rounds.map(\.id)
-            async let pr = Supa.select("profiles", "select=id,name&id=in.(\(ids.joined(separator: ",")))&order=id", as: [Profile].self)
-            async let sw = Store.loadSwipes(rids)
-            (s.profiles, s.swipes) = try await (pr, sw)
+            if let all = await loadAll() { s = all } else {
+                async let pl = Supa.select("places", "select=*&order=created_at.desc,id", as: [Place].self)
+                async let gr = Supa.select("groups", "select=*&order=created_at,id", as: [FoodGroup].self)
+                async let gm = Supa.select("group_members", "select=group_id,user_id&order=group_id,user_id", as: [Member].self)
+                async let gp = Supa.select("group_places", "select=group_id,place_id&order=group_id,place_id", as: [GroupPlace].self)
+                async let rd = Supa.select("swipe_rounds", "select=id,group_id,created_by,title,place_ids,created_at&order=created_at.desc,id&limit=50", as: [Round].self)
+                (s.places, s.groups, s.members, s.groupPlaces, s.rounds) = try await (pl, gr, gm, gp, rd)
+                let ids = Array(Set([me] + s.members.map(\.user_id) + s.places.compactMap(\.owner))).sorted()
+                let rids = s.rounds.map(\.id)
+                async let pr = Supa.select("profiles", "select=id,name&id=in.(\(ids.joined(separator: ",")))&order=id", as: [Profile].self)
+                async let sw = Store.loadSwipes(rids)
+                (s.profiles, s.swipes) = try await (pr, sw)
+            }
             // 同步途中登出或換帳號，就不要把舊資料寫回來
             guard loggedIn, Supa.session?.user.id == me else { return }
             apply(s)
@@ -151,12 +170,64 @@ struct Snapshot: Codable {
                 profiles[me] = p
             }
             saveCache()
+            warmPhotos()
             if quickKey == nil { await loadQuickKey() }
             syncMs = Int(Date().timeIntervalSince(t) * 1000)
             error = nil
         } catch {
             self.error = error.localizedDescription
             if Supa.session == nil { loggedIn = false }
+        }
+    }
+
+    // 雲端的 load_all：一個請求拿回全部（收藏、群組、成員、分享、最近 50 輪、滑卡紀錄、名字）
+    // 雲端還沒有這個函式（404、找不到函式）就回 nil 走舊的；其他錯誤也走舊的，下次再試
+    private func loadAll() async -> Snapshot? {
+        guard !noLoadAll else { return nil }
+        struct All: Decodable {
+            var places: [Place]?, groups: [FoodGroup]?, members: [Member]?, group_places: [GroupPlace]?
+            var rounds: [Round]?, swipes: [SwipeRow]?, profiles: [Profile]?
+        }
+        do {
+            let a = try await Supa.rpc("load_all", [:], as: All.self)
+            return Snapshot(places: a.places ?? [], groups: a.groups ?? [], members: a.members ?? [], groupPlaces: a.group_places ?? [],
+                            rounds: a.rounds ?? [], swipes: a.swipes ?? [], profiles: a.profiles ?? [])
+        } catch let e as Supa.Fail where e.code == 404 || e.msg.contains("Could not find the function") {
+            noLoadAll = true
+            return nil
+        } catch {
+            print("[sync] load_all 失敗，改用舊的：\(error)")
+            return nil
+        }
+    }
+
+    // 同步完在背景把看得到的店（自己的、群組的）照片先抓進手機（不解碼，同時最多 4 張）；
+    // 地圖現在範圍裡的圖釘照片另外先解碼，滑地圖時就不用等
+    private func warmPhotos() {
+        let shared = Set(groupPlaces.map(\.place_id))
+        let urls = places.filter { isMine($0) || shared.contains($0.id) }.compactMap(\.photoURL)
+        let pins = mapRegion.map { r in
+            mapBase.filter { p in
+                guard let la = p.lat, let lo = p.lng else { return false }
+                return abs(la - r.center.latitude) <= r.span.latitudeDelta / 2 && abs(lo - r.center.longitude) <= r.span.longitudeDelta / 2
+            }.compactMap(\.photoURL)
+        } ?? []
+        warming?.cancel()
+        warming = Task.detached(priority: .utility) {
+            await Store.each(pins) { _ = await PhotoLoader.shared.load($0, 160) }
+            await Store.each(urls) { await PhotoLoader.shared.prefetch($0, small: true) }
+        }
+    }
+
+    // 同時最多跑 4 個
+    nonisolated private static func each(_ us: [URL], _ f: @escaping @Sendable (URL) async -> Void) async {
+        await withTaskGroup(of: Void.self) { g in
+            var it = us.makeIterator()
+            for _ in 0..<4 { if let u = it.next() { g.addTask { await f(u) } } }
+            while await g.next() != nil {
+                if Task.isCancelled { g.cancelAll(); return }
+                if let u = it.next() { g.addTask { await f(u) } }
+            }
         }
     }
 
