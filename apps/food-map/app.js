@@ -291,6 +291,8 @@ const nameOf = id => S.profiles[id]?.name || '朋友';
 const DB = {
   client() {
     if (!S.cfg.supabaseUrl || !S.cfg.supabaseKey || !window.supabase) return;
+    // 「忘記密碼」信裡的連結會帶 type=recovery，建立連線時網址就被清掉，所以先記下來
+    S.recovery = /type=recovery/.test(location.hash);
     S.sb = window.supabase.createClient(S.cfg.supabaseUrl, S.cfg.supabaseKey, { db: { schema: 'food' } });
   },
   // 上次讀到的資料先畫出來，不用等登入確認和資料庫（換發登入憑證要多一輪網路）
@@ -320,8 +322,27 @@ const DB = {
     S.user = data.session?.user || null;
     S.sb.auth.onAuthStateChange((ev, session) => {
       const was = S.user?.id; S.user = session?.user || null;
+      if (ev === 'PASSWORD_RECOVERY') S.recovery = true;
       if ((S.user?.id || null) !== (was || null)) App.boot();
+      if (S.recovery && S.user) setTimeout(DB.newPassword, 300);
     });
+    if (S.recovery && S.user) setTimeout(DB.newPassword, 300);
+  },
+  // 從「忘記密碼」信點進來：已經用信裡的連結登入了，請他設一組新密碼
+  async newPassword() {
+    if (!S.recovery || DB.settingPw) return;
+    DB.settingPw = true;
+    let hint = '至少 6 個字，之後 App 和網頁都用這組登入。';
+    for (;;) {
+      const pw = await App.dialog(`<h3>設定新密碼</h3><p>${esc(hint)}</p><input id="dlg-in" class="input" type="password" autocomplete="new-password" onkeydown="if(event.key==='Enter')App._dlg(this.value)">
+        <div class="row"><button class="btn" onclick="App._dlg(null)">之後再說</button><button class="btn primary" onclick="App._dlg($('#dlg-in').value)">存檔</button></div>`);
+      if (pw == null) break;
+      if (pw.length < 6) { hint = '太短了，至少要 6 個字。'; continue; }
+      const { error } = await S.sb.auth.updateUser({ password: pw });
+      if (!error) { toast('新密碼設好了'); break; }
+      hint = '沒存到：' + error.message;
+    }
+    S.recovery = false; DB.settingPw = false;
   },
   async loadAll() {
     if (!cloud()) { S.places = load('food.places', []); return; }
