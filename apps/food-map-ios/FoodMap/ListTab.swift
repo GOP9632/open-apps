@@ -320,7 +320,7 @@ private struct PendingCard: View {
                     .frame(width: 56, height: 56).background(Color.bg2, in: .rect(cornerRadius: 14))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(failed == nil ? "找店中…" : "沒找到").font(.system(size: 16, weight: .heavy)).foregroundStyle(Color.ink)
-                    Text(failed ?? add.text).font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.55)).lineLimit(2)
+                    Text(failed ?? add.text).font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.55)).lineLimit(3).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
             }

@@ -13,7 +13,6 @@ struct PlaceDetail: View {
     @State private var askNav = false
     // 選到的分店（預設是點進來的那間）；想去／去過、導航、地址都跟著它
     @State private var picked: String?
-    @State private var hero = Hero.shared
     @State private var scroll = ScrollY()
     @State private var dishesIn = false
     @State private var backed = false
@@ -96,7 +95,7 @@ struct PlaceDetail: View {
                 .overlay { PlaceMedia(place: place) }
                 .clipShape(.rect(cornerRadius: 28))
                 // 卡片飛過來的時候先藏著，落地才換成真的
-                .opacity(hero.hiding == self.place.id ? 0 : 1)
+                .opacity(Hero.shared.flag(self.place.id).on ? 0 : 1)
         }
         // 量大圖最後的位置（推頁是橫向滑進來，所以 x 用頁面裡的、y 用螢幕上的）
         .onGeometryChange(for: CGRect.self) { g in

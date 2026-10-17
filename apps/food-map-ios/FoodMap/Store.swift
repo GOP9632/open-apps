@@ -372,7 +372,7 @@ struct Snapshot: Codable {
 
     // 雲端的訊息是寫給分享捷徑的（「打開美食收藏貼上店名」），在 App 裡新增時換成 App 裡的說法
     private static func inApp(_ m: String) -> String {
-        if m.isEmpty || m.contains("沒找到店家") { return "找不到這間店。加上地區或分店名再試一次，或按「自己填」" }
+        if m.isEmpty || m.contains("沒找到店家") { return "找不到這間店，加上地區再試，或自己填" }
         if m.contains("收藏碼") { return "收藏碼失效了，請到「我的」重新產生後再試" }
         return m
     }

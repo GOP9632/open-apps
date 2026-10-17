@@ -16,7 +16,18 @@ import UIKit
     }
     private(set) var trip: Trip?
     // 飛的時候先藏起真的照片（店家頁大圖、卡片上那張）
-    private(set) var hiding: String?
+    // 正在藏的那間：每間一個小開關，只有那張卡和店家頁大圖跟著重畫（大家一起看同一個值，進店家頁時整頁卡片都會重算）
+    @ObservationIgnored private var hiding: String? {
+        didSet {
+            if let o = oldValue, o != hiding { flags[o]?.on = false }
+            if let n = hiding { flag(n).on = true }
+        }
+    }
+    @ObservationIgnored private var flags: [String: HideFlag] = [:]
+    func flag(_ id: String) -> HideFlag {
+        if let f = flags[id] { return f }
+        let f = HideFlag(); flags[id] = f; return f
+    }
 
     // 畫面上每張卡片照片的位置（不觸發重畫）：店 id → [哪張卡: (分頁, 位置, 圓角)]
     @ObservationIgnored private var spots: [String: [UUID: (tab: Int, rect: CGRect, radius: CGFloat)]] = [:]
@@ -91,6 +102,8 @@ import UIKit
     }
 }
 
+@MainActor @Observable final class HideFlag { var on = false }
+
 extension EnvironmentValues {
     // 這個畫面在第幾個分頁（卡片和店家頁對得上才飛）
     @Entry var heroTab: Int = 0
@@ -102,11 +115,10 @@ private struct HeroSource: ViewModifier {
     let radius: CGFloat
     @Environment(\.heroTab) private var tab
     @State private var key = UUID()
-    @State private var hero = Hero.shared
 
     func body(content: Content) -> some View {
         content
-            .opacity(hero.hiding == place.id ? 0 : 1)
+            .opacity(Hero.shared.flag(place.id).on ? 0 : 1)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { r in
                 Hero.shared.report(place.id, key, tab: tab, rect: r, radius: radius)
             }
