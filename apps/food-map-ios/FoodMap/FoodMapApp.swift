@@ -74,6 +74,13 @@ struct Root: View {
                 .onTapGesture { withAnimation(.snappy) { store.toast = nil } }
             }
         }
+        // 手感量測浮層（「我的」版本號連點 5 下打開）
+        .overlay { PerfHUD() }
+        .task {
+            TouchClock.install()
+            try? await Task.sleep(for: .seconds(1))
+            TouchClock.install()
+        }
         // 切回 App 時跟網頁版一樣重新同步一次
         .onChange(of: phase) { _, p in if p == .active { Task { await store.sync() } } }
     }
@@ -100,6 +107,7 @@ struct TabBar: View {
                 let on = store.tab == i
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    Perf.shared.mark("換分頁")
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { store.tab = i }
                 } label: {
                     HStack(spacing: 6) {

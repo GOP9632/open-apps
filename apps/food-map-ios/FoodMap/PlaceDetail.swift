@@ -36,6 +36,7 @@ struct PlaceDetail: View {
         }
         .background(Color.bg)
         .toolbarVisibility(.hidden, for: .navigationBar)
+        .onAppear { Perf.shared.mark("進店家頁") }
         .sheet(isPresented: $editing) { EditSheet(place: place) }
         .confirmationDialog("用哪個地圖導航？", isPresented: $askNav, titleVisibility: .visible) {
             ForEach(NavApp.allCases, id: \.self) { a in
@@ -49,6 +50,7 @@ struct PlaceDetail: View {
 
     // 回上一頁：地圖分頁的頁面記在 store.mapPath，直接從那裡退一頁（dismiss 在地圖那邊沒反應）
     private func back() {
+        Perf.shared.mark("返回")
         if store.tab == 0, !store.mapPath.isEmpty { store.mapPath.removeLast() } else { dismiss() }
     }
 
@@ -250,6 +252,7 @@ struct StatusToggle: View {
         return Button {
             guard !on else { return }
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            Perf.shared.mark("想去/去過")
             var p = place; p.status = v
             if v == "want" { p.rating = nil }
             Task { await store.save(p) }

@@ -90,6 +90,7 @@ struct FilterChips: View {
 
     private func tap(_ g: () -> Void) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Perf.shared.mark("篩選")
         withAnimation(.snappy) { g() }
     }
 }
@@ -150,7 +151,7 @@ struct CircleIcon: View {
 struct BackButton: View {
     @Environment(\.dismiss) private var dismiss
     var body: some View {
-        Button { dismiss() } label: {
+        Button { Perf.shared.mark("返回"); dismiss() } label: {
             Image(systemName: "chevron.left").font(.system(size: 17, weight: .bold)).foregroundStyle(Color.ink)
                 .frame(width: 44, height: 44).contentShape(.rect)
         }

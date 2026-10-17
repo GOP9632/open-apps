@@ -1,6 +1,10 @@
 import SwiftUI
 
 struct MeTab: View {
+    static let version: String = {
+        let i = Bundle.main.infoDictionary
+        return "\(i?["CFBundleShortVersionString"] as? String ?? "")（\(i?["CFBundleVersion"] as? String ?? "")）"
+    }()
     @Environment(Store.self) private var store
     @State private var renaming = false
     @State private var newName = ""
@@ -75,6 +79,16 @@ struct MeTab: View {
                         Text("進階").font(.system(size: 16, weight: .heavy)).foregroundStyle(Color.ink.opacity(0.6))
                     }
                     .tint(Color.ink.opacity(0.6))
+                    // 版本號；連點 5 下打開手感量測（只有 TestFlight 版）
+                    Text("Bitemap \(Self.version)")
+                        .font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.35))
+                        .frame(maxWidth: .infinity).padding(.top, 8)
+                        .contentShape(.rect)
+                        .onTapGesture(count: 5) {
+                            guard Perf.allowed else { return }
+                            UINotificationFeedbackGenerator().notificationOccurred(.success)
+                            Perf.shared.on.toggle()
+                        }
                 }
                 .padding(.horizontal, 16).padding(.bottom, 24)
             }

@@ -58,6 +58,7 @@ struct MapTab: View {
                 .onChange(of: sel) { _, id in
                     guard let p = list.first(where: { $0.id == id }) else { return }
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    Perf.shared.mark(drawn == id ? "抽一間" : "點圖釘")
                     // 光圈和糖粒：記下那根圖釘在螢幕上的位置，地圖移動的這一小段時間跟著更新
                     if !reduce {
                         let c = CLLocationCoordinate2D(latitude: p.lat!, longitude: p.lng!)
