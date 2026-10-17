@@ -76,9 +76,11 @@ struct AddSheet: View {
         focus = false; busy = true
         Task {
             let r = await store.quickAdd(input.trimmingCharacters(in: .whitespacesAndNewlines), been: been, rating: been ? rating : nil)
-            UINotificationFeedbackGenerator().notificationOccurred(r.hasPrefix("已收藏") ? .success : .warning)
+            let ok = r.hasPrefix("已收藏")
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .warning)
+            // 存好了就直接關掉，結果用下面的小訊息告訴他；沒存到才留在這裡讓他改
+            if ok { dismiss(); store.say(r); return }
             withAnimation(.snappy) { result = r; busy = false }
-            if r.hasPrefix("已收藏") { input = "" }
         }
     }
 }

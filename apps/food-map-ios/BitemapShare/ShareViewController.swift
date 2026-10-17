@@ -28,11 +28,19 @@ final class ShareViewController: UIViewController {
             await finish("沒有讀到連結或文字", ok: false, delay: 2)
             return
         }
+        // 交給背景上傳，馬上關掉分享選單；存好了會跳通知（ShareUpload.swift）
         do {
-            let line = try await quickAdd(key: key, input: input)
-            await finish(line.isEmpty ? "收藏失敗，請再試一次" : line, ok: !line.isEmpty, delay: 1.5)
+            try ShareUpload.shared.send(key: key, input: input)
+            await finish("收到了，存好會通知你", ok: true, delay: 0.8)
         } catch {
-            await finish("收藏失敗：\(error.localizedDescription)", ok: false, delay: 2.5)
+            // 背景上傳開不起來才在這裡等，最多 15 秒，點一下就關
+            model.tapToClose = { [weak self] in self?.extensionContext?.completeRequest(returningItems: nil) }
+            do {
+                let line = try await quickAdd(key: key, input: input)
+                await finish(line.isEmpty ? "收藏失敗，請再試一次" : line, ok: !line.isEmpty, delay: 1.5)
+            } catch {
+                await finish("收藏失敗：\(error.localizedDescription)", ok: false, delay: 2.5)
+            }
         }
     }
 
@@ -63,7 +71,7 @@ final class ShareViewController: UIViewController {
         r.setValue("sb_publishable_p_eT8zA9iEEITNyUFslSpQ_BU62SO9n", forHTTPHeaderField: "apikey")
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.httpBody = try JSONEncoder().encode(["key": qk, "input": input])
-        r.timeoutInterval = 60
+        r.timeoutInterval = 15
         let (d, res) = try await URLSession.shared.data(for: r)
         let code = (res as? HTTPURLResponse)?.statusCode ?? 0
         guard code == 200 else { throw NSError(domain: "Bitemap", code: code, userInfo: [NSLocalizedDescriptionKey: "雲端暫時出錯（\(code)）"]) }
@@ -75,6 +83,7 @@ final class ShareViewController: UIViewController {
     var text = "收藏中…"
     var done = false
     var ok = true
+    var tapToClose: (() -> Void)?
 }
 
 struct ShareCard: View {
@@ -98,6 +107,8 @@ struct ShareCard: View {
         .background(.regularMaterial, in: .rect(cornerRadius: 24))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black.opacity(0.25))
+        .contentShape(.rect)
+        .onTapGesture { model.tapToClose?() }
         .animation(.snappy, value: model.done)
     }
 }

@@ -11,14 +11,17 @@ struct MapTab: View {
     @State private var here: CLLocation?
     @State private var fitted = false
     @State private var adding = false
+    @State private var noAddr = false
 
-    private var points: [Place] { store.visible.filter { $0.lat != nil && $0.lng != nil } }
+    private var points: [Place] { store.shown(store.mapF).filter { $0.lat != nil && $0.lng != nil } }
 
     var body: some View {
         @Bindable var store = store
         // 有座標的店一次算好，下面每個地方共用
         let list = points
-        let near = Nearby(list: list, here: here, total: store.visible.count)
+        let all = store.shown(store.mapF)
+        let near = Nearby(list: list, here: here, total: all.count)
+        let missing = all.count - list.count
         NavigationStack(path: $store.mapPath) {
             MapReader { proxy in
                 Map(position: $pos, selection: $sel) {
@@ -44,23 +47,36 @@ struct MapTab: View {
             }
             .safeAreaInset(edge: .top, spacing: 0) {
                 VStack(spacing: 8) {
-                    SearchField(text: $store.q, prompt: "今天想吃什麼？") {
+                    SearchField(text: $store.mapF.q, prompt: "今天想吃什麼？") {
                         AddButton { adding = true }.coachAnchor(.add)
                     }
                     .padding(.horizontal, 16)
-                    FilterChips()
+                    FilterChips(f: $store.mapF)
                 }
                 .padding(.top, 6)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(alignment: .trailing, spacing: 10) {
-                    Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        withAnimation(.smooth(duration: 0.5)) { pos = .userLocation(fallback: pos) }
-                    } label: { CircleIcon(icon: "location.fill") }
-                    .buttonStyle(PressStyle())
-                    .accessibilityLabel("我的位置")
-                    .padding(.trailing, 16)
+                    HStack {
+                        // 沒有座標的店不會出現在地圖上，提醒一下，點了可以補地址
+                        if missing > 0 {
+                            Button { noAddr = true } label: {
+                                Label("\(missing) 間還沒有地址", systemImage: "mappin.slash")
+                                    .font(.footnote.weight(.heavy)).foregroundStyle(Color.ink)
+                                    .padding(.horizontal, 12).frame(height: 36)
+                                    .background(.white, in: .capsule).shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                            }
+                            .buttonStyle(PressStyle())
+                        }
+                        Spacer()
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            withAnimation(.smooth(duration: 0.5)) { pos = .userLocation(fallback: pos) }
+                        } label: { CircleIcon(icon: "location.fill") }
+                        .buttonStyle(PressStyle())
+                        .accessibilityLabel("我的位置")
+                    }
+                    .padding(.horizontal, 16)
                     NearbySheet(near: near, sel: $sel)
                 }
             }
@@ -68,6 +84,7 @@ struct MapTab: View {
             .navigationDestination(for: Place.self) { PlaceDetail(place: $0) }
         }
         .sheet(isPresented: $adding) { AddSheet() }
+        .sheet(isPresented: $noAddr) { NoAddressSheet() }
         .onAppear {
             loc.requestWhenInUseAuthorization()
             here = loc.location
@@ -192,5 +209,35 @@ struct MapCard: View {
         .frame(width: 270, height: 104)
         .candy(20)
         .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(on ? Color.accent : .clear, lineWidth: 2.5))
+    }
+}
+
+// 還沒有地址的店：列出來，點一間就能補地址（存檔時會自己查座標）
+struct NoAddressSheet: View {
+    @Environment(Store.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var editing: Place?
+
+    var body: some View {
+        let list = store.mine.filter { $0.lat == nil || $0.lng == nil }
+        NavigationStack {
+            List(list) { p in
+                Button { editing = p } label: {
+                    HStack(spacing: 12) {
+                        PhotoView(place: p, px: 160).frame(width: 52, height: 52).clipShape(.rect(cornerRadius: 12))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(p.name).font(.headline).foregroundStyle(Color.ink)
+                            Text(p.address?.isEmpty == false ? "地址找不到位置，點一下改" : "點一下補地址").font(.caption).foregroundStyle(Color.ink.opacity(0.5))
+                        }
+                        Spacer()
+                        Image(systemName: "pencil").foregroundStyle(Color.accent)
+                    }
+                }
+            }
+            .overlay { if list.isEmpty { ContentUnavailableView("都在地圖上了 🎉", systemImage: "map") } }
+            .navigationTitle("還沒有地址").navigationBarTitleDisplayMode(.inline)
+            .toolbar { Button("完成") { dismiss() } }
+            .sheet(item: $editing) { EditSheet(place: $0) }
+        }
     }
 }

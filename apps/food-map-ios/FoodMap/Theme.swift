@@ -64,29 +64,27 @@ struct Badge: View {
     }
 }
 
-// 地圖和收藏頁共用的篩選列：全部、想去、去過、各分類
+// 地圖和收藏頁都用的篩選列（各自一份篩選）：全部、想去、去過、各分類。「全部」會把想去／去過也清掉
 struct FilterChips: View {
-    @Environment(Store.self) private var store
+    @Binding var f: Filter
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                Chip(text: "全部", on: store.status.isEmpty && store.cat.isEmpty) {
-                    tap { store.status = ""; store.cat = "" }
-                }
-                Chip(text: "♥ 想去", on: store.status == "want", color: .sprPink) { tap { store.status = store.status == "want" ? "" : "want" } }
-                Chip(text: "✓ 去過", on: store.status == "been", color: .sprMint) { tap { store.status = store.status == "been" ? "" : "been" } }
+                Chip(text: "全部", on: !f.on) { tap { f.status = ""; f.cat = "" } }
+                Chip(text: "♥ 想去", on: f.status == "want", color: .sprPink) { tap { f.status = f.status == "want" ? "" : "want" } }
+                Chip(text: "✓ 去過", on: f.status == "been", color: .sprMint) { tap { f.status = f.status == "been" ? "" : "been" } }
                 ForEach(Cat.order, id: \.self) { k in
                     let c = Cat.all[k]!
-                    Chip(text: "\(c.emoji) \(c.name)", on: store.cat == k, color: c.color) { tap { store.cat = store.cat == k ? "" : k } }
+                    Chip(text: "\(c.emoji) \(c.name)", on: f.cat == k, color: c.color) { tap { f.cat = f.cat == k ? "" : k } }
                 }
             }
             .padding(.horizontal, 16).padding(.vertical, 4)
         }
     }
 
-    private func tap(_ f: () -> Void) {
+    private func tap(_ g: () -> Void) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.snappy) { f() }
+        withAnimation(.snappy) { g() }
     }
 }
 

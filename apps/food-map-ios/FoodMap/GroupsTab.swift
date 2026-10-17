@@ -53,7 +53,12 @@ struct GroupsTab: View {
         }
     }
 
-    private func ask(_ a: Ask) { text = ""; asking = a }
+    private func ask(_ a: Ask) {
+        text = ""
+        // 剪貼簿裡有朋友傳的邀請碼或邀請連結，就直接幫他填好
+        if a == .join, UIPasteboard.general.hasStrings, let c = FoodGroup.code(in: UIPasteboard.general.string ?? "") { text = c }
+        asking = a
+    }
 
     private func go(_ a: Ask?) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -111,7 +116,7 @@ struct GroupView: View {
 
     private func content(_ g: FoodGroup) -> some View {
         let mem = store.membersOf(gid), list = store.placesIn(gid), rounds = store.roundsOf(gid)
-        let link = "https://gop9632.github.io/open-apps/apps/food-map/?join=\(g.invite_code)"
+        let alone = mem.count < 2
         return ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: -8) {
@@ -127,13 +132,22 @@ struct GroupView: View {
                             .background(Color.grad, in: .rect(cornerRadius: 16)).foregroundStyle(.white)
                     }
                     .buttonStyle(PressStyle()).disabled(list.isEmpty)
-                    ShareLink(item: "來加入我的美食群組「\(g.name)」，一起收藏、一起滑卡決定吃什麼 🍜\n\(link)\n邀請碼：\(g.invite_code)") {
+                    ShareLink(item: g.inviteText) {
                         Label("邀請", systemImage: "person.badge.plus").font(.headline).frame(width: 100, height: 52)
                             .background(Color.panel, in: .rect(cornerRadius: 16))
                     }
                     .buttonStyle(PressStyle())
                 }
                 .padding(.horizontal, 16)
+
+                // 只有自己一個人：滑卡要兩個人以上才會配對
+                if alone {
+                    Label("現在只有你一個人。邀朋友加入，大家都想吃的店才會配對成功。", systemImage: "person.2.fill")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.7))
+                        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.sprYellow.opacity(0.25), in: .rect(cornerRadius: 16))
+                        .padding(.horizontal, 16)
+                }
 
                 if !rounds.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
@@ -351,6 +365,7 @@ struct RoundView: View {
     @State private var detail: Place?
     @State private var match: Store.Match?
     @State private var dropping = false
+    @State private var history: [String] = []
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -390,8 +405,9 @@ struct RoundView: View {
                 .padding(.horizontal, 20).padding(.top, 6)
                 SwipeDeck(deck: todo, onSwipe: { p, liked in
                     store.swipe(r, p.id, liked: liked)
+                    history.append(p.id)
                     if liked, let m = store.matches(r).first(where: { $0.place.id == p.id }), m.all { celebrate(m) }
-                }, onTap: { detail = $0 })
+                }, onTap: { detail = $0 }, onUndo: history.isEmpty ? nil : { undo(r) })
             }
         }
         .background(Color.bg)
@@ -411,13 +427,37 @@ struct RoundView: View {
         }
     }
 
+    // 收回剛滑的那張：從紀錄刪掉，卡片回到最上面
+    private func undo(_ r: Round) {
+        guard let pid = history.popLast() else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.snappy) { showResult = false }
+        Task { await store.unswipe(r, pid) }
+    }
+
     private func results(_ r: Round, done: Bool) -> some View {
         let all = store.matches(r), total = store.membersOf(r.group_id).count
         let swiped = Set(store.swipes.filter { $0.round_id == r.id }.map(\.user_id))
+        let g = store.groups.first { $0.id == r.group_id }
         return List {
             Section {
                 Text(done ? "你滑完了！" + (swiped.count < total ? "等其他人滑完，結果會自己更新。" : "大家都滑完了。") : "你還沒滑完，這是目前的結果。")
                     .font(.subheadline).foregroundStyle(.secondary)
+                if !history.isEmpty {
+                    Button("↶ 收回上一張") { undo(r) }.font(.subheadline.weight(.bold)).foregroundStyle(Color.accent)
+                }
+            }
+            // 群組只有一個人不會有配對
+            if total < 2, let g {
+                Section {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("邀朋友加入才會配對").font(.headline).foregroundStyle(Color.ink)
+                        Text("配對是大家都想吃的店。把邀請連結傳給朋友，他們滑完結果就會出現。").font(.subheadline).foregroundStyle(Color.ink.opacity(0.6))
+                        ShareLink(item: g.inviteText) { Label("邀請朋友", systemImage: "person.badge.plus").frame(maxWidth: .infinity) }
+                            .buttonStyle(ChunkyStyle(radius: 14))
+                    }
+                    .padding(.vertical, 6)
+                }
             }
             ForEach(all) { m in
                 Button { detail = m.place } label: {
@@ -463,7 +503,7 @@ struct MatchView: View {
                 Text("配對成功！").font(.system(size: 34, weight: .black)).foregroundStyle(.white)
                 Text("大家都想吃 **\(match.place.name)**").foregroundStyle(.white.opacity(0.9))
                 HStack(spacing: -8) { ForEach(match.who, id: \.self) { Avatar(name: store.name($0), id: $0, size: 36) } }
-                Button { if let u = match.place.mapsURL { openURL(u) } } label: {
+                Button { if let u = match.place.navURL(NavApp.saved ?? .google) { openURL(u) } } label: {
                     Label("就去這間", systemImage: "location.fill").font(.headline).frame(width: 240, height: 52)
                         .background(.white, in: .capsule).foregroundStyle(.black)
                 }
@@ -496,5 +536,20 @@ struct Flow: Layout {
             v.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(s))
             x += s.width + spacing; line = Swift.max(line, s.height)
         }
+    }
+}
+
+extension FoodGroup {
+    // 邀請連結：有裝 App 直接在 App 裡加入，沒裝就開網頁版
+    var inviteLink: String { "https://anthony-apps.netlify.app/join?code=\(invite_code)" }
+    var inviteText: String { "來加入我的美食群組「\(name)」，一起收藏、一起滑卡決定吃什麼 🍜\n\(inviteLink)\n邀請碼：\(invite_code)" }
+
+    // 從一段文字找出 8 碼邀請碼（邀請連結、「邀請碼：XXXX」或只有碼本身）
+    static func code(in s: String) -> String? {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        for p in [#"(?:join=|code=|邀請碼[：:]\s*)([A-Za-z0-9]{8})\b"#, #"^([A-Za-z0-9]{8})$"#] {
+            if let r = try? NSRegularExpression(pattern: p), let m = r.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)), let g = Range(m.range(at: 1), in: t) { return String(t[g]) }
+        }
+        return nil
     }
 }

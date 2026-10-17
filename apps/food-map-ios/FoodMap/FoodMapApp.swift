@@ -1,7 +1,9 @@
 import SwiftUI
+import UserNotifications
 
 @main
 struct FoodMapApp: App {
+    @UIApplicationDelegateAdaptor private var delegate: AppDelegate
     @State private var store = Store()
     init() { _ = Store.launchedAt }
 
@@ -39,6 +41,13 @@ struct Root: View {
                     await store.sync()
                     store.maybeStartCoach()
                 }
+                // 分享選單存好了：重新同步，剛存的店馬上出現
+                .onReceive(NotificationCenter.default.publisher(for: .shareSaved)) { _ in Task { await store.sync() } }
+                // 朋友傳來的邀請連結 https://anthony-apps.netlify.app/join?code=XXXX 直接在 App 裡加入
+                .onOpenURL { url in
+                    guard url.path.hasPrefix("/join"), let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "code" })?.value else { return }
+                    Task { if await store.join(code) != nil { withAnimation(.snappy) { store.tab = 2 } } }
+                }
                 .overlay { CoachOverlay().ignoresSafeArea() }
                 .fullScreenCover(isPresented: $store.showIG) { IGTutorial() }
             } else {
@@ -48,13 +57,19 @@ struct Root: View {
         // 存檔失敗之類的訊息，從下面浮出來，幾秒後自己消失
         .overlay(alignment: .bottom) {
             if let t = store.toast {
-                Text(t).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
-                    .padding(.horizontal, 16).padding(.vertical, 11)
-                    .background(Color.ink.opacity(0.9), in: .capsule)
-                    .padding(.bottom, 96).padding(.horizontal, 24)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .task(id: t) { try? await Task.sleep(for: .seconds(2.6)); withAnimation(.snappy) { if store.toast == t { store.toast = nil } } }
-                    .onTapGesture { withAnimation(.snappy) { store.toast = nil } }
+                let act = store.toastAction
+                HStack(spacing: 14) {
+                    Text(t).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
+                    if let act {
+                        Button(act.label) { act.run() }.font(.subheadline.weight(.heavy)).foregroundStyle(Color.sprYellow)
+                    }
+                }
+                .padding(.horizontal, 16).padding(.vertical, 11)
+                .background(Color.ink.opacity(0.92), in: .capsule)
+                .padding(.bottom, 96).padding(.horizontal, 24)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .task(id: t) { try? await Task.sleep(for: .seconds(act == nil ? 2.6 : 4)); withAnimation(.snappy) { if store.toast == t { store.toast = nil; store.toastAction = nil } } }
+                .onTapGesture { withAnimation(.snappy) { store.toast = nil } }
             }
         }
         // 切回 App 時跟網頁版一樣重新同步一次
@@ -114,4 +129,22 @@ struct TabBar: View {
 extension View {
     // 分頁最上層的捲動內容，底下留位置給浮著的分頁列
     func tabBarRoom() -> some View { safeAreaPadding(.bottom, 76) }
+}
+
+// 分享選單的背景收藏做完時，系統會叫醒 App 交結果；也負責在 App 開著時照樣跳通知
+final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    func application(_ app: UIApplication, didFinishLaunchingWithOptions o: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        // 第一次打開就問能不能發通知（分享選單存好要靠通知告訴他）
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        return true
+    }
+
+    func application(_ app: UIApplication, handleEventsForBackgroundURLSession id: String, completionHandler: @escaping () -> Void) {
+        guard id.hasPrefix(ShareUpload.prefix) else { completionHandler(); return }
+        ShareUpload.shared.finished[id] = completionHandler
+        ShareUpload.shared.session(id)
+    }
+
+    func userNotificationCenter(_ c: UNUserNotificationCenter, willPresent n: UNNotification) async -> UNNotificationPresentationOptions { [.banner, .sound] }
 }

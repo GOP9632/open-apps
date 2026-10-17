@@ -41,6 +41,17 @@ enum Supa {
         return false
     }
 
+    // 寄重設密碼的信（信裡的連結到網頁版設定新密碼）
+    static func recover(email: String) async throws {
+        var r = URLRequest(url: URL(string: "\(url.absoluteString)/auth/v1/recover?redirect_to=https%3A%2F%2Fgop9632.github.io%2Fopen-apps%2Fapps%2Ffood-map%2F")!)
+        r.httpMethod = "POST"
+        r.setValue(key, forHTTPHeaderField: "apikey")
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.httpBody = try JSONEncoder().encode(["email": email])
+        let (d, res) = try await URLSession.shared.data(for: r)
+        guard (res as? HTTPURLResponse)?.statusCode == 200 else { throw Fail(msg: message(d, "寄信失敗，請稍後再試")) }
+    }
+
     private static func message(_ d: Data, _ fallback: String) -> String {
         let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
         let m = (j?["msg"] ?? j?["error_description"] ?? j?["message"]) as? String ?? ""

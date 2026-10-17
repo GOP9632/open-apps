@@ -6,6 +6,9 @@ struct MeTab: View {
     @State private var newName = ""
     @State private var resetting = false
     @State private var leaving = false
+    @State private var advanced = false
+    @State private var killing = false
+    @State private var nav = NavApp.saved
 
     var body: some View {
         NavigationStack {
@@ -26,25 +29,50 @@ struct MeTab: View {
                             store.igFromCoach = false; store.showIG = true
                         }
                     }
-                    box("IG 分享捷徑", footer: "網頁版設定好的分享捷徑可以繼續用，不用改。換新的收藏碼之後，舊的捷徑就不能用了。") {
-                        if let k = store.quickKey {
-                            row("複製收藏碼", nil, "doc.on.doc.fill", .sprBlue) { UIPasteboard.general.string = k; store.say("已複製收藏碼") }
-                            Divider().padding(.leading, 58)
-                            row("換新的收藏碼", nil, "arrow.triangle.2.circlepath", .sprPink) { resetting = true }
-                        } else {
-                            ProgressView().frame(maxWidth: .infinity).padding()
+                    box("設定") {
+                        Menu {
+                            Picker("導航用", selection: Binding(get: { nav }, set: { nav = $0; NavApp.saved = $0 })) {
+                                Text("每次問我").tag(NavApp?.none)
+                                ForEach(NavApp.allCases, id: \.self) { Text($0.name).tag(NavApp?.some($0)) }
+                            }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "location.fill").font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
+                                    .frame(width: 34, height: 34).background(Color.accent, in: .rect(cornerRadius: 10))
+                                Text("導航用").font(.system(size: 16, weight: .bold)).foregroundStyle(Color.ink)
+                                Spacer()
+                                Text(nav?.name ?? "每次問我").font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
+                                Image(systemName: "chevron.up.chevron.down").font(.caption.bold()).foregroundStyle(Color.ink.opacity(0.3))
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 11)
                         }
                     }
-                    box("速度") {
-                        HStack { Text("打開到看到卡片"); Spacer(); Text(store.firstPaintMs.map { "\($0) ms" } ?? "—").foregroundStyle(Color.ink.opacity(0.5)) }.padding(14)
-                        Divider().padding(.leading, 14)
-                        HStack { Text("跟雲端同步一次"); Spacer(); Text(store.syncMs.map { "\($0) ms" } ?? "—").foregroundStyle(Color.ink.opacity(0.5)) }.padding(14)
-                    }
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink)
                     Button("登出") { leaving = true }
                         .font(.headline).foregroundStyle(Color.sprPink)
                         .frame(maxWidth: .infinity).frame(height: 50).candy(18)
                         .buttonStyle(PressStyle())
+                    // 很少用到的收在「進階」
+                    DisclosureGroup(isExpanded: $advanced.animation(.snappy)) {
+                        VStack(alignment: .leading, spacing: 16) {
+                            box("IG 分享捷徑（網頁版用）", footer: "網頁版設定好的分享捷徑可以繼續用。換新的收藏碼之後，舊的捷徑就不能用了。App 裡的分享選單不受影響。") {
+                                if let k = store.quickKey {
+                                    row("複製收藏碼", nil, "doc.on.doc.fill", .sprBlue) { UIPasteboard.general.string = k; store.say("已複製收藏碼") }
+                                    Divider().padding(.leading, 58)
+                                    row("換新的收藏碼", nil, "arrow.triangle.2.circlepath", .sprPurple) { resetting = true }
+                                } else {
+                                    ProgressView().frame(maxWidth: .infinity).padding()
+                                }
+                            }
+                            Button("刪除帳號") { killing = true }
+                                .font(.headline).foregroundStyle(.red)
+                                .frame(maxWidth: .infinity).frame(height: 50).candy(18)
+                                .buttonStyle(PressStyle())
+                        }
+                        .padding(.top, 10)
+                    } label: {
+                        Text("進階").font(.system(size: 16, weight: .heavy)).foregroundStyle(Color.ink.opacity(0.6))
+                    }
+                    .tint(Color.ink.opacity(0.6))
                 }
                 .padding(.horizontal, 16).padding(.bottom, 24)
             }
@@ -59,6 +87,9 @@ struct MeTab: View {
             }
             .confirmationDialog("換新的收藏碼？舊的分享捷徑會失效，要重新加入。", isPresented: $resetting, titleVisibility: .visible) {
                 Button("換新的", role: .destructive) { Task { await store.resetQuickKey() } }
+            }
+            .confirmationDialog("刪除帳號？你的收藏、群組、滑卡紀錄都會一起刪掉，不能復原。", isPresented: $killing, titleVisibility: .visible) {
+                Button("刪除帳號", role: .destructive) { Task { await store.deleteAccount() } }
             }
             .confirmationDialog("要登出嗎？", isPresented: $leaving, titleVisibility: .visible) {
                 Button("登出", role: .destructive) { store.signOut() }
@@ -153,6 +184,13 @@ struct LoginView: View {
             }
             .textFieldStyle(.roundedBorder).font(.body)
             if let e = store.error { Text(e).foregroundStyle(.red).font(.footnote) }
+            if !signUp {
+                Button("忘記密碼？") {
+                    let e = email.trimmingCharacters(in: .whitespaces)
+                    if e.isEmpty { store.error = "先填 Email，再按忘記密碼" } else { Task { await store.recover(e) } }
+                }
+                .font(.footnote.weight(.bold)).foregroundStyle(Color.accent)
+            }
             Button(action: go) {
                 Text(busy ? (signUp ? "建立中…" : "登入中…") : (signUp ? "建立帳號" : "登入")).frame(maxWidth: .infinity).frame(height: 52)
             }

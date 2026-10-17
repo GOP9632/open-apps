@@ -10,6 +10,7 @@ struct PlaceDetail: View {
     @Environment(Store.self) private var store
     @State private var editing = false
     @State private var deleting = false
+    @State private var askNav = false
 
     var body: some View {
         // 永遠顯示最新的那份（剛改的狀態、別台裝置改的都會跟上）
@@ -17,7 +18,8 @@ struct PlaceDetail: View {
         let mine = store.isMine(place)
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                photo(place, mine: mine)
+                top(place, mine: mine)
+                photo(place)
                 info(place, mine: mine)
                 actions(place)
                 if let d = place.dishes, !d.isEmpty { dishes(d) }
@@ -31,37 +33,45 @@ struct PlaceDetail: View {
         .background(Color.bg)
         .toolbarVisibility(.hidden, for: .navigationBar)
         .sheet(isPresented: $editing) { EditSheet(place: place) }
+        .confirmationDialog("用哪個地圖導航？", isPresented: $askNav, titleVisibility: .visible) {
+            ForEach(NavApp.allCases, id: \.self) { a in
+                Button(a.name) { NavApp.saved = a; if let u = place.navURL(a) { openURL(u) } }
+            }
+        } message: { Text("之後可以在「我的」改") }
         .confirmationDialog("刪除「\(place.name)」？", isPresented: $deleting, titleVisibility: .visible) {
-            Button("刪除", role: .destructive) { dismiss(); Task { await store.delete(place) } }
+            Button("刪除", role: .destructive) { dismiss(); store.deleteWithUndo(place) }
         }
     }
 
-    private func photo(_ place: Place, mine: Bool) -> some View {
+    // 上面一排：返回、更多（不壓在照片上）
+    private func top(_ place: Place, mine: Bool) -> some View {
+        HStack {
+            Button { dismiss() } label: { CircleIcon(icon: "chevron.left") }
+                .buttonStyle(PressStyle()).accessibilityLabel("返回")
+            Spacer()
+            Menu {
+                if mine {
+                    Button("編輯", systemImage: "pencil") { editing = true }
+                    Button("刪除", systemImage: "trash", role: .destructive) { deleting = true }
+                } else if let o = place.owner {
+                    Text("\(store.name(o)) 的收藏")
+                }
+                Button("分享", systemImage: "square.and.arrow.up") { share(place) }
+            } label: { CircleIcon(icon: "ellipsis") }
+            .accessibilityLabel("更多")
+        }
+        .padding(.top, 4)
+    }
+
+    private func photo(_ place: Place) -> some View {
         Color.clear.aspectRatio(1, contentMode: .fit)
             .overlay { PhotoView(place: place, px: 1200) }
             .clipShape(.rect(cornerRadius: 28))
-            .overlay(alignment: .topLeading) {
-                Button { dismiss() } label: { CircleIcon(icon: "chevron.left") }
-                    .buttonStyle(PressStyle()).accessibilityLabel("返回").padding(12)
-            }
-            .overlay(alignment: .topTrailing) {
-                Menu {
-                    if mine {
-                        Button("編輯", systemImage: "pencil") { editing = true }
-                        Button("刪除", systemImage: "trash", role: .destructive) { deleting = true }
-                    } else if let o = place.owner {
-                        Text("\(store.name(o)) 的收藏")
-                    }
-                    if let u = place.mapsURL { ShareLink("分享", item: u) }
-                } label: { CircleIcon(icon: "ellipsis") }
-                .accessibilityLabel("更多").padding(12)
-            }
             .overlay(alignment: .bottomLeading) {
                 Text("\(place.cat.emoji) \(place.cat.name)").font(.footnote.weight(.heavy)).foregroundStyle(.white)
                     .padding(.horizontal, 11).frame(height: 30).background(place.cat.color, in: .capsule)
                     .overlay(Capsule().strokeBorder(.white, lineWidth: 2)).padding(14)
             }
-            .padding(.top, 4)
     }
 
     private func info(_ place: Place, mine: Bool) -> some View {
@@ -89,6 +99,14 @@ struct PlaceDetail: View {
                     Spacer()
                     Badge(place: place)
                 }
+                // 朋友的店：一鍵加進自己的收藏
+                if store.alreadyMine(place) {
+                    Label("已在你的收藏", systemImage: "checkmark").font(.subheadline.weight(.heavy)).foregroundStyle(Color.sprMint)
+                        .frame(maxWidth: .infinity).frame(height: 44)
+                } else {
+                    Button { Task { await store.copyToMine(place) } } label: { Text("♥ 我也想去").frame(maxWidth: .infinity) }
+                        .buttonStyle(ChunkyStyle(color: .sprPink, edge: Color.sprPink.mix(with: .black, by: 0.2), radius: 14))
+                }
             }
         }
         .padding(16)
@@ -99,15 +117,27 @@ struct PlaceDetail: View {
 
     private func actions(_ place: Place) -> some View {
         HStack(spacing: 10) {
-            Button { if let u = place.mapsURL { openURL(u) } } label: { ActLabel(icon: "location.fill", text: "導航") }
+            Button {
+                if let a = NavApp.saved { if let u = place.navURL(a) { openURL(u) } } else { askNav = true }
+            } label: { ActLabel(icon: "location.fill", text: "導航") }
                 .buttonStyle(ChunkyStyle(color: .accent, edge: .accentDeep, radius: 18))
             if let s = place.source_url, let u = URL(string: s), !s.isEmpty {
-                let ig = s.contains("instagram")
-                Button { openURL(u) } label: { ActLabel(icon: ig ? "play.fill" : "arrow.up.right.square", text: ig ? "看影片" : "原始貼文") }
+                // 只有 IG Reels 是影片，其他貼文叫「看貼文」
+                let reel = s.contains("/reel/") || s.contains("/reels/")
+                Button { openURL(u) } label: { ActLabel(icon: reel ? "play.fill" : "doc.richtext", text: reel ? "看影片" : "看貼文") }
                     .buttonStyle(ChunkyStyle(color: .sprPink, edge: Color.sprPink.mix(with: .black, by: 0.2), radius: 18))
             }
-            ShareLink(item: place.mapsURL ?? URL(string: "https://maps.google.com")!) { ActLabel(icon: "square.and.arrow.up", text: "分享") }
+            Button { share(place) } label: { ActLabel(icon: "square.and.arrow.up", text: "分享") }
                 .buttonStyle(ChunkyStyle(color: .sprBlue, edge: Color.sprBlue.mix(with: .black, by: 0.2), radius: 18))
+        }
+    }
+
+    // 分享：店名、地址、必點、地圖連結，加上封面照片
+    private func share(_ place: Place) {
+        Task {
+            var items: [Any] = [place.shareText]
+            if let u = place.photoURL, let img = await PhotoLoader.shared.load(u, 1200) { items.append(img) }
+            presentShare(items)
         }
     }
 

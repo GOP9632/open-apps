@@ -10,7 +10,7 @@ struct ListTab: View {
     var body: some View {
         @Bindable var store = store
         // 篩選結果一次算好（每打一個字只算一次）
-        let visible = store.visible
+        let visible = store.shown(store.listF)
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -23,8 +23,8 @@ struct ListTab: View {
                         AddButton(size: 42) { adding = true }
                     }
                     .padding(.horizontal, 16)
-                    SearchField(text: $store.q, prompt: "搜尋店名、地區、料理、標籤").padding(.horizontal, 16)
-                    FilterChips()
+                    SearchField(text: $store.listF.q, prompt: "搜尋店名、地區、料理、標籤").padding(.horizontal, 16)
+                    if !store.mine.isEmpty { FilterChips(f: $store.listF) }
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 14) {
                         ForEach(visible) { p in
                             NavigationLink(value: p) { PlaceCard(place: p) }
@@ -35,9 +35,13 @@ struct ListTab: View {
                     }
                     .padding(.horizontal, 16)
                     if visible.isEmpty && !store.loading {
-                        Text(store.places.isEmpty ? "還沒有收藏，按右上角＋新增第一間 🍩" : "沒有符合的店")
-                            .font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
+                        if store.mine.isEmpty { empty } else {
+                            VStack(spacing: 12) {
+                                Text("沒有符合的店").font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
+                                Button("清除篩選") { withAnimation(.snappy) { store.listF = Filter() } }.buttonStyle(ChunkyStyle(radius: 14))
+                            }
                             .frame(maxWidth: .infinity).padding(.top, 40)
+                        }
                     }
                 }
                 .padding(.top, 8).padding(.bottom, 24)
@@ -50,7 +54,7 @@ struct ListTab: View {
             .navigationDestination(for: Place.self) { p in
                 PlaceDetail(place: p).navigationTransition(.zoom(sourceID: p.id, in: zoom))
             }
-            .overlay { if store.places.isEmpty && store.loading { ProgressView() } }
+            .overlay { if store.mine.isEmpty && store.loading { ProgressView() } }
             .sheet(isPresented: $adding) { AddSheet() }
         }
         .onChange(of: path.count) { _, n in store.depth[1] = n }
@@ -70,7 +74,23 @@ struct ListTab: View {
             var n = p; n.status = p.been ? "want" : "been"; if !n.been { n.rating = nil }
             Task { await store.save(n) }
         }
-        Button("刪除", systemImage: "trash", role: .destructive) { Task { await store.delete(p) } }
+        Button("刪除", systemImage: "trash", role: .destructive) { store.deleteWithUndo(p) }
+    }
+
+    // 還沒有收藏：教他怎麼開始
+    private var empty: some View {
+        VStack(spacing: 14) {
+            Image("Logo").resizable().frame(width: 110, height: 110).clipShape(.rect(cornerRadius: 28))
+                .shadow(color: .cardShadow, radius: 0, y: 5)
+            Text("還沒有收藏").font(.system(size: 22, weight: .black)).foregroundStyle(Color.ink)
+            Text("在 IG 看到想吃的店，分享給 Bitemap 就存好了。\n也可以直接貼連結或打店名。")
+                .font(.subheadline).foregroundStyle(Color.ink.opacity(0.6)).multilineTextAlignment(.center)
+            Button { adding = true } label: { Label("新增一間", systemImage: "plus").frame(maxWidth: 240) }
+                .buttonStyle(ChunkyStyle(radius: 16))
+            Button { store.igFromCoach = false; store.showIG = true } label: { Label("從 IG 收藏怎麼用", systemImage: "camera.fill").frame(maxWidth: 240) }
+                .buttonStyle(ChunkyStyle(color: .white, edge: .cardShadow, fg: .sprPink, radius: 16))
+        }
+        .frame(maxWidth: .infinity).padding(.top, 36)
     }
 }
 

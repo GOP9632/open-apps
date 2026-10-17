@@ -27,6 +27,8 @@ struct Snapshot: Codable {
     var loggedIn = Supa.session != nil
     var error: String?
     var toast: String?
+    // 訊息右邊的按鈕（例如刪除後的「復原」）
+    var toastAction: (label: String, run: () -> Void)?
     var loading = false
     // 分頁：0 地圖（打開就在這）、1 收藏、2 群組、3 我的
     var tab = 0
@@ -48,10 +50,11 @@ struct Snapshot: Codable {
     }
     static let shared = UserDefaults(suiteName: "group.io.github.gop9632.foodmap")
 
-    // 篩選（和網頁版收藏頁一樣）
-    var q = ""
-    var cat = ""
-    var status = ""
+    // 篩選：收藏頁和地圖各有一份，互不影響
+    var listF = Filter()
+    var mapF = Filter()
+    // 刪掉但還能復原的店（幾秒後才真的刪）
+    @ObservationIgnored private var undoable: Set<String> = []
 
     // 量測：從 App 啟動到收藏頁畫出卡片花多久
     static let launchedAt = Date()
@@ -73,10 +76,11 @@ struct Snapshot: Codable {
     func place(_ id: String) -> Place? { places.first { $0.id == id } }
     func name(_ uid: String) -> String { profiles[uid]?.name ?? "?" }
 
-    var visible: [Place] {
-        places.filter { p in
-            (cat.isEmpty || p.category == cat) && (status.isEmpty || p.status == status) &&
-            (q.isEmpty || [p.name, p.branch ?? "", p.address ?? "", p.city ?? "", p.district ?? "", p.cuisine ?? "", p.note ?? "", (p.tags ?? []).joined(separator: " ")].joined(separator: " ").localizedStandardContains(q))
+    // 收藏頁和地圖只放自己的店；朋友的店只在群組裡看
+    func shown(_ f: Filter) -> [Place] {
+        mine.filter { p in
+            (f.cat.isEmpty || p.category == f.cat) && (f.status.isEmpty || p.status == f.status) &&
+            (f.q.isEmpty || [p.name, p.branch ?? "", p.address ?? "", p.city ?? "", p.district ?? "", p.cuisine ?? "", p.note ?? "", (p.tags ?? []).joined(separator: " ")].joined(separator: " ").localizedStandardContains(f.q))
         }
     }
 
@@ -180,7 +184,25 @@ struct Snapshot: Codable {
         try? FileManager.default.removeItem(at: cacheFile)
     }
 
-    @MainActor func say(_ s: String) { withAnimation(.snappy) { toast = s } }
+    @MainActor func say(_ s: String, action: (label: String, run: () -> Void)? = nil) {
+        withAnimation(.snappy) { toast = s; toastAction = action }
+    }
+
+    // 忘記密碼：寄重設密碼的信
+    @MainActor func recover(_ email: String) async {
+        do { try await Supa.recover(email: email); error = nil; say("已寄出重設密碼的信，請到信箱收信") }
+        catch { self.error = error.localizedDescription }
+    }
+
+    // 刪除帳號：收藏、群組、滑卡紀錄、名字和帳號本身都刪掉
+    @MainActor func deleteAccount() async {
+        do {
+            try await Supa.write("POST", "rpc/delete_my_account", body: [String: AnyCodable]())
+            signOut()
+            UserDefaults.standard.removeObject(forKey: "coachDone")
+            say("帳號已刪除")
+        } catch { say("刪除失敗：" + error.localizedDescription) }
+    }
 
     // ----- 收藏 -----
 
@@ -211,6 +233,50 @@ struct Snapshot: Codable {
         } catch { say("新增失敗：" + error.localizedDescription); return false }
     }
 
+    // 先從畫面拿掉，4 秒內按「復原」就放回去，沒按才真的刪
+    @MainActor func deleteWithUndo(_ p: Place) {
+        let at = places.firstIndex { $0.id == p.id } ?? 0
+        let shares = groupPlaces.filter { $0.place_id == p.id }
+        undoable.insert(p.id)
+        withAnimation(.snappy) {
+            places.removeAll { $0.id == p.id }
+            groupPlaces.removeAll { $0.place_id == p.id }
+        }
+        say("已刪除 \(p.name)", action: ("復原", { [weak self] in
+            guard let self, self.undoable.remove(p.id) != nil else { return }
+            withAnimation(.snappy) {
+                self.places.insert(p, at: min(at, self.places.count))
+                self.groupPlaces += shares
+                self.toast = nil
+            }
+        }))
+        Task {
+            try? await Task.sleep(for: .seconds(4.2))
+            guard undoable.remove(p.id) != nil else { return }
+            do { try await Supa.write("DELETE", "places", query: "id=eq.\(p.id)"); saveCache() }
+            catch {
+                withAnimation(.snappy) { places.insert(p, at: min(at, places.count)); groupPlaces += shares }
+                say("刪除失敗：" + error.localizedDescription)
+            }
+        }
+    }
+
+    // 朋友的店：「我也想去」複製一份成自己的收藏
+    @MainActor func copyToMine(_ p: Place) async {
+        var n = Place(id: UUID().uuidString, name: p.name)
+        n.branch = p.branch; n.address = p.address; n.city = p.city; n.district = p.district
+        n.lat = p.lat; n.lng = p.lng; n.approx = p.approx; n.category = p.category; n.cuisine = p.cuisine
+        n.price = p.price; n.meals = p.meals; n.hours = p.hours; n.dishes = p.dishes; n.tags = p.tags
+        n.photo = p.photo; n.source_url = p.source_url; n.status = "want"
+        if await add(n) {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            say("已加到你的收藏")
+        }
+    }
+
+    // 這間是不是已經在我的收藏（同名同分店）
+    func alreadyMine(_ p: Place) -> Bool { mine.contains { $0.name == p.name && ($0.branch ?? "") == (p.branch ?? "") } }
+
     @MainActor func delete(_ p: Place) async {
         let before = places, shares = groupPlaces
         withAnimation(.snappy) {
@@ -229,14 +295,15 @@ struct Snapshot: Codable {
             if let quickKey { k = quickKey } else { k = try await Supa.rpc("quick_key", ["reset": .b(false)], as: String.self); quickKey = k }
             let before = Set(mine.map(\.id))
             let r = try await Supa.quickAdd(key: k, input: input)
-            await sync()
-            if been {
-                for var p in mine where !before.contains(p.id) {
-                    p.status = "been"; p.rating = rating
-                    await save(p)
+            // 結果一回來就先回報，同步、標去過、補座標都在背景做
+            Task {
+                await sync()
+                let new = mine.filter { !before.contains($0.id) }
+                for var p in new {
+                    if been { p.status = "been"; p.rating = rating; await save(p) }
                 }
+                await fillCoords(new.map(\.id))
             }
-            await fillCoords()
             return r.isEmpty ? "收藏失敗，請再試一次" : r
         } catch { return "收藏失敗：" + error.localizedDescription }
     }
@@ -251,8 +318,8 @@ struct Snapshot: Codable {
     }
 
     // 有地址但沒有座標的店，用 iPhone 內建的地址查詢補上，地圖上才看得到
-    @MainActor func fillCoords() async {
-        for p in mine where p.lat == nil && !(p.address ?? "").isEmpty {
+    @MainActor func fillCoords(_ only: [String]? = nil) async {
+        for p in mine where p.lat == nil && !(p.address ?? "").isEmpty && (only == nil || only!.contains(p.id)) {
             if let c = await Store.geocode(p) {
                 var n = p; n.lat = c.latitude; n.lng = c.longitude; n.approx = false
                 await save(n)
@@ -336,8 +403,8 @@ struct Snapshot: Codable {
         } catch { say("失敗：" + error.localizedDescription); return nil }
     }
 
-    // 刪掉一輪滑卡（連同大家滑的紀錄、配對結果）；只有開這輪的人能刪
-    func canDelete(_ r: Round) -> Bool { r.created_by == me }
+    // 刪掉一輪滑卡（連同大家滑的紀錄、配對結果）；開這輪的人和群組建立者能刪
+    func canDelete(_ r: Round) -> Bool { r.created_by == me || groups.first { $0.id == r.group_id }?.owner == me }
 
     @MainActor func deleteRound(_ r: Round) async {
         let before = rounds, sw = swipes
@@ -362,6 +429,14 @@ struct Snapshot: Codable {
         }
     }
 
+    // 「上一張」：收回自己剛滑的那張
+    @MainActor func unswipe(_ r: Round, _ pid: String) async {
+        guard let me, let row = swipes.first(where: { $0.round_id == r.id && $0.user_id == me && $0.place_id == pid }) else { return }
+        withAnimation(.snappy) { swipes.removeAll { $0 == row } }
+        do { try await Supa.write("DELETE", "swipes", query: "round_id=eq.\(r.id)&user_id=eq.\(me)&place_id=eq.\(pid)"); saveCache() }
+        catch { swipes.append(row); say("收回失敗：" + error.localizedDescription) }
+    }
+
     struct Match: Identifiable { let place: Place; let who: [String]; let all: Bool; var id: String { place.id } }
 
     // 跟網頁版一樣：每間店幾個人想吃，全員都想吃就是配對成功
@@ -382,6 +457,13 @@ struct Snapshot: Codable {
     }
 }
 
+struct Filter: Equatable {
+    var q = ""
+    var cat = ""
+    var status = ""
+    var on: Bool { !cat.isEmpty || !status.isEmpty }
+}
+
 extension Place {
     // 寫回資料庫的欄位（不含 id、owner、created_at；資料庫裡文字欄位不能是空值，所以用空字串）
     var row: [String: AnyCodable] {
@@ -391,7 +473,7 @@ extension Place {
             "lat": lat.map { AnyCodable.d($0) } ?? .null, "lng": lng.map { AnyCodable.d($0) } ?? .null, "approx": .b(approx ?? false),
             "category": .s(category ?? "restaurant"), "cuisine": s(cuisine), "price": price.map { AnyCodable.i($0) } ?? .null,
             "meals": .a(meals ?? []), "hours": s(hours), "status": .s(status ?? "want"), "rating": rating.map { AnyCodable.i($0) } ?? .null,
-            "note": s(note), "tags": .a(tags ?? []), "dishes": .a(dishes ?? []), "source_url": s(source_url),
+            "note": s(note), "tags": .a(tags ?? []), "dishes": .a(dishes ?? []), "source_url": s(source_url), "photo": photo.map { AnyCodable.s($0) } ?? .null,
             "updated_at": .s(updated_at ?? ISO8601DateFormatter().string(from: Date())),
         ]
     }

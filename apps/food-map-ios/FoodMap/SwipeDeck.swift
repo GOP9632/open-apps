@@ -5,6 +5,8 @@ struct SwipeDeck: View {
     let deck: [Place]
     var onSwipe: (Place, Bool) -> Void
     var onTap: (Place) -> Void = { _ in }
+    // 有值就顯示「↶ 上一張」，收回自己剛滑的那張
+    var onUndo: (() -> Void)? = nil
     @State private var drag: CGSize = .zero
     @State private var busy = false
 
@@ -19,6 +21,8 @@ struct SwipeDeck: View {
             .padding(.horizontal, 20).padding(.top, 8)
 
             HStack(spacing: 28) {
+                RoundBtn(icon: "arrow.uturn.backward", color: Color.ink.opacity(onUndo == nil ? 0.2 : 0.6), size: 50) { onUndo?() }
+                    .disabled(onUndo == nil || busy).accessibilityLabel("上一張")
                 RoundBtn(icon: "xmark", color: .sprPink) { fling(false) }.accessibilityLabel("跳過")
                 Button { fling(true) } label: {
                     Image(systemName: "heart.fill").font(.system(size: 32, weight: .bold)).foregroundStyle(.white)
@@ -115,11 +119,13 @@ struct SwipeCard: View {
 }
 
 struct RoundBtn: View {
-    let icon: String, color: Color, action: () -> Void
+    let icon: String, color: Color
+    var size: CGFloat = 66
+    let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Image(systemName: icon).font(.system(size: 26, weight: .heavy)).foregroundStyle(color)
-                .frame(width: 66, height: 66).background(.white, in: .circle).shadow(color: .cardShadow, radius: 0, y: 4)
+            Image(systemName: icon).font(.system(size: size * 0.4, weight: .heavy)).foregroundStyle(color)
+                .frame(width: size, height: size).background(.white, in: .circle).shadow(color: .cardShadow, radius: 0, y: 4)
         }
         .buttonStyle(PressStyle())
     }
