@@ -4,7 +4,7 @@ import CoreLocation
 
 // 存在手機裡的那一份（下次打開先畫這份，不用等網路）
 struct Snapshot: Codable {
-    var places: [Place] = [] { didSet { branchMemo = [:] } }
+    var places: [Place] = []
     var groups: [FoodGroup] = []
     var members: [Member] = []
     var groupPlaces: [GroupPlace] = []
@@ -16,7 +16,7 @@ struct Snapshot: Codable {
 // 資料：上次讀到的先從手機裡拿出來畫（開 app 不用等網路），再到背景跟雲端同步
 // 改資料一律「畫面先變、背景存檔」，存失敗才改回來並告訴你
 @MainActor @Observable final class Store {
-    var places: [Place] = []
+    var places: [Place] = [] { didSet { branchMemo = [:] } }
     var groups: [FoodGroup] = []
     var members: [Member] = []
     var groupPlaces: [GroupPlace] = []
