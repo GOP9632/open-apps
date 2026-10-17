@@ -11,23 +11,27 @@ struct ListTab: View {
         @Bindable var store = store
         // 篩選結果一次算好（每打一個字只算一次）
         let visible = store.shown(store.listF)
+        // 同一家的分店合成一張卡（最近的那間當封面）
+        let groups = store.brands(visible)
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text("我的收藏").font(.system(size: 30, weight: .black)).foregroundStyle(Color.ink)
-                            Text("\(visible.count) 間").font(.headline).foregroundStyle(Color.accent)
+                            Text("\(groups.count) 家").font(.headline).foregroundStyle(Color.accent)
                         }
                         Spacer()
                         AddButton(size: 42) { adding = true }
                     }
                     .padding(.horizontal, 16)
+                    StarterCard(open: { if let p = $0 { path = [p] } }, add: { adding = true })
                     SearchField(text: $store.listF.q, prompt: "搜尋店名、地區、料理、標籤").padding(.horizontal, 16)
                     if !store.mine.isEmpty { FilterChips(f: $store.listF) }
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 14) {
-                        ForEach(visible) { p in
-                            NavigationLink(value: p) { PlaceCard(place: p) }
+                        ForEach(groups, id: \.first!.id) { g in
+                            let p = g[0]
+                            NavigationLink(value: p) { PlaceCard(place: p, branches: g) }
                                 .buttonStyle(PressStyle())
                                 .matchedTransitionSource(id: p.id, in: zoom) { $0.clipShape(.rect(cornerRadius: 22)) }
                                 .contextMenu { if store.isMine(p) { menu(p) } }
@@ -96,20 +100,82 @@ struct ListTab: View {
 
 struct PlaceCard: View {
     let place: Place
+    var branches: [Place] = []
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Color.clear.aspectRatio(1, contentMode: .fit)
                 .overlay { PhotoView(place: place, px: 500) }
                 .overlay(alignment: .topLeading) { Badge(place: place).shadow(color: .black.opacity(0.12), radius: 3, y: 1).padding(8) }
+                .overlay(alignment: .bottomTrailing) {
+                    if branches.count > 1 {
+                        Text("\(branches.count) 間分店").font(.system(size: 11.5, weight: .heavy)).foregroundStyle(.white)
+                            .padding(.horizontal, 8).frame(height: 22).background(Color.ink.opacity(0.75), in: .capsule).padding(8)
+                    }
+                }
                 .clipShape(.rect(cornerRadius: 16))
                 .padding(.bottom, 4)
-            Text(place.name + (place.branch?.isEmpty == false ? " \(place.branch!)" : ""))
+            Text(branches.count > 1 ? place.name.replacingOccurrences(of: branchLabel(place), with: "").trimmingCharacters(in: .whitespaces) : place.name + (place.branch?.isEmpty == false ? " \(place.branch!)" : ""))
                 .font(.system(size: 15, weight: .heavy)).lineLimit(1).foregroundStyle(Color.ink)
-            Text("\(place.cat.emoji) \(place.cuisine?.isEmpty == false ? place.cuisine! : place.cat.name)\(place.area.isEmpty ? "" : " · " + place.area)")
+            Text(branches.count > 1
+                 ? "📍 " + branches.map(branchLabel).joined(separator: "・")
+                 : "\(place.cat.emoji) \(place.cuisine?.isEmpty == false ? place.cuisine! : place.cat.name)\(place.area.isEmpty ? "" : " · " + place.area)")
                 .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.ink.opacity(0.5)).lineLimit(1)
         }
         .padding(8).padding(.bottom, 4)
         .candy(22)
         .multilineTextAlignment(.leading)
+    }
+}
+
+// 「收藏起步」：新朋友的四個小任務，照資料自己打勾，全部完成或按 ✕ 就收起來
+struct StarterCard: View {
+    @Environment(Store.self) private var store
+    @AppStorage("starterHidden") private var hidden = false
+    let open: (Place?) -> Void
+    let add: () -> Void
+
+    var body: some View {
+        let mine = store.mine
+        let tasks: [(String, Bool, () -> Void)] = [
+            ("從 IG 收藏第一間", mine.contains { ($0.source_url ?? "").contains("instagram.com") }, { store.igFromCoach = false; store.showIG = true }),
+            ("標一間去過，給星星", mine.contains { $0.been && $0.rating != nil }, { open(mine.first { !$0.been } ?? mine.first) }),
+            ("收藏 10 間", mine.count >= 10, add),
+            ("邀一個朋友進群組", store.groups.contains { store.membersOf($0.id).count >= 2 }, { withAnimation(.snappy) { store.tab = 2 } }),
+        ]
+        let done = tasks.filter { $0.1 }.count
+        if !hidden && done < tasks.count && !mine.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("收藏起步：完成 \(done) / \(tasks.count)").font(.system(size: 16, weight: .heavy)).foregroundStyle(Color.ink)
+                    Spacer()
+                    Button { withAnimation(.snappy) { hidden = true } } label: {
+                        Image(systemName: "xmark").font(.system(size: 13, weight: .bold)).foregroundStyle(Color.ink.opacity(0.4)).frame(width: 44, height: 32).contentShape(.rect)
+                    }
+                    .accessibilityLabel("收起收藏起步")
+                }
+                SprinkleBar(progress: Double(done) / Double(tasks.count))
+                ForEach(tasks.indices, id: \.self) { i in
+                    let t = tasks[i]
+                    Button(action: t.2) {
+                        HStack(spacing: 10) {
+                            Image(systemName: t.1 ? "checkmark.circle.fill" : "circle").font(.system(size: 20, weight: .bold))
+                                .foregroundStyle(t.1 ? Color.sprMint : Color.ink.opacity(0.25))
+                            Text(t.0).font(.system(size: 15, weight: .bold)).foregroundStyle(t.1 ? Color.ink.opacity(0.4) : Color.ink)
+                                .strikethrough(t.1, color: Color.ink.opacity(0.3))
+                            Spacer()
+                            if !t.1 { Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(Color.ink.opacity(0.3)) }
+                        }
+                        .frame(minHeight: 36).contentShape(.rect)
+                    }
+                    .buttonStyle(PressStyle())
+                    .disabled(t.1)
+                    .accessibilityAddTraits(t.1 ? .isSelected : [])
+                }
+            }
+            .padding(14)
+            .candy(20)
+            .padding(.horizontal, 16)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
     }
 }

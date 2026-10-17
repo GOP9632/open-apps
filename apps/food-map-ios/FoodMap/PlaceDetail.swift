@@ -11,17 +11,21 @@ struct PlaceDetail: View {
     @State private var editing = false
     @State private var deleting = false
     @State private var askNav = false
+    // 選到的分店（預設是點進來的那間）；想去／去過、導航、地址都跟著它
+    @State private var picked: String?
 
     var body: some View {
         // 永遠顯示最新的那份（剛改的狀態、別台裝置改的都會跟上）
-        let place = store.place(self.place.id) ?? self.place
+        let base = store.place(self.place.id) ?? self.place
+        let place = picked.flatMap { store.place($0) } ?? base
+        let branches = store.branchesOf(base)
         let mine = store.isMine(place)
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 top(place, mine: mine)
                 photo(place)
-                info(place, mine: mine)
-                actions(place)
+                info(place, mine: mine, branches: branches)
+                actions(place, branched: branches.count > 1)
                 if let d = place.dishes, !d.isEmpty { dishes(d) }
                 details(place)
                 if mine && !store.groups.isEmpty { groups(place) }
@@ -65,7 +69,7 @@ struct PlaceDetail: View {
 
     private func photo(_ place: Place) -> some View {
         Color.clear.aspectRatio(1, contentMode: .fit)
-            .overlay { PhotoView(place: place, px: 1200) }
+            .overlay { PlaceMedia(place: place) }
             .clipShape(.rect(cornerRadius: 28))
             .overlay(alignment: .bottomLeading) {
                 Text("\(place.cat.emoji) \(place.cat.name)").font(.footnote.weight(.heavy)).foregroundStyle(.white)
@@ -74,11 +78,15 @@ struct PlaceDetail: View {
             }
     }
 
-    private func info(_ place: Place, mine: Bool) -> some View {
+    private func info(_ place: Place, mine: Bool, branches: [Place]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(place.name).font(.system(size: 26, weight: .black)).foregroundStyle(Color.ink)
-                if let b = place.branch, !b.isEmpty { Text(b).font(.headline).foregroundStyle(Color.ink.opacity(0.7)) }
+                if branches.count > 1 {
+                    branchChips(branches, on: place.id)
+                } else if let b = place.branch, !b.isEmpty {
+                    Text(b).font(.headline).foregroundStyle(Color.ink.opacity(0.7))
+                }
                 let meta = [place.cuisine ?? "", place.area, place.price.flatMap { PRICES[$0] } ?? ""].filter { !$0.isEmpty }
                 if !meta.isEmpty { Text(meta.joined(separator: " · ")).font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5)) }
             }
@@ -115,11 +123,31 @@ struct PlaceDetail: View {
         .animation(.snappy, value: place.been)
     }
 
-    private func actions(_ place: Place) -> some View {
+    // 同一家的分店：由近到遠，📍 是現在選的這間
+    private func branchChips(_ branches: [Place], on id: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(branches.count) 間分店" + (store.here != nil ? "・由近到遠" : "")).font(.caption.weight(.bold)).foregroundStyle(Color.ink.opacity(0.45))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(branches) { b in
+                        let d = store.distance(b).map { " " + fmtDistance($0) } ?? ""
+                        Chip(text: (b.id == id ? "📍 " : "") + branchLabel(b) + d, on: b.id == id, color: .accent) {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            withAnimation(.snappy) { picked = b.id }
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private func actions(_ place: Place, branched: Bool) -> some View {
         HStack(spacing: 10) {
             Button {
                 if let a = NavApp.saved { if let u = place.navURL(a) { openURL(u) } } else { askNav = true }
-            } label: { ActLabel(icon: "location.fill", text: "導航") }
+            } label: { ActLabel(icon: "location.fill", text: branched ? "導航到\(branchLabel(place))" : "導航") }
                 .buttonStyle(ChunkyStyle(color: .accent, edge: .accentDeep, radius: 18))
             if let s = place.source_url, let u = URL(string: s), !s.isEmpty {
                 // 只有 IG Reels 是影片，其他貼文叫「看貼文」
@@ -238,8 +266,9 @@ struct ActLabel: View {
     var body: some View {
         VStack(spacing: 5) {
             Image(systemName: icon).font(.system(size: 19, weight: .bold))
-            Text(text).font(.system(size: 13, weight: .heavy))
+            Text(text).font(.system(size: 13, weight: .heavy)).lineLimit(1).minimumScaleFactor(0.7)
         }
+        .padding(.horizontal, -8)
         .frame(maxWidth: .infinity).frame(height: 64)
     }
 }

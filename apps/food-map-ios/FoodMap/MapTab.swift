@@ -8,7 +8,6 @@ struct MapTab: View {
     @State private var pos: MapCameraPosition = .region(MKCoordinateRegion(center: .init(latitude: 25.0418, longitude: 121.5436), latitudinalMeters: 9000, longitudinalMeters: 9000))
     @State private var sel: String?
     @State private var loc = CLLocationManager()
-    @State private var here: CLLocation?
     @State private var fitted = false
     @State private var adding = false
     @State private var noAddr = false
@@ -20,7 +19,7 @@ struct MapTab: View {
         // 有座標的店一次算好，下面每個地方共用
         let list = points
         let all = store.shown(store.mapF)
-        let near = Nearby(list: list, here: here, total: all.count)
+        let near = Nearby(list: list, here: store.here, total: all.count)
         let missing = all.count - list.count
         NavigationStack(path: $store.mapPath) {
             MapReader { proxy in
@@ -86,14 +85,14 @@ struct MapTab: View {
         .sheet(isPresented: $noAddr) { NoAddressSheet() }
         .onAppear {
             loc.requestWhenInUseAuthorization()
-            here = loc.location
+            if store.here == nil { store.here = loc.location }
             // 第一次打開先把所有收藏的店框進畫面
             fit()
         }
         .onChange(of: list.count) { fit() }
         // 拿到一次目前位置就好（剛允許定位也會馬上更新「附近」），不一直開著 GPS
         .task {
-            do { for try await u in CLLocationUpdate.liveUpdates() { if let l = u.location { here = l; break } } } catch {}
+            do { for try await u in CLLocationUpdate.liveUpdates() { if let l = u.location { store.here = l; break } } } catch {}
         }
     }
 

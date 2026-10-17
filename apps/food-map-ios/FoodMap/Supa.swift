@@ -141,6 +141,22 @@ import Security
         return try JSONDecoder().decode(T.self, from: d)
     }
 
+    // IG Reel 的影片網址（IG 的網址會過期，所以每次打開店家頁都重新拿，不存）
+    static func reelVideo(_ source: String) async throws -> URL? {
+        let s = try await fresh()
+        var r = URLRequest(url: URL(string: "\(url.absoluteString)/functions/v1/reel-video")!)
+        r.httpMethod = "POST"
+        r.setValue(key, forHTTPHeaderField: "apikey")
+        r.setValue("Bearer \(s.access_token)", forHTTPHeaderField: "Authorization")
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.httpBody = try JSONEncoder().encode(["url": source])
+        r.timeoutInterval = 20
+        let (d, res) = try await URLSession.shared.data(for: r)
+        guard (res as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        struct R: Decodable { let video: String? }
+        return (try? JSONDecoder().decode(R.self, from: d))?.video.flatMap(URL.init(string:))
+    }
+
     // 分享捷徑用的同一個雲端函式：貼一個連結或一段文字，AI 找出店家直接存好，回一行結果
     static func quickAdd(key qk: String, input: String) async throws -> String {
         var r = URLRequest(url: URL(string: "\(url.absoluteString)/functions/v1/quick-add")!)

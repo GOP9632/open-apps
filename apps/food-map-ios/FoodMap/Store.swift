@@ -53,6 +53,9 @@ struct Snapshot: Codable {
     // 篩選：收藏頁和地圖各有一份，互不影響
     var listF = Filter()
     var mapF = Filter()
+    // 目前位置（地圖頁拿到就放這），分店「由近到遠」用
+    var here: CLLocation?
+    @ObservationIgnored private var brandCache: [String: String] = [:]
     // 刪掉但還能復原的店（幾秒後才真的刪）
     @ObservationIgnored private var undoable: Set<String> = []
 
@@ -293,6 +296,51 @@ struct Snapshot: Codable {
         }
     }
 
+    // ----- 分店：同一家店的多個地點（一篇 IG 常列好幾間分店），清單和滑卡都算一家 -----
+
+    func brand(_ p: Place) -> String {
+        let k = p.id + "|" + p.name
+        if let b = brandCache[k] { return b }
+        let b = brandOf(p)
+        brandCache[k] = b
+        return b
+    }
+
+    func distance(_ p: Place) -> Double? {
+        guard let here, let lat = p.lat, let lng = p.lng else { return nil }
+        return here.distance(from: CLLocation(latitude: lat, longitude: lng))
+    }
+
+    // 由近到遠，沒座標的排最後；不知道位置就照原本順序
+    func nearFirst(_ l: [Place]) -> [Place] {
+        guard here != nil else { return l }
+        return l.enumerated().sorted { a, b in
+            switch (distance(a.element), distance(b.element)) {
+            case let (x?, y?): x < y
+            case (.some, nil): true
+            case (nil, .some): false
+            default: a.offset < b.offset
+            }
+        }.map(\.element)
+    }
+
+    // 依店家分組，保留原本順序；每組最近的分店排第一
+    func brands(_ l: [Place]) -> [[Place]] {
+        var order: [String] = [], g: [String: [Place]] = [:]
+        for p in l {
+            let k = brand(p)
+            if g[k] == nil { order.append(k) }
+            g[k, default: []].append(p)
+        }
+        return order.map { nearFirst(g[$0]!) }
+    }
+
+    // 同一家的所有分店（自己的店在自己的收藏裡找；朋友的店在同一個人的收藏裡找）
+    func branchesOf(_ p: Place) -> [Place] {
+        let k = brand(p)
+        return nearFirst(places.filter { $0.owner == p.owner && brand($0) == k })
+    }
+
     // 這間是不是已經在我的收藏（同名同分店）
     func alreadyMine(_ p: Place) -> Bool { mine.contains { $0.name == p.name && ($0.branch ?? "") == (p.branch ?? "") } }
 
@@ -497,3 +545,18 @@ extension Place {
         ]
     }
 }
+
+// 分店的名字：分店欄位、店名後面的「XX店」、區、縣市、地址開頭
+func branchLabel(_ p: Place) -> String {
+    if let b = p.branch, !b.isEmpty { return b }
+    let re = #"[\s・·\-–|｜(（]+([^\s・·\-–|｜(（]{1,12}?(?:分店|店|門市|館))[)）]?$"#
+    if let r = p.name.range(of: re, options: .regularExpression),
+       let m = try? NSRegularExpression(pattern: re).firstMatch(in: p.name, range: NSRange(r, in: p.name)),
+       let g = Range(m.range(at: 1), in: p.name) { return String(p.name[g]) }
+    if let d = p.district, !d.isEmpty { return d }
+    let c = normCity(p.city); if !c.isEmpty { return c }
+    if let a = p.address, !a.isEmpty { return String(a.prefix(10)) }
+    return "分店"
+}
+
+func fmtDistance(_ m: Double) -> String { m < 1000 ? "\(Int(m)) m" : String(format: m < 10000 ? "%.1f km" : "%.0f km", m / 1000) }

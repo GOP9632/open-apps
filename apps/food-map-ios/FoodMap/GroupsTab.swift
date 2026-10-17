@@ -260,7 +260,7 @@ struct NewRoundSheet: View {
         if price > 0 { l = l.filter { ($0.price ?? 0) == 0 || $0.price! <= price } }
         // 同一家的分店只出一張卡，配對才不會分散在不同分店
         var seen = Set<String>()
-        return l.filter { seen.insert(brandOf($0)).inserted }
+        return store.nearFirst(l).filter { seen.insert(store.brand($0)).inserted }
     }
 
     var body: some View {
@@ -467,7 +467,7 @@ struct RoundView: View {
                 }
             }
             ForEach(all) { m in
-                Button { detail = m.place } label: {
+                Button { detail = store.branchesOf(m.place).first ?? m.place } label: {
                     HStack(spacing: 12) {
                         PhotoView(place: m.place, px: 160).frame(width: 58, height: 58).clipShape(.rect(cornerRadius: 12))
                         VStack(alignment: .leading, spacing: 4) {
@@ -510,7 +510,7 @@ struct MatchView: View {
                 Text("配對成功！").font(.system(size: 34, weight: .black)).foregroundStyle(.white)
                 Text("大家都想吃 **\(match.place.name)**").foregroundStyle(.white.opacity(0.9))
                 HStack(spacing: -8) { ForEach(match.who, id: \.self) { Avatar(name: store.name($0), id: $0, size: 36) } }
-                Button { if let u = match.place.navURL(NavApp.saved ?? .google) { openURL(u) } } label: {
+                Button { if let u = (store.branchesOf(match.place).first ?? match.place).navURL(NavApp.saved ?? .google) { openURL(u) } } label: {
                     Label("就去這間", systemImage: "location.fill").font(.headline).frame(width: 240, height: 52)
                         .background(.white, in: .capsule).foregroundStyle(.black)
                 }
