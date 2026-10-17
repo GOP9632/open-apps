@@ -58,7 +58,24 @@ extension CharacterSet {
 extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
     override open func viewDidLoad() {
         super.viewDidLoad()
-        interactivePopGestureRecognizer?.delegate = self
+        claimPopGesture()
+    }
+
+    // 從背景回來或畫面更新時，SwiftUI 會把手勢的代理換回它自己的（藏導覽列時它會擋掉滑回），所以每次排版都搶回來
+    override open func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        claimPopGesture()
+    }
+
+    override open func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        claimPopGesture()
+    }
+
+    private func claimPopGesture() {
+        guard let g = interactivePopGestureRecognizer else { return }
+        if g.delegate !== self { g.delegate = self }
+        if !g.isEnabled { g.isEnabled = true }
     }
 
     public func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
