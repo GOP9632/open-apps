@@ -563,8 +563,9 @@ private struct PinBurst: View {
                 .keyframeAnimator(initialValue: -1.0, trigger: spot.shot) { v, t in
                     v.overlay {
                         if t >= 0, t < 1, let at {
-                            // 圓頭的中心：圖釘高 51、圓心離底 29，放大 1.35 倍後約 39，再抬高 10
-                            Canvas { ctx, _ in Self.draw(ctx, CGPoint(x: at.x - o.x, y: at.y - o.y - 49), t, color) }
+                            // 圓頭的中心：一開始離尖端 29（還沒彈起），圖釘彈高放大後約 49（39＋抬高 10），跟著一起升上去
+                            let rise = 29 + 20 * (1 - pow(1 - min(t / 0.36, 1), 3))
+                            Canvas { ctx, _ in Self.draw(ctx, CGPoint(x: at.x - o.x, y: at.y - o.y - rise), t, color) }
                         }
                     }
                 } keyframes: { _ in
@@ -666,12 +667,13 @@ struct ScopeSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 10) {
-                    row(nil, "我的收藏", "\(store.mine.count) 間 · 只有你自己存的") { Image("Logo").resizable().frame(width: 40, height: 40).clipShape(.rect(cornerRadius: 10)).accessibilityHidden(true) }
+                    row(nil, "我的收藏", "\(store.mine.count) 間 · 只有你自己存的") { Image("Logo").resizable().frame(width: 40, height: 40).clipShape(.rect(cornerRadius: 10)).frame(width: 56, alignment: .leading).accessibilityHidden(true) }
                     ForEach(store.groups) { g in
                         let mem = store.membersOf(g.id)
                         row(g.id, g.name, "\(store.placesIn(g.id).count) 間 · \(mem.count) 人") {
-                            HStack(spacing: -10) { ForEach(mem.prefix(3), id: \.self) { Avatar(name: store.name($0), id: $0, size: 28) } }
-                                .frame(width: 40, alignment: .leading)
+                            // 最多三個頭像疊在一起，固定 56 寬，不會壓到群組名稱
+                            HStack(spacing: -11) { ForEach(mem.prefix(3), id: \.self) { Avatar(name: store.name($0), id: $0, size: 26) } }
+                                .frame(width: 56, alignment: .leading)
                         }
                     }
                 }

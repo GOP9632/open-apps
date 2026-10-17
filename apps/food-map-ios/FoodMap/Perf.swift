@@ -107,7 +107,7 @@ final class TouchClock: UIGestureRecognizer, UIGestureRecognizerDelegate {
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith o: UIGestureRecognizer) -> Bool { true }
 }
 
-// 畫面最上面的小浮層：最近幾次的毫秒數、掉幀數；點兩下關掉
+// 左下角的小浮層：最近幾次的毫秒數、掉幀數
 struct PerfHUD: View {
     @State private var perf = Perf.shared
     var body: some View {
@@ -120,9 +120,10 @@ struct PerfHUD: View {
             .font(.system(size: 12, weight: .bold, design: .monospaced)).foregroundStyle(.white)
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(.black.opacity(0.75), in: .rect(cornerRadius: 10))
-            .onTapGesture(count: 2) { perf.on = false }
-            .padding(.top, 2).padding(.leading, 8)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .allowsHitTesting(false)
+            // 放在分頁列上面一點的左下角，不擋返回鍵和上面的按鈕；不收點擊（再連點版本號 5 下關掉）
+            .padding(.bottom, 92).padding(.leading, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             .accessibilityHidden(true)
         }
     }

@@ -53,24 +53,73 @@ struct PlaceMedia: View {
             guard let u, !Task.isCancelled else { print("[reel] 這則沒有影片網址"); return }
             print("[reel] 影片網址 \(u.host() ?? "")")
             try? AVAudioSession.sharedInstance().setCategory(.ambient)
-            let item = AVPlayerItem(url: u)
-            let p = AVPlayer(playerItem: item)
-            p.isMuted = muted
-            p.actionAtItemEnd = .none
-            // 播完從頭再播
-            loop = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { _ in
-                p.seek(to: .zero); p.play()
+            // 先直接串流；6 秒還沒能播（IG 的伺服器有時不給串流），就整支下載到手機再播
+            var p = makePlayer(u)
+            if !(await Self.waitReady(p)) {
+                guard !Task.isCancelled else { return }
+                print("[reel] 串流沒成功，改成先下載")
+                p.pause(); p.replaceCurrentItem(with: nil)
+                guard let local = await Self.download(u), !Task.isCancelled else { print("[reel] 下載失敗"); return }
+                p = makePlayer(local)
+                guard await Self.waitReady(p) else { return }
             }
-            video = u
-            p.play()
-            // 影片可以播了才把照片換掉，不會先黑一下
-            for await st in item.publisher(for: \.status).values {
-                if st == .readyToPlay { print("[reel] 開始播放"); withAnimation(.easeOut(duration: 0.3)) { player = p }; break }
-                if st == .failed { print("[reel] 播放失敗：\(item.error.map { "\($0)" } ?? "")"); break }
-            }
+            guard !Task.isCancelled else { p.pause(); return }
+            print("[reel] 開始播放")
+            withAnimation(.easeOut(duration: 0.3)) { player = p }
         }
         // 離開店家頁就停
         .onDisappear(perform: stop)
+    }
+
+    // 建一個播放器：靜音、播完從頭再播，馬上開始載
+    private func makePlayer(_ u: URL) -> AVPlayer {
+        if let loop { NotificationCenter.default.removeObserver(loop) }
+        // 用一般瀏覽器的 User-Agent 去拿影片（有些 CDN 不理 AVPlayer 預設的）
+        let asset = AVURLAsset(url: u, options: ["AVURLAssetHTTPHeaderFieldsKey": ["User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"]])
+        let item = AVPlayerItem(asset: asset)
+        let p = AVPlayer(playerItem: item)
+        p.isMuted = muted
+        p.actionAtItemEnd = .none
+        loop = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { _ in
+            p.seek(to: .zero); p.play()
+        }
+        video = u
+        p.play()
+        return p
+    }
+
+    // 每 0.25 秒看一次能不能播（不靠 KVO），每 2 秒記一次狀態，最多等 6 秒
+    private static func waitReady(_ p: AVPlayer, seconds: Double = 6) async -> Bool {
+        let end = Date().addingTimeInterval(seconds)
+        var n = 0
+        while Date() < end, !Task.isCancelled {
+            guard let item = p.currentItem else { return false }
+            switch item.status {
+            case .readyToPlay: return true
+            case .failed: print("[reel] 播放失敗：\(item.error.map { "\($0)" } ?? "")"); return false
+            default: break
+            }
+            n += 1
+            if n % 8 == 0 {
+                print("[reel] 等待中 status=\(item.status.rawValue) time=\(p.timeControlStatus.rawValue) wait=\(p.reasonForWaitingToPlay?.rawValue ?? "-") err=\(item.errorLog()?.events.last?.errorComment ?? "-")")
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        print("[reel] 等了 \(Int(seconds)) 秒還不能播")
+        return false
+    }
+
+    // 整支影片下載到暫存資料夾（檔名要有 .mp4，播放器才認得）
+    private static func download(_ u: URL) async -> URL? {
+        var r = URLRequest(url: u)
+        r.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        r.timeoutInterval = 30
+        guard let (tmp, res) = try? await URLSession.shared.download(for: r) else { return nil }
+        print("[reel] 下載 \((res as? HTTPURLResponse)?.statusCode ?? 0) \(res.expectedContentLength / 1024) KB")
+        let dst = FileManager.default.temporaryDirectory.appendingPathComponent("reel-\(abs(u.path.hashValue)).mp4")
+        try? FileManager.default.removeItem(at: dst)
+        do { try FileManager.default.moveItem(at: tmp, to: dst) } catch { return nil }
+        return dst
     }
 
     private func stop() {

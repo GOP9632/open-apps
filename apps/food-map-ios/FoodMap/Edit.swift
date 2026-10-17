@@ -59,6 +59,14 @@ struct AddSheet: View {
             }
             .padding(16)
             .background(Color.bg)
+            // 等視窗彈上來（約 0.35 秒）再叫鍵盤，兩個動畫不搶；沒成功就再試幾次
+            .task {
+                try? await Task.sleep(for: .milliseconds(350))
+                for _ in 0..<4 where !focus {
+                    focus = true
+                    try? await Task.sleep(for: .milliseconds(150))
+                }
+            }
             .navigationTitle("新增店家").navigationBarTitleDisplayMode(.inline)
             .toolbar { Button(result == nil ? "取消" : "完成") { dismiss() } }
             .sheet(isPresented: $manual) {
@@ -69,8 +77,6 @@ struct AddSheet: View {
                 }(), isNew: true) { dismiss() }
             }
         }
-        // 等視窗彈上來（約 0.35 秒）再叫鍵盤，兩個動畫不搶
-        .task { try? await Task.sleep(for: .milliseconds(350)); focus = true }
     }
 
     private func go() {
