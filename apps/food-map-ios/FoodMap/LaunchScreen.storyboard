@@ -8,7 +8,7 @@
         <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
     </dependencies>
     <scenes>
-        <!--啟動畫面：奶油色底、正中間的甜甜圈 B（跟 App 打開後的第一個畫面同一個位置、同樣大小）-->
+        <!--啟動畫面：奶油色底、正中間的甜甜圈 B（圓角直接做在圖裡，啟動畫面不能用 runtime 屬性）-->
         <scene sceneID="EHf-IW-A2E">
             <objects>
                 <viewController id="01J-lp-oVM" sceneMemberID="viewController">
@@ -16,17 +16,12 @@
                         <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <subviews>
-                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" image="Logo" translatesAutoresizingMaskIntoConstraints="NO" id="Lg0-gO-a01">
+                            <imageView userInteractionEnabled="NO" contentMode="scaleAspectFit" image="LaunchLogo" translatesAutoresizingMaskIntoConstraints="NO" id="Lg0-gO-a01">
                                 <rect key="frame" x="146.5" y="376" width="100" height="100"/>
                                 <constraints>
                                     <constraint firstAttribute="width" constant="100" id="Wc1-aa-a01"/>
                                     <constraint firstAttribute="height" constant="100" id="Hc1-aa-a01"/>
                                 </constraints>
-                                <userDefinedRuntimeAttributes>
-                                    <userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius">
-                                        <integer key="value" value="24"/>
-                                    </userDefinedRuntimeAttribute>
-                                </userDefinedRuntimeAttributes>
                             </imageView>
                         </subviews>
                         <viewLayoutGuide key="safeArea" id="6Tk-OE-BBY"/>
@@ -43,7 +38,7 @@
         </scene>
     </scenes>
     <resources>
-        <image name="Logo" width="240" height="240"/>
+        <image name="LaunchLogo" width="240" height="240"/>
         <namedColor name="LaunchBg">
             <color red="1" green="0.97254901960784312" blue="0.93333333333333335" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
         </namedColor>
