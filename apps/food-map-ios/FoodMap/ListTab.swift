@@ -22,6 +22,20 @@ struct ListTab: View {
                             Text("\(groups.count) 家").font(.headline).foregroundStyle(Color.accent)
                         }
                         Spacer()
+                        // 抽一間：從現在篩出來的收藏裡抽，分店多的不會比較容易抽到，抽中離你最近的那間
+                        if !groups.isEmpty {
+                            Button {
+                                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                                if let p = groups.randomElement()?.first { path = [p] }
+                            } label: {
+                                Text("🎲").font(.system(size: 22))
+                                    .frame(width: 42, height: 42)
+                                    .background(RoundedRectangle(cornerRadius: 42 * 0.32).fill(Color.accent.opacity(0.13)))
+                                    .frame(minWidth: 44, minHeight: 44).contentShape(.rect)
+                            }
+                            .buttonStyle(PressStyle())
+                            .accessibilityLabel("抽一間")
+                        }
                         AddButton(size: 42) { adding = true }
                     }
                     .padding(.horizontal, 16)

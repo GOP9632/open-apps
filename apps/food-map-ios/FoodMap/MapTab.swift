@@ -15,6 +15,8 @@ struct MapTab: View {
     // 地圖現在看到的範圍（移動、縮放停下來才更新）；點卡片／圖釘造成的移動不算，免得下面的卡片一直換
     @State private var shownRegion: MKCoordinateRegion?
     @State private var selfMoved = false
+    // 抽一間抽中的那間（還選著它時，按鈕變「再抽一次」）
+    @State private var drawn: String?
 
     private var points: [Place] { store.shown(store.mapF, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil } }
 
@@ -87,7 +89,7 @@ struct MapTab: View {
                         .accessibilityLabel("我的位置")
                     }
                     .padding(.horizontal, 16)
-                    NearbySheet(near: near, sel: $sel, group: gname)
+                    NearbySheet(near: near, sel: $sel, group: gname, drawn: drawn != nil && drawn == sel) { draw(near) }
                 }
             }
             .toolbarVisibility(.hidden, for: .navigationBar)
@@ -112,6 +114,18 @@ struct MapTab: View {
     }
 
     // 搜尋框下面的深色膠囊：現在看誰的收藏，點了換；群組時旁邊有 ✕ 回到我的收藏
+    // 抽一間：從地圖現在看到的店裡抽（跟著篩選和群組），同一家的分店只算一次、抽中離你最近的那間；再抽一次不會抽到同一家
+    private func draw(_ near: Nearby) {
+        var pool = store.brands(near.places).map { $0[0] }
+        if pool.count > 1, let cur = sel.flatMap({ id in pool.first { $0.id == id } }) {
+            pool.removeAll { store.brand($0) == store.brand(cur) }
+        }
+        guard let p = pool.randomElement() else { return }
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        drawn = p.id
+        withAnimation(.snappy) { sel = p.id }
+    }
+
     private func scopePill(_ gname: String?) -> some View {
         HStack(spacing: 8) {
             Button { scoping = true } label: {
@@ -201,15 +215,23 @@ struct NearbySheet: View {
     let near: Nearby
     @Binding var sel: String?
     var group: String? = nil
+    var drawn = false
+    var draw: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Capsule().fill(Color.ink.opacity(0.15)).frame(width: 38, height: 5).frame(maxWidth: .infinity).padding(.top, 8)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text((group.map { "\($0) · " } ?? "") + near.title).font(.system(size: 19, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1)
-                Text(near.subtitle).font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.45))
+                Text(near.subtitle).font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.45)).lineLimit(1)
+                Spacer(minLength: 0)
+                if let draw, !near.places.isEmpty {
+                    Chip(text: drawn ? "🎲 再抽一次" : "🎲 抽一間", on: true, action: draw)
+                        .fixedSize()
+                        .accessibilityHint("從地圖上的店隨機挑一間")
+                }
             }
-            .padding(.horizontal, 18)
+            .padding(.leading, 18).padding(.trailing, 12)
             if !near.places.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 12) {
