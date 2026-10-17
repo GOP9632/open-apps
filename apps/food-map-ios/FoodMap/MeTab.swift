@@ -65,33 +65,58 @@ struct MeTab: View {
 
 struct LoginView: View {
     @Environment(Store.self) private var store
+    @State private var signUp = false
+    @State private var name = ""
     @State private var email = ""
     @State private var pw = ""
     @State private var busy = false
 
+    private var ready: Bool { !email.isEmpty && !pw.isEmpty && (!signUp || !name.trimmingCharacters(in: .whitespaces).isEmpty) }
+
     var body: some View {
         VStack(spacing: 16) {
             Spacer()
-            Text("🍜").font(.system(size: 60))
+            Text("🍩").font(.system(size: 60))
             Text("美食收藏").font(.largeTitle.bold())
-            Text("用網頁版同一個帳號登入").foregroundStyle(.secondary)
+            Text(signUp ? "建立帳號，開始收藏想吃的店" : "網頁版的帳號也可以直接登入").foregroundStyle(.secondary)
+            Picker("", selection: $signUp.animation(.snappy)) {
+                Text("登入").tag(false)
+                Text("建立帳號").tag(true)
+            }
+            .pickerStyle(.segmented)
             VStack(spacing: 10) {
+                if signUp {
+                    TextField("名字（朋友看到的）", text: $name).textContentType(.nickname)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 TextField("Email", text: $email).textContentType(.username).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
-                SecureField("密碼", text: $pw).textContentType(.password)
+                SecureField(signUp ? "密碼（至少 6 個字）" : "密碼", text: $pw).textContentType(signUp ? .newPassword : .password)
             }
             .textFieldStyle(.roundedBorder).font(.body)
             if let e = store.error { Text(e).foregroundStyle(.red).font(.footnote) }
-            Button {
-                busy = true
-                Task { await store.signIn(email.trimmingCharacters(in: .whitespaces), pw); busy = false }
-            } label: {
-                Text(busy ? "登入中…" : "登入").font(.headline).frame(maxWidth: .infinity).frame(height: 52)
+            Button(action: go) {
+                Text(busy ? (signUp ? "建立中…" : "登入中…") : (signUp ? "建立帳號" : "登入")).font(.headline).frame(maxWidth: .infinity).frame(height: 52)
                     .background(Color.grad, in: .rect(cornerRadius: 16)).foregroundStyle(.white)
             }
-            .disabled(busy || email.isEmpty || pw.isEmpty)
+            .disabled(busy || !ready)
             Spacer()
         }
         .padding(24)
         .background(Color.bg)
+        .onChange(of: signUp) { store.error = nil }
+    }
+
+    private func go() {
+        busy = true
+        let e = email.trimmingCharacters(in: .whitespaces)
+        Task {
+            if signUp {
+                // 要先收確認信的話，切回登入讓他收完信直接登入
+                if !(await store.signUp(e, pw, name.trimmingCharacters(in: .whitespaces))) && store.error == nil { signUp = false }
+            } else {
+                await store.signIn(e, pw)
+            }
+            busy = false
+        }
     }
 }

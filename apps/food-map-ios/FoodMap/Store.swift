@@ -142,6 +142,21 @@ struct Snapshot: Codable {
         catch { self.error = error.localizedDescription }
     }
 
+    // 建好帳號就直接登入，並用他填的名字建 profile（朋友在群組裡看到的名字）
+    @MainActor func signUp(_ email: String, _ pw: String, _ name: String) async -> Bool {
+        do {
+            guard try await Supa.signUp(email: email, password: pw, name: name) else {
+                error = nil; say("帳號建好了，請到信箱點確認信再回來登入"); return false
+            }
+            if let me = Supa.session?.user.id {
+                let p = Profile(id: me, name: name)
+                try? await Supa.write("POST", "profiles", body: p, upsert: true)
+                profiles[me] = p
+            }
+            loggedIn = true; error = nil; await sync(); return true
+        } catch { self.error = error.localizedDescription; return false }
+    }
+
     @MainActor func signOut() {
         Supa.signOut(); loggedIn = false; apply(Snapshot()); quickKey = nil
         try? FileManager.default.removeItem(at: cacheFile)

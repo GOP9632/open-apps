@@ -27,6 +27,31 @@ enum Supa {
     }
     static func signOut() { session = nil }
 
+    // 建立帳號（跟網頁版一樣把名字放在 user metadata）。
+    // 回傳 true = 直接登入了；false = 要先到信箱點確認信
+    static func signUp(email: String, password: String, name: String) async throws -> Bool {
+        var r = URLRequest(url: URL(string: "\(url.absoluteString)/auth/v1/signup")!)
+        r.httpMethod = "POST"
+        r.setValue(key, forHTTPHeaderField: "apikey")
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.httpBody = try JSONSerialization.data(withJSONObject: ["email": email, "password": password, "data": ["name": name]])
+        let (d, res) = try await URLSession.shared.data(for: r)
+        guard (res as? HTTPURLResponse)?.statusCode == 200 else { throw Fail(msg: message(d, "建立帳號失敗")) }
+        if let s = try? JSONDecoder().decode(Session.self, from: d) { session = s; return true }
+        return false
+    }
+
+    private static func message(_ d: Data, _ fallback: String) -> String {
+        let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
+        let m = (j?["msg"] ?? j?["error_description"] ?? j?["message"]) as? String ?? ""
+        if m == "Invalid login credentials" { return "Email 或密碼不對" }
+        if m.contains("already registered") { return "這個 Email 已經註冊過，請直接登入" }
+        if m.contains("at least") && m.lowercased().contains("password") { return "密碼至少要 6 個字" }
+        if m.contains("Email not confirmed") { return "還沒到信箱點確認信" }
+        if m.lowercased().contains("invalid") && m.lowercased().contains("email") { return "Email 格式不對" }
+        return m.isEmpty ? fallback : m
+    }
+
     private static func auth(_ path: String, _ body: [String: String]) async throws -> Session {
         var r = URLRequest(url: URL(string: "\(url.absoluteString)/auth/v1/\(path)")!)
         r.httpMethod = "POST"
@@ -34,11 +59,7 @@ enum Supa {
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.httpBody = try JSONEncoder().encode(body)
         let (d, res) = try await URLSession.shared.data(for: r)
-        guard (res as? HTTPURLResponse)?.statusCode == 200 else {
-            let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
-            let m = (j?["msg"] ?? j?["error_description"] ?? j?["message"]) as? String
-            throw Fail(msg: m == "Invalid login credentials" ? "Email 或密碼不對" : (m ?? "登入失敗"))
-        }
+        guard (res as? HTTPURLResponse)?.statusCode == 200 else { throw Fail(msg: message(d, "登入失敗")) }
         return try JSONDecoder().decode(Session.self, from: d)
     }
 
