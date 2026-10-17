@@ -509,7 +509,8 @@ struct DrawCards: View {
             guard chosen == nil, up.contains(p.id) else { return }
             Haptic.medium()
             withAnimation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.8)) { chosen = p.id }
-            Task { try? await Task.sleep(for: .milliseconds(reduce ? 120 : 220)); pick(p) }
+            // 馬上選（推店家頁、地圖選中），卡片的動畫在關掉時一起淡出
+            pick(p)
         }
         .accessibilityLabel(up.contains(p.id) ? p.name : "還沒翻開")
         .accessibilityAddTraits(.isButton)
@@ -597,6 +598,8 @@ struct DrawWheel: View {
     @State private var burst = 0
     @Environment(\.accessibilityReduceMotion) private var reduce
     private let size: CGFloat = 300
+    // 每格不同顏色（相鄰的分得出來）；分類看格子裡的食物圖示
+    private static let colors: [Color] = [.accent, .sprPink, .sprBlue, .sprMint, .sprPurple, Color(hex: 0xe8a200), Color(hex: 0x1fbf8f), Color(hex: 0xff4f9a).mix(with: .accent, by: 0.5)]
 
     private var seg: Double { 2 * .pi / Double(max(places.count, 1)) }
 
@@ -636,7 +639,7 @@ struct DrawWheel: View {
             ForEach(Array(places.enumerated()), id: \.element.id) { i, p in
                 let a0 = Double(i) * seg, mid = a0 + seg / 2
                 Slice(start: a0, end: a0 + seg, inner: 0.3)
-                    .fill(p.cat.color.opacity(i % 2 == 0 ? 1 : 0.82))
+                    .fill(Self.colors[i % Self.colors.count])
                     .overlay(Slice(start: a0, end: a0 + seg, inner: 0.3).stroke(.white, lineWidth: 3))
                     .scaleEffect(won == p.id ? 1.06 : 1)
                     .animation(.spring(response: 0.3, dampingFraction: 0.45), value: won)
