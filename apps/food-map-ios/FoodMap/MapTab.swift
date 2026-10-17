@@ -117,7 +117,7 @@ struct MapTab: View {
     }
 }
 
-// 下面那排要放哪些店、標題怎麼寫：1.2 公里內叫「附近」，附近沒有就列最近的 10 間，沒開定位就照收藏順序
+// 下面那排要放哪些店、標題怎麼寫：1.2 公里內叫「附近」，卡片由近到遠全部列出，沒開定位就照收藏順序
 struct Nearby {
     let title: String, subtitle: String, places: [Place]
 
@@ -134,10 +134,12 @@ struct Nearby {
         }
         let sorted = list.map { ($0, here.distance(from: CLLocation(latitude: $0.lat!, longitude: $0.lng!))) }.sorted { $0.1 < $1.1 }
         let close = sorted.filter { $0.1 <= 1200 }.map(\.0)
+        // 卡片一律放全部（由近到遠），點地圖上任何一個圖釘，下面都捲得到那張卡；標題才算附近幾間
+        places = sorted.map(\.0)
         if close.isEmpty {
-            title = "離你最近"; subtitle = "附近 1.2 公里沒有收藏的店"; places = Array(sorted.prefix(10).map(\.0))
+            title = "離你最近"; subtitle = "附近 1.2 公里沒有收藏的店"
         } else {
-            title = "附近 \(close.count) 間"; subtitle = "走路 15 分鐘內"; places = close
+            title = "附近 \(close.count) 間"; subtitle = close.count < list.count ? "走路 15 分鐘內・往右滑看更遠的" : "走路 15 分鐘內"
         }
     }
 }
