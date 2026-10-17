@@ -281,3 +281,46 @@ begin
 end $$;
 revoke all on function food.delete_my_account() from public, anon;
 grant execute on function food.delete_my_account() to authenticated;
+
+-- App 打開或切回來時，原本要分兩輪發 7 個請求，改成呼叫這一個函式就拿完
+--    用呼叫的人自己的權限讀（security invoker），看得到的東西跟原本一模一樣
+create or replace function food.load_all() returns json
+language sql stable security invoker set search_path = '' as $$
+  with r as (
+    select id, group_id, created_by, title, place_ids, created_at
+    from food.swipe_rounds order by created_at desc, id limit 50
+  )
+  select json_build_object(
+    -- 貼文原文（source_text）App 用不到，不傳
+    'places', coalesce((select json_agg(to_jsonb(p) - 'source_text' order by p.created_at desc, p.id) from food.places p), '[]'::json),
+    'groups', coalesce((select json_agg(g order by g.created_at, g.id) from food.groups g), '[]'::json),
+    'members', coalesce((select json_agg(json_build_object('group_id', m.group_id, 'user_id', m.user_id) order by m.group_id, m.user_id) from food.group_members m), '[]'::json),
+    'group_places', coalesce((select json_agg(json_build_object('group_id', gp.group_id, 'place_id', gp.place_id) order by gp.group_id, gp.place_id) from food.group_places gp), '[]'::json),
+    'rounds', coalesce((select json_agg(r order by r.created_at desc, r.id) from r), '[]'::json),
+    'swipes', coalesce((select json_agg(json_build_object('round_id', s.round_id, 'user_id', s.user_id, 'place_id', s.place_id, 'liked', s.liked, 'created_at', s.created_at) order by s.round_id, s.user_id, s.place_id)
+                        from food.swipes s where s.round_id in (select id from r)), '[]'::json),
+    'profiles', coalesce((select json_agg(json_build_object('id', pr.id, 'name', pr.name) order by pr.id) from food.profiles pr
+                          where pr.id = auth.uid() or pr.id in (select user_id from food.group_members) or pr.id in (select owner from food.places)), '[]'::json)
+  );
+$$;
+revoke execute on function food.load_all() from public, anon;
+grant execute on function food.load_all() to authenticated;
+
+-- Supabase 健檢建議：權限規則裡的 auth.uid() 包成 (select auth.uid())，每次查詢只算一次，不用每一列都算
+do $$
+declare r record;
+begin
+  for r in
+    select * from pg_policies
+    where schemaname = 'food'
+      and (coalesce(qual, '') || coalesce(with_check, '')) like '%auth.uid()%'
+      and (coalesce(qual, '') || coalesce(with_check, '')) not ilike '%select auth.uid()%'
+  loop
+    execute format('alter policy %I on food.%I %s %s', r.policyname, r.tablename,
+      case when r.qual is not null then 'using (' || replace(r.qual, 'auth.uid()', '(select auth.uid())') || ')' else '' end,
+      case when r.with_check is not null then 'with check (' || replace(r.with_check, 'auth.uid()', '(select auth.uid())') || ')' else '' end);
+  end loop;
+end $$;
+
+-- 讓 App 馬上認得新函式
+notify pgrst, 'reload schema';
