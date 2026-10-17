@@ -86,6 +86,7 @@ struct Snapshot: Codable {
     static let launchedAt = Date()
     var firstPaintMs: Int?
     var syncMs: Int?
+    var syncVia = ""
 
     // 剛滑的卡還在存的時候，同步回來的舊資料不能把它蓋掉（不然卡片會跳回來）
     @ObservationIgnored private var pendingSwipes: [SwipeRow] = []
@@ -156,7 +157,8 @@ struct Snapshot: Codable {
         do {
             _ = try await Supa.fresh()
             var s = Snapshot()
-            if let all = await loadAll() { s = all } else {
+            if let all = await loadAll() { s = all; syncVia = "load_all" } else {
+                syncVia = "7 個請求"
                 async let pl = Supa.select("places", "select=*&order=created_at.desc,id", as: [Place].self)
                 async let gr = Supa.select("groups", "select=*&order=created_at,id", as: [FoodGroup].self)
                 async let gm = Supa.select("group_members", "select=group_id,user_id&order=group_id,user_id", as: [Member].self)
@@ -350,7 +352,7 @@ struct Snapshot: Codable {
             guard msg.hasPrefix("已收藏") || !new.isEmpty else {
                 // 全部都之前收藏過：卡片收掉，訊息說一聲
                 if msg.hasPrefix("之前收藏過") { Haptic.light(); dropAdd(id); say(msg); return }
-                Haptic.warning(); set(.failed(msg.isEmpty ? "找不到這間店" : msg)); return
+                Haptic.warning(); set(.failed(Self.inApp(msg))); return
             }
             Haptic.success()
             markFresh(Set(new.map(\.id)))
@@ -366,6 +368,13 @@ struct Snapshot: Codable {
             Haptic.warning()
             set(.failed("收藏失敗：" + error.localizedDescription))
         }
+    }
+
+    // 雲端的訊息是寫給分享捷徑的（「打開美食收藏貼上店名」），在 App 裡新增時換成 App 裡的說法
+    private static func inApp(_ m: String) -> String {
+        if m.isEmpty || m.contains("沒找到店家") { return "找不到這間店。加上地區或分店名再試一次，或按「自己填」" }
+        if m.contains("收藏碼") { return "收藏碼失效了，請到「我的」重新產生後再試" }
+        return m
     }
 
     // 忘記密碼：寄重設密碼的信

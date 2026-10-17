@@ -6,11 +6,15 @@ import UIKit
 @MainActor @Observable final class Hero {
     static let shared = Hero()
 
-    // 正在飛的那張（沒在飛就是 nil）
-    private(set) var flying: String?
-    private(set) var img: UIImage?
-    private(set) var rect: CGRect = .zero
-    private(set) var radius: CGFloat = 16
+    // 正在飛的那一趟（沒在飛就是 nil）
+    struct Trip: Equatable {
+        let id = UUID()
+        let place: String
+        let img: UIImage
+        let from: CGRect, to: CGRect
+        let r0: CGFloat, r1: CGFloat
+    }
+    private(set) var trip: Trip?
     // 飛的時候先藏起真的照片（店家頁大圖、卡片上那張）
     private(set) var hiding: String?
 
@@ -61,15 +65,17 @@ import UIKit
     // 從左邊滑回（不是按返回鍵）：不飛，下次進來重新算
     func left(_ id: String) { if landedPage == id { landedPage = nil } }
 
+    // 照片先畫在起點，出現之後才開始飛（同一幀裡設起點又設終點，SwiftUI 只會畫終點，看起來就沒飛）
     private func fly(_ id: String, _ im: UIImage, from: CGRect, _ r0: CGFloat, to: CGRect, _ r1: CGFloat) {
-        img = im; rect = from; radius = r0; flying = id; hiding = id
-        let reduce = UIAccessibility.isReduceMotionEnabled
-        withAnimation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.38, dampingFraction: 0.86)) {
-            rect = to; radius = r1
-        } completion: { [weak self] in
-            guard let self, self.flying == id else { return }
-            self.flying = nil; self.hiding = nil; self.img = nil
-        }
+        // 減少動態：不飛，照一般推頁
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        trip = Trip(place: id, img: im, from: from, to: to, r0: r0, r1: r1)
+        hiding = id
+    }
+
+    func landed(_ t: Trip) {
+        guard trip?.id == t.id else { return }
+        trip = nil; hiding = nil
     }
 
     private func pickSpot(_ id: String, tab: Int, near p: CGPoint) -> (rect: CGRect, radius: CGFloat)? {
@@ -104,11 +110,8 @@ private struct HeroSource: ViewModifier {
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { r in
                 Hero.shared.report(place.id, key, tab: tab, rect: r, radius: radius)
             }
-            .onDisappear {
-                let id = place.id, k = key
-                // 卡片關掉的同時推頁（抽到的卡），晚一點再忘掉位置
-                Task { try? await Task.sleep(for: .seconds(1)); Hero.shared.forget(id, k) }
-            }
+            // 推進店家頁時卡片會 onDisappear，但返回要飛回這裡，所以位置不忘掉；
+            // 真的拿掉的卡（刪除、篩掉）就算留著舊位置，也只會在同一分頁、原卡附近才被用到
     }
 }
 
@@ -120,13 +123,36 @@ extension View {
 struct HeroLayer: View {
     @State private var hero = Hero.shared
     var body: some View {
-        if hero.flying != nil, let img = hero.img {
-            Image(uiImage: img).resizable().scaledToFill()
-                .frame(width: hero.rect.width, height: hero.rect.height)
-                .clipShape(.rect(cornerRadius: hero.radius))
-                .position(x: hero.rect.midX, y: hero.rect.midY)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
+        if let t = hero.trip { HeroTrip(t: t).id(t.id) }
+    }
+}
+
+// 一趟：先在起點畫出來，onAppear 才用彈簧把進度 0 → 1
+private struct HeroTrip: View {
+    let t: Hero.Trip
+    @State private var p: CGFloat = 0
+    var body: some View {
+        Image(uiImage: t.img).resizable().scaledToFill()
+            .modifier(HeroMove(t: t, p: p))
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .onAppear {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) { p = 1 } completion: { Hero.shared.landed(t) }
+            }
+    }
+}
+
+// 照進度算位置、大小、圓角
+private struct HeroMove: ViewModifier, Animatable {
+    let t: Hero.Trip
+    var p: CGFloat
+    var animatableData: CGFloat { get { p } set { p = newValue } }
+    func body(content: Content) -> some View {
+        func mix(_ a: CGFloat, _ b: CGFloat) -> CGFloat { a + (b - a) * p }
+        let w = mix(t.from.width, t.to.width), h = mix(t.from.height, t.to.height)
+        return content
+            .frame(width: w, height: h)
+            .clipShape(.rect(cornerRadius: mix(t.r0, t.r1)))
+            .position(x: mix(t.from.midX, t.to.midX), y: mix(t.from.midY, t.to.midY))
     }
 }

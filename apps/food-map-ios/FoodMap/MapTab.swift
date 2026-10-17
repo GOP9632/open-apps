@@ -99,7 +99,8 @@ struct MapTab: View {
                 .onChange(of: list.map(\.id)) { recluster(proxy) }
                 .onChange(of: store.coachStep) { pinFrame(proxy) }
                 // 選到一根圖釘：地圖移過去、放光圈（只有這個小觀察者看 sel，MapTab 本身不跟著重算）
-                .background { SelWatcher(pins: pins) { id in picked(id, list, proxy); recluster(proxy) } }
+                // 選到時不重算泡泡（會讓整張地圖重畫，點圖釘變慢）；地圖移完停下來時會重算
+                .background { SelWatcher(pins: pins) { id in picked(id, list, proxy) } }
                 .overlay { PinBurst(spot: spot) }
             }
             .safeAreaInset(edge: .top, spacing: 0) {
@@ -597,8 +598,13 @@ struct PickedCard: View {
             }
             .padding(.leading, 18).padding(.trailing, 10)
             HStack(alignment: .top, spacing: 12) {
-                PhotoView(place: place, px: 400).frame(width: 120, height: 120).clipShape(.rect(cornerRadius: 18))
-                    .heroSource(place, radius: 18)
+                // 點照片也進店家頁（照片飛過去）
+                NavigationLink(value: place) {
+                    PhotoView(place: place, px: 400).frame(width: 120, height: 120).clipShape(.rect(cornerRadius: 18))
+                        .heroSource(place, radius: 18)
+                }
+                .buttonStyle(PressStyle { ReelCache.warm(place) })
+                .accessibilityLabel("\(place.name) 店家頁")
                 VStack(alignment: .leading, spacing: 4) {
                     Text(place.name).font(.system(size: 18, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1)
                     Text(meta).font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.55)).lineLimit(1)
@@ -624,7 +630,7 @@ struct PickedCard: View {
                                 .padding(.horizontal, 12).frame(height: 36).background(Color.accent.opacity(0.13), in: .capsule)
                                 .frame(minHeight: 44).contentShape(.rect)
                         }
-                        .buttonStyle(PressStyle())
+                        .buttonStyle(PressStyle { ReelCache.warm(place) })
                     }
                 }
                 .frame(height: 120)
@@ -778,12 +784,13 @@ struct FoodPin: View {
         _dOp = State(initialValue: d != nil ? 0 : 1)
         _dsx = State(initialValue: pop ? 1.3 : 1)
         _dsy = State(initialValue: pop ? 1.3 : 1)
-        _fly = State(initialValue: reduce ? .zero : pins.flyFrom[place.id] ?? .zero)
+        _fly = State(initialValue: reduce || pins.sel == place.id ? .zero : pins.flyFrom[place.id] ?? .zero)
     }
 
     var body: some View {
         let on = pins.sel == place.id
-        let merge = pins.mergeTo[place.id]
+        // 選到的那根永遠不跟泡泡合、也不從泡泡飛（店名小牌子才會跟著圖釘）
+        let merge = on ? nil : pins.mergeTo[place.id]
         let faded = pins.sel != nil && !on && !hopping   // 別間被選到時變淡（只改透明度，76 根一起動也不吃力）
         let hop = pins.hops[place.id] ?? 0
         // 自己接點擊：手指一按下就壓扁、輕震，放開就選中，不用等地圖確認「是不是點兩下放大」

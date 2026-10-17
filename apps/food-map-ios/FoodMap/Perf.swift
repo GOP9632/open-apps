@@ -114,11 +114,14 @@ final class TouchClock: UIGestureRecognizer, UIGestureRecognizerDelegate {
 
 // 左下角的小浮層：最近幾次的毫秒數、掉幀數
 struct PerfHUD: View {
+    @Environment(Store.self) private var store
     @State private var perf = Perf.shared
     var body: some View {
         if perf.on {
             VStack(alignment: .leading, spacing: 2) {
                 Text("掉幀（2 秒內）\(perf.hitches)").foregroundStyle(perf.hitches > 0 ? Color.sprYellow : .white)
+                // 上次同步花多久、用的是一次拿全部（load_all）還是舊的 7 個請求
+                if let ms = store.syncMs { Text("同步 \(ms) ms（\(store.syncVia)）") }
                 ForEach(Array(perf.lines.enumerated()), id: \.offset) { Text($0.element) }
                 if perf.lines.isEmpty { Text("點點看，這裡會顯示毫秒數") }
             }
