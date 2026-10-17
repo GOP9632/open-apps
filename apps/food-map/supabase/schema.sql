@@ -270,3 +270,14 @@ begin
 end $$;
 revoke execute on function food.quick_key(boolean) from public, anon;
 grant execute on function food.quick_key(boolean) to authenticated;
+
+-- 刪除帳號（App Store 規定要有）：只刪美食收藏的資料，登入帳號和其他 App 共用所以不刪
+-- 刪掉 profile 之後，收藏、群組、滑卡、收藏碼都會跟著刪（cascade）
+create or replace function food.delete_my_account() returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  delete from food.profiles where id = auth.uid();
+end $$;
+revoke all on function food.delete_my_account() from public, anon;
+grant execute on function food.delete_my_account() to authenticated;
