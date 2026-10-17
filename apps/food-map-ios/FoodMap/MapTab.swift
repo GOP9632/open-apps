@@ -11,6 +11,9 @@ struct MapTab: View {
     @State private var fitted = false
     @State private var adding = false
     @State private var noAddr = false
+    // 地圖現在看到的範圍（移動、縮放停下來才更新）；點卡片／圖釘造成的移動不算，免得下面的卡片一直換
+    @State private var shownRegion: MKCoordinateRegion?
+    @State private var selfMoved = false
 
     private var points: [Place] { store.shown(store.mapF).filter { $0.lat != nil && $0.lng != nil } }
 
@@ -19,7 +22,7 @@ struct MapTab: View {
         // 有座標的店一次算好，下面每個地方共用
         let list = points
         let all = store.shown(store.mapF)
-        let near = Nearby(list: list, here: store.here, total: all.count)
+        let near = Nearby(list: list, here: store.here, region: shownRegion, selected: sel, total: all.count)
         let missing = all.count - list.count
         NavigationStack(path: $store.mapPath) {
             MapReader { proxy in
@@ -36,11 +39,17 @@ struct MapTab: View {
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
                 .mapControls { MapCompass() }
                 .onMapCameraChange(frequency: .continuous) { _ in pinFrame(proxy) }
+                .onMapCameraChange { c in
+                    if selfMoved { selfMoved = false } else { shownRegion = c.region }
+                }
                 .onChange(of: store.coachStep) { pinFrame(proxy) }
                 .onChange(of: sel) { _, id in
                     guard let p = list.first(where: { $0.id == id }) else { return }
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.smooth(duration: 0.5)) { pos = .region(MKCoordinateRegion(center: .init(latitude: p.lat!, longitude: p.lng!), latitudinalMeters: 1500, longitudinalMeters: 1500)) }
+                    // 只把地圖移到那間，不改縮放
+                    selfMoved = true
+                    let span = shownRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+                    withAnimation(.smooth(duration: 0.5)) { pos = .region(MKCoordinateRegion(center: .init(latitude: p.lat!, longitude: p.lng!), span: span)) }
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) {
@@ -117,29 +126,34 @@ struct MapTab: View {
     }
 }
 
-// 下面那排要放哪些店、標題怎麼寫：1.2 公里內叫「附近」，卡片由近到遠全部列出，沒開定位就照收藏順序
+// 下面那排要放哪些店：地圖現在看到的範圍裡的店，由近到遠（沒開定位就從地圖中心算）；點到的那間一定在
 struct Nearby {
     let title: String, subtitle: String, places: [Place]
 
-    init(list: [Place], here: CLLocation?, total: Int) {
+    init(list: [Place], here: CLLocation?, region: MKCoordinateRegion?, selected: String?, total: Int) {
         guard !list.isEmpty else {
             title = total == 0 ? "還沒有收藏" : "地圖上還沒有店"
             subtitle = total == 0 ? "按右上角＋新增第一間" : "有地址的店會自己出現在地圖上"
             places = []
             return
         }
-        guard let here else {
-            title = "你的收藏 \(list.count) 間"; subtitle = "打開定位就能看附近的店"; places = list
-            return
+        let center = region.map { CLLocation(latitude: $0.center.latitude, longitude: $0.center.longitude) }
+        let ref = here ?? center
+        func inView(_ p: Place) -> Bool {
+            guard let r = region else { return true }
+            return abs(p.lat! - r.center.latitude) <= r.span.latitudeDelta / 2 && abs(p.lng! - r.center.longitude) <= r.span.longitudeDelta / 2
         }
-        let sorted = list.map { ($0, here.distance(from: CLLocation(latitude: $0.lat!, longitude: $0.lng!))) }.sorted { $0.1 < $1.1 }
-        let close = sorted.filter { $0.1 <= 1200 }.map(\.0)
-        // 卡片一律放全部（由近到遠），點地圖上任何一個圖釘，下面都捲得到那張卡；標題才算附近幾間
-        places = sorted.map(\.0)
-        if close.isEmpty {
-            title = "離你最近"; subtitle = "附近 1.2 公里沒有收藏的店"
+        var l = list.filter(inView)
+        if let selected, !l.contains(where: { $0.id == selected }), let p = list.first(where: { $0.id == selected }) { l.append(p) }
+        if let ref {
+            l = l.map { ($0, ref.distance(from: CLLocation(latitude: $0.lat!, longitude: $0.lng!))) }.sorted { $0.1 < $1.1 }.map(\.0)
+        }
+        places = l
+        if l.isEmpty {
+            title = "這一帶沒有收藏"; subtitle = "把地圖拉遠一點看看"
         } else {
-            title = "附近 \(close.count) 間"; subtitle = close.count < list.count ? "走路 15 分鐘內・往右滑看更遠的" : "走路 15 分鐘內"
+            title = (here != nil ? "附近 " : "這一帶 ") + "\(l.count) 間"
+            subtitle = here != nil ? "由近到遠" : "打開定位就會從你的位置排"
         }
     }
 }
