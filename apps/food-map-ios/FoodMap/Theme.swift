@@ -89,7 +89,7 @@ struct FilterChips: View {
     }
 
     private func tap(_ g: () -> Void) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptic.light()
         Perf.shared.mark("篩選")
         withAnimation(.snappy) { g() }
     }
@@ -190,4 +190,19 @@ struct Triangle: Shape {
     func path(in r: CGRect) -> Path {
         Path { p in p.move(to: CGPoint(x: r.midX, y: r.minY)); p.addLine(to: CGPoint(x: r.maxX, y: r.maxY)); p.addLine(to: CGPoint(x: r.minX, y: r.maxY)); p.closeSubpath() }
     }
+}
+
+// 震動：共用幾個先準備好的產生器（每次現建一個、沒先 prepare，第一下會晚）
+@MainActor enum Haptic {
+    private static let lightGen = UIImpactFeedbackGenerator(style: .light)
+    private static let mediumGen = UIImpactFeedbackGenerator(style: .medium)
+    private static let noteGen = UINotificationFeedbackGenerator()
+    private static let tickGen = UISelectionFeedbackGenerator()
+
+    static func prepare() { lightGen.prepare(); mediumGen.prepare(); noteGen.prepare(); tickGen.prepare() }
+    static func light() { lightGen.impactOccurred(); lightGen.prepare() }
+    static func medium() { mediumGen.impactOccurred(); mediumGen.prepare() }
+    static func success() { noteGen.notificationOccurred(.success); noteGen.prepare() }
+    static func warning() { noteGen.notificationOccurred(.warning); noteGen.prepare() }
+    static func tick() { tickGen.selectionChanged(); tickGen.prepare() }
 }

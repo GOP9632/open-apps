@@ -48,7 +48,7 @@ extension Store {
     }
 
     @MainActor func advanceCoach() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptic.light()
         if coachStep == .been { mapPath = [] }
         guard coachIndex + 1 < coach.count else { endCoach(); return }
         withAnimation(.snappy) { coachIndex += 1 }
@@ -284,7 +284,7 @@ struct IGTutorial: View {
     }
 
     private func next() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptic.light()
         if step < 2 { withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { step += 1 } } else { finish() }
     }
 

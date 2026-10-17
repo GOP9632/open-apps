@@ -24,7 +24,7 @@ struct ListTab: View {
                         // 抽一間：從現在篩出來的收藏裡抽，分店多的不會比較容易抽到，抽中離你最近的那間
                         if !groups.isEmpty {
                             Button {
-                                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                                Haptic.success()
                                 if let p = groups.randomElement()?.first { path = [p] }
                             } label: {
                                 Text("🎲").font(.system(size: 22))

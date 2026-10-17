@@ -77,7 +77,7 @@ struct AddSheet: View {
         Task {
             let r = await store.quickAdd(input.trimmingCharacters(in: .whitespacesAndNewlines), been: been, rating: been ? rating : nil)
             let ok = r.hasPrefix("已收藏")
-            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .warning)
+            ok ? Haptic.success() : Haptic.warning()
             // 存好了就直接關掉，結果用下面的小訊息告訴他；沒存到才留在這裡讓他改
             if ok { dismiss(); store.say(r); return }
             withAnimation(.snappy) { result = r; busy = false }
@@ -190,7 +190,7 @@ struct EditSheet: View {
             let ok: Bool
             if isNew { ok = await store.add(p) } else { ok = await store.save(p) }
             busy = false
-            if ok { UINotificationFeedbackGenerator().notificationOccurred(.success); dismiss(); done() }
+            if ok { Haptic.success(); dismiss(); done() }
         }
     }
 }
@@ -209,7 +209,7 @@ struct Stars: View {
     var body: some View {
         HStack(spacing: 0) {
             ForEach(1...5, id: \.self) { i in
-                Button { UIImpactFeedbackGenerator(style: .light).impactOccurred(); set(value == i ? nil : i) } label: {
+                Button { Haptic.light(); set(value == i ? nil : i) } label: {
                     Image(systemName: i <= (value ?? 0) ? "star.fill" : "star")
                         .font(.system(size: size)).foregroundStyle(i <= (value ?? 0) ? Color(hex: 0xfab005) : .secondary)
                         .frame(width: 44, height: 44).contentShape(.rect)

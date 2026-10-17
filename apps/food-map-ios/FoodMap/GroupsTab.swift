@@ -338,7 +338,7 @@ struct PickSheet: View {
         NavigationStack {
             List(list) { p in
                 Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    Haptic.light()
                     pick.formSymmetricDifference([p.id])
                 } label: {
                     HStack(spacing: 12) {
@@ -441,7 +441,7 @@ struct RoundView: View {
     // 收回剛滑的那張：從紀錄刪掉，卡片回到最上面
     private func undo(_ r: Round) {
         guard let pid = history.popLast() else { return }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptic.light()
         withAnimation(.snappy) { showResult = false }
         Task { await store.unswipe(r, pid) }
     }
@@ -492,7 +492,7 @@ struct RoundView: View {
     }
 
     private func celebrate(_ m: Store.Match) {
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        Haptic.success()
         withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { match = m }
     }
 }

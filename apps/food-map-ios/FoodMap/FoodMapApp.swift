@@ -77,6 +77,7 @@ struct Root: View {
         // 手感量測浮層（「我的」版本號連點 5 下打開）
         .overlay { PerfHUD() }
         .task {
+            Haptic.prepare()
             TouchClock.install()
             try? await Task.sleep(for: .seconds(1))
             TouchClock.install()
@@ -106,7 +107,7 @@ struct TabBar: View {
             ForEach(items.indices, id: \.self) { i in
                 let on = store.tab == i
                 Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    Haptic.light()
                     Perf.shared.mark("換分頁")
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { store.tab = i }
                 } label: {

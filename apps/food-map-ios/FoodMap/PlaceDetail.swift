@@ -139,7 +139,7 @@ struct PlaceDetail: View {
                     ForEach(branches) { b in
                         let d = store.distance(b).map { " " + fmtDistance($0) } ?? ""
                         Chip(text: (b.id == id ? "📍 " : "") + branchLabel(b) + d, on: b.id == id, color: .accent) {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            Haptic.light()
                             withAnimation(.snappy) { picked = b.id }
                         }
                     }
@@ -211,7 +211,7 @@ struct PlaceDetail: View {
                 ForEach(store.groups) { g in
                     let on = store.shared(place.id, g.id)
                     Chip(text: (on ? "✓ " : "") + g.name, on: on, color: .sprPurple) {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        Haptic.light()
                         Task { if on { await store.unshare(g.id, place.id) } else { await store.share(g.id, [place.id]) } }
                     }
                 }
@@ -251,7 +251,7 @@ struct StatusToggle: View {
         let on = (place.status ?? "want") == v
         return Button {
             guard !on else { return }
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            Haptic.medium()
             Perf.shared.mark("想去/去過")
             var p = place; p.status = v
             if v == "want" { p.rating = nil }

@@ -86,7 +86,7 @@ struct MeTab: View {
                         .contentShape(.rect)
                         .onTapGesture(count: 5) {
                             guard Perf.allowed else { return }
-                            UINotificationFeedbackGenerator().notificationOccurred(.success)
+                            Haptic.success()
                             Perf.shared.on.toggle()
                         }
                 }

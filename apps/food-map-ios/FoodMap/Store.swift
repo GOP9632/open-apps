@@ -293,7 +293,7 @@ struct Snapshot: Codable {
         n.price = p.price; n.meals = p.meals; n.hours = p.hours; n.dishes = p.dishes; n.tags = p.tags
         n.photo = p.photo; n.source_url = p.source_url; n.status = "want"
         if await add(n) {
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptic.success()
             say("已加到你的收藏")
         }
     }

@@ -73,7 +73,7 @@ struct SwipeDeck: View {
     private func fling(_ like: Bool) {
         guard let top = deck.first, !busy else { return }
         busy = true
-        UIImpactFeedbackGenerator(style: like ? .medium : .light).impactOccurred()
+        like ? Haptic.medium() : Haptic.light()
         // 飛出去的動畫真的結束才換下一張，不會閃
         withAnimation(.easeIn(duration: 0.28)) {
             drag = CGSize(width: like ? 700 : -700, height: drag.height + 40)
