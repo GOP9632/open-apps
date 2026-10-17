@@ -432,6 +432,9 @@ const Photo = {
       const path = `${S.user.id}/${uid()}.jpg`;
       const { error } = await S.sb.storage.from('food-photos').upload(path, b, { contentType: 'image/jpeg', cacheControl: '31536000' });
       if (error) throw error;
+      // 另存一張長邊 480 的小圖（同檔名加 _s），iPhone App 的地圖和卡片用；存不到 App 會自己改用原圖
+      Photo.shrink(b, 480, 0.75).then(s => S.sb.storage.from('food-photos').upload(path.replace(/\.jpg$/, '_s.jpg'), s, { contentType: 'image/jpeg', cacheControl: '31536000' }))
+        .catch(e => console.warn('thumb failed', e));
       return S.sb.storage.from('food-photos').getPublicUrl(path).data.publicUrl;
     } catch (e) { console.warn('photo store failed', e); return ''; }
   },

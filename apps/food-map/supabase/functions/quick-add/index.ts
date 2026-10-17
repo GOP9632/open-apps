@@ -1,9 +1,11 @@
 // 美食收藏：iPhone 分享捷徑在背景直接收藏，不用打開 app
 // 捷徑送 {key: 收藏碼, input: 分享進來的連結或文字}，回一行文字給捷徑當通知
+// App 裡的新增送 format: "json"，回 {message, places: [存好的完整資料]}，App 直接放進清單不用整份重抓
 // 部署：npx supabase functions deploy quick-add --no-verify-jwt（收藏碼就是驗證）
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { extract } from "../_shared/extract.ts";
+import { makeThumb } from "../_shared/thumb.ts";
 
 const CATS = ["cafe", "restaurant", "bakery", "dessert", "snack", "brunch", "bar", "drink", "other"];
 const MEALS = ["breakfast", "lunch", "tea", "dinner", "night"];
@@ -30,25 +32,31 @@ function parseAddr(addr: string) {
 const cleanDishes = (a: unknown) => [...new Set((Array.isArray(a) ? a : []).map((x) => String(x || "").trim()).filter((x) => x && x.length <= 30))].slice(0, 8);
 const nk = (s: unknown) => String(s || "").toLowerCase().normalize("NFKC").replace(/[\s\-_.,，。、・·'’"「」『』()（）【】\[\]|｜/&＆!！?？~～:：#＃@]+/g, "").replace(/(本店|總店|旗艦店)$/, "");
 
-// 封面存到自己的 Storage（IG 圖片網址過幾天就失效）
+// 封面存到自己的 Storage（IG 圖片網址過幾天就失效），小圖在背景做
 async function storePhoto(sb: ReturnType<typeof admin>, uid: string, data: string) {
   const m = data.match(/^data:(image\/(jpeg|png|webp));base64,(.+)$/);
   if (!m) return "";
   const bin = Uint8Array.from(atob(m[3]), (c) => c.charCodeAt(0));
   const path = `${uid}/${crypto.randomUUID()}.${m[2] === "jpeg" ? "jpg" : m[2]}`;
   const { error } = await sb.storage.from("food-photos").upload(path, bin, { contentType: m[1], cacheControl: "31536000" });
-  return error ? "" : sb.storage.from("food-photos").getPublicUrl(path).data.publicUrl;
+  if (error) return "";
+  (globalThis as any).EdgeRuntime?.waitUntil(makeThumb(sb, path, bin).catch(console.error));
+  return sb.storage.from("food-photos").getPublicUrl(path).data.publicUrl;
 }
 
-export async function quickAdd(key: string, input: string) {
+type Result = { message: string; places: Place[] };
+const say = (message: string): Result => ({ message, places: [] });
+
+// wait = true（App 裡的新增）：封面存好才回，App 拿到的資料就有照片；分享捷徑則先回通知，封面在背景存
+export async function quickAdd(key: string, input: string, wait = false): Promise<Result> {
   const sb = admin();
-  if (!/^[0-9a-f]{64}$/.test(key)) return "收藏碼不對，請到美食收藏「我的」重新加入分享捷徑";
+  if (!/^[0-9a-f]{64}$/.test(key)) return say("收藏碼不對，請到美食收藏「我的」重新加入分享捷徑");
   const { data: k } = await sb.from("quick_keys").select("user_id").eq("key", key).maybeSingle();
-  if (!k) return "收藏碼已失效，請到美食收藏「我的」重新加入分享捷徑";
+  if (!k) return say("收藏碼已失效，請到美食收藏「我的」重新加入分享捷徑");
   const uid = k.user_id as string;
 
   const text = String(input || "").trim();
-  if (!text) return "沒有收到連結，請從 IG 貼文按分享再選這個捷徑";
+  if (!text) return say("沒有收到連結，請從 IG 貼文按分享再選這個捷徑");
   const url = (text.match(/https?:\/\/\S+/) || [])[0];
   const rest = url ? text.replace(url, "").trim() : text;
   const minePromise = sb.from("places").select("name,branch,city").eq("owner", uid).then((x) => x); // 和抓店家同時跑
@@ -58,12 +66,12 @@ export async function quickAdd(key: string, input: string) {
     ...p, name: String(p.name || "").trim(),
     city: normCity(p.city) || parseAddr(p.address || "").city, district: p.district || parseAddr(p.address || "").district,
   })).filter((p) => p.name);
-  if (!found.length) return "這篇貼文沒找到店家，可以打開美食收藏貼上店名";
+  if (!found.length) return say("這篇貼文沒找到店家，可以打開美食收藏貼上店名");
 
   const { data: mine } = await minePromise;
   const have = new Set((mine ?? []).map((p) => nk(p.name + (p.branch || "")) + "|" + normCity(p.city)));
   const saved: string[] = [], dup: string[] = [];
-  const ids: string[] = [];
+  const rows: Place[] = [];
   for (const c of found) {
     if (have.has(nk(c.name + (c.branch || "")) + "|" + normCity(c.city))) { dup.push(c.name); continue; }
     const row = {
@@ -73,28 +81,41 @@ export async function quickAdd(key: string, input: string) {
       hours: c.hours || "", status: "want", note: c.note || "", tags: (c.tags || []).slice(0, 6), dishes: cleanDishes(c.dishes),
       source_url: src.url || url || "", source_text: String(src.caption || rest || "").slice(0, 2000),
     };
-    const { data: ins, error } = await sb.from("places").insert(row).select("id").single();
+    const { data: ins, error } = await sb.from("places").insert(row).select("*").single();
     if (error) throw error;
-    ids.push(ins.id);
+    rows.push(ins);
     saved.push(c.name);
     have.add(nk(c.name + (c.branch || "")) + "|" + normCity(c.city));
   }
-  // 先回通知，封面在背景存（座標由 app 打開時補，伺服器打 Nominatim 常被擋）
-  if (ids.length && src.thumbData) {
-    const later = storePhoto(sb, uid, src.thumbData).then((url) => url && sb.from("places").update({ photo: url }).in("id", ids)).catch(console.error);
-    (globalThis as any).EdgeRuntime?.waitUntil(later);
+  // 座標由 app 打開時補（伺服器打 Nominatim 常被擋）
+  if (rows.length && src.thumbData) {
+    const ids = rows.map((r) => r.id);
+    const later = storePhoto(sb, uid, src.thumbData).then(async (url) => {
+      if (!url) return;
+      await sb.from("places").update({ photo: url }).in("id", ids);
+      for (const r of rows) r.photo = url;
+    }).catch(console.error);
+    if (wait) await later;
+    else (globalThis as any).EdgeRuntime?.waitUntil(later);
   }
-  return [saved.length ? `已收藏：${saved.join("、")}` : "", dup.length ? `之前收藏過：${dup.join("、")}` : ""].filter(Boolean).join("\n");
+  const message = [saved.length ? `已收藏：${saved.join("、")}` : "", dup.length ? `之前收藏過：${dup.join("、")}` : ""].filter(Boolean).join("\n");
+  // 貼文原文 App 用不到，不傳回去
+  return { message, places: rows.map(({ source_text: _, ...r }) => r) };
 }
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("美食收藏分享捷徑", { status: 405 });
   const text = (s: string) => new Response(s, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  const json = (o: Result) => new Response(JSON.stringify(o), { headers: { "Content-Type": "application/json; charset=utf-8" } });
+  let asJson = false;
   try {
     const body = await req.json().catch(() => ({}));
-    return text(await quickAdd(String(body.key ?? "").trim().toLowerCase(), String(body.input ?? "")));
+    asJson = body.format === "json";
+    const r = await quickAdd(String(body.key ?? "").trim().toLowerCase(), String(body.input ?? ""), asJson);
+    return asJson ? json(r) : text(r.message);
   } catch (e) {
     console.error(e);
-    return text(`收藏失敗：${String((e as Error).message ?? e).slice(0, 120)}`);
+    const msg = `收藏失敗：${String((e as Error).message ?? e).slice(0, 120)}`;
+    return asJson ? json(say(msg)) : text(msg);
   }
 });
