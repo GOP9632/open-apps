@@ -188,7 +188,7 @@ struct MapTab: View {
             .buttonStyle(PressStyle())
             .accessibilityLabel("地圖要看誰的收藏，現在是" + (gname ?? "我的收藏"))
             if store.mapGroup != nil {
-                Button { withAnimation(.snappy) { store.mapGroup = nil } } label: {
+                Button { withAnimation(.snappy(duration: 0.28)) { store.mapGroup = nil } } label: {
                     Image(systemName: "xmark").font(.system(size: 13, weight: .heavy)).foregroundStyle(Color.ink)
                         .frame(width: 36, height: 36).background(.white, in: .circle).shadow(color: .black.opacity(0.12), radius: 4, y: 1)
                         .frame(width: 44, height: 44).contentShape(.rect)
@@ -686,7 +686,7 @@ struct ScopeSheet: View {
         let on = store.mapGroup == id
         return Button {
             Haptic.light()
-            withAnimation(.snappy) { store.mapGroup = id }
+            withAnimation(.snappy(duration: 0.28)) { store.mapGroup = id }
             dismiss()
         } label: {
             HStack(spacing: 12) {

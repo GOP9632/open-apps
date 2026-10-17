@@ -69,7 +69,8 @@ struct AddSheet: View {
                 }(), isNew: true) { dismiss() }
             }
         }
-        .onAppear { focus = true }
+        // 等視窗彈上來（約 0.35 秒）再叫鍵盤，兩個動畫不搶
+        .task { try? await Task.sleep(for: .milliseconds(350)); focus = true }
     }
 
     private func go() {
@@ -80,7 +81,7 @@ struct AddSheet: View {
             ok ? Haptic.success() : Haptic.warning()
             // 存好了就直接關掉，結果用下面的小訊息告訴他；沒存到才留在這裡讓他改
             if ok { dismiss(); store.say(r); return }
-            withAnimation(.snappy) { result = r; busy = false }
+            withAnimation(.snappy(duration: 0.28)) { result = r; busy = false }
         }
     }
 }

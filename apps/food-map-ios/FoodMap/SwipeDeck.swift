@@ -1,6 +1,6 @@
 import SwiftUI
 
-// 滑卡：右滑想吃、左滑跳過，點一下看店家。卡片先飛出去，飛完才通知外面（存檔在背景）
+// 滑卡：右滑想吃、左滑跳過，點一下看店家。滑出去的那張交給飛走的複本自己飛，下一張馬上可以拖（手快可以連續滑）
 struct SwipeDeck: View {
     let deck: [Place]
     var onSwipe: (Place, Bool) -> Void
@@ -8,7 +8,13 @@ struct SwipeDeck: View {
     // 有值就顯示「↶ 上一張」，收回自己剛滑的那張
     var onUndo: (() -> Void)? = nil
     @State private var drag: CGSize = .zero
-    @State private var busy = false
+    // 正在飛走的卡（複本），飛完自己消失
+    @State private var flying: [Flying] = []
+
+    struct Flying: Identifiable {
+        let id = UUID()
+        let place: Place, from: CGSize, like: Bool
+    }
 
     var body: some View {
         VStack(spacing: 18) {
@@ -16,13 +22,16 @@ struct SwipeDeck: View {
                 ForEach(Array(deck.prefix(3).enumerated()).reversed(), id: \.element.id) { i, p in
                     card(p, at: i)
                 }
+                ForEach(flying) { f in
+                    FlyingCard(f: f) { flying.removeAll { $0.id == f.id } }.zIndex(10).allowsHitTesting(false)
+                }
             }
             .frame(maxHeight: .infinity)
             .padding(.horizontal, 20).padding(.top, 8)
 
             HStack(spacing: 28) {
                 RoundBtn(icon: "arrow.uturn.backward", color: Color.ink.opacity(onUndo == nil ? 0.2 : 0.6), size: 50) { onUndo?() }
-                    .disabled(onUndo == nil || busy).accessibilityLabel("上一張")
+                    .disabled(onUndo == nil).accessibilityLabel("上一張")
                 RoundBtn(icon: "xmark", color: .sprPink) { fling(false) }.accessibilityLabel("跳過")
                 Button { fling(true) } label: {
                     Image(systemName: "heart.fill").font(.system(size: 32, weight: .bold)).foregroundStyle(.white)
@@ -53,7 +62,7 @@ struct SwipeDeck: View {
             .offset(offset)
             .scaleEffect(scale)
             .rotationEffect(.degrees(angle))
-            .onTapGesture { if top && !busy { onTap(p) } }
+            .onTapGesture { if top { onTap(p) } }
             .gesture(gesture, including: top ? .all : .subviews)
             .zIndex(Double(3 - i))
             .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.9)), removal: .identity))
@@ -61,9 +70,8 @@ struct SwipeDeck: View {
 
     private var gesture: some Gesture {
         DragGesture()
-            .onChanged { if !busy { drag = $0.translation } }
+            .onChanged { drag = $0.translation }
             .onEnded { v in
-                guard !busy else { return }
                 let fast = abs(v.predictedEndTranslation.width) > 260
                 if abs(v.translation.width) > 100 || fast { fling(v.translation.width > 0) }
                 else { withAnimation(.spring(response: 0.35, dampingFraction: 0.65)) { drag = .zero } }
@@ -71,24 +79,47 @@ struct SwipeDeck: View {
     }
 
     private func fling(_ like: Bool) {
-        guard let top = deck.first, !busy else { return }
-        busy = true
+        guard let top = deck.first else { return }
         like ? Haptic.medium() : Haptic.light()
-        // 飛出去的動畫真的結束才換下一張，不會閃
-        withAnimation(.easeIn(duration: 0.28)) {
-            drag = CGSize(width: like ? 700 : -700, height: drag.height + 40)
-        } completion: {
-            var t = Transaction(); t.disablesAnimations = true
-            withTransaction(t) { drag = .zero; onSwipe(top, like) }
-            busy = false
-        }
+        // 這張交給飛走的複本，從手指放開的位置接著飛
+        flying.append(Flying(place: top, from: drag, like: like))
+        var t = Transaction(); t.disablesAnimations = true
+        withTransaction(t) { drag = .zero }
+        // 下一張用彈簧從歪歪的位置轉正、放大到最上面，馬上可以拖
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) { onSwipe(top, like) }
     }
 
-    private func stamp(_ t: String, _ c: Color) -> some View {
-        Text(t).font(.system(size: 32, weight: .black)).foregroundStyle(c)
+    private func stamp(_ t: String, _ c: Color) -> some View { Stamp(text: t, color: c) }
+}
+
+// 想吃！／跳過 的印章
+struct Stamp: View {
+    let text: String, color: Color
+    var body: some View {
+        let c = color, t = text
+        return Text(t).font(.system(size: 32, weight: .black)).foregroundStyle(c)
             .padding(.horizontal, 14).padding(.vertical, 4)
             .background(.white.opacity(0.9), in: .rect(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(c, lineWidth: 4))
+    }
+}
+
+// 飛走的那張：出現就往旁邊飛出去，飛完通知移除
+private struct FlyingCard: View {
+    let f: SwipeDeck.Flying
+    let done: () -> Void
+    @State private var gone = false
+    var body: some View {
+        let to = CGSize(width: f.like ? 700 : -700, height: f.from.height * 0.35 + 40)
+        let at = gone ? to : CGSize(width: f.from.width, height: f.from.height * 0.35)
+        SwipeCard(place: f.place)
+            .overlay(alignment: .topLeading) { if f.like { Stamp(text: "想吃！", color: .sprMint).rotationEffect(.degrees(-12)).padding(24) } }
+            .overlay(alignment: .topTrailing) { if !f.like { Stamp(text: "跳過", color: .sprPink).rotationEffect(.degrees(12)).padding(24) } }
+            .offset(at)
+            .rotationEffect(.degrees(Double(at.width / 16)))
+            .onAppear {
+                withAnimation(.easeIn(duration: 0.26)) { gone = true } completion: { done() }
+            }
     }
 }
 

@@ -209,7 +209,7 @@ struct Snapshot: Codable {
     }
 
     @MainActor func say(_ s: String, action: (label: String, run: () -> Void)? = nil) {
-        withAnimation(.snappy) { toast = s; toastAction = action }
+        withAnimation(.snappy(duration: 0.28)) { toast = s; toastAction = action }
     }
 
     // 忘記密碼：寄重設密碼的信
@@ -239,7 +239,11 @@ struct Snapshot: Codable {
         places[i] = p
         do {
             let d = try await Supa.write("PATCH", "places", query: "id=eq.\(p.id)", body: p.row)
-            if let back = try? JSONDecoder().decode([Place].self, from: d).first, let j = places.firstIndex(where: { $0.id == p.id }) { places[j] = back }
+            // 伺服器回來的那筆只有 updated_at 不同就不寫回去（不然整個 App 會在動畫中途再重算一次）
+            if let back = try? JSONDecoder().decode([Place].self, from: d).first, let j = places.firstIndex(where: { $0.id == p.id }) {
+                var same = back; same.updated_at = places[j].updated_at
+                if same != places[j] { places[j] = back }
+            }
             saveCache()
             return true
         } catch {
@@ -253,7 +257,7 @@ struct Snapshot: Codable {
     @MainActor func add(_ p: Place) async -> Bool {
         do {
             let d = try await Supa.write("POST", "places", body: p.row)
-            if let back = try JSONDecoder().decode([Place].self, from: d).first { withAnimation(.snappy) { places.insert(back, at: 0) } }
+            if let back = try JSONDecoder().decode([Place].self, from: d).first { withAnimation(.snappy(duration: 0.28)) { places.insert(back, at: 0) } }
             saveCache()
             return true
         } catch { say("新增失敗：" + error.localizedDescription); return false }
@@ -264,13 +268,13 @@ struct Snapshot: Codable {
         let at = places.firstIndex { $0.id == p.id } ?? 0
         let shares = groupPlaces.filter { $0.place_id == p.id }
         undoable.insert(p.id)
-        withAnimation(.snappy) {
+        withAnimation(.snappy(duration: 0.28)) {
             places.removeAll { $0.id == p.id }
             groupPlaces.removeAll { $0.place_id == p.id }
         }
         say("已刪除 \(p.name)", action: ("復原", { [weak self] in
             guard let self, self.undoable.remove(p.id) != nil else { return }
-            withAnimation(.snappy) {
+            withAnimation(.snappy(duration: 0.28)) {
                 self.places.insert(p, at: min(at, self.places.count))
                 self.groupPlaces += shares
                 self.toast = nil
@@ -281,7 +285,7 @@ struct Snapshot: Codable {
             guard undoable.remove(p.id) != nil, loggedIn else { return }
             do { try await Supa.write("DELETE", "places", query: "id=eq.\(p.id)"); saveCache() }
             catch {
-                withAnimation(.snappy) { places.insert(p, at: min(at, places.count)); groupPlaces += shares }
+                withAnimation(.snappy(duration: 0.28)) { places.insert(p, at: min(at, places.count)); groupPlaces += shares }
                 say("刪除失敗：" + error.localizedDescription)
             }
         }
@@ -354,7 +358,7 @@ struct Snapshot: Codable {
 
     @MainActor func delete(_ p: Place) async {
         let before = places, shares = groupPlaces
-        withAnimation(.snappy) {
+        withAnimation(.snappy(duration: 0.28)) {
             places.removeAll { $0.id == p.id }
             groupPlaces.removeAll { $0.place_id == p.id }
         }
@@ -487,7 +491,7 @@ struct Snapshot: Codable {
 
     @MainActor func deleteRound(_ r: Round) async {
         let before = rounds, sw = swipes
-        withAnimation(.snappy) {
+        withAnimation(.snappy(duration: 0.28)) {
             rounds.removeAll { $0.id == r.id }
             swipes.removeAll { $0.round_id == r.id }
         }
@@ -511,7 +515,7 @@ struct Snapshot: Codable {
     // 「上一張」：收回自己剛滑的那張
     @MainActor func unswipe(_ r: Round, _ pid: String) async {
         guard let me, let row = swipes.first(where: { $0.round_id == r.id && $0.user_id == me && $0.place_id == pid }) else { return }
-        withAnimation(.snappy) { swipes.removeAll { $0 == row } }
+        withAnimation(.snappy(duration: 0.28)) { swipes.removeAll { $0 == row } }
         do { try await Supa.write("DELETE", "swipes", query: "round_id=eq.\(r.id)&user_id=eq.\(me)&place_id=eq.\(pid)"); saveCache() }
         catch { swipes.append(row); say("收回失敗：" + error.localizedDescription) }
     }
@@ -559,11 +563,12 @@ extension Place {
 }
 
 // 分店的名字：分店欄位、店名後面的「XX店」、區、縣市、地址開頭
+// 店名結尾的分店名（例如「・台北復北店」）；只編譯一次
+private let branchRE = try! NSRegularExpression(pattern: #"[\s・·\-–|｜(（]+([^\s・·\-–|｜(（]{1,12}?(?:分店|店|門市|館))[)）]?$"#)
+
 func branchLabel(_ p: Place) -> String {
     if let b = p.branch, !b.isEmpty { return b }
-    let re = #"[\s・·\-–|｜(（]+([^\s・·\-–|｜(（]{1,12}?(?:分店|店|門市|館))[)）]?$"#
-    if let r = p.name.range(of: re, options: .regularExpression),
-       let m = try? NSRegularExpression(pattern: re).firstMatch(in: p.name, range: NSRange(r, in: p.name)),
+    if let m = branchRE.firstMatch(in: p.name, range: NSRange(p.name.startIndex..., in: p.name)),
        let g = Range(m.range(at: 1), in: p.name) { return String(p.name[g]) }
     if let d = p.district, !d.isEmpty { return d }
     let c = normCity(p.city); if !c.isEmpty { return c }

@@ -5,7 +5,11 @@ import UserNotifications
 struct FoodMapApp: App {
     @UIApplicationDelegateAdaptor private var delegate: AppDelegate
     @State private var store = Store()
-    init() { _ = Store.launchedAt }
+    init() {
+        _ = Store.launchedAt
+        // 捲動區裡的按鈕一按就縮（不等系統確認是不是要捲動）；拖著捲動時按鈕照樣會取消
+        UIScrollView.appearance().delaysContentTouches = false
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -35,18 +39,21 @@ struct Root: View {
                         TabBar().transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
-                .animation(.snappy, value: store.barHidden)
+                .animation(.snappy(duration: 0.28), value: store.barHidden)
                 .onChange(of: store.tab) { _, t in opened.insert(t) }
                 .task {
                     await store.sync()
                     store.maybeStartCoach()
+                    // 第一個畫面出來、空閒一下之後，先把另外三頁建好，第一次點過去不會頓
+                    try? await Task.sleep(for: .seconds(1))
+                    opened.formUnion([1, 2, 3])
                 }
                 // 分享選單存好了：重新同步，剛存的店馬上出現
                 .onReceive(NotificationCenter.default.publisher(for: .shareSaved)) { _ in Task { await store.sync() } }
                 // 朋友傳來的邀請連結 https://anthony-apps.netlify.app/join?code=XXXX 直接在 App 裡加入
                 .onOpenURL { url in
                     guard url.path.hasPrefix("/join"), let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "code" })?.value else { return }
-                    Task { if await store.join(code) != nil { withAnimation(.snappy) { store.tab = 2 } } }
+                    Task { if await store.join(code) != nil { withAnimation(.snappy(duration: 0.28)) { store.tab = 2 } } }
                 }
                 .overlay { CoachOverlay().ignoresSafeArea() }
                 .fullScreenCover(isPresented: $store.showIG) { IGTutorial() }
@@ -70,8 +77,8 @@ struct Root: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .accessibilityAddTraits(.isButton)
                 .onAppear { AccessibilityNotification.Announcement(t).post() }
-                .task(id: t) { try? await Task.sleep(for: .seconds(act == nil ? 2.6 : 4)); withAnimation(.snappy) { if store.toast == t { store.toast = nil; store.toastAction = nil } } }
-                .onTapGesture { withAnimation(.snappy) { store.toast = nil } }
+                .task(id: t) { try? await Task.sleep(for: .seconds(act == nil ? 2.6 : 4)); withAnimation(.snappy(duration: 0.28)) { if store.toast == t { store.toast = nil; store.toastAction = nil } } }
+                .onTapGesture { withAnimation(.snappy(duration: 0.28)) { store.toast = nil } }
             }
         }
         // 手感量測浮層（「我的」版本號連點 5 下打開）
@@ -90,6 +97,8 @@ struct Root: View {
     @ViewBuilder private func page<V: View>(_ i: Int, @ViewBuilder _ v: () -> V) -> some View {
         if opened.contains(i) || store.tab == i {
             v().opacity(store.tab == i ? 1 : 0)
+                // 換頁直接切過去，不做兩頁同時畫的淡入淡出（下面的橘色膠囊照樣滑過去）
+                .animation(nil, value: store.tab)
                 .allowsHitTesting(store.tab == i)
                 .accessibilityHidden(store.tab != i)
         }
@@ -107,7 +116,6 @@ struct TabBar: View {
             ForEach(items.indices, id: \.self) { i in
                 let on = store.tab == i
                 Button {
-                    Haptic.light()
                     Perf.shared.mark("換分頁")
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { store.tab = i }
                 } label: {
@@ -122,7 +130,7 @@ struct TabBar: View {
                     }
                     .contentShape(.capsule)
                 }
-                .buttonStyle(PressStyle())
+                .buttonStyle(PressStyle(haptic: true))
                 .accessibilityLabel(items[i].0)
                 .accessibilityAddTraits(on ? .isSelected : [])
                 .coachAnchor(.groups, on: i == 2)
