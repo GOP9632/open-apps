@@ -28,7 +28,20 @@ struct Snapshot: Codable {
     var error: String?
     var toast: String?
     var loading = false
+    // 分頁：0 地圖（打開就在這）、1 收藏、2 群組、3 我的
     var tab = 0
+    // 地圖頁的店家頁（教學要能直接帶他進某一間）；其他分頁回報自己往裡走了幾層，走進去就收起下面的分頁列
+    var mapPath: [Place] = []
+    var depth = [0, 0, 0, 0]
+    var barHidden: Bool { tab == 0 ? !mapPath.isEmpty : depth[tab] > 0 }
+
+    // 教學（Coach.swift）：在真的畫面上把要按的東西圈起來
+    var coach: [CoachStep] = []
+    var coachIndex = 0
+    var coachPlace: Place?
+    var coachFrames: [CoachStep: CGRect] = [:]
+    var showIG = false
+    var igFromCoach = false
     // 收藏碼同時放進 App Group，讓分享選單裡的 Bitemap 不用打開 App 也能收藏
     var quickKey: String? {
         didSet { Store.shared?.set(quickKey, forKey: "quickKey") }

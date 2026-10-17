@@ -15,17 +15,32 @@ struct FoodMapApp: App {
 struct Root: View {
     @Environment(Store.self) private var store
     @Environment(\.scenePhase) private var phase
+    // 去過的分頁才建（第一次打開只建地圖），之後留著，切回來還在原來的位置
+    @State private var opened: Set<Int> = [0]
 
     var body: some View {
+        @Bindable var store = store
         Group {
             if store.loggedIn {
-                TabView(selection: Bindable(store).tab) {
-                    ListTab().tabItem { Label("收藏", systemImage: "heart") }.tag(0)
-                    MapTab().tabItem { Label("地圖", systemImage: "map") }.tag(1)
-                    GroupsTab().tabItem { Label("群組", systemImage: "person.3") }.tag(2)
-                    MeTab().tabItem { Label("我的", systemImage: "person") }.tag(3)
+                ZStack {
+                    page(0) { MapTab() }
+                    page(1) { ListTab() }
+                    page(2) { GroupsTab() }
+                    page(3) { MeTab() }
                 }
-                .task { await store.sync() }
+                .overlay(alignment: .bottom) {
+                    if !store.barHidden {
+                        TabBar().transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                }
+                .animation(.snappy, value: store.barHidden)
+                .onChange(of: store.tab) { _, t in opened.insert(t) }
+                .task {
+                    await store.sync()
+                    store.maybeStartCoach()
+                }
+                .overlay { CoachOverlay().ignoresSafeArea() }
+                .fullScreenCover(isPresented: $store.showIG) { IGTutorial() }
             } else {
                 LoginView()
             }
@@ -35,7 +50,7 @@ struct Root: View {
             if let t = store.toast {
                 Text(t).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
                     .padding(.horizontal, 16).padding(.vertical, 11)
-                    .background(.black.opacity(0.82), in: .capsule)
+                    .background(Color.ink.opacity(0.9), in: .capsule)
                     .padding(.bottom, 96).padding(.horizontal, 24)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .task(id: t) { try? await Task.sleep(for: .seconds(2.6)); withAnimation(.snappy) { if store.toast == t { store.toast = nil } } }
@@ -45,4 +60,58 @@ struct Root: View {
         // 切回 App 時跟網頁版一樣重新同步一次
         .onChange(of: phase) { _, p in if p == .active { Task { await store.sync() } } }
     }
+
+    // 四個分頁疊在一起，只顯示目前這個（切換不重建，捲到哪、地圖看到哪都留著）
+    @ViewBuilder private func page<V: View>(_ i: Int, @ViewBuilder _ v: () -> V) -> some View {
+        if opened.contains(i) || store.tab == i {
+            v().opacity(store.tab == i ? 1 : 0)
+                .allowsHitTesting(store.tab == i)
+                .accessibilityHidden(store.tab != i)
+        }
+    }
+}
+
+// 下面浮著的深色分頁列，選到的那個是橘色膠囊
+struct TabBar: View {
+    @Environment(Store.self) private var store
+    @Namespace private var ns
+    private let items = [("地圖", "map.fill"), ("收藏", "heart.fill"), ("群組", "person.3.fill"), ("我的", "person.fill")]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(items.indices, id: \.self) { i in
+                let on = store.tab == i
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { store.tab = i }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: items[i].1).font(.system(size: 17, weight: .bold))
+                        if on { Text(items[i].0).font(.system(size: 15, weight: .heavy)).fixedSize() }
+                    }
+                    .foregroundStyle(on ? .white : .white.opacity(0.55))
+                    .frame(maxWidth: .infinity).frame(height: 48)
+                    .background {
+                        if on { Capsule().fill(Color.accent).matchedGeometryEffect(id: "on", in: ns) }
+                    }
+                    .contentShape(.capsule)
+                }
+                .buttonStyle(PressStyle())
+                .accessibilityLabel(items[i].0)
+                .accessibilityAddTraits(on ? .isSelected : [])
+                .coachAnchor(.groups, on: i == 2)
+            }
+        }
+        .padding(6)
+        .background(Color(hex: 0x2a1a0a), in: .capsule)
+        .shadow(color: .black.opacity(0.25), radius: 14, y: 6)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 4)
+        .ignoresSafeArea(.keyboard)
+    }
+}
+
+extension View {
+    // 分頁最上層的捲動內容，底下留位置給浮著的分頁列
+    func tabBarRoom() -> some View { safeAreaPadding(.bottom, 76) }
 }

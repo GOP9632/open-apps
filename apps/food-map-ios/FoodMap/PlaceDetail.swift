@@ -1,7 +1,8 @@
 import SwiftUI
 import MapKit
 
-// 店家頁：自己的店可以改想去／去過、星等、分享到群組、編輯、刪除；朋友的店只能看
+// 店家頁：大張圓角照片、白色資料卡（想去／去過切換）、三顆彩色按鈕、彩色必點
+// 自己的店可以改想去／去過、星等、分享到群組、編輯、刪除；朋友的店只能看
 struct PlaceDetail: View {
     let place: Place
     @Environment(\.openURL) private var openURL
@@ -15,156 +16,199 @@ struct PlaceDetail: View {
         let place = store.place(self.place.id) ?? self.place
         let mine = store.isMine(place)
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Color.clear.aspectRatio(4 / 4.2, contentMode: .fit)
-                    .overlay { PhotoView(place: place, px: 1200) }
-                    .overlay(alignment: .bottomLeading) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Badge(place: place)
-                            Text(place.name).font(.system(size: 28, weight: .heavy))
-                            if let b = place.branch, !b.isEmpty { Text(b).font(.headline).opacity(0.85) }
-                            Text([ "\(place.cat.emoji) \(place.cuisine?.isEmpty == false ? place.cuisine! : place.cat.name)", place.area, place.price.flatMap { PRICES[$0] } ?? "" ].filter { !$0.isEmpty }.joined(separator: "・"))
-                                .font(.subheadline.weight(.semibold)).opacity(0.9)
-                        }
-                        .foregroundStyle(.white).padding(20)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(LinearGradient(colors: [.clear, .black.opacity(0.65)], startPoint: .top, endPoint: .bottom))
-                    }
-                    .clipped()
-
-                HStack(spacing: 10) {
-                    Act(icon: "location.fill", text: "導航", primary: true) { if let u = place.mapsURL { openURL(u) } }
-                    if let s = place.source_url, let u = URL(string: s), !s.isEmpty {
-                        Act(icon: s.contains("instagram") ? "play.fill" : "arrow.up.right.square", text: s.contains("instagram") ? "看影片" : "原始貼文") { openURL(u) }
-                    }
-                    ShareLink(item: place.mapsURL ?? URL(string: "https://maps.google.com")!) { ActLabel(icon: "square.and.arrow.up", text: "分享") }
-                        .buttonStyle(PressStyle())
-                }
-                .padding(.horizontal, 16)
-
-                if mine { mineBox(place) }
-                else if let o = place.owner { Label("\(store.name(o)) 的收藏", systemImage: "person.crop.circle").font(.subheadline).foregroundStyle(.secondary).padding(.horizontal, 16) }
-
-                if let d = place.dishes, !d.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("必點", systemImage: "star.fill").font(.headline).foregroundStyle(Color.accent)
-                        FlowRow(items: d)
-                    }
-                    .padding(.horizontal, 16)
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Label(place.address?.isEmpty == false ? place.address! : (place.area.isEmpty ? "沒有地址" : place.area), systemImage: "mappin.and.ellipse")
-                    if let h = place.hours, !h.isEmpty { Label(h, systemImage: "clock") }
-                    if let n = place.note, !n.isEmpty { Label(n, systemImage: "text.bubble") }
-                }
-                .font(.subheadline).padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.panel, in: .rect(cornerRadius: 18))
-                .padding(.horizontal, 16)
-
-                if let lat = place.lat, let lng = place.lng {
-                    let c = CLLocationCoordinate2D(latitude: lat, longitude: lng)
-                    Map(initialPosition: .region(MKCoordinateRegion(center: c, latitudinalMeters: 700, longitudinalMeters: 700))) {
-                        Marker(place.name, coordinate: c).tint(place.cat.color)
-                    }
-                    .frame(height: 190).clipShape(.rect(cornerRadius: 18)).allowsHitTesting(false)
-                    // 地圖本身不接手勢（避免跟捲動打架），上面疊一層透明的來接「點一下開 Google 地圖」
-                    .overlay { Color.clear.contentShape(.rect).onTapGesture { if let u = place.mapsURL { openURL(u) } } }
-                    .padding(.horizontal, 16)
-                }
+            VStack(alignment: .leading, spacing: 14) {
+                photo(place, mine: mine)
+                info(place, mine: mine)
+                actions(place)
+                if let d = place.dishes, !d.isEmpty { dishes(d) }
+                details(place)
+                if mine && !store.groups.isEmpty { groups(place) }
+                if let lat = place.lat, let lng = place.lng { map(place, CLLocationCoordinate2D(latitude: lat, longitude: lng)) }
             }
+            .padding(.horizontal, 14)
             .padding(.bottom, 30)
         }
         .background(Color.bg)
-        .ignoresSafeArea(edges: .top)
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .toolbar {
-            if mine {
-                Menu {
-                    Button("編輯", systemImage: "pencil") { editing = true }
-                    Button("刪除", systemImage: "trash", role: .destructive) { deleting = true }
-                } label: { Image(systemName: "ellipsis.circle.fill").symbolRenderingMode(.hierarchical).font(.title2) }
-                .accessibilityLabel("更多")
-            }
-        }
+        .toolbarVisibility(.hidden, for: .navigationBar)
         .sheet(isPresented: $editing) { EditSheet(place: place) }
         .confirmationDialog("刪除「\(place.name)」？", isPresented: $deleting, titleVisibility: .visible) {
             Button("刪除", role: .destructive) { dismiss(); Task { await store.delete(place) } }
         }
     }
 
-    // 自己的店：想去／去過、星等、分享到哪些群組
-    private func mineBox(_ place: Place) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Picker("狀態", selection: Binding(get: { place.status ?? "want" }, set: { v in
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                var p = place; p.status = v
-                if v == "want" { p.rating = nil }
-                Task { await store.save(p) }
-            })) {
-                Text("想去").tag("want")
-                Text("去過").tag("been")
+    private func photo(_ place: Place, mine: Bool) -> some View {
+        Color.clear.aspectRatio(1, contentMode: .fit)
+            .overlay { PhotoView(place: place, px: 1200) }
+            .clipShape(.rect(cornerRadius: 28))
+            .overlay(alignment: .topLeading) {
+                Button { dismiss() } label: { CircleIcon(icon: "chevron.left") }
+                    .buttonStyle(PressStyle()).accessibilityLabel("返回").padding(12)
             }
-            .pickerStyle(.segmented)
-            if place.been {
-                HStack {
-                    Text("好吃嗎？").font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Stars(value: place.rating) { r in var p = place; p.rating = r; Task { await store.save(p) } }
+            .overlay(alignment: .topTrailing) {
+                Menu {
+                    if mine {
+                        Button("編輯", systemImage: "pencil") { editing = true }
+                        Button("刪除", systemImage: "trash", role: .destructive) { deleting = true }
+                    } else if let o = place.owner {
+                        Text("\(store.name(o)) 的收藏")
+                    }
+                    if let u = place.mapsURL { ShareLink("分享", item: u) }
+                } label: { CircleIcon(icon: "ellipsis") }
+                .accessibilityLabel("更多").padding(12)
+            }
+            .overlay(alignment: .bottomLeading) {
+                Text("\(place.cat.emoji) \(place.cat.name)").font(.footnote.weight(.heavy)).foregroundStyle(.white)
+                    .padding(.horizontal, 11).frame(height: 30).background(place.cat.color, in: .capsule)
+                    .overlay(Capsule().strokeBorder(.white, lineWidth: 2)).padding(14)
+            }
+            .padding(.top, 4)
+    }
+
+    private func info(_ place: Place, mine: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(place.name).font(.system(size: 26, weight: .black)).foregroundStyle(Color.ink)
+                if let b = place.branch, !b.isEmpty { Text(b).font(.headline).foregroundStyle(Color.ink.opacity(0.7)) }
+                let meta = [place.cuisine ?? "", place.area, place.price.flatMap { PRICES[$0] } ?? ""].filter { !$0.isEmpty }
+                if !meta.isEmpty { Text(meta.joined(separator: " · ")).font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5)) }
+            }
+            if mine {
+                StatusToggle(place: place)
+                if place.been {
+                    HStack {
+                        Text("好吃嗎？").font(.subheadline.weight(.bold)).foregroundStyle(Color.ink)
+                        Spacer()
+                        Stars(value: place.rating) { r in var p = place; p.rating = r; Task { await store.save(p) } }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+            } else if let o = place.owner {
+                HStack(spacing: 8) {
+                    Avatar(name: store.name(o), id: o, size: 26)
+                    Text("\(store.name(o)) 的收藏").font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.6))
+                    Spacer()
+                    Badge(place: place)
+                }
             }
-            if !store.groups.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("分享到群組").font(.subheadline.weight(.semibold))
-                    Flow(spacing: 8) {
-                        ForEach(store.groups) { g in
-                            let on = store.shared(place.id, g.id)
-                            Chip(text: (on ? "✓ " : "") + g.name, on: on) {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                Task { if on { await store.unshare(g.id, place.id) } else { await store.share(g.id, [place.id]) } }
-                            }
-                        }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .candy(24)
+        .animation(.snappy, value: place.been)
+    }
+
+    private func actions(_ place: Place) -> some View {
+        HStack(spacing: 10) {
+            Button { if let u = place.mapsURL { openURL(u) } } label: { ActLabel(icon: "location.fill", text: "導航") }
+                .buttonStyle(ChunkyStyle(color: .accent, edge: .accentDeep, radius: 18))
+            if let s = place.source_url, let u = URL(string: s), !s.isEmpty {
+                let ig = s.contains("instagram")
+                Button { openURL(u) } label: { ActLabel(icon: ig ? "play.fill" : "arrow.up.right.square", text: ig ? "看影片" : "原始貼文") }
+                    .buttonStyle(ChunkyStyle(color: .sprPink, edge: Color.sprPink.mix(with: .black, by: 0.2), radius: 18))
+            }
+            ShareLink(item: place.mapsURL ?? URL(string: "https://maps.google.com")!) { ActLabel(icon: "square.and.arrow.up", text: "分享") }
+                .buttonStyle(ChunkyStyle(color: .sprBlue, edge: Color.sprBlue.mix(with: .black, by: 0.2), radius: 18))
+        }
+    }
+
+    private func dishes(_ d: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("必點").font(.system(size: 18, weight: .heavy)).foregroundStyle(Color.ink)
+            Flow(spacing: 8) {
+                ForEach(Array(d.enumerated()), id: \.offset) { i, t in
+                    let c = Color.sprinkles[i % Color.sprinkles.count]
+                    Text(t).font(.subheadline.weight(.heavy)).padding(.horizontal, 12).frame(height: 34)
+                        .background(c.opacity(0.15), in: .capsule).foregroundStyle(c.mix(with: .black, by: 0.15))
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .candy(24)
+    }
+
+    private func details(_ place: Place) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(place.address?.isEmpty == false ? place.address! : (place.area.isEmpty ? "沒有地址" : place.area), systemImage: "mappin.and.ellipse")
+            if let h = place.hours, !h.isEmpty { Label(h, systemImage: "clock") }
+            if let n = place.note, !n.isEmpty { Label(n, systemImage: "text.bubble") }
+        }
+        .font(.subheadline).foregroundStyle(Color.ink)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .candy(24)
+    }
+
+    private func groups(_ place: Place) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("分享到群組").font(.system(size: 16, weight: .heavy)).foregroundStyle(Color.ink)
+            Flow(spacing: 8) {
+                ForEach(store.groups) { g in
+                    let on = store.shared(place.id, g.id)
+                    Chip(text: (on ? "✓ " : "") + g.name, on: on, color: .sprPurple) {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        Task { if on { await store.unshare(g.id, place.id) } else { await store.share(g.id, [place.id]) } }
                     }
                 }
             }
         }
         .padding(16)
-        .background(Color.panel, in: .rect(cornerRadius: 18))
-        .padding(.horizontal, 16)
-        .animation(.snappy, value: place.been)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .candy(24)
+    }
+
+    private func map(_ place: Place, _ c: CLLocationCoordinate2D) -> some View {
+        Map(initialPosition: .region(MKCoordinateRegion(center: c, latitudinalMeters: 700, longitudinalMeters: 700))) {
+            Annotation(place.name, coordinate: c, anchor: .bottom) { FoodPin(place: place, on: false) }.annotationTitles(.hidden)
+        }
+        .frame(height: 190).clipShape(.rect(cornerRadius: 24)).allowsHitTesting(false)
+        // 地圖本身不接手勢（避免跟捲動打架），上面疊一層透明的來接「點一下開 Google 地圖」
+        .overlay { Color.clear.contentShape(.rect).onTapGesture { if let u = place.mapsURL { openURL(u) } } }
     }
 }
 
-struct Act: View {
-    let icon: String, text: String
-    var primary = false
-    let action: () -> Void
-    var body: some View { Button(action: action) { ActLabel(icon: icon, text: text, primary: primary) }.buttonStyle(PressStyle()) }
+// 想去／去過切換：想去是粉紅、去過是薄荷綠。「去過」是教學第三步要圈的地方
+struct StatusToggle: View {
+    @Environment(Store.self) private var store
+    let place: Place
+
+    var body: some View {
+        HStack(spacing: 6) {
+            seg("♥ 想去", "want", .sprPink)
+            seg("✓ 去過", "been", .sprMint)
+                .coachAnchor(.been, on: store.coachStep == .been && store.coachPlace?.id == place.id && store.tab == 0)
+        }
+        .padding(5)
+        .background(Color.bg2, in: .rect(cornerRadius: 16))
+    }
+
+    private func seg(_ t: String, _ v: String, _ c: Color) -> some View {
+        let on = (place.status ?? "want") == v
+        return Button {
+            guard !on else { return }
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            var p = place; p.status = v
+            if v == "want" { p.rating = nil }
+            Task { await store.save(p) }
+        } label: {
+            Text(t).font(.system(size: 16, weight: .heavy))
+                .frame(maxWidth: .infinity).frame(height: 42)
+                .background(on ? c : .clear, in: .rect(cornerRadius: 12))
+                .foregroundStyle(on ? .white : Color.ink.opacity(0.45))
+                .contentShape(.rect)
+        }
+        .buttonStyle(PressStyle())
+        .animation(.snappy, value: on)
+    }
 }
 
 struct ActLabel: View {
     let icon: String, text: String
-    var primary = false
     var body: some View {
         VStack(spacing: 5) {
-            Image(systemName: icon).font(.system(size: 18, weight: .semibold))
-            Text(text).font(.caption.weight(.semibold))
+            Image(systemName: icon).font(.system(size: 19, weight: .bold))
+            Text(text).font(.system(size: 13, weight: .heavy))
         }
-        .frame(maxWidth: .infinity).frame(height: 62)
-        .background(primary ? AnyShapeStyle(Color.grad) : AnyShapeStyle(Color.panel), in: .rect(cornerRadius: 16))
-        .foregroundStyle(primary ? .white : .primary)
-    }
-}
-
-struct FlowRow: View {
-    let items: [String]
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(items, id: \.self) { Text($0).font(.subheadline.weight(.semibold)).padding(.horizontal, 12).frame(height: 32).background(Color.accent.opacity(0.12), in: .capsule).foregroundStyle(Color.accent) }
-            }
-        }
+        .frame(maxWidth: .infinity).frame(height: 64)
     }
 }

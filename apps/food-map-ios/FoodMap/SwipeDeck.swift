@@ -19,8 +19,13 @@ struct SwipeDeck: View {
             .padding(.horizontal, 20).padding(.top, 8)
 
             HStack(spacing: 28) {
-                RoundBtn(icon: "xmark", color: .red) { fling(false) }.accessibilityLabel("跳過")
-                RoundBtn(icon: "heart.fill", color: .accent2) { fling(true) }.accessibilityLabel("想吃")
+                RoundBtn(icon: "xmark", color: .sprPink) { fling(false) }.accessibilityLabel("跳過")
+                Button { fling(true) } label: {
+                    Image(systemName: "heart.fill").font(.system(size: 32, weight: .bold)).foregroundStyle(.white)
+                        .frame(width: 78, height: 78).background(Color.accent, in: .circle).shadow(color: .accentDeep, radius: 0, y: 4)
+                }
+                .buttonStyle(PressStyle())
+                .accessibilityLabel("想吃")
             }
             .padding(.bottom, 16)
         }
@@ -36,10 +41,11 @@ struct SwipeDeck: View {
         let offset: CGSize = top ? CGSize(width: drag.width, height: drag.height * 0.35) : CGSize(width: 0, height: CGFloat(i) * 14 - lift)
         let grow: CGFloat = i == 1 ? min(0.05, abs(drag.width) / 2800) : 0
         let scale: CGFloat = top ? 1 : 1 - CGFloat(i) * 0.05 + grow
-        let angle: Double = top ? Double(drag.width / 16) : 0
+        // 後面兩張歪一點，像一疊隨手放的卡
+        let angle: Double = top ? Double(drag.width / 16) : (i == 1 ? -3 : 3)
         SwipeCard(place: p)
-            .overlay(alignment: .topLeading) { stamp("想吃", .green).opacity(likeOpacity).rotationEffect(.degrees(-12)).padding(24) }
-            .overlay(alignment: .topTrailing) { stamp("跳過", .red).opacity(skipOpacity).rotationEffect(.degrees(12)).padding(24) }
+            .overlay(alignment: .topLeading) { stamp("想吃！", .sprMint).opacity(likeOpacity).rotationEffect(.degrees(-12)).padding(24) }
+            .overlay(alignment: .topTrailing) { stamp("跳過", .sprPink).opacity(skipOpacity).rotationEffect(.degrees(12)).padding(24) }
             .offset(offset)
             .scaleEffect(scale)
             .rotationEffect(.degrees(angle))
@@ -75,30 +81,36 @@ struct SwipeDeck: View {
     }
 
     private func stamp(_ t: String, _ c: Color) -> some View {
-        Text(t).font(.system(size: 30, weight: .black)).foregroundStyle(c)
-            .padding(.horizontal, 12).padding(.vertical, 4)
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(c, lineWidth: 4))
+        Text(t).font(.system(size: 32, weight: .black)).foregroundStyle(c)
+            .padding(.horizontal, 14).padding(.vertical, 4)
+            .background(.white.opacity(0.9), in: .rect(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(c, lineWidth: 4))
     }
 }
 
+// 白邊卡片：上面照片，下面白色資料條
 struct SwipeCard: View {
     let place: Place
     var body: some View {
-        Color.clear.aspectRatio(3 / 4.2, contentMode: .fit)
-            .overlay { PhotoView(place: place, px: 1000) }
-            .overlay(alignment: .bottomLeading) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(place.name).font(.system(size: 28, weight: .heavy))
-                    Text("\(place.cat.emoji) \(place.cuisine?.isEmpty == false ? place.cuisine! : place.cat.name)\(place.area.isEmpty ? "" : "・" + place.area)").font(.subheadline.weight(.semibold))
-                    if let d = place.dishes, !d.isEmpty { Label("必點 " + d.prefix(3).joined(separator: "・"), systemImage: "star.fill").font(.subheadline.weight(.semibold)) }
+        VStack(alignment: .leading, spacing: 0) {
+            Color.clear.aspectRatio(1, contentMode: .fit)
+                .overlay { PhotoView(place: place, px: 1000) }
+                .clipShape(.rect(cornerRadius: 22))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(place.name).font(.system(size: 24, weight: .black)).foregroundStyle(Color.ink).lineLimit(1)
+                Text("\(place.cat.emoji) \(place.cuisine?.isEmpty == false ? place.cuisine! : place.cat.name)\(place.area.isEmpty ? "" : " · " + place.area)")
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.55)).lineLimit(1)
+                if let d = place.dishes, !d.isEmpty {
+                    Text("必點 " + d.prefix(3).joined(separator: "・")).font(.subheadline.weight(.heavy)).foregroundStyle(Color.accent).lineLimit(1)
                 }
-                .foregroundStyle(.white).padding(22)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom))
             }
-            .clipShape(.rect(cornerRadius: 28))
-            .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
-            .contentShape(.rect(cornerRadius: 28))
+            .padding(.horizontal, 8).padding(.top, 12).padding(.bottom, 6)
+        }
+        .padding(10)
+        .background(.white, in: .rect(cornerRadius: 30))
+        .shadow(color: .black.opacity(0.14), radius: 16, y: 8)
+        .contentShape(.rect(cornerRadius: 30))
+        .environment(\.colorScheme, .light)
     }
 }
 
@@ -106,8 +118,8 @@ struct RoundBtn: View {
     let icon: String, color: Color, action: () -> Void
     var body: some View {
         Button(action: action) {
-            Image(systemName: icon).font(.system(size: 26, weight: .bold)).foregroundStyle(color)
-                .frame(width: 66, height: 66).background(Color.panel, in: .circle).shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+            Image(systemName: icon).font(.system(size: 26, weight: .heavy)).foregroundStyle(color)
+                .frame(width: 66, height: 66).background(.white, in: .circle).shadow(color: .cardShadow, radius: 0, y: 4)
         }
         .buttonStyle(PressStyle())
     }

@@ -28,6 +28,9 @@ struct GroupsTab: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.bg)
+            .tabBarRoom()
             .navigationTitle("群組")
             .toolbar {
                 Menu {
@@ -40,6 +43,7 @@ struct GroupsTab: View {
             .navigationDestination(for: FoodGroup.self) { GroupView(gid: $0.id, path: $path) }
             .navigationDestination(for: Round.self) { RoundView(rid: $0.id) }
             .navigationDestination(for: Place.self) { PlaceDetail(place: $0) }
+            .onChange(of: path.count) { _, n in store.depth[2] = n }
             .alert(asking == .join ? "輸入邀請碼" : "建立美食群組", isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } })) {
                 TextField(asking == .join ? "朋友傳給你的 8 碼" : "例如：大學同學吃貨團", text: $text)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -363,11 +367,20 @@ struct RoundView: View {
             if todo.isEmpty || showResult {
                 results(r, done: todo.isEmpty)
             } else {
+                let mem = store.membersOf(r.group_id)
+                VStack(spacing: 8) {
+                    SprinkleBar(progress: r.place_ids.isEmpty ? 0 : Double(r.place_ids.count - todo.count) / Double(r.place_ids.count))
+                    HStack {
+                        HStack(spacing: -8) { ForEach(mem, id: \.self) { Avatar(name: store.name($0), id: $0, size: 28) } }
+                        Spacer()
+                        Text("還有 \(todo.count) 張").font(.footnote.weight(.bold)).foregroundStyle(Color.ink.opacity(0.5))
+                    }
+                }
+                .padding(.horizontal, 20).padding(.top, 6)
                 SwipeDeck(deck: todo, onSwipe: { p, liked in
                     store.swipe(r, p.id, liked: liked)
                     if liked, let m = store.matches(r).first(where: { $0.place.id == p.id }), m.all { celebrate(m) }
                 }, onTap: { detail = $0 })
-                Text("還有 \(todo.count) 張").font(.footnote).foregroundStyle(.secondary).padding(.bottom, 6)
             }
         }
         .background(Color.bg)
@@ -396,12 +409,12 @@ struct RoundView: View {
                         }
                         Spacer()
                         VStack(alignment: .trailing, spacing: 2) {
-                            if m.all { Text("配對成功").font(.caption.bold()).foregroundStyle(Color.accent2) }
+                            if m.all { Text("配對成功").font(.caption.bold()).foregroundStyle(Color.sprMint) }
                             Text("\(m.who.count)/\(total) 想吃").font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
-                .listRowBackground(m.all ? Color.accent2.opacity(0.08) : Color.panel)
+                .listRowBackground(m.all ? Color.sprMint.opacity(0.15) : Color.panel)
             }
         }
         .scrollContentBackground(.hidden)

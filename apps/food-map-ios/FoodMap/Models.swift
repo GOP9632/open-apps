@@ -42,15 +42,15 @@ struct Cat {
     // 跟網頁版 CATS 一樣的分類、圖示和顏色
     static let order = ["restaurant", "cafe", "bakery", "dessert", "snack", "brunch", "bar", "drink", "other"]
     static let all: [String: Cat] = [
-        "restaurant": Cat(key: "restaurant", name: "餐廳", emoji: "🍴", color: Color(hex: 0xff7a45)),
-        "cafe": Cat(key: "cafe", name: "咖啡廳", emoji: "☕", color: Color(hex: 0xa9744f)),
-        "bakery": Cat(key: "bakery", name: "麵包店", emoji: "🥐", color: Color(hex: 0xe8a33d)),
-        "dessert": Cat(key: "dessert", name: "甜點", emoji: "🍰", color: Color(hex: 0xf06595)),
-        "snack": Cat(key: "snack", name: "小吃", emoji: "🥟", color: Color(hex: 0xf59f00)),
-        "brunch": Cat(key: "brunch", name: "早午餐", emoji: "🥞", color: Color(hex: 0xfab005)),
-        "bar": Cat(key: "bar", name: "酒吧", emoji: "🍸", color: Color(hex: 0x7950f2)),
-        "drink": Cat(key: "drink", name: "飲料", emoji: "🧋", color: Color(hex: 0x20c997)),
-        "other": Cat(key: "other", name: "其他", emoji: "📍", color: Color(hex: 0x868e96)),
+        "restaurant": Cat(key: "restaurant", name: "餐廳", emoji: "🍜", color: .accent),
+        "cafe": Cat(key: "cafe", name: "咖啡", emoji: "☕", color: .sprBlue),
+        "bakery": Cat(key: "bakery", name: "麵包", emoji: "🥐", color: Color(hex: 0xe8a200)),
+        "dessert": Cat(key: "dessert", name: "甜點", emoji: "🍰", color: .sprPink),
+        "snack": Cat(key: "snack", name: "小吃", emoji: "🥟", color: .sprMint),
+        "brunch": Cat(key: "brunch", name: "早午餐", emoji: "🥞", color: Color(hex: 0xf5a300)),
+        "bar": Cat(key: "bar", name: "酒吧", emoji: "🍸", color: .sprPurple),
+        "drink": Cat(key: "drink", name: "飲料", emoji: "🧋", color: Color(hex: 0x1fbf8f)),
+        "other": Cat(key: "other", name: "其他", emoji: "📍", color: Color(hex: 0x9a8a7a)),
     ]
 }
 
@@ -65,13 +65,22 @@ func normCity(_ c: String?) -> String {
 
 extension Color {
     init(hex: UInt32) { self.init(red: Double((hex >> 16) & 0xff) / 255, green: Double((hex >> 8) & 0xff) / 255, blue: Double(hex & 0xff) / 255) }
-    // 網頁版的主色
-    static let accent = Color(hex: 0xff6a2b)
-    static let accent2 = Color(hex: 0xff3d6e)
-    static let grad = LinearGradient(colors: [Color(hex: 0xff8a3d), Color(hex: 0xff5a3c), Color(hex: 0xff3d6e)], startPoint: .topLeading, endPoint: .bottomTrailing)
-    static let bg = Color(light: 0xfbf7f2, dark: 0x121110)
-    static let bg2 = Color(light: 0xf4eee6, dark: 0x1a1816)
-    static let panel = Color(light: 0xffffff, dark: 0x1e1c1a)
+    // 甜甜圈糖霜：芒果橘當主色，彩色糖粒當分類和點綴色（跟 App 圖示同一組顏色）
+    static let accent = Color(hex: 0xff8a00)
+    static let accentDeep = Color(hex: 0xd96f00)
+    static let accent2 = Color(hex: 0xff4f9a)
+    static let grad = LinearGradient(colors: [Color(hex: 0xffa02e), Color(hex: 0xff8a00)], startPoint: .top, endPoint: .bottom)
+    static let bg = Color(light: 0xfff8ee, dark: 0x17110b)
+    static let bg2 = Color(light: 0xfff1dc, dark: 0x2a2016)
+    static let panel = Color(light: 0xffffff, dark: 0x241b12)
+    static let cardShadow = Color(light: 0xf1dfc4, dark: 0x0d0905)
+    static let ink = Color(hex: 0x2a1a0a)
+    static let sprPink = Color(hex: 0xff4f9a)
+    static let sprMint = Color(hex: 0x2ed3a0)
+    static let sprBlue = Color(hex: 0x3a8ef0)
+    static let sprYellow = Color(hex: 0xffd23f)
+    static let sprPurple = Color(hex: 0x8a5cf6)
+    static let sprinkles: [Color] = [.sprPink, .sprMint, .sprBlue, .sprPurple, .accent, .sprYellow]
 
     init(light: UInt32, dark: UInt32) {
         self.init(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(Color(hex: dark)) : UIColor(Color(hex: light)) })
