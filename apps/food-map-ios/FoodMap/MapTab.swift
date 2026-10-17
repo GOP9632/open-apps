@@ -1,0 +1,1137 @@
+import SwiftUI
+import UIKit
+import MapKit
+
+// 首頁地圖：用 iPhone 內建的 Apple 地圖，收藏的店是食物圖釘；上面搜尋＋新增、篩選，下面「附近 N 間」一排卡片
+struct MapTab: View {
+    @Environment(Store.self) private var store
+    // 一打開先框住所有收藏的店（不跳到目前位置），想看自己在哪按右下的定位鈕
+    @State private var pos: MapCameraPosition = .region(MKCoordinateRegion(center: .init(latitude: 25.0418, longitude: 121.5436), latitudinalMeters: 9000, longitudinalMeters: 9000))
+    // 選到哪根、抽一間的跳動：放在自己的物件裡，選圖釘時只有圖釘和下面的卡片重畫，整張地圖不用重算
+    @State private var pins = PinState()
+    @State private var loc = CLLocationManager()
+    @State private var fitted = false
+    @State private var adding = false
+    @State private var noAddr = false
+    @State private var scoping = false
+    // 地圖現在看到的範圍（移動、縮放停下來才更新）；點卡片／圖釘造成的移動不算，免得下面的卡片一直換
+    @State private var shownRegion: MKCoordinateRegion?
+    @State private var selfMoved = false
+    @State private var spot = BurstSpot()
+    @State private var drawer = Drawer.shared
+    @State private var show: DrawShow?
+    @State private var paneling = false
+    // 泡泡：畫面上擠在一起（44pt 一格）的圖釘合成一顆，停下來才重算
+    @State private var clusters: [PinCluster] = []
+    @State private var hidden: Set<String> = []
+    @State private var clusterTask: Task<Void, Never>?
+    // 選到很遠的店：先拉遠再降落
+    @State private var flight: Flight?
+    @Environment(\.accessibilityReduceMotion) private var reduce
+
+    // 抽一間不跟篩選：抽中被篩掉的店，那根圖釘還是要畫出來
+    private func withExtra(_ l: [Place]) -> [Place] {
+        guard let x = pins.extra, !l.contains(where: { $0.id == x }),
+              let p = store.mapBase.first(where: { $0.id == x }), p.lat != nil, p.lng != nil else { return l }
+        return l + [p]
+    }
+
+    private var points: [Place] { store.shown(store.mapF, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil } }
+
+    var body: some View {
+        @Bindable var store = store
+        // 篩選結果只算一次；有座標的店下面每個地方共用
+        let all = store.shown(store.mapF, in: store.mapBase)
+        let list = withExtra(all.filter { $0.lat != nil && $0.lng != nil })
+        // 第一次畫圖釘、換看誰的收藏：排好落下順序（由近到遠）
+        let _ = pins.arm(store.mapGroup ?? "mine", list, from: store.here ?? (shownRegion ?? store.mapRegion).map { CLLocation(latitude: $0.center.latitude, longitude: $0.center.longitude) })
+        // 篩選拿掉的，多畫 0.25 秒縮小淡掉
+        let gone = pins.track(list)
+        let gname = store.mapGroupName
+        let near = Nearby(list: list, here: store.here, region: shownRegion, total: all.count)
+        let missing = all.count - list.count
+        NavigationStack(path: $store.mapPath) {
+            MapReader { proxy in
+                Map(position: $pos, selection: Binding(get: { pins.sel }, set: { pins.select($0) })) {
+                    UserAnnotation()
+                    ForEach(list.filter { !hidden.contains($0.id) }) { p in
+                        Annotation(p.name, coordinate: .init(latitude: p.lat!, longitude: p.lng!), anchor: .bottom) {
+                            FoodPin(place: p, pins: pins, reduce: reduce, saver: gname == nil ? nil : p.owner.map { ($0, store.name($0)) })
+                        }
+                        .tag(p.id)
+                        .annotationTitles(.hidden)
+                    }
+                    ForEach(gone) { p in
+                        Annotation("", coordinate: .init(latitude: p.lat!, longitude: p.lng!), anchor: .bottom) { GonePin(place: p, reduce: reduce) }
+                            .annotationTitles(.hidden)
+                    }
+                    ForEach(clusters) { c in
+                        Annotation("", coordinate: .init(latitude: c.lat, longitude: c.lng), anchor: .center) {
+                            ClusterBubble(c: c, reduce: reduce) { zoom(c) }
+                        }
+                        .annotationTitles(.hidden)
+                    }
+                }
+                .mapStyle(.standard(pointsOfInterest: .excludingAll))
+                .mapControls { MapCompass() }
+                .onMapCameraChange(frequency: .continuous) { _ in
+                    pinFrame(proxy)
+                    if let c = spot.coord, Date() < spot.until { spot.at = proxy.convert(c, to: .global) }
+                }
+                .onMapCameraChange { c in
+                    if selfMoved { selfMoved = false } else { shownRegion = c.region }
+                    store.mapRegion = c.region
+                    recluster(proxy)
+                }
+                // 很遠的店：前 40% 時間拉遠到 1.6 倍，再降落到那間（共 0.8 秒）
+                .mapCameraKeyframeAnimator(trigger: flight) { cam in
+                    let to = flight.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) } ?? cam.centerCoordinate
+                    let mid = CLLocationCoordinate2D(latitude: (cam.centerCoordinate.latitude + to.latitude) / 2, longitude: (cam.centerCoordinate.longitude + to.longitude) / 2)
+                    KeyframeTrack(\MapCamera.centerCoordinate) {
+                        CubicKeyframe(mid, duration: 0.32)
+                        CubicKeyframe(to, duration: 0.48)
+                    }
+                    KeyframeTrack(\MapCamera.distance) {
+                        CubicKeyframe(cam.distance * 1.6, duration: 0.32)
+                        CubicKeyframe(cam.distance, duration: 0.48)
+                    }
+                }
+                .onChange(of: list.map(\.id)) { recluster(proxy) }
+                .onChange(of: store.coachStep) { pinFrame(proxy) }
+                // 選到一根圖釘：地圖移過去、放光圈（只有這個小觀察者看 sel，MapTab 本身不跟著重算）
+                // 選到時不重算泡泡（會讓整張地圖重畫，點圖釘變慢）；地圖移完停下來時會重算
+                .background { SelWatcher(pins: pins) { id in picked(id, list, proxy) } }
+                .overlay { PinBurst(spot: spot) }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                VStack(spacing: 8) {
+                    SearchField(text: $store.mapF.q, prompt: gname.map { "在「\($0)」裡找" } ?? "今天想吃什麼？") {
+                        AddButton { adding = true }.coachAnchor(.add)
+                    }
+                    .padding(.horizontal, 16)
+                    if !store.groups.isEmpty { scopePill(gname) }
+                    FilterChips(f: $store.mapF, solid: true)
+                }
+                .padding(.top, 6)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(alignment: .trailing, spacing: 10) {
+                    // AI 在背景找剛新增的店
+                    if store.pendingAdds.contains(where: { $0.state == .finding }) {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small).tint(.white)
+                            Text("找店中…").font(.footnote.weight(.heavy)).foregroundStyle(.white)
+                        }
+                        .padding(.horizontal, 14).frame(height: 36)
+                        .background(Color(hex: 0x2a1a0a), in: .capsule)
+                        .frame(maxWidth: .infinity)
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
+                    }
+                    HStack {
+                        // 沒有座標的店不會出現在地圖上，提醒一下，點了可以補地址
+                        if missing > 0 {
+                            Button { noAddr = true } label: {
+                                Label("\(missing) 間還沒有地址", systemImage: "mappin.slash")
+                                    .font(.footnote.weight(.heavy)).foregroundStyle(Color.ink)
+                                    .padding(.horizontal, 12).frame(height: 36)
+                                    .background(.white, in: .capsule).shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                            }
+                            .buttonStyle(PressStyle())
+                        }
+                        Spacer()
+                        Button {
+                            Haptic.light()
+                            withAnimation(.smooth(duration: 0.5)) { pos = .userLocation(fallback: pos) }
+                        } label: { CircleIcon(icon: "location.fill") }
+                        .buttonStyle(PressStyle())
+                        .accessibilityLabel("我的位置")
+                    }
+                    .padding(.horizontal, 16)
+                    NearbySheet(near: near, pins: pins, list: list, group: gname, draw: draw, panel: openPanel, choose: choose, dropKey: pins.dropKey, focus: focus)
+                }
+                .animation(.snappy, value: store.pendingAdds.map(\.state))
+            }
+            // 抽 3 間的卡片、轉盤蓋在地圖上
+            .overlay {
+                DrawStage(show: $show, reroll: { avoid, n in
+                    drawer.pick(store, drawer.candidates(store, drawCtx(), drawer.prefs), k: n, avoid: avoid)
+                }, hop: { p in pins.hops[p.id, default: 0] += 1 }, pick: { p in
+                    drawer.record(store, p)
+                    choose(p)
+                })
+            }
+            .toolbarVisibility(.hidden, for: .navigationBar)
+            .navigationDestination(for: Place.self) { PlaceDetail(place: $0) }
+        }
+        .sheet(isPresented: $paneling) {
+            DrawPanel(ctx: drawCtx(), go: { draw() }, pickHistory: choose)
+                .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $adding) { AddSheet() }
+        .sheet(isPresented: $noAddr) { NoAddressSheet() }
+        .sheet(isPresented: $scoping) { ScopeSheet().presentationDetents([.medium, .large]) }
+        // 換看誰的收藏：重新框住那些店
+        .onChange(of: store.mapGroup) { pins.select(nil); fitted = false; fit() }
+        .onAppear {
+            loc.requestWhenInUseAuthorization()
+            if store.here == nil { store.here = loc.location }
+            // 第一次打開先把所有收藏的店框進畫面
+            fit()
+        }
+        .onChange(of: list.count) { fit() }
+        // 拿到一次目前位置就好（剛允許定位也會馬上更新「附近」），不一直開著 GPS
+        .task {
+            do { for try await u in CLLocationUpdate.liveUpdates() { if let l = u.location { store.here = l; break } } } catch {}
+        }
+    }
+
+    // 抽一間：照存好的設定抽（範圍、分類、價位…長按 🎲 改）。同一家的分店只算一次、抽中離你最近的那間；再抽一次不會抽到同一家
+    private func draw() {
+        // 跳的過程中再按一次：直接出結果
+        if let win = pins.drawWin {
+            pins.drawTask?.cancel(); pins.drawTask = nil; pins.drawWin = nil
+            Haptic.success()
+            pins.select(win)
+            return
+        }
+        let pool = drawer.candidates(store, drawCtx(), drawer.prefs)
+        guard !pool.isEmpty else {
+            Haptic.warning()
+            store.say("沒有符合的店，改一下條件")
+            openPanel()
+            return
+        }
+        drawer.spin += 1
+        // 量「按下 → 骰子開始轉、第一根圖釘開始跳」；選中那一刻另外記「抽一間（抽中）」
+        Perf.shared.mark("抽一間（開始）")
+        let avoid = pins.sel.flatMap { store.place($0) }.map { Set([store.brand($0)]) } ?? []
+        switch drawer.prefs.mode {
+        case .three:
+            Perf.shared.mark("抽 3 間")
+            Haptic.light()
+            show = DrawShow(mode: .three, places: drawer.pick(store, pool, k: 3, avoid: avoid))
+        case .wheel:
+            Haptic.light()
+            show = DrawShow(mode: .wheel, places: drawer.pick(store, pool, k: 8, avoid: avoid))
+        case .one:
+            guard let win = drawer.pick(store, pool, k: 1, avoid: avoid).first else { return }
+            drawer.record(store, win)
+            pins.drawn = win.id
+            reveal(win)
+            // 先讓地圖上 6–8 根圖釘輪流跳一下（按下去的那一刻第一根就跳），最後選中抽到的那根
+            let shown = shownRegion.map { r in pool.filter { abs($0.lat! - r.center.latitude) <= r.span.latitudeDelta / 2 && abs($0.lng! - r.center.longitude) <= r.span.longitudeDelta / 2 } } ?? pool
+            let hoppers = shown.filter { $0.id != win.id && $0.id != pins.sel && !hidden.contains($0.id) }.shuffled().prefix(Int.random(in: 6...8))
+            guard !reduce, !hoppers.isEmpty else {
+                Haptic.success()
+                pins.select(win.id)
+                return
+            }
+            pins.drawWin = win.id
+            pins.drawTask = Task {
+                for p in hoppers {
+                    pins.hops[p.id, default: 0] += 1
+                    Haptic.tick()
+                    try? await Task.sleep(for: .seconds(0.15))
+                    if Task.isCancelled { return }
+                }
+                try? await Task.sleep(for: .seconds(0.12))
+                guard pins.drawWin == win.id else { return }
+                pins.drawWin = nil; pins.drawTask = nil
+                Haptic.success()
+                pins.select(win.id)
+            }
+        }
+    }
+
+    // 選中抽到的那間（被篩選篩掉的也畫出來）
+    private func choose(_ p: Place) {
+        guard store.mapBase.contains(where: { $0.id == p.id }), p.lat != nil, p.lng != nil else {
+            store.say("這間不在現在的地圖上"); return
+        }
+        reveal(p)
+        pins.drawn = p.id
+        pins.select(p.id)
+    }
+
+    // 被篩選篩掉的店也要能畫出那根圖釘
+    private func reveal(_ p: Place) {
+        if !store.shown(store.mapF, in: store.mapBase).contains(where: { $0.id == p.id }) { pins.extra = p.id }
+    }
+
+    private func openPanel() {
+        Perf.shared.mark("抽一間面板")
+        paneling = true
+    }
+
+    // 抽一間從哪些店抽：地圖現在看誰的收藏（不跟上面的篩選），地圖上看到的那些，距離從你的位置（沒有就地圖中心）算
+    private func drawCtx() -> Drawer.Ctx {
+        let base = store.mapBase
+        let r = shownRegion ?? store.mapRegion
+        let view = r.map { r in
+            base.filter { p in
+                guard let la = p.lat, let lo = p.lng else { return false }
+                return abs(la - r.center.latitude) <= r.span.latitudeDelta / 2 && abs(lo - r.center.longitude) <= r.span.longitudeDelta / 2
+            }
+        }
+        let center = r.map { CLLocation(latitude: $0.center.latitude, longitude: $0.center.longitude) }
+        return Drawer.Ctx(base: base, view: view, ref: store.here ?? center, refIsCenter: store.here == nil, onMap: true)
+    }
+
+    // 選到一根圖釘之後：光圈、量測、地圖移過去（不改縮放）
+    private func picked(_ id: String?, _ list: [Place], _ proxy: MapProxy) {
+        guard let id, let p = list.first(where: { $0.id == id }) else { return }
+        Perf.shared.mark(pins.drawn == id ? "抽一間（抽中）" : "點圖釘")
+        // 先把大卡片和店家頁要用的照片載好，點進去時第一幀就有
+        if let u = p.photoURL { Task { _ = await PhotoLoader.shared.load(u, 400); _ = await PhotoLoader.shared.load(u, 1200) } }
+        ReelCache.warm(p)
+        let c = CLLocationCoordinate2D(latitude: p.lat!, longitude: p.lng!)
+        if !reduce {
+            spot.coord = c; spot.color = p.cat.color
+            spot.at = proxy.convert(c, to: .global)
+            spot.until = Date().addingTimeInterval(0.9)
+            spot.shot += 1
+        }
+        selfMoved = true
+        let cur = store.mapRegion ?? shownRegion
+        let span = cur?.span ?? MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+        // 離畫面中心超過可見範圍的 60%：拉遠再降落；近的直接平移
+        let far = cur.map { abs(c.latitude - $0.center.latitude) > $0.span.latitudeDelta * 0.6 || abs(c.longitude - $0.center.longitude) > $0.span.longitudeDelta * 0.6 } ?? false
+        if far && !reduce { flight = Flight(lat: c.latitude, lng: c.longitude) }
+        else { withAnimation(.smooth(duration: 0.55)) { pos = .region(MKCoordinateRegion(center: c, span: span)) } }
+    }
+
+    private var currentList: [Place] { withExtra(store.shown(store.mapF, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil }) }
+
+    // 擠在一起的圖釘合成泡泡（選到的、抽中被篩掉的那根不合）：拆開的從泡泡飛回自己的位置，合起來的先飛進泡泡再收掉
+    private func recluster(_ proxy: MapProxy) {
+        if pins.dropping {
+            // 落下播完再算，不然一邊掉一邊合
+            clusterTask?.cancel()
+            let wait = max(0.05, 1.3 - (CACurrentMediaTime() - pins.dropStart))
+            clusterTask = Task { try? await Task.sleep(for: .seconds(wait)); if !Task.isCancelled { recluster(proxy) } }
+            return
+        }
+        var pts: [String: CGPoint] = [:]
+        var cells: [String: [Place]] = [:]
+        for p in currentList {
+            guard let pt = proxy.convert(CLLocationCoordinate2D(latitude: p.lat!, longitude: p.lng!), to: .local) else { continue }
+            pts[p.id] = pt
+            guard p.id != pins.sel, p.id != pins.extra else { continue }
+            cells["\(Int((pt.x / 44).rounded(.down))),\(Int((pt.y / 44).rounded(.down)))", default: []].append(p)
+        }
+        let groups = cells.values.filter { $0.count >= 2 }
+        let next = groups.map { g -> PinCluster in
+            let cats = Dictionary(grouping: g, by: \.cat.key).sorted { $0.value.count > $1.value.count }.prefix(2).map { $0.value[0].cat.color }
+            return PinCluster(id: g.map(\.id).sorted().joined(separator: ","), ids: g.map(\.id),
+                              lat: g.map { $0.lat! }.reduce(0, +) / Double(g.count), lng: g.map { $0.lng! }.reduce(0, +) / Double(g.count),
+                              colors: cats.count > 1 ? cats : [cats[0], cats[0].opacity(0.75)])
+        }.sorted { $0.id < $1.id }
+        let nextHidden = Set(groups.flatMap { $0.map(\.id) })
+        guard nextHidden != hidden || next.map(\.id) != clusters.map(\.id) else { return }
+        func at(_ c: PinCluster) -> CGPoint? { proxy.convert(CLLocationCoordinate2D(latitude: c.lat, longitude: c.lng), to: .local) }
+        var from: [String: CGSize] = [:], to: [String: CGSize] = [:]
+        for c in clusters {
+            guard let b = at(c) else { continue }
+            for id in c.ids where !nextHidden.contains(id) { if let p = pts[id] { from[id] = CGSize(width: b.x - p.x, height: b.y - p.y) } }
+        }
+        for c in next {
+            guard let b = at(c) else { continue }
+            for id in c.ids where !hidden.contains(id) { if let p = pts[id] { to[id] = CGSize(width: b.x - p.x, height: b.y - p.y) } }
+        }
+        clusterTask?.cancel()
+        pins.flyFrom = reduce ? [:] : from
+        if to.isEmpty {
+            hidden = nextHidden; clusters = next
+        } else {
+            // 先拆開的馬上出來、沒變的泡泡留著；要合的先飛過去，0.33 秒後再換成泡泡
+            hidden = hidden.intersection(nextHidden)
+            clusters = clusters.filter { o in next.contains { $0.id == o.id } }
+            pins.mergeTo = to
+            clusterTask = Task {
+                try? await Task.sleep(for: .milliseconds(reduce ? 200 : 330))
+                guard !Task.isCancelled else { return }
+                hidden = nextHidden; clusters = next; pins.mergeTo = [:]
+            }
+        }
+        Task { try? await Task.sleep(for: .milliseconds(500)); pins.flyFrom = [:] }
+    }
+
+    // 點泡泡：放大到框住這幾家
+    private func zoom(_ c: PinCluster) {
+        Haptic.light()
+        let ps = currentList.filter { c.ids.contains($0.id) }
+        guard !ps.isEmpty else { return }
+        let la = ps.map { $0.lat! }, lo = ps.map { $0.lng! }
+        withAnimation(.smooth(duration: 0.5)) {
+            pos = .region(MKCoordinateRegion(center: .init(latitude: (la.min()! + la.max()!) / 2, longitude: (lo.min()! + lo.max()!) / 2),
+                                             span: .init(latitudeDelta: max(0.003, (la.max()! - la.min()!) * 2.6), longitudeDelta: max(0.003, (lo.max()! - lo.min()!) * 2.2))))
+        }
+    }
+
+    // 下面的卡片停在某間：那根圖釘跳一下；不在看得到的地方就平移過去（縮放不變，下面的卡片不換）
+    private func focus(_ id: String) {
+        guard let p = currentList.first(where: { $0.id == id }), let la = p.lat, let lo = p.lng else { return }
+        if !hidden.contains(id) { pins.hops[id, default: 0] += 1 }
+        guard let r = store.mapRegion ?? shownRegion else { return }
+        let dy = (la - r.center.latitude) / r.span.latitudeDelta, dx = (lo - r.center.longitude) / r.span.longitudeDelta
+        // 上面有搜尋列、下面有卡片蓋住，只算中間那塊
+        guard dy > 0.38 || dy < -0.12 || abs(dx) > 0.42 else { return }
+        selfMoved = true
+        withAnimation(.smooth(duration: 0.45)) {
+            pos = .region(MKCoordinateRegion(center: .init(latitude: la - r.span.latitudeDelta * 0.12, longitude: lo), span: r.span))
+        }
+    }
+
+    // 搜尋框下面的深色膠囊：現在看誰的收藏，點了換；群組時旁邊有 ✕ 回到我的收藏
+    private func scopePill(_ gname: String?) -> some View {
+        HStack(spacing: 8) {
+            Button { scoping = true } label: {
+                HStack(spacing: 8) {
+                    if let g = store.mapGroup {
+                        HStack(spacing: -6) { ForEach(store.membersOf(g).prefix(4), id: \.self) { Avatar(name: store.name($0), id: $0, size: 22) } }
+                        Text("\(gname ?? "") · \(store.placesIn(g).count) 間").lineLimit(1)
+                    } else {
+                        Text("我的收藏")
+                    }
+                    Image(systemName: "chevron.down").font(.caption.weight(.heavy))
+                }
+                .font(.subheadline.weight(.heavy)).foregroundStyle(.white)
+                .padding(.horizontal, 14).frame(height: 36)
+                .background(Color(hex: 0x2a1a0a), in: .capsule)
+                .frame(minHeight: 44).contentShape(.rect)
+            }
+            .buttonStyle(PressStyle())
+            .accessibilityLabel("地圖要看誰的收藏，現在是" + (gname ?? "我的收藏"))
+            if store.mapGroup != nil {
+                Button { withAnimation(.snappy) { store.mapGroup = nil } } label: {
+                    Image(systemName: "xmark").font(.system(size: 13, weight: .heavy)).foregroundStyle(Color.ink)
+                        .frame(width: 36, height: 36).background(.white, in: .circle).shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+                        .frame(width: 44, height: 44).contentShape(.rect)
+                }
+                .accessibilityLabel("回到我的收藏")
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+    }
+
+    // 教學第一步：量出那間店的圖釘在螢幕上的位置（圖釘的尖端就是店的座標）
+    private func pinFrame(_ proxy: MapProxy) {
+        guard store.coachStep == .pin, let p = store.coachPlace, let lat = p.lat, let lng = p.lng,
+              let pt = proxy.convert(CLLocationCoordinate2D(latitude: lat, longitude: lng), to: .global) else { return }
+        let r = CGRect(x: pt.x - 24, y: pt.y - 58, width: 48, height: 58)
+        if store.coachFrames[.pin] != r { store.coachFrames[.pin] = r }
+    }
+
+    private func fit() {
+        if !fitted, let b = bounds { fitted = true; pos = .region(b) }
+    }
+
+    private var bounds: MKCoordinateRegion? {
+        let ps = points; guard !ps.isEmpty else { return nil }
+        let la = ps.map { $0.lat! }, lo = ps.map { $0.lng! }
+        // 下面有一排卡片蓋住，框的時候往下多留一點
+        return MKCoordinateRegion(center: .init(latitude: (la.min()! + la.max()!) / 2 - (la.max()! - la.min()!) * 0.15, longitude: (lo.min()! + lo.max()!) / 2),
+                                  span: .init(latitudeDelta: max(0.02, (la.max()! - la.min()!) * 1.9), longitudeDelta: max(0.02, (lo.max()! - lo.min()!) * 1.3)))
+    }
+}
+
+// 下面那排要放哪些店：地圖現在看到的範圍裡的店，由近到遠（沒開定位就從地圖中心算）
+struct Nearby {
+    let title: String, subtitle: String, places: [Place]
+    var lead: String?                  // 「附近 」「這一帶 」：後面接間數（數字會滾動）
+
+    init(list: [Place], here: CLLocation?, region: MKCoordinateRegion?, total: Int) {
+        guard !list.isEmpty else {
+            title = total == 0 ? "還沒有收藏" : "地圖上還沒有店"
+            subtitle = total == 0 ? "按右上角＋新增第一間" : "有地址的店會自己出現在地圖上"
+            places = []
+            return
+        }
+        let center = region.map { CLLocation(latitude: $0.center.latitude, longitude: $0.center.longitude) }
+        let ref = here ?? center
+        func inView(_ p: Place) -> Bool {
+            guard let r = region else { return true }
+            return abs(p.lat! - r.center.latitude) <= r.span.latitudeDelta / 2 && abs(p.lng! - r.center.longitude) <= r.span.longitudeDelta / 2
+        }
+        var l = list.filter(inView)
+        if let ref {
+            l = l.map { ($0, ref.distance(from: CLLocation(latitude: $0.lat!, longitude: $0.lng!))) }.sorted { $0.1 < $1.1 }.map(\.0)
+        }
+        places = l
+        if l.isEmpty {
+            title = "這一帶沒有收藏"; subtitle = "把地圖拉遠一點看看"
+        } else {
+            lead = here != nil ? "附近 " : "這一帶 "
+            title = lead! + "\(l.count) 間"
+            subtitle = here != nil ? "由近到遠" : "打開定位就會從你的位置排"
+        }
+    }
+}
+
+struct NearbySheet: View {
+    let near: Nearby
+    let pins: PinState
+    let list: [Place]
+    var group: String? = nil
+    var draw: (() -> Void)? = nil
+    var panel: () -> Void = {}
+    var choose: (Place) -> Void = { _ in }
+    var dropKey: String? = nil
+    var focus: (String) -> Void = { _ in }
+    @State private var counted: Int?          // 圖釘落下時「附近 N 間」從 0 數上去
+    @State private var scrolled: String?      // 卡片列停在哪一間
+    @State private var skip: String?          // 自己捲過去的（關掉大卡），不用再移地圖
+    @Environment(\.accessibilityReduceMotion) private var reduce
+
+    var body: some View {
+        // 選到的那間（點圖釘或抽中）：下面換成那間的大卡片
+        let picked = pins.sel.flatMap { id in list.first { $0.id == id } }
+        let drawn = pins.drawn != nil && pins.drawn == pins.sel
+        VStack(alignment: .leading, spacing: 10) {
+            Capsule().fill(Color.ink.opacity(0.15)).frame(width: 38, height: 5).frame(maxWidth: .infinity).padding(.top, 8)
+            if let p = picked {
+                PickedCard(place: p, saver: group == nil ? nil : p.owner, drawn: drawn, draw: draw, panel: panel, pickHistory: choose) {
+                    // 關掉大卡：下面的卡片列捲到這間
+                    skip = p.id; scrolled = p.id
+                    pins.select(nil)
+                }
+                    .id(p.id)
+                    .transition(.asymmetric(insertion: .offset(y: 44).combined(with: .opacity), removal: .opacity))
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        title.font(.system(size: 19, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1)
+                        Text(near.subtitle).font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.45)).lineLimit(1)
+                        Spacer(minLength: 0)
+                        if let draw, !list.isEmpty {
+                            DiceChip(draw: draw, panel: panel)
+                        }
+                    }
+                    .padding(.leading, 18).padding(.trailing, 12)
+                    if !near.places.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            LazyHStack(spacing: 12) {
+                                ForEach(near.places) { p in
+                                    NavigationLink(value: p) { MapCard(place: p, on: false, saver: group == nil ? nil : p.owner) }.buttonStyle(PressStyle { ReelCache.warm(p) })
+                                }
+                            }
+                            .scrollTargetLayout()
+                            .padding(.horizontal, 16).padding(.bottom, 6)
+                        }
+                        .scrollTargetBehavior(.viewAligned)
+                        .scrollPosition(id: $scrolled, anchor: .leading)
+                        .frame(height: 112)
+                        // 停在某張 0.25 秒：那根圖釘跳一下、地圖移過去
+                        .task(id: scrolled) {
+                            guard let id = scrolled else { return }
+                            if id == skip { skip = nil; return }
+                            try? await Task.sleep(for: .milliseconds(250))
+                            if !Task.isCancelled { focus(id) }
+                        }
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+        // 圖釘落下時，「附近 N 間」跟著從 0 往上數
+        .task(id: dropKey) {
+            guard dropKey != nil, !reduce else { return }
+            let total = near.places.count
+            guard total > 1 else { return }
+            let steps = min(total, 20)
+            for i in 0...steps {
+                withAnimation(.snappy) { counted = total * i / steps }
+                try? await Task.sleep(for: .milliseconds(40))
+                if Task.isCancelled { break }
+            }
+            counted = nil
+        }
+        // 換成大卡片時從下面彈上來（有一點點回彈）
+        .animation(reduce ? .easeOut(duration: 0.25) : .spring(response: 0.45, dampingFraction: 0.68), value: picked?.id)
+        // 底下留位置給浮著的分頁列，底色一路鋪到螢幕最下面
+        .padding(.bottom, 82)
+        .background(UnevenRoundedRectangle(topLeadingRadius: 26, topTrailingRadius: 26).fill(Color.bg).shadow(color: .black.opacity(0.12), radius: 12, y: -2).ignoresSafeArea(edges: .bottom))
+    }
+}
+
+extension NearbySheet {
+    // 「附近 12 間」：數字變的時候滾動
+    fileprivate var title: some View {
+        let g = group.map { "\($0) · " } ?? ""
+        let n = counted ?? near.places.count
+        return (near.lead.map { Text(g + $0) + Text("\(n)") + Text(" 間") } ?? Text(g + near.title))
+            .contentTransition(.numericText(value: Double(n)))
+            .animation(.snappy, value: n)
+    }
+}
+
+// 選到一間時下面那張大卡：照片、店名、分類地區，導航和店家頁；抽中的還能再抽一次
+struct PickedCard: View {
+    @Environment(Store.self) private var store
+    @Environment(\.openURL) private var openURL
+    let place: Place
+    var saver: String? = nil
+    var drawn = false
+    var draw: (() -> Void)? = nil
+    var panel: () -> Void = {}
+    var pickHistory: (Place) -> Void = { _ in }
+    let close: () -> Void
+    @State private var askNav = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // 這次抽過的店，點一個回到那間
+            if draw != nil { DrawHistory(tap: pickHistory).padding(.top, -2) }
+            HStack(spacing: 8) {
+                Text(top).font(.system(size: 15, weight: .heavy)).foregroundStyle(Color.ink.opacity(0.55)).lineLimit(1)
+                Spacer(minLength: 0)
+                if let draw {
+                    DiceChip(text: drawn ? "再抽一次" : "抽一間", draw: draw, panel: panel)
+                }
+                Button(action: close) {
+                    Image(systemName: "xmark").font(.system(size: 13, weight: .heavy)).foregroundStyle(Color.ink)
+                        .frame(width: 32, height: 32).background(Color.ink.opacity(0.07), in: .circle)
+                        .frame(width: 44, height: 44).contentShape(.rect)
+                }
+                .accessibilityLabel("回到附近的店")
+            }
+            .padding(.leading, 18).padding(.trailing, 10)
+            HStack(alignment: .top, spacing: 12) {
+                // 點照片也進店家頁（照片飛過去）
+                NavigationLink(value: place) {
+                    PhotoView(place: place, px: 400).frame(width: 120, height: 120).clipShape(.rect(cornerRadius: 18))
+                        .heroSource(place, radius: 18)
+                }
+                .buttonStyle(PressStyle { ReelCache.warm(place) })
+                .accessibilityLabel("\(place.name) 店家頁")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(place.name).font(.system(size: 18, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1)
+                    Text(meta).font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.55)).lineLimit(1)
+                    if let saver {
+                        Text("\(store.name(saver)) 收").font(.system(size: 11.5, weight: .heavy)).foregroundStyle(.white)
+                            .padding(.horizontal, 8).frame(height: 22).background(Avatar.color(saver), in: .capsule)
+                    } else {
+                        Badge(place: place).overlay(Capsule().strokeBorder(Color.sprPink.opacity(place.been ? 0 : 0.35)))
+                    }
+                    Spacer(minLength: 0)
+                    HStack(spacing: 8) {
+                        Button {
+                            if let a = NavApp.saved { if let u = place.navURL(a) { openURL(u) } } else { askNav = true }
+                        } label: {
+                            Label("導航", systemImage: "location.fill").font(.subheadline.weight(.heavy)).foregroundStyle(.white)
+                                .padding(.horizontal, 12).frame(height: 36).background(Color.accent, in: .capsule)
+                                .frame(minHeight: 44).contentShape(.rect)
+                        }
+                        .buttonStyle(PressStyle())
+                        NavigationLink(value: place) {
+                            HStack(spacing: 3) { Text("店家頁"); Image(systemName: "chevron.right").font(.caption.weight(.heavy)) }
+                                .font(.subheadline.weight(.heavy)).foregroundStyle(Color.accent)
+                                .padding(.horizontal, 12).frame(height: 36).background(Color.accent.opacity(0.13), in: .capsule)
+                                .frame(minHeight: 44).contentShape(.rect)
+                        }
+                        .buttonStyle(PressStyle { ReelCache.warm(place) })
+                    }
+                }
+                .frame(height: 120)
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .candy(22)
+            .padding(.horizontal, 16).padding(.bottom, 6)
+        }
+        .confirmationDialog("用哪個地圖導航？", isPresented: $askNav, titleVisibility: .visible) {
+            ForEach(NavApp.allCases, id: \.self) { a in
+                Button(a.name) { NavApp.saved = a; if let u = place.navURL(a) { openURL(u) } }
+            }
+        }
+    }
+
+    // 卡片上面一行：多遠、有幾間分店
+    private var top: String {
+        let n = store.branchesOf(place).count
+        let s = [store.distance(place).map { "離你 " + fmtDistance($0) }, n > 1 ? "\(branchLabel(place))（\(n) 間分店）" : nil].compactMap { $0 }
+        return s.isEmpty ? "選到的店" : s.joined(separator: " · ")
+    }
+
+    private var meta: String {
+        var s = "\(place.cat.emoji) \(place.cuisine?.isEmpty == false ? place.cuisine! : place.cat.name)"
+        if !place.area.isEmpty { s += " · " + place.area }
+        if let pr = place.price, let t = PRICES[pr] { s += " · " + t }
+        return s
+    }
+}
+
+// 地圖上選到哪根圖釘、抽一間跳哪幾根
+@MainActor @Observable final class PinState {
+    private(set) var sel: String?
+    var drawn: String?                  // 抽一間抽中的那間（還選著它時，按鈕變「再抽一次」）
+    var hops: [String: Int] = [:]       // 抽一間時跳一下的圖釘（每跳一次加一）
+    var extra: String?                  // 抽中但被篩選篩掉的店：照樣畫出圖釘（選別間就收掉）
+    @ObservationIgnored var drawWin: String?     // 抽一間正在跳，最後會選中這根
+    @ObservationIgnored var drawTask: Task<Void, Never>?
+    var mergeTo: [String: CGSize] = [:]          // 要合進泡泡的圖釘：往泡泡的位置飛過去並淡掉
+
+    // 圖釘落下（第一次畫圖釘、換看誰的收藏時播一次）：由近到遠，每根晚 0.025 秒，最多錯開 40 根，之後的直接淡入
+    @ObservationIgnored private(set) var dropKey: String?
+    @ObservationIgnored private(set) var dropStart: CFTimeInterval = 0
+    @ObservationIgnored private var dropRank: [String: Int] = [:]
+    // 篩選改變：新出現的彈一下、被篩掉的多畫 0.25 秒縮小淡掉
+    @ObservationIgnored private var lastIds: Set<String> = []
+    @ObservationIgnored private var lastList: [Place] = []
+    @ObservationIgnored private var pop: Set<String> = []
+    @ObservationIgnored private var popUntil: CFTimeInterval = 0
+    @ObservationIgnored private var gone: [Place] = []
+    @ObservationIgnored private var goneUntil: CFTimeInterval = 0
+    // 從泡泡拆出來的圖釘：一開始在泡泡的位置（相對自己的螢幕位移），再彈回自己的位置
+    @ObservationIgnored var flyFrom: [String: CGSize] = [:]
+
+    var dropping: Bool { CACurrentMediaTime() - dropStart < 1.3 }
+
+    // 畫面算名單時呼叫（還沒畫圖釘之前），換了名單就重新排落下順序
+    func arm(_ key: String, _ list: [Place], from ref: CLLocation?) {
+        guard dropKey != key, !list.isEmpty else { return }
+        dropKey = key
+        dropStart = CACurrentMediaTime()
+        let order = ref.map { r in list.sorted { r.distance(from: CLLocation(latitude: $0.lat!, longitude: $0.lng!)) < r.distance(from: CLLocation(latitude: $1.lat!, longitude: $1.lng!)) } } ?? list
+        dropRank = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($1.id, $0) })
+        lastIds = Set(list.map(\.id)); lastList = list
+    }
+
+    // 新收藏的店（AI 剛找到、同步回來多的）：圖釘下次出現時落下
+    static var fresh: Set<String> = []
+
+    // 這根什麼時候開始落下（fade：排在 40 根之後，直接淡入）；不用落下回 nil
+    func drop(_ id: String) -> (at: CFTimeInterval, fade: Bool)? {
+        if Self.fresh.remove(id) != nil { return (CACurrentMediaTime() + 0.15, false) }
+        guard let r = dropRank[id], dropping else { return nil }
+        return r < 40 ? (dropStart + Double(r) * 0.025, false) : (dropStart + 1.0, true)
+    }
+
+    func popping(_ id: String) -> Bool { CACurrentMediaTime() < popUntil && pop.contains(id) }
+
+    // 名單變了（篩選、搜尋）：記下新出現的和被拿掉的；回傳還要多畫一下的那些
+    func track(_ list: [Place]) -> [Place] {
+        let ids = Set(list.map(\.id)), now = CACurrentMediaTime()
+        if ids != lastIds {
+            if !lastIds.isEmpty, !dropping {
+                pop = ids.subtracting(lastIds); popUntil = now + 0.6
+                let g = lastIds.subtracting(ids)
+                gone = lastList.filter { g.contains($0.id) }; goneUntil = now + 0.3
+            }
+            lastIds = ids; lastList = list
+        }
+        return now < goneUntil ? gone : []
+    }
+
+    func select(_ id: String?) {
+        guard sel != id else { return }
+        // 手動選別根或點空白處，就取消還在跳的抽一間
+        if drawWin != nil, id != drawWin { drawTask?.cancel(); drawTask = nil; drawWin = nil }
+        if extra != nil, id != extra { extra = nil }
+        sel = id
+    }
+}
+
+// 只有這個看不見的小東西看 sel；sel 變了才呼叫 MapTab 處理（移地圖、放光圈）
+private struct SelWatcher: View {
+    let pins: PinState
+    let act: (String?) -> Void
+    var body: some View {
+        Color.clear.onChange(of: pins.sel) { _, id in act(id) }
+    }
+}
+
+// 圖釘的按下手感：手指一碰到就壓扁並輕震（不等放開）
+private struct PinPress: ButtonStyle {
+    let reduce: Bool
+    func makeBody(configuration c: Configuration) -> some View {
+        c.label
+            .scaleEffect(x: c.isPressed && !reduce ? 0.86 : 1, y: c.isPressed && !reduce ? 0.8 : 1, anchor: .bottom)
+            .animation(c.isPressed ? .easeOut(duration: 0.07) : .spring(response: 0.25, dampingFraction: 0.55), value: c.isPressed)
+            .onChange(of: c.isPressed) { _, down in if down { Haptic.light() } }
+    }
+}
+
+// 食物圖釘：分類顏色的圓、白邊、中間是分類的食物圖示，下面一個小尖角。
+// 選到時：先壓扁一下再彈高放大、圖示換成封面照片、下面跳出店名、地上影子變寬、放一圈光和彩色糖粒；其他圖釘縮小變淡。
+// 只動縮放、位移、透明度，不重建圖釘，地圖才順
+struct FoodPin: View {
+    let place: Place
+    let pins: PinState             // 選到哪根、抽一間跳哪根；每根自己看，地圖不用整張重算
+    var reduce = false             // 減少動態：不壓扁、不放光圈糖粒，只淡入淡出
+    var saver: (id: String, name: String)? = nil   // 群組地圖：右上角小頭像是誰收的（地圖圖釘裡拿不到環境，直接傳名字）
+    @State private var sx: CGFloat = 1
+    @State private var sy: CGFloat = 1
+    @State private var lift: CGFloat = 0
+    @State private var up = false
+    @State private var hopping = false
+    // 落下、彈出、從泡泡飛回來
+    @State private var dy: CGFloat
+    @State private var dOp: Double
+    @State private var dsx: CGFloat
+    @State private var dsy: CGFloat
+    @State private var fly: CGSize
+    @State private var dropAt: CFTimeInterval?
+    @State private var dropFade: Bool
+
+    init(place: Place, pins: PinState, reduce: Bool = false, saver: (id: String, name: String)? = nil) {
+        self.place = place; self.pins = pins; self.reduce = reduce; self.saver = saver
+        let d = pins.drop(place.id), pop = pins.popping(place.id) && !reduce
+        _dropAt = State(initialValue: d?.at)
+        _dropFade = State(initialValue: d?.fade ?? false)
+        _dy = State(initialValue: d != nil && !d!.fade && !reduce ? -40 : 0)
+        _dOp = State(initialValue: d != nil ? 0 : 1)
+        _dsx = State(initialValue: pop ? 1.3 : 1)
+        _dsy = State(initialValue: pop ? 1.3 : 1)
+        _fly = State(initialValue: reduce || pins.sel == place.id ? .zero : pins.flyFrom[place.id] ?? .zero)
+    }
+
+    var body: some View {
+        let on = pins.sel == place.id
+        // 選到的那根永遠不跟泡泡合、也不從泡泡飛（店名小牌子才會跟著圖釘）
+        let merge = on ? nil : pins.mergeTo[place.id]
+        let faded = pins.sel != nil && !on && !hopping   // 別間被選到時變淡（只改透明度，76 根一起動也不吃力）
+        let hop = pins.hops[place.id] ?? 0
+        // 自己接點擊：手指一按下就壓扁、輕震，放開就選中，不用等地圖確認「是不是點兩下放大」
+        Button { pins.select(place.id) } label: { pin(on) }
+            .buttonStyle(PinPress(reduce: reduce))
+            .accessibilityLabel(place.name)
+            .accessibilityAddTraits(on ? .isSelected : [])
+            // 地上的影子：選到時變寬變淡
+            .background(alignment: .bottom) {
+                Ellipse().fill(.black.opacity(0.28)).frame(width: 22, height: 7)
+                    .scaleEffect(x: on ? 1.6 : 1, y: 1).opacity(on ? 0.55 : 1).offset(y: 3)
+                    .animation(.smooth(duration: 0.3), value: on)
+            }
+            // 深色店名小牌子，從圖釘下面彈出來
+            .overlay(alignment: .bottom) {
+                ZStack {
+                    if on {
+                        Text(place.name).font(.system(size: 13, weight: .heavy)).foregroundStyle(.white).lineLimit(1)
+                            .padding(.horizontal, 9).frame(height: 24)
+                            .background(Color(hex: 0x2a1a0a), in: .capsule)
+                            .fixedSize()
+                            .transition(reduce ? AnyTransition.opacity : AnyTransition.scale(scale: 0.4, anchor: .top).combined(with: .opacity))
+                    }
+                }
+                .offset(y: 32)
+                .animation(reduce ? .easeOut(duration: 0.25) : .spring(response: 0.38, dampingFraction: 0.55), value: on)
+                .allowsHitTesting(false)
+            }
+            .opacity(faded ? 0.5 : 1)
+            .animation(.snappy(duration: 0.25), value: faded)
+            .scaleEffect(x: dsx, y: dsy, anchor: .bottom)
+            .offset(x: fly.width + (merge?.width ?? 0), y: dy + fly.height + (merge?.height ?? 0))
+            .opacity(dOp * (merge == nil ? 1 : 0))
+            .animation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.85), value: merge)
+            .onAppear {
+                if on { up = true; sx = 1.35; sy = 1.35; lift = -10 }
+                arrive()
+            }
+            .onChange(of: on) { _, v in v ? select() : deselect() }
+            .onChange(of: hop) {
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.5)) { hopping = true } completion: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { hopping = false }
+                }
+            }
+    }
+
+    // 剛出現：落下（壓扁再彈回）、淡入、篩選新出現的從 1.3 倍彈回、從泡泡飛回自己的位置
+    private func arrive() {
+        if let at = dropAt {
+            dropAt = nil
+            let wait = max(0, at - CACurrentMediaTime())
+            if dropFade || reduce {
+                withAnimation(.easeOut(duration: 0.2).delay(wait)) { dOp = 1 }
+            } else {
+                withAnimation(.easeIn(duration: 0.25).delay(wait)) { dy = 0; dOp = 1 } completion: {
+                    withAnimation(.easeOut(duration: 0.06)) { dsx = 1.1; dsy = 0.8 } completion: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) { dsx = 1; dsy = 1 }
+                    }
+                }
+            }
+        } else if dOp < 1 {
+            withAnimation(.easeOut(duration: 0.2)) { dOp = 1; dy = 0 }
+        }
+        if dsx != 1 { withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) { dsx = 1; dsy = 1 } }
+        if fly != .zero { withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { fly = .zero } }
+    }
+
+    private func pin(_ on: Bool) -> some View {
+        let c = place.cat.color
+        return VStack(spacing: -3) {
+            ZStack {
+                Circle().fill(c)
+                Text(place.cat.emoji).font(.system(size: 21))
+                if on, place.photoURL != nil { PinPhoto(place: place) }
+            }
+            .frame(width: 44, height: 44)
+            .overlay(Circle().strokeBorder(.white, lineWidth: 3))
+            .overlay(alignment: .topTrailing) {
+                if let saver { Avatar(name: saver.name, id: saver.id, size: 20).offset(x: 6, y: -4) }
+            }
+            Triangle().fill(.white).frame(width: 14, height: 10).rotationEffect(.degrees(180))
+        }
+        .scaleEffect(x: sx * (hopping ? 1.3 : 1), y: sy * (hopping ? 1.3 : 1), anchor: .bottom)
+        .offset(y: lift)
+        .contentShape(.rect)
+    }
+
+    private func select() {
+        up = true
+        if reduce { withAnimation(.easeOut(duration: 0.25)) { sx = 1.35; sy = 1.35; lift = -10 }; return }
+        // 手指按下時已經壓扁過了（PinPress），放開直接彈高放大（有回彈）
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.55)) { sx = 1.35; sy = 1.35; lift = -10 }
+    }
+
+    // 換選別間：這根縮回去時先縮過頭一點再彈回原大小
+    private func deselect() {
+        up = false
+        if reduce { withAnimation(.easeOut(duration: 0.25)) { sx = 1; sy = 1; lift = 0 }; return }
+        withAnimation(.easeIn(duration: 0.12)) { sx = 0.9; sy = 0.9; lift = 0 } completion: {
+            guard !up else { return }
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.5)) { sx = 1; sy = 1 }
+        }
+    }
+}
+
+// 圖釘裡的圓形封面照：照片載好才淡入，不會先閃一下
+private struct PinPhoto: View {
+    let place: Place
+    @State private var img: UIImage?
+    var body: some View {
+        Color.clear.frame(width: 44, height: 44)
+            .overlay { if let img { Image(uiImage: img).resizable().scaledToFill().transition(.opacity) } }
+            .clipShape(.circle)
+            .contentShape(.circle)
+        .task(id: place.photo) {
+            guard let u = place.photoURL else { return }
+            if let c = PhotoLoader.shared.cached(u, 160) ?? PhotoLoader.shared.anySize(u) { img = c; return }
+            let i = await PhotoLoader.shared.load(u, 160)
+            withAnimation(.easeOut(duration: 0.25)) { img = i }
+        }
+    }
+}
+
+// 選到時放一次的光圈和糖粒，畫在整張地圖上面（不放在圖釘裡，才不會被圖釘的框切掉一半）
+@Observable final class BurstSpot {
+    var at: CGPoint?                     // 選到那根圖釘尖端在螢幕上的位置（地圖移動時跟著更新）
+    var coord: CLLocationCoordinate2D?
+    var color: Color = .accent
+    var shot = 0
+    var until = Date.distantPast         // 光圈放完前，地圖移動才需要更新位置
+}
+
+private struct PinBurst: View {
+    let spot: BurstSpot
+    private static let dots: [Color] = ([0xff4f9a, 0x2ed3a0, 0x4da3ff, 0xffd23f, 0xff8a00, 0x8a5cf6, 0xff4f9a, 0x2ed3a0, 0x4da3ff, 0xffd23f] as [UInt32]).map { Color(hex: $0) }
+
+    var body: some View {
+        let at = spot.at, color = spot.color
+        GeometryReader { g in
+            let o = g.frame(in: .global).origin
+            Color.clear
+                .keyframeAnimator(initialValue: -1.0, trigger: spot.shot) { v, t in
+                    v.overlay {
+                        if t >= 0, t < 1, let at {
+                            // 圓頭的中心：一開始離尖端 29（還沒彈起），圖釘彈高放大後約 49（39＋抬高 10），跟著一起升上去
+                            let rise = 29 + 20 * (1 - pow(1 - min(t / 0.36, 1), 3))
+                            Canvas { ctx, _ in Self.draw(ctx, CGPoint(x: at.x - o.x, y: at.y - o.y - rise), t, color) }
+                        }
+                    }
+                } keyframes: { _ in
+                    // 圖釘彈起來的同時放（手指按下時已經壓扁過了）
+                    KeyframeTrack {
+                        MoveKeyframe(0.0)
+                        LinearKeyframe(1.0, duration: 0.7)
+                    }
+                }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private static func draw(_ ctx: GraphicsContext, _ head: CGPoint, _ t: Double, _ color: Color) {
+        // 光圈：以圓頭為中心，0.65 秒從 0.6 倍放大到 3.2 倍並淡掉
+        let rt = min(t / 0.93, 1), re = 1 - pow(1 - rt, 3)
+        let r = 30 * (0.6 + 2.6 * re)
+        ctx.stroke(Path(ellipseIn: CGRect(x: head.x - r, y: head.y - r, width: r * 2, height: r * 2)),
+                   with: .color(color.opacity(0.9 * (1 - rt))), lineWidth: 3)
+        // 糖粒：從圓頭往四周噴出去 34–54pt，再往下掉、淡掉
+        let e = 1 - pow(1 - t, 2)
+        for i in 0..<Self.dots.count {
+            let a = 2 * Double.pi * (Double(i) + 0.25) / Double(Self.dots.count)
+            let d = 34 + 20 * (Double(i) * 0.618).truncatingRemainder(dividingBy: 1)
+            let rr = 24 + d * e   // 從圓頭邊緣往外飛
+            let p = CGPoint(x: head.x + cos(a) * rr, y: head.y + sin(a) * rr + 36 * t * t)
+            ctx.fill(Path(ellipseIn: CGRect(x: p.x - 3.5, y: p.y - 3.5, width: 7, height: 7)), with: .color(dots[i].opacity(1 - t)))
+        }
+    }
+}
+
+struct MapCard: View {
+    @Environment(Store.self) private var store
+    let place: Place, on: Bool
+    var saver: String? = nil
+    var body: some View {
+        HStack(spacing: 12) {
+            PhotoView(place: place, px: 300).frame(width: 84, height: 84).clipShape(.rect(cornerRadius: 16))
+                .heroSource(place, radius: 16)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(place.name).font(.system(size: 16, weight: .heavy)).lineLimit(1).foregroundStyle(Color.ink)
+                Text("\(place.cat.emoji) \(place.cuisine?.isEmpty == false ? place.cuisine! : place.cat.name)\(place.area.isEmpty ? "" : " · " + place.area)")
+                    .font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.55)).lineLimit(1)
+                Spacer(minLength: 0)
+                if let saver {
+                    // 群組地圖：誰收的（那個人的顏色）
+                    Text("\(store.name(saver)) 收").font(.system(size: 11.5, weight: .heavy)).foregroundStyle(.white)
+                        .padding(.horizontal, 8).frame(height: 22).background(Avatar.color(saver), in: .capsule)
+                } else {
+                    Badge(place: place).overlay(Capsule().strokeBorder(Color.sprPink.opacity(place.been ? 0 : 0.35)))
+                }
+            }
+            .padding(.vertical, 4)
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(width: 270, height: 104)
+        .candy(20)
+        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(on ? Color.accent : .clear, lineWidth: 2.5))
+    }
+}
+
+// 還沒有地址的店：列出來，點一間就能補地址（存檔時會自己查座標）
+struct NoAddressSheet: View {
+    @Environment(Store.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var editing: Place?
+
+    var body: some View {
+        let list = store.mine.filter { $0.lat == nil || $0.lng == nil }
+        NavigationStack {
+            List(list) { p in
+                Button { editing = p } label: {
+                    HStack(spacing: 12) {
+                        PhotoView(place: p, px: 160).frame(width: 52, height: 52).clipShape(.rect(cornerRadius: 12))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(p.name).font(.headline).foregroundStyle(Color.ink)
+                            Text(p.address?.isEmpty == false ? "地址找不到位置，點一下改" : "點一下補地址").font(.caption).foregroundStyle(Color.ink.opacity(0.5))
+                        }
+                        Spacer()
+                        Image(systemName: "pencil").foregroundStyle(Color.accent)
+                    }
+                }
+            }
+            .overlay { if list.isEmpty { ContentUnavailableView("都在地圖上了 🎉", systemImage: "map") } }
+            .navigationTitle("還沒有地址").navigationBarTitleDisplayMode(.inline)
+            .toolbar { Button("完成") { dismiss() } }
+            .sheet(item: $editing) { EditSheet(place: $0) }
+        }
+    }
+}
+
+// 「地圖要看誰的收藏？」：我的收藏，或某個群組大家分享的店
+struct ScopeSheet: View {
+    @Environment(Store.self) private var store
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 10) {
+                    row(nil, "我的收藏", "\(store.mine.count) 間 · 只有你自己存的") { Image("Logo").resizable().frame(width: 40, height: 40).clipShape(.rect(cornerRadius: 10)).frame(width: 56, alignment: .leading).accessibilityHidden(true) }
+                    ForEach(store.groups) { g in
+                        let mem = store.membersOf(g.id)
+                        row(g.id, g.name, "\(store.placesIn(g.id).count) 間 · \(mem.count) 人") {
+                            // 最多三個頭像疊在一起，固定 56 寬，不會壓到群組名稱
+                            HStack(spacing: -11) { ForEach(mem.prefix(3), id: \.self) { Avatar(name: store.name($0), id: $0, size: 26) } }
+                                .frame(width: 56, alignment: .leading)
+                        }
+                    }
+                }
+                .padding(16)
+            }
+            .background(Color.bg)
+            .navigationTitle("地圖要看誰的收藏？").navigationBarTitleDisplayMode(.inline)
+            .toolbar { Button("完成") { dismiss() } }
+        }
+    }
+
+    private func row<I: View>(_ id: String?, _ title: String, _ sub: String, @ViewBuilder icon: () -> I) -> some View {
+        let on = store.mapGroup == id
+        return Button {
+            Haptic.light()
+            withAnimation(.snappy) { store.mapGroup = id }
+            dismiss()
+        } label: {
+            HStack(spacing: 12) {
+                icon()
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 16, weight: .heavy)).foregroundStyle(Color.ink)
+                    Text(sub).font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
+                }
+                Spacer()
+                if on { Image(systemName: "checkmark").font(.system(size: 15, weight: .heavy)).foregroundStyle(Color.accent) }
+            }
+            .padding(14)
+            .candy(18)
+            .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(on ? Color.accent : .clear, lineWidth: 2.5))
+            .contentShape(.rect)
+        }
+        .buttonStyle(PressStyle())
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
+// 很遠的店要飛過去的目的地（每次選都是新的一趟）
+struct Flight: Equatable {
+    let id = UUID()
+    let lat: Double, lng: Double
+}
+
+// 擠在一起的幾根圖釘合成的泡泡
+struct PinCluster: Identifiable, Equatable {
+    let id: String
+    let ids: [String]
+    let lat: Double, lng: Double
+    let colors: [Color]
+}
+
+// 泡泡：分類顏色的漸層加家數，出現時彈一下；點了放大到框住這幾家
+private struct ClusterBubble: View {
+    let c: PinCluster
+    var reduce = false
+    let tap: () -> Void
+    @State private var on = false
+    var body: some View {
+        Button(action: tap) {
+            Text("\(c.ids.count)").font(.system(size: 17, weight: .black)).foregroundStyle(.white)
+                .frame(width: 46, height: 46)
+                .background(LinearGradient(colors: c.colors, startPoint: .topLeading, endPoint: .bottomTrailing), in: .circle)
+                .overlay(Circle().strokeBorder(.white, lineWidth: 3))
+                .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
+                .contentShape(.circle)
+        }
+        .buttonStyle(PinPress(reduce: reduce))
+        .scaleEffect(on || reduce ? 1 : 0.6)
+        .opacity(on ? 1 : 0)
+        .onAppear { withAnimation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.6)) { on = true } }
+        .accessibilityLabel("\(c.ids.count) 間店，點了放大")
+    }
+}
+
+// 被篩選拿掉的圖釘：縮到 0.4 倍並淡掉（MapKit 拿掉圖釘不會播動畫，所以另外畫一下）
+private struct GonePin: View {
+    let place: Place
+    var reduce = false
+    @State private var on = true
+    var body: some View {
+        PinGlyph(place: place)
+            .scaleEffect(on || reduce ? 1 : 0.4, anchor: .bottom)
+            .opacity(on ? 1 : 0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .onAppear { withAnimation(.easeIn(duration: 0.2)) { on = false } }
+    }
+}
