@@ -203,6 +203,9 @@ drop policy if exists "成員開新一輪" on food.swipe_rounds;
 create policy "成員開新一輪" on food.swipe_rounds for insert with check (food.is_member(group_id) and created_by = auth.uid());
 drop policy if exists "開的人刪除" on food.swipe_rounds;
 create policy "開的人刪除" on food.swipe_rounds for delete using (created_by = auth.uid());
+-- 群組建立者也能刪（清掉別人開的舊配對）
+drop policy if exists "群組建立者也能刪滑卡" on food.swipe_rounds;
+create policy "群組建立者也能刪滑卡" on food.swipe_rounds for delete using (exists (select 1 from food.groups g where g.id = swipe_rounds.group_id and g.owner = auth.uid()));
 
 drop policy if exists "成員看得到大家的選擇" on food.swipes;
 create policy "成員看得到大家的選擇" on food.swipes for select
