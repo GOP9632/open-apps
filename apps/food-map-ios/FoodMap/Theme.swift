@@ -39,14 +39,17 @@ struct PressStyle: ButtonStyle {
 struct Chip: View {
     let text: String, on: Bool
     var color: Color = .accent
+    // 疊在地圖上：沒選的也是不透明白底、字加深，看得清楚
+    var solid = false
     let action: () -> Void
     var body: some View {
         Button(action: action) {
             Text(text).font(.subheadline.weight(.heavy))
                 .padding(.horizontal, 14).frame(height: 36)
-                .background(on ? color : color.opacity(0.13), in: .capsule)
-                .foregroundStyle(on ? .white : color)
-                .shadow(color: on ? color.mix(with: .black, by: 0.2) : .clear, radius: 0, y: 3)
+                .background(on ? color : solid ? .white : color.opacity(0.13), in: .capsule)
+                .overlay(Capsule().strokeBorder(!on && solid ? color.opacity(0.35) : .clear, lineWidth: 1.5))
+                .foregroundStyle(on ? .white : solid ? color.mix(with: .black, by: 0.3) : color)
+                .shadow(color: on ? color.mix(with: .black, by: 0.2) : solid ? .black.opacity(0.12) : .clear, radius: on ? 0 : 4, y: on ? 3 : 2)
                 .frame(minHeight: 44).contentShape(.rect)
         }
         .buttonStyle(PressStyle())
@@ -69,15 +72,16 @@ struct Badge: View {
 // 地圖和收藏頁都用的篩選列（各自一份篩選）：全部、想去、去過、各分類。「全部」會把想去／去過也清掉
 struct FilterChips: View {
     @Binding var f: Filter
+    var solid = false
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                Chip(text: "全部", on: !f.on) { tap { f.status = ""; f.cat = "" } }
-                Chip(text: "♥ 想去", on: f.status == "want", color: .sprPink) { tap { f.status = f.status == "want" ? "" : "want" } }
-                Chip(text: "✓ 去過", on: f.status == "been", color: .sprMint) { tap { f.status = f.status == "been" ? "" : "been" } }
+                Chip(text: "全部", on: !f.on, solid: solid) { tap { f.status = ""; f.cat = "" } }
+                Chip(text: "♥ 想去", on: f.status == "want", color: .sprPink, solid: solid) { tap { f.status = f.status == "want" ? "" : "want" } }
+                Chip(text: "✓ 去過", on: f.status == "been", color: .sprMint, solid: solid) { tap { f.status = f.status == "been" ? "" : "been" } }
                 ForEach(Cat.order, id: \.self) { k in
                     let c = Cat.all[k]!
-                    Chip(text: "\(c.emoji) \(c.name)", on: f.cat == k, color: c.color) { tap { f.cat = f.cat == k ? "" : k } }
+                    Chip(text: "\(c.emoji) \(c.name)", on: f.cat == k, color: c.color, solid: solid) { tap { f.cat = f.cat == k ? "" : k } }
                 }
             }
             .padding(.horizontal, 16).padding(.vertical, 4)

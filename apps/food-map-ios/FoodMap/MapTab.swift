@@ -67,7 +67,7 @@ struct MapTab: View {
                     }
                     .padding(.horizontal, 16)
                     if !store.groups.isEmpty { scopePill(gname) }
-                    FilterChips(f: $store.mapF)
+                    FilterChips(f: $store.mapF, solid: true)
                 }
                 .padding(.top, 6)
             }
@@ -488,7 +488,7 @@ private struct PinBurst: View {
     private static let dots: [Color] = ([0xff4f9a, 0x2ed3a0, 0x4da3ff, 0xffd23f, 0xff8a00, 0x8a5cf6, 0xff4f9a, 0x2ed3a0, 0x4da3ff, 0xffd23f] as [UInt32]).map { Color(hex: $0) }
 
     var body: some View {
-        Color.clear.frame(width: 220, height: 220)
+        Color.clear.frame(width: 320, height: 320)
             .keyframeAnimator(initialValue: 1.0, trigger: trigger) { v, t in
                 v.overlay {
                     if t < 1 {
@@ -501,25 +501,26 @@ private struct PinBurst: View {
                     LinearKeyframe(1.0, duration: 0.7)
                 }
             }
-            .offset(y: 110)
+            .offset(y: 160)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }
 
     private func draw(_ ctx: GraphicsContext, _ size: CGSize, _ t: Double) {
-        let ground = CGPoint(x: size.width / 2, y: size.height / 2)
-        // 光圈：0.65 秒從 0.6 倍放大到 3.2 倍並淡掉
+        // 圓頭的中心：圖釘高 51、圓心離底 29，放大 1.35 倍後約 39，再抬高 10
+        let head = CGPoint(x: size.width / 2, y: size.height / 2 - 49)
+        // 光圈：以圓頭為中心，0.65 秒從 0.6 倍放大到 3.2 倍並淡掉
         let rt = min(t / 0.93, 1), re = 1 - pow(1 - rt, 3)
-        let r = 22 * (0.6 + 2.6 * re)
-        ctx.stroke(Path(ellipseIn: CGRect(x: ground.x - r, y: ground.y - r, width: r * 2, height: r * 2)),
+        let r = 30 * (0.6 + 2.6 * re)
+        ctx.stroke(Path(ellipseIn: CGRect(x: head.x - r, y: head.y - r, width: r * 2, height: r * 2)),
                    with: .color(color.opacity(0.9 * (1 - rt))), lineWidth: 3)
-        // 糖粒：從圖釘的頭往上半圈噴出去 34–54pt，再往下掉、淡掉
-        let head = CGPoint(x: ground.x, y: ground.y - 54)
+        // 糖粒：從圓頭往四周噴出去 34–54pt，再往下掉、淡掉
         let e = 1 - pow(1 - t, 2)
         for i in 0..<Self.dots.count {
-            let a = -Double.pi + Double.pi * (Double(i) + 0.5) / Double(Self.dots.count)
+            let a = 2 * Double.pi * (Double(i) + 0.25) / Double(Self.dots.count)
             let d = 34 + 20 * (Double(i) * 0.618).truncatingRemainder(dividingBy: 1)
-            let p = CGPoint(x: head.x + cos(a) * d * e, y: head.y + sin(a) * d * e + 36 * t * t)
+            let rr = 24 + d * e   // 從圓頭邊緣往外飛
+            let p = CGPoint(x: head.x + cos(a) * rr, y: head.y + sin(a) * rr + 36 * t * t)
             ctx.fill(Path(ellipseIn: CGRect(x: p.x - 3.5, y: p.y - 3.5, width: 7, height: 7)), with: .color(Self.dots[i].opacity(1 - t)))
         }
     }
