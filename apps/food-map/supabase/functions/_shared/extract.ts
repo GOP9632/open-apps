@@ -88,10 +88,16 @@ async function tiktok(url: string) {
 async function googleMaps(url: string) {
   const page = await get(url, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36");
   const final = page.url || url;
-  const name = decodeURIComponent((final.match(/\/place\/([^/@?]+)/) || [])[1] ?? "").replace(/\+/g, " ");
+  let name = decodeURIComponent((final.match(/\/place\/([^/@?]+)/) || [])[1] ?? "").replace(/\+/g, " ");
   const c = final.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) || final.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) || final.match(/[?&](?:q|ll)=(-?\d+\.\d+),(-?\d+\.\d+)/);
-  const title = meta(page.html, "og:title"), d = meta(page.html, "og:description");
-  return { name, lat: c ? +c[1] : null, lng: c ? +c[2] : null, caption: [name, title, d].filter(Boolean).join("\n"), final };
+  // 一般瀏覽器拿到的 og:image 是靜態地圖；用連結預覽的 UA 才會拿到店家照片和「店名 · 地址」
+  const card = await get(final, "facebookexternalhit/1.1");
+  const pic = meta(card.html, "og:image");
+  const thumb = /googleusercontent\.com/.test(pic) ? pic.replace(/=w\d+-h\d+/, "=w1080-h1080") : "";
+  const title = meta(card.html, "og:title") || meta(page.html, "og:title"), d = meta(page.html, "og:description");
+  // iPhone 分享的連結常常是 ?q=…&ftid=…，網址裡沒有 /place/店名，改用預覽標題「店名 · 地址」
+  if (!name && title && title !== "Google Maps") name = title.split(" · ")[0];
+  return { name, lat: c ? +c[1] : null, lng: c ? +c[2] : null, caption: [name, title, d].filter(Boolean).join("\n"), final, thumb };
 }
 
 async function webpage(url: string) {
@@ -154,7 +160,7 @@ export async function extract(body: { url?: string; text?: string; image?: strin
     else if (/tiktok\.com/.test(u)) Object.assign(src, await tiktok(u));
     else if (/maps\.app\.goo\.gl|goo\.gl\/maps|google\.[a-z.]+\/maps|maps\.google\./.test(u)) {
       const g = await googleMaps(u);
-      Object.assign(src, { caption: g.caption, url: g.final });
+      Object.assign(src, { caption: g.caption, url: g.final, thumb: g.thumb });
       if (g.name) places = [{ name: g.name, lat: g.lat, lng: g.lng }];
     } else Object.assign(src, await webpage(u));
     const loc = src.location as Record<string, unknown> | null;
