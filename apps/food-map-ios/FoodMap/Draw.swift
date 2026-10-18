@@ -413,8 +413,8 @@ struct DrawCards: View {
                 ForEach(Array(places.enumerated()), id: \.element.id) { i, p in
                     let mid = Double(places.count - 1) / 2, k = Double(i) - mid
                     let w = cardW(center: k == 0)
-                    card(p, w: w)
-                        .rotationEffect(.degrees(out && chosen == nil ? k * 7 : 0), anchor: .bottom)
+                    card(p, w: w, lockLeft: k < 0)
+                        .rotationEffect(.degrees(out && chosen == nil ? k * 5 : 0))
                         .offset(x: out ? CGFloat(k) * sideX : 0, y: out ? CGFloat(abs(k)) * 18 : 420)
                         .scaleEffect(out ? (chosen == p.id ? 1.05 : 1) : 0.3)
                         .opacity(chosen == nil || chosen == p.id ? 1 : 0)
@@ -451,16 +451,21 @@ struct DrawCards: View {
         .task { await deal(places.map(\.id)) }
     }
 
-    // 卡片大小跟螢幕寬度走：一張時最大，三張時中間那張約半個螢幕寬
+    // 卡片大小跟螢幕寬度走：一張時大一點；三張時中間約 0.44 個螢幕寬，旁邊兩張小一點、整張留在螢幕裡
     private var screenW: CGFloat { MapTab.mapWidth }
     private func cardW(center: Bool) -> CGFloat {
-        if places.count == 1 { return min(260, screenW * 0.66) }
-        return center ? min(220, screenW * 0.52) : min(186, screenW * 0.44)
+        if places.count == 1 { return min(230, screenW * 0.58) }
+        return center ? min(176, screenW * 0.44) : min(148, screenW * 0.37)
     }
     private func cardH(_ w: CGFloat) -> CGFloat { w - 16 + 78 }
-    private var sideX: CGFloat { min(130, screenW * 0.31) }
+    // 旁邊那張的外緣（含轉 5 度後翹出去的角、上面的鎖頭）離螢幕邊至少 12pt
+    private var sideX: CGFloat {
+        let w = cardW(center: false)
+        return screenW / 2 - w / 2 - 12 - cardH(w) / 2 * sin(5 * .pi / 180)
+    }
 
-    private func card(_ p: Place, w: CGFloat) -> some View {
+    // 鎖頭放在露出來的那一角：左邊那張放左上，其他放右上（中間那張壓在旁邊兩張的內側角上）
+    private func card(_ p: Place, w: CGFloat, lockLeft: Bool) -> some View {
         FlipCard(angle: up.contains(p.id) ? 0 : 180) {
             VStack(alignment: .leading, spacing: 5) {
                 PhotoView(place: p, px: 600).frame(width: w - 16, height: w - 16).clipShape(.rect(cornerRadius: 14))
@@ -473,7 +478,7 @@ struct DrawCards: View {
             .padding(8)
             .frame(width: w, height: cardH(w))
             .background(Color.panel, in: .rect(cornerRadius: 16))
-            .overlay(alignment: .topTrailing) {
+            .overlay(alignment: lockLeft ? .topLeading : .topTrailing) {
                 if !one {
                     Button {
                         Haptic.tick()
