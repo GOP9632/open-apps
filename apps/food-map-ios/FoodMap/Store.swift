@@ -184,7 +184,7 @@ struct Snapshot: Codable {
             saveCache()
             warmPhotos()
             noteNew()
-            if mine.contains(where: { $0.lat == nil && !($0.address ?? "").isEmpty && !geoTried.contains($0.id) }) { Task { await fillCoords() } }
+            if mine.contains(where: { $0.lat == nil && !geoTried.contains($0.id) }) { Task { await fillCoords() } }
             if quickKey == nil { await loadQuickKey() }
             syncMs = Int(Date().timeIntervalSince(t) * 1000)
             error = nil
@@ -287,7 +287,7 @@ struct Snapshot: Codable {
 
     @MainActor func signOut() {
         Supa.signOut(); loggedIn = false
-        undoable = []; pendingSwipes = []
+        undoable = []; pendingSwipes = []; geoTried = []; pendingAdds = []; freshIds = []
         apply(Snapshot()); quickKey = nil
         mapPath = []; depth = [0, 0, 0, 0]; tab = 0; coach = []; listF = Filter(); mapF = Filter()
         try? FileManager.default.removeItem(at: cacheFile)
@@ -565,13 +565,16 @@ struct Snapshot: Codable {
     }
 
     // 有地址但沒有座標的店，用 iPhone 內建的地址查詢補上，地圖上才看得到
-    // 從 IG 分享捷徑收進來的店是雲端直接存的、沒有座標，所以每次同步完都補一次（同一間這次開 App 只試一次）
+    // 從 IG 分享捷徑收進來的店是雲端直接存的、沒有座標，所以每次同步完都補一次。
+    // 有地址查地址，沒地址用「店名＋城市」搜（算大概位置）。正在查的不重複查；查不到的下次同步再試
     @MainActor func fillCoords(_ only: [String]? = nil) async {
-        for p in mine where p.lat == nil && !(p.address ?? "").isEmpty && (only == nil ? !geoTried.contains(p.id) : only!.contains(p.id)) {
+        for p in mine where p.lat == nil && !geoTried.contains(p.id) && (only == nil || only!.contains(p.id)) {
             geoTried.insert(p.id)
-            if let c = await Store.geocode(p) {
-                var n = p; n.lat = c.latitude; n.lng = c.longitude; n.approx = false
+            if let g = await Store.locate(p) {
+                var n = p; n.lat = g.coord.latitude; n.lng = g.coord.longitude; n.approx = g.approx
                 await save(n)
+            } else {
+                geoTried.remove(p.id)
             }
         }
     }
@@ -579,6 +582,18 @@ struct Snapshot: Codable {
     static func geocode(_ p: Place) async -> CLLocationCoordinate2D? {
         let q = [normCity(p.city), p.district ?? "", p.address ?? ""].joined(separator: " ").trimmingCharacters(in: .whitespaces)
         return try? await CLGeocoder().geocodeAddressString(q).first?.location?.coordinate
+    }
+
+    // 找座標：有地址用地址（準），沒有就用店名＋城市在 Apple 地圖搜（標成大概位置）
+    static func locate(_ p: Place) async -> (coord: CLLocationCoordinate2D, approx: Bool)? {
+        if !(p.address ?? "").isEmpty { return await geocode(p).map { ($0, false) } }
+        let name = [p.name, p.branch ?? ""].joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return nil }
+        let r = MKLocalSearch.Request()
+        r.naturalLanguageQuery = [normCity(p.city), p.district ?? "", name].joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        r.resultTypes = .pointOfInterest
+        guard let item = try? await MKLocalSearch(request: r).start().mapItems.first else { return nil }
+        return (item.placemark.coordinate, true)
     }
 
     @MainActor func rename(_ name: String) async {

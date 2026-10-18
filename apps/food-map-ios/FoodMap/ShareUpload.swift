@@ -30,9 +30,15 @@ final class ShareUpload: NSObject, URLSessionDataDelegate {
         r.httpMethod = "POST"
         r.setValue("sb_publishable_p_eT8zA9iEEITNyUFslSpQ_BU62SO9n", forHTTPHeaderField: "apikey")
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let t = session(Self.prefix + UUID().uuidString).uploadTask(with: r, fromFile: file)
+        // 背景 session 同一時間只能有一個程序用，所以分享擴充每次用新的代號（Apple 的規定）；
+        // 送出後就請它「做完就收掉」，系統那邊不會越積越多
+        let id = Self.prefix + UUID().uuidString
+        let s = session(id)
+        let t = s.uploadTask(with: r, fromFile: file)
         t.taskDescription = file.path
         t.resume()
+        s.finishTasksAndInvalidate()
+        lock.lock(); sessions[id] = nil; lock.unlock()
     }
 
     // 同一個代號重建 session，系統才會把結果交回來

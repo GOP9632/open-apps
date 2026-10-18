@@ -190,8 +190,9 @@ struct EditSheet: View {
         Task { [p] in
             var p = p
             // 地址改了（或本來沒座標）就重新查座標，地圖上才會在對的位置
-            if !(p.address ?? "").isEmpty && (p.lat == nil || old?.address != p.address || old?.city != p.city), let c = await Store.geocode(p) {
-                p.lat = c.latitude; p.lng = c.longitude; p.approx = false
+            // 沒有地址也沒有座標：用店名＋城市找大概位置
+            if (p.lat == nil || old?.address != p.address || old?.city != p.city), let g = await Store.locate(p) {
+                p.lat = g.coord.latitude; p.lng = g.coord.longitude; p.approx = g.approx
             }
             let ok: Bool
             if isNew { ok = await store.add(p) } else { ok = await store.save(p) }
