@@ -300,6 +300,10 @@ struct MapTab: View {
         else { withAnimation(.smooth(duration: 0.55)) { pos = .region(MKCoordinateRegion(center: c, span: span)) } }
     }
 
+    static var mapWidth: CGFloat {
+        UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow?.bounds.width }.first ?? 390
+    }
+
     private var currentList: [Place] { withExtra(store.shown(store.mapF, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil }) }
 
     // 擠在一起的圖釘合成泡泡（選到的、抽中被篩掉的那根不合）：拆開的從泡泡飛回自己的位置，合起來的先飛進泡泡再收掉
@@ -311,13 +315,16 @@ struct MapTab: View {
             clusterTask = Task { try? await Task.sleep(for: .seconds(wait)); if !Task.isCancelled { recluster(proxy) } }
             return
         }
+        // 格子釘在地圖上（不是螢幕上），大小只在縮放跨過 2 倍時才變：平移不會重組，縮放中也不會一直換人
+        guard let r = store.mapRegion ?? shownRegion else { return }
+        let cell = pow(2, ceil(log2(max(r.span.longitudeDelta / Double(Self.mapWidth) * 44, 1e-7))))
         var pts: [String: CGPoint] = [:]
         var cells: [String: [Place]] = [:]
         for p in currentList {
-            guard let pt = proxy.convert(CLLocationCoordinate2D(latitude: p.lat!, longitude: p.lng!), to: .local) else { continue }
-            pts[p.id] = pt
+            if let pt = proxy.convert(CLLocationCoordinate2D(latitude: p.lat!, longitude: p.lng!), to: .local) { pts[p.id] = pt }
             guard p.id != pins.sel, p.id != pins.extra else { continue }
-            cells["\(Int((pt.x / 44).rounded(.down))),\(Int((pt.y / 44).rounded(.down)))", default: []].append(p)
+            let y = log(tan(.pi / 4 + p.lat! * .pi / 360)) * 180 / .pi
+            cells["\(Int((p.lng! / cell).rounded(.down))),\(Int((y / cell).rounded(.down)))", default: []].append(p)
         }
         let groups = cells.values.filter { $0.count >= 2 }
         let next = groups.map { g -> PinCluster in
@@ -601,7 +608,6 @@ struct PickedCard: View {
                 // 點照片也進店家頁（照片飛過去）
                 NavigationLink(value: place) {
                     PhotoView(place: place, px: 400).frame(width: 120, height: 120).clipShape(.rect(cornerRadius: 18))
-                        .heroSource(place, radius: 18)
                 }
                 .buttonStyle(PressStyle { ReelCache.warm(place) })
                 .accessibilityLabel("\(place.name) 店家頁")
@@ -977,7 +983,6 @@ struct MapCard: View {
     var body: some View {
         HStack(spacing: 12) {
             PhotoView(place: place, px: 300).frame(width: 84, height: 84).clipShape(.rect(cornerRadius: 16))
-                .heroSource(place, radius: 16)
             VStack(alignment: .leading, spacing: 4) {
                 Text(place.name).font(.system(size: 16, weight: .heavy)).lineLimit(1).foregroundStyle(Color.ink)
                 Text("\(place.cat.emoji) \(place.cuisine?.isEmpty == false ? place.cuisine! : place.cat.name)\(place.area.isEmpty ? "" : " · " + place.area)")

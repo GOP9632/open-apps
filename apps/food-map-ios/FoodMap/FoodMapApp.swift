@@ -92,8 +92,6 @@ struct Root: View {
             }
         }
         .environment(\.toastNS, toastNS)
-        // 卡片飛去店家頁的那張照片
-        .overlay { HeroLayer().ignoresSafeArea() }
         .overlay { if bite { LaunchBite(on: $bite) } }
         // 手感量測浮層（「我的」版本號連點 5 下打開）
         .overlay { PerfHUD() }
@@ -111,8 +109,7 @@ struct Root: View {
     // 四個分頁疊在一起，只顯示目前這個（切換不重建，捲到哪、地圖看到哪都留著）
     @ViewBuilder private func page<V: View>(_ i: Int, @ViewBuilder _ v: () -> V) -> some View {
         if opened.contains(i) || store.tab == i {
-            v().environment(\.heroTab, i)
-                .opacity(store.tab == i ? 1 : 0)
+            v().opacity(store.tab == i ? 1 : 0)
                 .offset(y: store.tab == i ? 0 : 8)
                 // 換頁：新的一頁從下面 8pt 淡入往上（0.15 秒），舊的直接藏起來，不做兩頁同時畫的交叉淡入
                 .animation(store.tab == i ? .easeOut(duration: 0.15) : nil, value: store.tab)

@@ -204,7 +204,6 @@ struct PlaceCard: View {
                     }
                 }
                 .clipShape(.rect(cornerRadius: 16))
-                .heroSource(place, radius: 16)
                 .padding(.bottom, 4)
             Text(branches.count > 1 ? place.name.replacingOccurrences(of: branchLabel(place), with: "").trimmingCharacters(in: .whitespaces) : place.name + (place.branch?.isEmpty == false ? " \(place.branch!)" : ""))
                 .font(.system(size: 15, weight: .heavy)).lineLimit(1).foregroundStyle(Color.ink)

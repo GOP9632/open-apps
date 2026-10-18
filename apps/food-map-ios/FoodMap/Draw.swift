@@ -409,18 +409,20 @@ struct DrawCards: View {
     var body: some View {
         VStack(spacing: 22) {
             ZStack {
+                // 中間那張最大、疊在最上面；旁邊兩張小一點、斜斜壓在後面（露出大半，點得到）
                 ForEach(Array(places.enumerated()), id: \.element.id) { i, p in
                     let mid = Double(places.count - 1) / 2, k = Double(i) - mid
-                    card(p)
-                        .rotationEffect(.degrees(out && chosen == nil ? k * 8 : 0), anchor: .bottom)
-                        .offset(x: out ? CGFloat(k) * 112 : 0, y: out ? CGFloat(abs(k)) * 8 : 320)
-                        .scaleEffect(out ? (chosen == p.id ? 1.08 : 1) : 0.3)
+                    let w = cardW(center: k == 0)
+                    card(p, w: w)
+                        .rotationEffect(.degrees(out && chosen == nil ? k * 7 : 0), anchor: .bottom)
+                        .offset(x: out ? CGFloat(k) * sideX : 0, y: out ? CGFloat(abs(k)) * 18 : 420)
+                        .scaleEffect(out ? (chosen == p.id ? 1.05 : 1) : 0.3)
                         .opacity(chosen == nil || chosen == p.id ? 1 : 0)
-                        .offset(y: chosen == p.id ? 260 : 0)
-                        .zIndex(chosen == p.id ? 1 : 0)
+                        .offset(y: chosen == p.id ? 300 : 0)
+                        .zIndex(chosen == p.id ? 2 : k == 0 ? 1 : 0)
                 }
             }
-            .frame(height: 190)
+            .frame(height: cardH(cardW(center: true)) + 24)
             .overlay { Confetti(shot: burst).allowsHitTesting(false) }
             HStack(spacing: 10) {
                 if one {
@@ -449,17 +451,27 @@ struct DrawCards: View {
         .task { await deal(places.map(\.id)) }
     }
 
-    private func card(_ p: Place) -> some View {
+    // 卡片大小跟螢幕寬度走：一張時最大，三張時中間那張約半個螢幕寬
+    private var screenW: CGFloat { MapTab.mapWidth }
+    private func cardW(center: Bool) -> CGFloat {
+        if places.count == 1 { return min(260, screenW * 0.66) }
+        return center ? min(220, screenW * 0.52) : min(186, screenW * 0.44)
+    }
+    private func cardH(_ w: CGFloat) -> CGFloat { w - 16 + 78 }
+    private var sideX: CGFloat { min(130, screenW * 0.31) }
+
+    private func card(_ p: Place, w: CGFloat) -> some View {
         FlipCard(angle: up.contains(p.id) ? 0 : 180) {
-            VStack(alignment: .leading, spacing: 6) {
-                PhotoView(place: p, px: 300).frame(width: 108, height: 108).clipShape(.rect(cornerRadius: 12))
-                    .heroSource(p, radius: 12)
-                Text(p.name).font(.system(size: 13.5, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(2)
+            VStack(alignment: .leading, spacing: 5) {
+                PhotoView(place: p, px: 600).frame(width: w - 16, height: w - 16).clipShape(.rect(cornerRadius: 14))
+                Text(p.name).font(.system(size: 16, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                Text("\(p.cat.emoji) \(p.cuisine?.isEmpty == false ? p.cuisine! : p.cat.name)\(p.area.isEmpty ? "" : " · " + p.area)")
+                    .font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.55)).lineLimit(1)
                 Spacer(minLength: 0)
             }
-            .padding(6)
-            .frame(width: 120, height: 160)
+            .padding(8)
+            .frame(width: w, height: cardH(w))
             .background(Color.panel, in: .rect(cornerRadius: 16))
             .overlay(alignment: .topTrailing) {
                 if !one {
@@ -479,7 +491,7 @@ struct DrawCards: View {
             RoundedRectangle(cornerRadius: 16).fill(Color.grad)
                 .overlay { Text("🍩").font(.system(size: 44)) }
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white, lineWidth: 3))
-                .frame(width: 120, height: 160)
+                .frame(width: w, height: cardH(w))
         }
         .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
         .onTapGesture {

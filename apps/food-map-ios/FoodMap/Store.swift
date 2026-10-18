@@ -87,6 +87,7 @@ struct Snapshot: Codable {
     var firstPaintMs: Int?
     var syncMs: Int?
     var syncVia = ""
+    @ObservationIgnored private var geoTried: Set<String> = []
 
     // 剛滑的卡還在存的時候，同步回來的舊資料不能把它蓋掉（不然卡片會跳回來）
     @ObservationIgnored private var pendingSwipes: [SwipeRow] = []
@@ -183,6 +184,7 @@ struct Snapshot: Codable {
             saveCache()
             warmPhotos()
             noteNew()
+            if mine.contains(where: { $0.lat == nil && !($0.address ?? "").isEmpty && !geoTried.contains($0.id) }) { Task { await fillCoords() } }
             if quickKey == nil { await loadQuickKey() }
             syncMs = Int(Date().timeIntervalSince(t) * 1000)
             error = nil
@@ -563,8 +565,10 @@ struct Snapshot: Codable {
     }
 
     // 有地址但沒有座標的店，用 iPhone 內建的地址查詢補上，地圖上才看得到
+    // 從 IG 分享捷徑收進來的店是雲端直接存的、沒有座標，所以每次同步完都補一次（同一間這次開 App 只試一次）
     @MainActor func fillCoords(_ only: [String]? = nil) async {
-        for p in mine where p.lat == nil && !(p.address ?? "").isEmpty && (only == nil || only!.contains(p.id)) {
+        for p in mine where p.lat == nil && !(p.address ?? "").isEmpty && (only == nil ? !geoTried.contains(p.id) : only!.contains(p.id)) {
+            geoTried.insert(p.id)
             if let c = await Store.geocode(p) {
                 var n = p; n.lat = c.latitude; n.lng = c.longitude; n.approx = false
                 await save(n)

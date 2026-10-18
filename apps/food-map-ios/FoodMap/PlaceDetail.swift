@@ -15,8 +15,6 @@ struct PlaceDetail: View {
     @State private var picked: String?
     @State private var scroll = ScrollY()
     @State private var dishesIn = false
-    @State private var backed = false
-    @Environment(\.heroTab) private var tab
     @Environment(\.accessibilityReduceMotion) private var reduce
 
     var body: some View {
@@ -41,15 +39,12 @@ struct PlaceDetail: View {
         }
         // 往下拉超過頂端時大圖放大、往上滑時大圖慢一半（只有大圖跟著重畫）
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in scroll.y = y }
-        .coordinateSpace(.named("pd"))
         .background(Color.bg)
         .toolbarVisibility(.hidden, for: .navigationBar)
         .onAppear {
             Perf.shared.mark("進店家頁")
             if !dishesIn { withAnimation { dishesIn = true } }
         }
-        // 從左邊滑回（沒按返回鍵）：不飛回去
-        .onDisappear { if !backed { Hero.shared.left(self.place.id) } }
         .sheet(isPresented: $editing) { EditSheet(place: place) }
         .confirmationDialog("用哪個地圖導航？", isPresented: $askNav, titleVisibility: .visible) {
             ForEach(NavApp.allCases, id: \.self) { a in
@@ -64,8 +59,6 @@ struct PlaceDetail: View {
     // 回上一頁：地圖分頁的頁面記在 store.mapPath，直接從那裡退一頁（dismiss 在地圖那邊沒反應）
     private func back() {
         Perf.shared.mark("返回")
-        backed = true
-        Hero.shared.flyBack(store.place(self.place.id) ?? self.place, tab: tab)
         if store.tab == 0, !store.mapPath.isEmpty { store.mapPath.removeLast() } else { dismiss() }
     }
 
@@ -94,17 +87,6 @@ struct PlaceDetail: View {
             Color.clear.aspectRatio(1, contentMode: .fit)
                 .overlay { PlaceMedia(place: place) }
                 .clipShape(.rect(cornerRadius: 28))
-                // 卡片飛過來的時候先藏著，落地才換成真的
-                .opacity(Hero.shared.flag(self.place.id).on ? 0 : 1)
-        }
-        // 量大圖最後的位置（推頁是橫向滑進來，所以 x 用頁面裡的、y 用螢幕上的）
-        .onGeometryChange(for: CGRect.self) { g in
-            let a = g.frame(in: .global), b = g.frame(in: .named("pd"))
-            return CGRect(x: b.minX, y: a.minY, width: a.width, height: a.height)
-        } action: { r in
-            if backed { return }
-            Hero.shared.land(store.place(self.place.id) ?? self.place, tab: tab, target: r)
-            Hero.shared.detailMoved(self.place.id, r)
         }
             .overlay(alignment: .bottomLeading) {
                 Text("\(place.cat.emoji) \(place.cat.name)").font(.footnote.weight(.heavy)).foregroundStyle(.white)
