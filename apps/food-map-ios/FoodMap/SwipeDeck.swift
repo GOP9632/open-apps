@@ -31,6 +31,8 @@ struct SwipeDeck: View {
             }
             .frame(maxHeight: .infinity)
             .padding(.horizontal, 20).padding(.top, 8)
+            // 滑卡自己要左右拖：在卡片上往右滑不會回上一頁
+            .swipeBackBlocked()
 
             HStack(spacing: 28) {
                 RoundBtn(icon: "arrow.uturn.backward", color: Color.ink.opacity(onUndo == nil ? 0.2 : 0.6), size: 50) { onUndo?() }

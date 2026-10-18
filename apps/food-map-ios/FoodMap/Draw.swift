@@ -460,8 +460,11 @@ struct DrawCards: View {
     private func cardH(_ w: CGFloat) -> CGFloat { w - 16 + 78 }
     // 旁邊那張的外緣（含轉 5 度後翹出去的角、上面的鎖頭）離螢幕邊至少 12pt
     private var sideX: CGFloat {
-        let w = cardW(center: false)
-        return screenW / 2 - w / 2 - 12 - cardH(w) / 2 * sin(5 * .pi / 180)
+        let w: CGFloat = cardW(center: false)
+        let h: CGFloat = cardH(w)
+        let tilt: CGFloat = sin(CGFloat.pi * 5 / 180)
+        let half: CGFloat = screenW / 2
+        return half - w / 2 - 12 - h / 2 * tilt
     }
 
     // 鎖頭放在露出來的那一角：左邊那張放左上，其他放右上（中間那張壓在旁邊兩張的內側角上）
@@ -604,6 +607,7 @@ struct DrawWheel: View {
                     .frame(width: size, height: size)
                     .contentShape(.circle)
                     .gesture(spinDrag)
+                    .swipeBackBlocked()
                 Button(action: spinRandom) {
                     Text(won == nil ? "轉" : "🎉").font(.system(size: 26, weight: .black)).foregroundStyle(.white)
                         .frame(width: 92, height: 92).background(Color.ink, in: .circle)

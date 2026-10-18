@@ -95,6 +95,8 @@ struct Root: View {
         .overlay { if bite { LaunchBite(on: $bite) } }
         // 手感量測浮層（「我的」版本號連點 5 下打開）
         .overlay { PerfHUD() }
+        // 畫面上任何地方往右滑都能回上一頁（換分頁、推頁時把每個導覽都裝上）
+        .background { SwipeBackInstaller(key: store.depth + [store.tab]) }
         .task {
             Haptic.prepare()
             TouchClock.install()
