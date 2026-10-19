@@ -76,10 +76,17 @@ extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
         guard let g = interactivePopGestureRecognizer else { return }
         if g.delegate !== self { g.delegate = self }
         if !g.isEnabled { g.isEnabled = true }
+        // iOS 26 起：畫面任何地方往右滑都能回上一頁（系統的，只用公開 API）
+        if #available(iOS 26.0, *), let c = interactiveContentPopGestureRecognizer {
+            if c.delegate !== self { c.delegate = self }
+            if !c.isEnabled { c.isEnabled = true }
+        }
     }
 
     public func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
-        viewControllers.count > 1
+        if g === interactivePopGestureRecognizer { return viewControllers.count > 1 }
+        // 從畫面中間滑：落在地圖、滑桿、橫向捲動、滑卡、轉盤上就不搶
+        return SwipeBack.shouldBegin(g, nav: self)
     }
 
     // 從左邊滑的時候，先讓「滑回上一頁」判斷；不是從邊緣開始的，頁面才能上下捲（不會被當成往下滑）
