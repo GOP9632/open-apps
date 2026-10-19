@@ -26,6 +26,7 @@ struct TripPage: View {
     @State private var deleting = false
     @State private var focused = false
     @State private var size: CGSize = .zero
+    @State private var adding = false
 
     enum Level { case low, mid, high }
 
@@ -77,6 +78,7 @@ struct TripPage: View {
             TripMap(pos: $pos, segs: segs, marks: marks)
                 .ignoresSafeArea()
             panel(t, d: d, base: base, order: order, legs: legs, plan: plan)
+            actions(t)
         }
         .overlay(alignment: .top) { header(t, d: d, order: order, plan: plan) }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
@@ -95,6 +97,7 @@ struct TripPage: View {
             }
         }
         .sheet(isPresented: $setting) { TripForm(trip: t) }
+        .fullScreenCover(isPresented: $adding) { TripAddSheet(tid: t.id, day: d).environment(store) }
         .confirmationDialog("刪除「\(t.title)」？每一站都會一起刪掉", isPresented: $deleting, titleVisibility: .visible) {
             Button("刪除行程", role: .destructive) { store.pop(dismiss); trips.deleteWithUndo(t, store: store) }
         }
@@ -147,7 +150,7 @@ struct TripPage: View {
 
     private func heights() -> (low: CGFloat, mid: CGFloat, high: CGFloat) {
         let h = max(size.height, 500)
-        return (150, h * 0.52, h - 76)
+        return (176, h * 0.52, h - 76)
     }
 
     private func panelHeight() -> CGFloat {
@@ -168,7 +171,7 @@ struct TripPage: View {
             ScrollViewReader { sp in
                 ScrollView {
                     rows(t, d: d, base: base, order: order, legs: legs, plan: plan)
-                        .padding(.horizontal, 14).padding(.top, 4).padding(.bottom, 40)
+                        .padding(.horizontal, 14).padding(.top, 4).padding(.bottom, 120)
                 }
                 .scrollDisabled(drag.id != nil)
                 .onChange(of: focused) { _, f in
@@ -182,6 +185,29 @@ struct TripPage: View {
         .background(Color.bg, in: UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28))
         .shadow(color: .black.opacity(0.14), radius: 14, y: -2)
         .ignoresSafeArea(edges: .bottom)
+    }
+
+    // 面板最下面一排：＋ 加一站（之後還有幫我排順序、出發）
+    private func actions(_ t: Trip) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                Haptic.light()
+                Perf.shared.mark("按加一站")
+                adding = true
+            } label: {
+                Label("加一站", systemImage: "plus").font(.headline).frame(maxWidth: .infinity)
+            }
+            .buttonStyle(ChunkyStyle(radius: 18))
+            .accessibilityLabel("加一站")
+        }
+        .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 6)
+        .background {
+            LinearGradient(colors: [Color.bg.opacity(0), Color.bg], startPoint: .top, endPoint: .init(x: 0.5, y: 0.35))
+                .ignoresSafeArea(edges: .bottom)
+                .allowsHitTesting(false)
+        }
+        .opacity(drag.id == nil ? 1 : 0)
+        .animation(.snappy(duration: 0.2), value: drag.id == nil)
     }
 
     // 拉面板：放開時停在最近的一段（甩得快就往甩的方向）
@@ -254,7 +280,8 @@ struct TripPage: View {
             VStack(spacing: 8) {
                 Text("🍩").font(.system(size: 40))
                 Text("這天還沒有站").font(.headline).foregroundStyle(Color.ink)
-                Text("到店家頁按「加進行程」就會加在這裡").font(.subheadline).foregroundStyle(Color.ink.opacity(0.5))
+                Text("按下面的「＋ 加一站」，或到店家頁按「加進行程」").font(.subheadline).foregroundStyle(Color.ink.opacity(0.5))
+                    .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity).padding(.vertical, 30)
         }

@@ -430,13 +430,17 @@ struct Snapshot: Codable {
     }
 
     // 手動新增一間（沒有連結時用）
-    @MainActor func add(_ p: Place) async -> Bool {
+    @MainActor func add(_ p: Place) async -> Bool { await create(p) != nil }
+
+    // 新增並拿回存好的那筆（行程「♥ 收藏」要知道新店的 id）
+    @MainActor func create(_ p: Place) async -> Place? {
         do {
             let d = try await Supa.write("POST", "places", body: p.row)
-            if let back = try JSONDecoder().decode([Place].self, from: d).first { withAnimation(.snappy) { places.insert(back, at: 0) } }
+            let back = try JSONDecoder().decode([Place].self, from: d).first
+            if let back { withAnimation(.snappy) { places.insert(back, at: 0) } }
             saveCache()
-            return true
-        } catch { say("新增失敗：" + error.localizedDescription); return false }
+            return back ?? p
+        } catch { say("新增失敗：" + error.localizedDescription); return nil }
     }
 
     // 先從畫面拿掉，4 秒內按「復原」就放回去，沒按才真的刪
@@ -594,15 +598,68 @@ struct Snapshot: Codable {
     }
 
     // 找座標：有地址用地址（準），沒有就用店名＋城市在 Apple 地圖搜（標成大概位置）
-    static func locate(_ p: Place) async -> (coord: CLLocationCoordinate2D, approx: Bool)? {
-        if !(p.address ?? "").isEmpty { return await geocode(p).map { ($0, false) } }
-        let name = [p.name, p.branch ?? ""].joined(separator: " ").trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return nil }
-        let r = MKLocalSearch.Request()
-        r.naturalLanguageQuery = [normCity(p.city), p.district ?? "", name].joined(separator: " ").trimmingCharacters(in: .whitespaces)
-        r.resultTypes = .pointOfInterest
-        guard let item = try? await MKLocalSearch(request: r).start().mapItems.first else { return nil }
-        return (item.placemark.coordinate, true)
+    // 只有店名時：先找到那個城市在哪，搜尋範圍設在那裡（不然 Apple 會照手機所在地找，人在國外就找不到）；
+    // 店名有中英文（「泓品牛排 Mimi‘s Steakhouse」）整串找不到，就拆開中文、英文各找一次；彎引號換成直的
+    @MainActor static func locate(_ p: Place) async -> (coord: CLLocationCoordinate2D, approx: Bool)? {
+        if !(p.address ?? "").isEmpty, let c = await geocode(p) { return (c, false) }
+        let full = clean([p.name, p.branch ?? ""].joined(separator: " "))
+        guard !full.isEmpty else { return nil }
+        let city = [normCity(p.city), p.district ?? ""].joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        let center = await cityCenter(city)
+        var names = [full]
+        for part in nameParts(clean(p.name)) where !names.contains(part) { names.append(part) }
+        for n in names {
+            let q = [city, n].joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            if let c = await search(q, near: center) { return (c, true) }
+        }
+        return nil
+    }
+
+    private static func search(_ q: String, near center: CLLocationCoordinate2D?) async -> CLLocationCoordinate2D? {
+        let kinds: [MKLocalSearch.ResultType] = [.pointOfInterest, [.pointOfInterest, .address]]
+        for types in kinds {
+            let r = MKLocalSearch.Request()
+            r.naturalLanguageQuery = q
+            r.resultTypes = types
+            if let center { r.region = MKCoordinateRegion(center: center, latitudinalMeters: 60_000, longitudinalMeters: 60_000) }
+            guard let items = try? await MKLocalSearch(request: r).start().mapItems else { continue }
+            // 知道城市在哪：離城市 80 公里外的不算（同名的店在別的城市）
+            let ok = items.first { item in
+                guard let center else { return true }
+                let c = item.placemark.coordinate
+                return CLLocation(latitude: c.latitude, longitude: c.longitude).distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude)) < 80_000
+            }
+            if let ok { return ok.placemark.coordinate }
+        }
+        return nil
+    }
+
+    // 城市（「台中」「台北 大安區」）的中心；查過的記起來
+    @MainActor private static var cities: [String: CLLocationCoordinate2D] = [:]
+    @MainActor private static func cityCenter(_ city: String) async -> CLLocationCoordinate2D? {
+        guard !city.isEmpty else { return nil }
+        if let c = cities[city] { return c }
+        guard let c = try? await CLGeocoder().geocodeAddressString(city).first?.location?.coordinate else { return nil }
+        cities[city] = c
+        return c
+    }
+
+    // 彎引號換直的、多的空白合成一個
+    private static func clean(_ s: String) -> String {
+        var t = s
+        for (a, b) in [("‘", "'"), ("’", "'"), ("“", "\""), ("”", "\""), ("｜", " "), ("|", " ")] { t = t.replacingOccurrences(of: a, with: b) }
+        return t.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    // 中英混在一起的店名拆成中文、英文兩段（只有一種就不拆）
+    private static func nameParts(_ s: String) -> [String] {
+        func cjk(_ u: Unicode.Scalar) -> Bool { (0x3040...0x9fff).contains(u.value) || (0xac00...0xd7af).contains(u.value) }
+        guard s.unicodeScalars.contains(where: cjk) else { return [] }
+        let zh = s.replacingOccurrences(of: #"[A-Za-z0-9'&.\-]+(\s+[A-Za-z0-9'&.\-]+)*"#, with: " ", options: .regularExpression)
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let en = s.replacingOccurrences(of: #"[^A-Za-z0-9'&.\-\s]+"#, with: " ", options: .regularExpression)
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return [zh, en].filter { $0.count >= 2 && $0 != s }
     }
 
     @MainActor func rename(_ name: String) async {

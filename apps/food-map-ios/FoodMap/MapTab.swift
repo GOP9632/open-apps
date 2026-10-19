@@ -27,7 +27,10 @@ struct MapTab: View {
     @State private var clusterTask: Task<Void, Never>?
     // 選到很遠的店：先拉遠再降落
     @State private var flight: Flight?
+    // 長按圖釘選「導航」但還沒選過用哪個地圖
+    @State private var navAsk: Place?
     @Environment(\.accessibilityReduceMotion) private var reduce
+    @Environment(\.openURL) private var openURL
 
     // 抽一間不跟篩選：抽中被篩掉的店，那根圖釘還是要畫出來
     private func withExtra(_ l: [Place]) -> [Place] {
@@ -102,6 +105,8 @@ struct MapTab: View {
                 // 選到時不重算泡泡（會讓整張地圖重畫，點圖釘變慢）；地圖移完停下來時會重算
                 .background { SelWatcher(pins: pins) { id in picked(id, list, proxy) } }
                 .overlay { PinBurst(spot: spot) }
+                // 長按圖釘的選單要知道圖釘在螢幕哪裡
+                .task { pins.locate = { c in proxy.convert(c, to: .global) } }
             }
             .safeAreaInset(edge: .top, spacing: 0) {
                 VStack(spacing: 8) {
@@ -166,6 +171,8 @@ struct MapTab: View {
                 }
                 .animation(.snappy, value: store.pendingAdds.map(\.state))
             }
+            // 長按圖釘：背景變暗、圖釘放大，旁邊彈出「加進行程／導航／看店家」
+            .overlay { PinMenu(pins: pins, list: list, act: pinAct) }
             // 抽 3 間的卡片、轉盤蓋在地圖上
             .overlay {
                 DrawStage(show: $show, reroll: { avoid, n in
@@ -184,6 +191,11 @@ struct MapTab: View {
                 .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $adding) { AddSheet() }
+        .confirmationDialog("用哪個地圖導航？", isPresented: Binding(get: { navAsk != nil }, set: { if !$0 { navAsk = nil } }), titleVisibility: .visible, presenting: navAsk) { p in
+            ForEach(NavApp.allCases, id: \.self) { a in
+                Button(a.name) { NavApp.saved = a; if let u = p.navURL(a) { openURL(u) } }
+            }
+        }
         .sheet(isPresented: $noAddr) { NoAddressSheet() }
         .sheet(isPresented: $scoping) { ScopeSheet().presentationDetents([.medium, .large]) }
         // 換看誰的收藏：重新框住那些店
@@ -256,6 +268,26 @@ struct MapTab: View {
                 Haptic.success()
                 pins.select(win.id)
             }
+        }
+    }
+
+    // 長按圖釘選單選了什麼
+    private func pinAct(_ a: PinMenu.Act, _ p: Place) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { pins.menu = nil }
+        let trips = TripStore.shared
+        switch a {
+        case .add:
+            Task {
+                // 還沒讀過行程（第一次按）：先讀，免得多開一個新行程
+                if !trips.loaded { await trips.load() }
+                trips.addPlace(p, store: store)
+            }
+        case .trip(let s):
+            store.mapPath.append(TripRoute.trip(s.trip_id, focus: s.id))
+        case .nav:
+            if let n = NavApp.saved { if let u = p.navURL(n) { openURL(u) } } else { navAsk = p }
+        case .open:
+            store.mapPath.append(p)
         }
     }
 
@@ -693,6 +725,9 @@ struct PickedCard: View {
     @ObservationIgnored var drawWin: String?     // 抽一間正在跳，最後會選中這根
     @ObservationIgnored var drawTask: Task<Void, Never>?
     var mergeTo: [String: CGSize] = [:]          // 要合進泡泡的圖釘：往泡泡的位置飛過去並淡掉
+    var menu: String?                            // 長按開了選單的那根
+    @ObservationIgnored var longFired = false    // 長按剛開過選單（放開手指時不要當成點一下）
+    @ObservationIgnored var locate: ((CLLocationCoordinate2D) -> CGPoint?)?   // 地圖座標 → 螢幕位置
 
     // 圖釘落下（第一次畫圖釘、換看誰的收藏時播一次）：由近到遠，每根晚 0.025 秒，最多錯開 40 根，之後的直接淡入
     @ObservationIgnored private(set) var dropKey: String?
@@ -767,11 +802,12 @@ private struct SelWatcher: View {
 // 圖釘的按下手感：手指一碰到就壓扁並輕震（不等放開）
 private struct PinPress: ButtonStyle {
     let reduce: Bool
+    var down: () -> Void = {}
     func makeBody(configuration c: Configuration) -> some View {
         c.label
             .scaleEffect(x: c.isPressed && !reduce ? 0.86 : 1, y: c.isPressed && !reduce ? 0.8 : 1, anchor: .bottom)
             .animation(c.isPressed ? .easeOut(duration: 0.07) : .spring(response: 0.25, dampingFraction: 0.55), value: c.isPressed)
-            .onChange(of: c.isPressed) { _, down in if down { Haptic.light() } }
+            .onChange(of: c.isPressed) { _, d in if d { Haptic.light(); down() } }
     }
 }
 
@@ -816,9 +852,20 @@ struct FoodPin: View {
         let faded = pins.sel != nil && !on && !hopping   // 別間被選到時變淡（只改透明度，76 根一起動也不吃力）
         let hop = pins.hops[place.id] ?? 0
         // 自己接點擊：手指一按下就壓扁、輕震，放開就選中，不用等地圖確認「是不是點兩下放大」
-        Button { pins.select(place.id) } label: { pin(on) }
-            .buttonStyle(PinPress(reduce: reduce))
+        Button {
+            // 長按開過選單：放開手指不算點一下
+            if pins.longFired { pins.longFired = false; return }
+            pins.select(place.id)
+        } label: { pin(on) }
+            .buttonStyle(PinPress(reduce: reduce) { pins.longFired = false })
+            .simultaneousGesture(LongPressGesture(minimumDuration: 0.35).onEnded { _ in
+                pins.longFired = true
+                Haptic.medium()
+                Perf.shared.mark("長按圖釘")
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.72)) { pins.menu = place.id }
+            })
             .accessibilityLabel(place.name)
+            .accessibilityAction(named: "加進行程、導航") { withAnimation(.snappy) { pins.menu = place.id } }
             .accessibilityAddTraits(on ? .isSelected : [])
             // 地上的影子：選到時變寬變淡
             .background(alignment: .bottom) {

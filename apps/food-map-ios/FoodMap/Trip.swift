@@ -98,6 +98,19 @@ enum POI {
         return table.first { r.contains($0.0) }?.1 ?? "mappin"
     }
     static func label(_ s: TripStop) -> String { s.kind == "stay" ? "住宿" : "其他行程" }
+    // 搜尋結果上的類別小字（Apple 給的是英文代號）
+    static func name(_ raw: String?) -> String? {
+        let r = (raw ?? "").lowercased()
+        guard !r.isEmpty else { return nil }
+        let table: [(String, String)] = [
+            ("nationalpark", "國家公園"), ("amusement", "遊樂園"), ("museum", "博物館"), ("hotel", "住宿"), ("park", "公園"), ("beach", "海灘"),
+            ("theater", "劇場"), ("movie", "電影院"), ("library", "圖書館"), ("zoo", "動物園"), ("aquarium", "水族館"), ("stadium", "體育場"),
+            ("nightlife", "夜生活"), ("cafe", "咖啡廳"), ("bakery", "麵包甜點"), ("restaurant", "餐廳"), ("foodmarket", "市場"), ("brewery", "酒吧"),
+            ("winery", "酒莊"), ("store", "商店"), ("airport", "機場"), ("train", "車站"), ("transit", "車站"), ("parking", "停車場"),
+            ("marina", "碼頭"), ("campground", "露營地"), ("university", "學校"), ("school", "學校"), ("hospital", "醫院"),
+        ]
+        return table.first { r.contains($0.0) }?.1
+    }
 }
 
 enum TripDate {
@@ -353,6 +366,20 @@ enum TripCalc {
                  mode: nil, fixed_time: nil, done_at: nil, added_by: Supa.session?.user.id, created_at: nil, updated_at: nil)
     }
 
+    // 從 Apple 地圖搜到的地點：景點活動是 spot、飯店是 stay，只存在行程裡
+    func makeStop(_ tid: String, day: Int, hit h: MapHit) -> TripStop {
+        TripStop(id: UUID().uuidString.lowercased(), trip_id: tid, day: day, pos: nextPos(tid, day), kind: h.stay ? "stay" : "spot", place_id: nil,
+                 name: h.name, address: h.address, lat: h.coord.latitude, lng: h.coord.longitude, poi: h.poi, stay_min: h.stay ? 0 : h.food ? 60 : 90,
+                 mode: nil, fixed_time: nil, done_at: nil, added_by: Supa.session?.user.id, created_at: nil, updated_at: nil)
+    }
+
+    // 搜到的餐廳按了「♥ 收藏」：這站改成收藏的店
+    func attach(_ sid: String, place p: Place, store: Store?) {
+        guard var s = stops.first(where: { $0.id == sid }) else { return }
+        s.kind = "place"; s.place_id = p.id
+        withAnimation(.snappy) { update(s, store: store) }
+    }
+
     func nextPos(_ tid: String, _ day: Int) -> Double { (stops(tid, day: day).last?.pos ?? 0) + 1 }
 
     func insert(_ s: TripStop, store: Store?) {
@@ -383,6 +410,9 @@ enum TripCalc {
         if old.mode != s.mode { body["mode"] = opt(s.mode) }
         if old.fixed_time != s.fixed_time { body["fixed_time"] = opt(s.fixed_time) }
         if old.done_at != s.done_at { body["done_at"] = opt(s.done_at) }
+        if old.kind != s.kind { body["kind"] = .s(s.kind) }
+        if old.place_id != s.place_id { body["place_id"] = opt(s.place_id) }
+        if old.name != s.name { body["name"] = .s(s.name) }
         send(store, "沒存到：", undo: { if let j = self.stops.firstIndex(where: { $0.id == s.id }) { self.stops[j] = old } }) {
             try await Supa.write("PATCH", "trip_stops", query: "id=eq.\(s.id)", body: body)
         }
