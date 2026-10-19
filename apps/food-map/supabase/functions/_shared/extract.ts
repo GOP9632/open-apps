@@ -164,6 +164,24 @@ async function groqVision(messages: unknown[]) {
   throw new Error(`Groq 目前找不到能看圖的模型（可用：${ids.join(", ") || "讀不到清單"}；${errs.join(" / ")}）。請改貼貼文文字。`);
 }
 
+// 座標要落在店家縣市中心 80 公里內（跟 iPhone App 同一條規則），不合就不存，交給 App 照地址重新定位
+// 例：IG 地點標記掛到別的分店，台北的店拿到台南的座標
+const CITY_CENTER: Record<string, [number, number]> = {
+  台北: [25.04, 121.56], 新北: [25.01, 121.47], 基隆: [25.13, 121.74], 桃園: [24.99, 121.30], 新竹: [24.81, 120.97],
+  苗栗: [24.56, 120.82], 台中: [24.15, 120.67], 彰化: [24.05, 120.52], 南投: [23.96, 120.97], 雲林: [23.71, 120.43],
+  嘉義: [23.48, 120.45], 台南: [23.00, 120.23], 高雄: [22.63, 120.30], 屏東: [22.55, 120.55], 宜蘭: [24.76, 121.75],
+  花蓮: [23.99, 121.60], 台東: [22.76, 121.14], 澎湖: [23.57, 119.58], 金門: [24.45, 118.38], 連江: [26.16, 119.95], 馬祖: [26.16, 119.95],
+};
+function nearCity(p: Record<string, unknown>) {
+  if (p.lat == null || p.lng == null) return true;
+  const raw = String(p.city || "") || (String(p.address || "").match(/(台北|臺北|新北|基隆|桃園|新竹|苗栗|台中|臺中|彰化|南投|雲林|嘉義|台南|臺南|高雄|屏東|宜蘭|花蓮|台東|臺東|澎湖|金門|連江)[市縣]/) || [])[1] || "";
+  const c = CITY_CENTER[raw.replace(/臺/g, "台").replace(/[市縣]$/, "").trim()];
+  if (!c) return true; // 國外或不知道縣市就不檢查
+  const r = (x: number) => x * Math.PI / 180, lat = Number(p.lat), lng = Number(p.lng);
+  const h = Math.sin(r(lat - c[0]) / 2) ** 2 + Math.cos(r(c[0])) * Math.cos(r(lat)) * Math.sin(r(lng - c[1]) / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(h)) <= 80;
+}
+
 export async function extract(body: { url?: string; text?: string; image?: string }) {
   const src: Record<string, unknown> = { url: body.url ?? "" };
   let text = body.text ?? "";
@@ -195,6 +213,7 @@ export async function extract(body: { url?: string; text?: string; image?: strin
     const hit = places.length === 1 ? places[0] : places.find((p) => String(loc.name ?? "").includes(String(p.name)));
     if (hit && hit.lat == null) Object.assign(hit, { lat: loc.lat, lng: loc.lng, address: hit.address || loc.address || "" });
   }
+  for (const p of places) if (!nearCity(p)) Object.assign(p, { lat: null, lng: null });
   let thumb = String(src.thumb ?? "");
   let thumbData = await inlineImage(thumb);
   if (!thumbData && src.thumbAlt) thumbData = await inlineImage(thumb = String(src.thumbAlt));
