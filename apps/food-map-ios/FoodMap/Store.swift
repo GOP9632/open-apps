@@ -30,6 +30,8 @@ struct Snapshot: Codable {
     var toast: String?
     // 訊息右邊的按鈕（例如刪除後的「復原」）
     var toastAction: (label: String, run: () -> Void)?
+    // 點訊息條本身要做的事（例如「加進行程」後換別的行程）；沒有就只是收起來
+    var toastTap: (() -> Void)?
     // 訊息左邊畫出來的勾勾或垃圾桶；刪除時還有那間的小照片（卡片縮小飛過去）
     var toastIcon: ToastIcon?
     var toastPlace: Place?
@@ -43,7 +45,7 @@ struct Snapshot: Codable {
     // 分頁：0 地圖（打開就在這）、1 收藏、2 群組、3 我的
     var tab = 0
     // 地圖頁的店家頁（教學要能直接帶他進某一間）；其他分頁回報自己往裡走了幾層，走進去就收起下面的分頁列
-    var mapPath: [Place] = []
+    var mapPath = NavigationPath()
     var depth = [0, 0, 0, 0]
     // 抽一間丟到群組投票：群組頁直接打開這個群組（開好那一輪再推進去）
     var groupJump: GroupJump?
@@ -289,12 +291,19 @@ struct Snapshot: Codable {
         Supa.signOut(); loggedIn = false
         undoable = []; pendingSwipes = []; geoTried = []; pendingAdds = []; freshIds = []
         apply(Snapshot()); quickKey = nil
-        mapPath = []; depth = [0, 0, 0, 0]; tab = 0; coach = []; listF = Filter(); mapF = Filter()
+        mapPath = NavigationPath(); depth = [0, 0, 0, 0]; tab = 0; coach = []; listF = Filter(); mapF = Filter()
         try? FileManager.default.removeItem(at: cacheFile)
+        TripStore.shared.reset()
     }
 
-    @MainActor func say(_ s: String, icon: ToastIcon? = nil, place: Place? = nil, action: (label: String, run: () -> Void)? = nil) {
-        withAnimation(.snappy(duration: 0.35)) { toast = s; toastAction = action; toastIcon = icon; toastPlace = place }
+    @MainActor func say(_ s: String, icon: ToastIcon? = nil, place: Place? = nil, action: (label: String, run: () -> Void)? = nil, tap: (() -> Void)? = nil) {
+        withAnimation(.snappy(duration: 0.35)) { toast = s; toastAction = action; toastIcon = icon; toastPlace = place; toastTap = tap }
+    }
+
+    // 回上一頁：地圖分頁的頁面記在 mapPath，直接從那裡退一頁（dismiss 在地圖那邊沒反應）
+    @MainActor func pop(_ dismiss: DismissAction) {
+        Perf.shared.mark("返回")
+        if tab == 0, !mapPath.isEmpty { mapPath.removeLast() } else { dismiss() }
     }
 
     // 同步回來多了新店：卡片亮框、圖釘下次出現時落下

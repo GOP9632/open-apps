@@ -4,7 +4,7 @@ import SwiftUI
 struct ListTab: View {
     @Environment(Store.self) private var store
     @State private var adding = false
-    @State private var path: [Place] = []
+    @State private var path = NavigationPath()
     @State private var drawer = Drawer.shared
     @State private var show: DrawShow?
     @State private var paneling = false
@@ -64,7 +64,7 @@ struct ListTab: View {
                         PendingCard(add: a, manual: { manual = a }).padding(.horizontal, 16)
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
-                    StarterCard(open: { if let p = $0 { path = [p] } }, add: { adding = true })
+                    StarterCard(open: { if let p = $0 { path = NavigationPath([p]) } }, add: { adding = true })
                     SearchField(text: $store.listF.q, prompt: "搜尋店名、地區、料理、標籤").padding(.horizontal, 16)
                     if !store.mine.isEmpty { FilterChips(f: $store.listF) }
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 14) {
@@ -109,6 +109,7 @@ struct ListTab: View {
             }
             // 跟地圖、群組一樣用一般的推入（放大轉場會把從左邊滑回當成往下拉關閉）
             .navigationDestination(for: Place.self) { PlaceDetail(place: $0) }
+            .tripDestinations()
             .overlay { if store.mine.isEmpty && store.loading { ProgressView() } }
             // 抽中的卡片蓋在收藏頁上，點卡片進店家頁
             .overlay {

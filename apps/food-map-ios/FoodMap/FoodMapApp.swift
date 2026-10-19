@@ -61,6 +61,10 @@ struct Root: View {
                 }
                 .overlay { CoachOverlay().ignoresSafeArea() }
                 .fullScreenCover(isPresented: $store.showIG) { IGTutorial() }
+                // 「加進行程」後點訊息條：換到別的行程
+                .sheet(item: Binding(get: { TripStore.shared.picking }, set: { TripStore.shared.picking = $0 })) { r in
+                    TripPickSheet(stopId: r.id).presentationDetents([.medium, .large])
+                }
             } else {
                 LoginView()
             }
@@ -75,8 +79,13 @@ struct Root: View {
                             .matchedGeometryEffect(id: "del-" + p.id, in: toastNS)
                     }
                     if let i = store.toastIcon { ToastGlyph(icon: i).id(t) }
-                    Text(t).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
-                        .padding(.trailing, act == nil ? 0 : 4)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(t).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
+                        if store.toastTap != nil {
+                            Text("按一下換別的行程").font(.caption2.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
+                        }
+                    }
+                    .padding(.trailing, act == nil ? 0 : 4)
                     if let act {
                         Button(act.label) { act.run() }.font(.subheadline.weight(.heavy)).foregroundStyle(Color.sprYellow)
                     }
@@ -88,7 +97,11 @@ struct Root: View {
                 .accessibilityAddTraits(.isButton)
                 .onAppear { AccessibilityNotification.Announcement(t).post() }
                 .task(id: t) { try? await Task.sleep(for: .seconds(act == nil ? 2.6 : 4)); withAnimation(.snappy) { if store.toast == t { store.toast = nil; store.toastAction = nil } } }
-                .onTapGesture { withAnimation(.snappy) { store.toast = nil } }
+                .onTapGesture {
+                    let tap = store.toastTap
+                    withAnimation(.snappy) { store.toast = nil; store.toastTap = nil }
+                    tap?()
+                }
             }
         }
         .environment(\.toastNS, toastNS)

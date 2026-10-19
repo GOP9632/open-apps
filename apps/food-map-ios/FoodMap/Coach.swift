@@ -42,25 +42,25 @@ extension Store {
         s.append(.groups)
         // 回到地圖、清掉篩選，圖釘才一定看得到
         mapF = Filter(); mapGroup = nil
-        mapPath = []; tab = 0
+        mapPath = NavigationPath(); tab = 0
         coachFrames = [:]
         withAnimation(.snappy) { coachIndex = 0; coach = s }
     }
 
     @MainActor func advanceCoach() {
         Haptic.light()
-        if coachStep == .been { mapPath = [] }
+        if coachStep == .been { mapPath = NavigationPath() }
         guard coachIndex + 1 < coach.count else { endCoach(); return }
         withAnimation(.snappy) { coachIndex += 1 }
         if coachStep == .been, let p = coachPlace {
             // 進到那間店的店家頁，等畫面停好再量「去過」的位置
             coachFrames[.been] = nil
-            mapPath = [p]
+            mapPath = NavigationPath([p])
         }
     }
 
     @MainActor func endCoach() {
-        if coachStep == .been { mapPath = [] }
+        if coachStep == .been { mapPath = NavigationPath() }
         withAnimation(.snappy) { coach = []; coachIndex = 0 }
         UserDefaults.standard.set(true, forKey: "coachDone")
     }

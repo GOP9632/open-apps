@@ -15,6 +15,7 @@ struct PlaceDetail: View {
     @State private var picked: String?
     @State private var scroll = ScrollY()
     @State private var dishesIn = false
+    @State private var trips = TripStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduce
 
     var body: some View {
@@ -41,6 +42,8 @@ struct PlaceDetail: View {
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in scroll.y = y }
         .background(Color.bg)
         .toolbarVisibility(.hidden, for: .navigationBar)
+        // 先在背景讀行程，按「加進行程」時就知道要加到哪
+        .task { if !trips.loaded { await trips.load() } }
         .onAppear {
             Perf.shared.mark("進店家頁")
             if !dishesIn { withAnimation { dishesIn = true } }
@@ -56,11 +59,7 @@ struct PlaceDetail: View {
         }
     }
 
-    // 回上一頁：地圖分頁的頁面記在 store.mapPath，直接從那裡退一頁（dismiss 在地圖那邊沒反應）
-    private func back() {
-        Perf.shared.mark("返回")
-        if store.tab == 0, !store.mapPath.isEmpty { store.mapPath.removeLast() } else { dismiss() }
-    }
+    private func back() { store.pop(dismiss) }
 
     // 上面一排：返回、更多（不壓在照片上）
     private func top(_ place: Place, mine: Bool) -> some View {
@@ -167,11 +166,12 @@ struct PlaceDetail: View {
     }
 
     private func actions(_ place: Place, branched: Bool) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Button {
                 if let a = NavApp.saved { if let u = place.navURL(a) { openURL(u) } } else { askNav = true }
             } label: { ActLabel(icon: "location.fill", text: branched ? "導航到\(branchLabel(place))" : "導航") }
                 .buttonStyle(ChunkyStyle(color: .accent, edge: .accentDeep, radius: 18))
+            tripButton(place)
             if let s = place.source_url, let u = URL(string: s), !s.isEmpty {
                 // 只有 IG Reels 是影片，其他貼文叫「看貼文」
                 let reel = s.contains("/reel/") || s.contains("/reels/")
@@ -180,6 +180,26 @@ struct PlaceDetail: View {
             }
             Button { share(place) } label: { ActLabel(icon: "square.and.arrow.up", text: "分享") }
                 .buttonStyle(ChunkyStyle(color: .sprBlue, edge: Color.sprBlue.mix(with: .black, by: 0.2), radius: 18))
+        }
+    }
+
+    // 加進行程：有進行中的行程就加到最後一站；已經在行程裡就打開那個行程、捲到那一站
+    @ViewBuilder private func tripButton(_ place: Place) -> some View {
+        if let s = trips.stopOf(place: place.id) {
+            NavigationLink(value: TripRoute.trip(s.trip_id, focus: s.id)) {
+                ActLabel(icon: "checkmark", text: "在行程裡")
+            }
+            .buttonStyle(ChunkyStyle(color: .sprMint, edge: Color.sprMint.mix(with: .black, by: 0.2), radius: 18))
+            .transition(.scale(scale: 0.9).combined(with: .opacity))
+        } else {
+            Button {
+                Task {
+                    // 還沒讀過行程（第一次按）：先讀，免得多開一個新行程
+                    if !trips.loaded { await trips.load() }
+                    trips.addPlace(place, store: store)
+                }
+            } label: { ActLabel(icon: "point.topleft.down.to.point.bottomright.curvepath.fill", text: "加進行程") }
+            .buttonStyle(ChunkyStyle(color: .sprYellow, edge: Color.sprYellow.mix(with: .black, by: 0.25), fg: .ink, radius: 18))
         }
     }
 

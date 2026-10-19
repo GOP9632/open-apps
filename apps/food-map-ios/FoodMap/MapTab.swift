@@ -127,7 +127,7 @@ struct MapTab: View {
                         .frame(maxWidth: .infinity)
                         .transition(.scale(scale: 0.6).combined(with: .opacity))
                     }
-                    HStack {
+                    HStack(alignment: .bottom) {
                         // 沒有座標的店不會出現在地圖上，提醒一下，點了可以補地址
                         if missing > 0 {
                             Button { noAddr = true } label: {
@@ -139,12 +139,27 @@ struct MapTab: View {
                             .buttonStyle(PressStyle())
                         }
                         Spacer()
-                        Button {
-                            Haptic.light()
-                            withAnimation(.smooth(duration: 0.5)) { pos = .userLocation(fallback: pos) }
-                        } label: { CircleIcon(icon: "location.fill") }
-                        .buttonStyle(PressStyle())
-                        .accessibilityLabel("我的位置")
+                        VStack(spacing: 10) {
+                            // 我的行程：跟定位鈕一樣的白色圓角方塊，路線圖示加小字
+                            NavigationLink(value: TripRoute.list) {
+                                VStack(spacing: 1) {
+                                    Image(systemName: "point.topleft.down.to.point.bottomright.curvepath.fill").font(.system(size: 17, weight: .bold))
+                                    Text("行程").font(.system(size: 10, weight: .heavy))
+                                }
+                                .foregroundStyle(Color.accentDeep)
+                                .frame(width: 44, height: 50)
+                                .background(.white, in: .rect(cornerRadius: 14))
+                                .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                            }
+                            .buttonStyle(PressStyle(haptic: true))
+                            .accessibilityLabel("我的行程")
+                            Button {
+                                Haptic.light()
+                                withAnimation(.smooth(duration: 0.5)) { pos = .userLocation(fallback: pos) }
+                            } label: { CircleIcon(icon: "location.fill") }
+                            .buttonStyle(PressStyle())
+                            .accessibilityLabel("我的位置")
+                        }
                     }
                     .padding(.horizontal, 16)
                     NearbySheet(near: near, pins: pins, list: list, group: gname, draw: draw, panel: openPanel, choose: choose, dropKey: pins.dropKey, focus: focus)
@@ -162,6 +177,7 @@ struct MapTab: View {
             }
             .toolbarVisibility(.hidden, for: .navigationBar)
             .navigationDestination(for: Place.self) { PlaceDetail(place: $0) }
+            .tripDestinations()
         }
         .sheet(isPresented: $paneling) {
             DrawPanel(ctx: drawCtx(), go: { draw() }, pickHistory: choose)

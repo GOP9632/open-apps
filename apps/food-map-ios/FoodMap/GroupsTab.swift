@@ -43,6 +43,7 @@ struct GroupsTab: View {
             .navigationDestination(for: FoodGroup.self) { GroupView(gid: $0.id, path: $path) }
             .navigationDestination(for: Round.self) { RoundView(rid: $0.id) }
             .navigationDestination(for: Place.self) { PlaceDetail(place: $0) }
+            .tripDestinations()
             .onChange(of: path.count) { _, n in store.depth[2] = n }
             .onChange(of: store.groupJump) { jump() }
             .onAppear(perform: jump)
