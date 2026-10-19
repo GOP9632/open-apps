@@ -26,7 +26,7 @@ struct TripPage: View {
     @State private var deleting = false
     @State private var focused = false
     @State private var size: CGSize = .zero
-    @State private var adding = false
+    @State private var addReq: AddReq?
     // 出發
     @State private var going = false
     @State private var me: CLLocation?          // 出發時的目前位置（只在 App 開著時更新）
@@ -118,7 +118,9 @@ struct TripPage: View {
             }
         }
         .sheet(isPresented: $setting) { TripForm(trip: t) }
-        .fullScreenCover(isPresented: $adding) { TripAddSheet(tid: t.id, day: d).environment(store) }
+        .fullScreenCover(item: $addReq) { r in
+            TripAddSheet(tid: t.id, day: d, start: r.filter, slot: r.slot, seg: r.seg).environment(store)
+        }
         .confirmationDialog("刪除「\(t.title)」？每一站都會一起刪掉", isPresented: $deleting, titleVisibility: .visible) {
             Button("刪除行程", role: .destructive) { store.pop(dismiss); trips.deleteWithUndo(t, store: store) }
         }
@@ -208,19 +210,27 @@ struct TripPage: View {
         .ignoresSafeArea(edges: .bottom)
     }
 
-    // 面板最下面一排：＋ 加一站（之後還有幫我排順序、出發）
+    // 面板最下面一排：＋ 加一站、✨ 幫我排順序、出發
     private func actions(_ t: Trip, base: [TripStop]) -> some View {
         let allDone = !base.isEmpty && base.allSatisfy { $0.done_at != nil }
-        return HStack(spacing: 10) {
+        let canSort = base.filter(TripSort.movable).count >= 2
+        return HStack(spacing: 8) {
             Button {
                 Haptic.light()
                 Perf.shared.mark("按加一站")
-                adding = true
+                addReq = AddReq()
             } label: {
-                Label("加一站", systemImage: "plus").font(.headline).frame(maxWidth: .infinity)
+                Label("加一站", systemImage: "plus").font(.headline).lineLimit(1).frame(maxWidth: .infinity)
             }
             .buttonStyle(ChunkyStyle(color: .panel, edge: .cardShadow, fg: .ink, radius: 18))
             .accessibilityLabel("加一站")
+            Button { sortDay(t, base) } label: {
+                Text("✨ 排順序").font(.headline).lineLimit(1).minimumScaleFactor(0.8).frame(maxWidth: .infinity)
+            }
+            .buttonStyle(ChunkyStyle(color: .sprPurple, edge: Color.sprPurple.mix(with: .black, by: 0.25), radius: 18))
+            .disabled(!canSort)
+            .opacity(canSort ? 1 : 0.5)
+            .accessibilityLabel("幫我排順序")
             Button { startGo(base, again: allDone) } label: {
                 Label(allDone ? "重新出發" : "出發", systemImage: "location.north.fill").font(.headline).frame(maxWidth: .infinity)
             }
@@ -269,11 +279,7 @@ struct TripPage: View {
                     }
                     .buttonStyle(PressStyle())
                 }
-                if store.here != nil {
-                    Text("🏠 目前位置出發").font(.footnote.weight(.heavy)).foregroundStyle(Color.ink.opacity(0.7))
-                        .padding(.horizontal, 12).frame(height: 34)
-                        .background(.white, in: .capsule).overlay(Capsule().strokeBorder(Color.ink.opacity(0.1)))
-                }
+                startChip(t, d: d)
             }
             .padding(.horizontal, 14)
         }
@@ -331,6 +337,13 @@ struct TripPage: View {
                     var x = s; x.mode = m.rawValue == t.mode ? nil : m.rawValue
                     trips.update(x, store: store)
                 } openMaps: { if let b = s.coord, let u = transitURL(prev.coord, b) { openURL(u) } }
+                // 空檔推薦：下一站有固定時間、中間多出 1 小時以上
+                if let row, row.wait >= 60, drag.id == nil {
+                    gapHint(row.wait, count: gapCount(t, prev, s)) {
+                        Haptic.light()
+                        addReq = AddReq(filter: .route, slot: .between(prev.pos, s.pos), seg: [prev.id, s.id])
+                    }
+                }
             }
             SwipeToDelete(enabled: drag.id == nil) {
                 if expanded == s.id { expanded = nil }
@@ -407,6 +420,8 @@ struct TripPage: View {
     // ----- 地圖 -----
 
     private func originOf(_ order: [TripStop]) -> CLLocationCoordinate2D? {
+        // 第一站是住宿：從住宿出發（住宿就是第 1 站），不用目前位置
+        if order.first?.kind == "stay" { return nil }
         // 目前位置離第一站 30 公里內才當起點（人在台北排台南的行程就不算）
         guard let here = store.here, let f = order.first(where: { $0.coord != nil })?.coord else { return nil }
         return here.distance(from: CLLocation(latitude: f.latitude, longitude: f.longitude)) < 30_000 ? here.coordinate : nil
@@ -424,8 +439,15 @@ struct TripPage: View {
         }
     }
 
+    // 一天結束回到哪：目前位置出發就回目前位置；從住宿出發就回住宿
+    private func backTo(_ order: [TripStop], origin: CLLocationCoordinate2D?) -> CLLocationCoordinate2D? {
+        if let origin { return origin }
+        guard order.count > 1, let f = order.first, f.kind == "stay", order.last?.kind != "stay" else { return nil }
+        return f.coord
+    }
+
     private func backLeg(_ t: Trip, _ order: [TripStop], origin: CLLocationCoordinate2D?) -> Int? {
-        guard let o = origin, let l = order.last?.coord else { return nil }
+        guard let o = backTo(order, origin: origin), let l = order.last?.coord else { return nil }
         return router.leg(l, o, TravelMode(rawValue: t.mode) ?? .walk).min
     }
 
@@ -437,7 +459,7 @@ struct TripPage: View {
             if i == 0 { if let o = origin { out.append((o, b, tm)) } }
             else if let a = base[i - 1].coord { out.append((a, b, mode(t, s))) }
         }
-        if let o = origin, let l = base.last?.coord { out.append((l, o, tm)) }
+        if let o = backTo(base, origin: origin), let l = base.last?.coord { out.append((l, o, tm)) }
         return out
     }
 
@@ -492,6 +514,109 @@ struct TripPage: View {
         day = min(s.day, t.days)
         expanded = f
         focused = true
+    }
+
+    // ----- 幫我排順序 -----
+
+    private func sortDay(_ t: Trip, _ base: [TripStop]) {
+        Haptic.light()
+        Perf.shared.mark("幫我排順序")
+        let n = base.filter(TripSort.movable).count
+        if n > TripSort.maxStops { store.say("超過 \(TripSort.maxStops) 站，先移一些到別天再排"); return }
+        let tm = TravelMode(rawValue: t.mode) ?? .walk
+        guard let r = TripSort.best(base, origin: originOf(base), mode: tm), r.saved >= 3 else {
+            store.say("已經很順了", icon: .check)
+            return
+        }
+        let old = base
+        expanded = nil
+        trips.reorder(r.order, store: store)
+        Haptic.success()
+        store.say("省下 \(r.saved) 分", icon: .check, action: ("復原", {
+            TripStore.shared.reorder(old, store: store)
+            store.toast = nil
+        }))
+    }
+
+    // ----- 空檔推薦 -----
+
+    // 這段路 400 公尺內、還沒去過、不在這個行程裡的收藏有幾間
+    private func gapCount(_ t: Trip, _ a: TripStop, _ b: TripStop) -> Int {
+        guard let ca = a.coord, let cb = b.coord else { return 0 }
+        let line = router.leg(ca, cb, mode(t, b)).coords ?? [ca, cb]
+        let near = RouteNear([line])
+        let inTrip = Set(trips.stops(t.id).compactMap(\.place_id))
+        return store.places.filter { p in
+            guard p.status != "been", !inTrip.contains(p.id), let la = p.lat, let ln = p.lng else { return false }
+            return near.meters(CLLocationCoordinate2D(latitude: la, longitude: ln)) <= 400
+        }.count
+    }
+
+    private func gapHint(_ wait: Int, count: Int, open: @escaping () -> Void) -> some View {
+        Button(action: open) {
+            HStack(spacing: 8) {
+                Color.clear.frame(width: 30, height: 1)
+                Text(count > 0 ? "空出 \(TripDate.span(wait))，附近有 \(count) 間你想去的" : "空出 \(TripDate.span(wait))，順路找點吃的？")
+                    .font(.footnote.weight(.heavy)).foregroundStyle(Color.accentDeep).lineLimit(2)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").font(.caption.weight(.heavy)).foregroundStyle(Color.accentDeep.opacity(0.6))
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 44)
+            .background(Color.accent.opacity(0.1), in: .rect(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.accent.opacity(0.4), style: StrokeStyle(lineWidth: 1.2, dash: [4, 3])))
+        }
+        .buttonStyle(PressStyle())
+        .padding(.vertical, 2)
+    }
+
+    // ----- 起點：目前位置或住宿 -----
+
+    private func startChip(_ t: Trip, d: Int) -> some View {
+        let base = trips.stops(t.id, day: d)
+        let first = base.first
+        let label: String
+        if let first, first.kind == "stay" { label = "🏨 住宿：" + first.name }
+        else if originOf(base) != nil { label = "🏠 目前位置出發" }
+        else { label = "📍 從第 1 站出發" }
+        var names: Set<String> = []
+        let stays = trips.stops(t.id).filter { $0.kind == "stay" && names.insert($0.name).inserted }
+        return Menu {
+            Button("🏠 從目前位置出發") { startHere(base) }
+            ForEach(stays) { st in
+                Button("🏨 " + st.name) { startAt(st, t, d: d, base: base) }
+            }
+            Button("🔍 搜尋飯店…") { addReq = AddReq(filter: .stay, slot: .first) }
+        } label: {
+            Text(label).font(.footnote.weight(.heavy)).foregroundStyle(Color.ink.opacity(0.7)).lineLimit(1)
+                .padding(.horizontal, 12).frame(height: 34)
+                .background(.white, in: .capsule).overlay(Capsule().strokeBorder(Color.ink.opacity(0.1)))
+                .frame(minHeight: 44).contentShape(.rect)
+        }
+        .accessibilityLabel("起點：" + label)
+    }
+
+    // 改從目前位置出發：第一站的住宿移到最後（晚上回飯店）
+    private func startHere(_ base: [TripStop]) {
+        Haptic.light()
+        guard var f = base.first, f.kind == "stay", base.count > 1 else { return }
+        f.pos = (base.last?.pos ?? 0) + 1
+        withAnimation(.snappy) { trips.update(f, store: store) }
+    }
+
+    // 從某間住宿出發：這天有就移到最前面，沒有就複製一份放在最前面
+    private func startAt(_ st: TripStop, _ t: Trip, d: Int, base: [TripStop]) {
+        Haptic.light()
+        let top = (base.first?.pos ?? 1) - 1
+        if var x = base.first(where: { $0.id == st.id }) {
+            guard base.first?.id != st.id else { return }
+            x.pos = top
+            withAnimation(.snappy) { trips.update(x, store: store) }
+            return
+        }
+        let c = TripStop(id: UUID().uuidString.lowercased(), trip_id: t.id, day: d, pos: top, kind: "stay", place_id: nil, name: st.name,
+                         address: st.address, lat: st.lat, lng: st.lng, poi: st.poi, stay_min: 0, mode: nil, fixed_time: nil, done_at: nil,
+                         added_by: Supa.session?.user.id, created_at: nil, updated_at: nil)
+        trips.insert(c, store: store)
     }
 
     // ----- 出發 -----

@@ -37,6 +37,21 @@ enum AddFilter: String, CaseIterable, Identifiable {
     }
 }
 
+// 新站加在哪：最後、兩站中間（空檔推薦）、最前面（選住宿當起點）
+enum AddSlot: Equatable {
+    case end
+    case between(Double, Double)
+    case first
+}
+
+// 打開「加一站」：預設篩選、加在哪、順路只看哪一段（兩站的 id）
+struct AddReq: Identifiable {
+    let id = UUID()
+    var filter: AddFilter? = .route
+    var slot: AddSlot = .end
+    var seg: [String]? = nil
+}
+
 // Apple 地圖搜到的一個地點
 struct MapHit: Identifiable, Equatable {
     let id: String
@@ -138,10 +153,13 @@ struct TripAddSheet: View {
     @State private var dist: [String: Double] = [:]     // 收藏的店離路線幾公尺
     @State private var added: [String: String] = [:]    // 這次加的：收藏 id 或地點 id → 站 id（可以再按一次取消）
     @State private var saving: Set<String> = []         // 「♥ 收藏」存檔中
+    @State private var cursor: Double?                  // 加在兩站中間時，上一個加的放在哪
     @FocusState private var typing: Bool
+    let slot: AddSlot
+    let seg: [String]?
 
-    init(tid: String, day: Int, start: AddFilter? = .route) {
-        self.tid = tid; self.day = day
+    init(tid: String, day: Int, start: AddFilter? = .route, slot: AddSlot = .end, seg: [String]? = nil) {
+        self.tid = tid; self.day = day; self.slot = slot; self.seg = seg
         _filter = State(initialValue: start)
     }
 
@@ -270,8 +288,10 @@ struct TripAddSheet: View {
         return a + "|\(router.legs.count)|\(store.places.count)"
     }
 
-    private func measure(_ ss: [TripStop]) {
+    private func measure(_ all: [TripStop]) {
         let mode = TravelMode(rawValue: trips.trip(tid)?.mode ?? "walk") ?? .walk
+        // 空檔推薦打開的：只看那兩站中間那段
+        let ss = seg.map { ids in all.filter { ids.contains($0.id) } } ?? all
         let cs = ss.compactMap { s in s.coord.map { (s, $0) } }
         var lines: [[CLLocationCoordinate2D]] = []
         if cs.count == 1 { lines = [[cs[0].1]] }
@@ -348,8 +368,25 @@ struct TripAddSheet: View {
     private func add(_ s: TripStop, key: String) {
         Haptic.light()
         Perf.shared.mark("加一站")
-        added[key] = s.id
-        trips.insert(s, store: store)
+        let x = placed(s)
+        added[key] = x.id
+        trips.insert(x, store: store)
+    }
+
+    // 依「加在哪」改 pos：兩站中間的一個接一個往後排；最前面的放在第一站前面
+    private func placed(_ s: TripStop) -> TripStop {
+        var x = s
+        switch slot {
+        case .end:
+            break
+        case .between(let a, let b):
+            let lo = cursor ?? a
+            x.pos = (lo + b) / 2
+            cursor = x.pos
+        case .first:
+            x.pos = (trips.stops(tid, day: day).first?.pos ?? 1) - 1
+        }
+        return x
     }
 
     // 這次加的才能再按一次取消；本來就在行程裡的回行程頁左滑刪

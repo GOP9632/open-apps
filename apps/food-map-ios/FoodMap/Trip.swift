@@ -156,7 +156,7 @@ enum TripDate {
 
 // 一天的時間表：全部在 App 端算，不存
 struct DayPlan {
-    struct Row { var arrive: Int; var leave: Int; var late: Int }
+    struct Row { var arrive: Int; var leave: Int; var late: Int; var wait = 0 }   // wait：早到要等幾分（下一站有固定時間）
     var rows: [Row] = []
     var depart: Int = 600       // 從起點出發
     var back: Int?              // 回到起點
@@ -173,18 +173,91 @@ enum TripCalc {
         for (i, s) in stops.enumerated() {
             var arrive = t
             if i > 0 { arrive = t + (legs[i] ?? 0) }
-            var late = 0
+            var late = 0, wait = 0
             // 固定時間的站：早到就等到那個時間；會遲到就照算出來的時間，標紅「會晚 N 分」
             if let f = s.fixedMin, i > 0 {
                 late = max(0, arrive - f)
-                if late == 0 { arrive = f }
+                if late == 0 { wait = f - arrive; arrive = f }
             }
             let leave = arrive + s.stay_min
-            p.rows.append(.init(arrive: arrive, leave: leave, late: late))
+            p.rows.append(.init(arrive: arrive, leave: leave, late: late, wait: wait))
             t = leave
         }
         if let b = backLeg { p.back = t + b }
         return p
+    }
+}
+
+// 幫我排順序：同一天、沒有固定時間的站重排；起點、住宿、有固定時間的站不動
+// 用直線距離：先最近的先去，再用 2-opt 把交叉的路解開（12 站以內，幾毫秒算完）
+enum TripSort {
+    static let maxStops = 12
+
+    static func movable(_ s: TripStop) -> Bool { s.fixedMin == nil && s.coord != nil && s.kind != "stay" }
+
+    // 新順序＋省下幾分；沒得排回 nil
+    static func best(_ stops: [TripStop], origin: CLLocationCoordinate2D?, mode: TravelMode) -> (order: [TripStop], saved: Int)? {
+        var slots: [Int] = []
+        for (i, s) in stops.enumerated() where movable(s) && !(origin == nil && i == 0) { slots.append(i) }
+        guard slots.count >= 2, slots.count <= maxStops else { return nil }
+
+        func d(_ a: CLLocationCoordinate2D?, _ b: CLLocationCoordinate2D?) -> Double {
+            guard let a, let b else { return 0 }
+            return CLLocation(latitude: a.latitude, longitude: a.longitude).distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
+        }
+        func cost(_ seq: [TripStop]) -> Double {
+            var total = 0.0
+            var prev = origin
+            for s in seq {
+                guard let c = s.coord else { continue }
+                total += d(prev, c)
+                prev = c
+            }
+            return total
+        }
+        func build(_ perm: [Int]) -> [TripStop] {
+            var seq = stops
+            for (k, slot) in slots.enumerated() { seq[slot] = stops[perm[k]] }
+            return seq
+        }
+
+        // 最近的先去
+        var left = slots
+        var perm: [Int] = []
+        var seq = stops
+        for slot in slots {
+            let before = seq[..<slot].last { $0.coord != nil }
+            let from: CLLocationCoordinate2D? = before?.coord ?? origin
+            var pick = left[0]
+            var near = Double.infinity
+            for j in left {
+                let x = d(from, stops[j].coord)
+                if x < near { near = x; pick = j }
+            }
+            perm.append(pick)
+            left.removeAll { $0 == pick }
+            seq[slot] = stops[pick]
+        }
+
+        // 2-opt：把一段倒過來比較短就換
+        var best = cost(build(perm))
+        var better = true
+        var rounds = 0
+        while better && rounds < 60 {
+            better = false
+            rounds += 1
+            for i in 0..<(perm.count - 1) {
+                for j in (i + 1)..<perm.count {
+                    var c = perm
+                    c[i...j].reverse()
+                    let x = cost(build(c))
+                    if x < best - 1 { best = x; perm = c; better = true }
+                }
+            }
+        }
+        let old = cost(stops)
+        let saved = Int(((old - best) * 1.3 / mode.mPerMin).rounded())
+        return (build(perm), saved)
     }
 }
 
@@ -470,6 +543,17 @@ enum TripCalc {
             self?.remove(s, dropTrip: made, store: store)
             store.toast = nil
         }), tap: { [weak self] in self?.picking = PickReq(id: s.id) })
+    }
+
+    // 整天換順序（幫我排順序、復原）：pos 依序改成 1、2、3…，只送有變的站
+    func reorder(_ seq: [TripStop], store: Store?) {
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+            for (i, s) in seq.enumerated() {
+                guard let cur = stops.first(where: { $0.id == s.id }) else { continue }
+                let p = Double(i + 1)
+                if cur.pos != p { var x = cur; x.pos = p; update(x, store: store) }
+            }
+        }
     }
 
     // 換到別的行程（訊息條點下去選的）
