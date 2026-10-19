@@ -29,7 +29,7 @@ struct PinMenu: View {
                         .contentShape(.rect)
                         .onTapGesture { close() }
                         .transition(.opacity)
-                    PinGlyph(place: p)
+                    MenuPin(place: p)
                         .scaleEffect(1.15, anchor: .bottom)
                         .position(x: x, y: y - 25.5)
                         .allowsHitTesting(false)
@@ -98,7 +98,7 @@ struct PinMenu: View {
 }
 
 // 圖釘的樣子（分類顏色的圓＋食物圖示＋白色小尖角），選單打開時畫在變暗的背景上面
-struct PinGlyph: View {
+struct MenuPin: View {
     let place: Place
     var body: some View {
         VStack(spacing: -3) {
