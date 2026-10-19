@@ -337,6 +337,8 @@ struct TripAddSheet: View {
                 if let c = center {
                     let span = min(max(near.radius * 2, 3000), 40000)
                     r.region = MKCoordinateRegion(center: c, latitudinalMeters: span, longitudinalMeters: span)
+                    // 只要這個範圍裡的（不然 Apple 會照手機所在地找，人在國外會搜到國外的店）
+                    r.regionPriority = .required
                 }
                 if let cats = filter?.poi { r.pointOfInterestFilter = MKPointOfInterestFilter(including: cats) }
                 items = try await MKLocalSearch(request: r).start().mapItems
@@ -346,7 +348,9 @@ struct TripAddSheet: View {
         }
         guard !Task.isCancelled else { return }
         var seen: Set<String> = []
-        let list = items.map(MapHit.init).filter { seen.insert($0.id).inserted }
+        // 離路線（沒有站就離目前位置）太遠的不要：至少 30 公里，路線很長就放寬
+        let limit = max(30_000, near.radius * 3)
+        let list = items.map(MapHit.init).filter { seen.insert($0.id).inserted && far($0) <= limit }
         let sorted = list.sorted { far($0) < far($1) }
         withAnimation(.snappy(duration: 0.25)) { hits = Array(sorted.prefix(30)); searching = false }
     }

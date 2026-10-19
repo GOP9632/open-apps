@@ -108,6 +108,10 @@ struct TripCard: View {
         .clipShape(.rect(cornerRadius: 22))
         .background(RoundedRectangle(cornerRadius: 22).fill(Color.panel).shadow(color: .cardShadow, radius: 0, y: 4))
         .contentShape(.rect(cornerRadius: 22))
+        .task(id: legsKey(ss)) {
+            // 一天的行程才在卡片上寫交通總時間，那些段先問好
+            if trip.days == 1, ss.count > 1, ss.count <= 15 { router.need(pairs(ss)) }
+        }
     }
 
     private func tag(_ t: String, _ c: Color) -> some View {
@@ -127,21 +131,38 @@ struct TripCard: View {
         parts.append("\(ss.count) 站" + (spots > 0 && trip.days > 1 ? "（\(spots) 個景點）" : ""))
         if trip.days == 1 && ss.count > 1 {
             let m = TravelMode(rawValue: trip.mode) ?? .walk
-            parts.append("\(m.verb)共 \(TripDate.span(total(ss)))")
+            let t = total(ss)
+            parts.append("\(m.verb)共 \(t.approx ? "約 " : "")\(TripDate.span(t.min))")
         }
         return parts.joined(separator: "・")
     }
 
-    private func total(_ ss: [TripStop]) -> Int {
-        var sum = 0
+    // 跟行程頁用同一份路線（站和站之間；還沒算過的段排進去問 Apple，算好卡片跟著更新）
+    private func pairs(_ ss: [TripStop]) -> [(CLLocationCoordinate2D, CLLocationCoordinate2D, TravelMode)] {
+        var out: [(CLLocationCoordinate2D, CLLocationCoordinate2D, TravelMode)] = []
         for d in 1...max(1, trip.days) {
             let l = ss.filter { $0.day == d }.sorted { $0.pos < $1.pos }
             for (a, b) in zip(l, l.dropFirst()) {
                 guard let ca = a.coord, let cb = b.coord else { continue }
-                sum += router.leg(ca, cb, TravelMode(rawValue: b.mode ?? trip.mode) ?? .walk).min
+                out.append((ca, cb, TravelMode(rawValue: b.mode ?? trip.mode) ?? .walk))
             }
         }
-        return sum
+        return out
+    }
+
+    private func legsKey(_ ss: [TripStop]) -> String {
+        guard trip.days == 1 else { return "" }
+        return ss.map { s in s.id + "\(s.pos)" + (s.mode ?? "") }.joined(separator: ",")
+    }
+
+    private func total(_ ss: [TripStop]) -> (min: Int, approx: Bool) {
+        var sum = 0, approx = false
+        for (a, b, m) in pairs(ss) {
+            let l = router.leg(a, b, m)
+            sum += l.min
+            if l.approx { approx = true }
+        }
+        return (sum, approx)
     }
 }
 

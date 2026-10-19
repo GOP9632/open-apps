@@ -493,7 +493,14 @@ struct TripPage: View {
     private func fit(_ base: [TripStop], origin: CLLocationCoordinate2D?, animated: Bool) {
         var cs = base.compactMap(\.coord)
         if cs.isEmpty, let o = origin { cs = [o] }
-        guard !cs.isEmpty, size.height > 0 else { return }
+        // 這天沒有站：回到目前位置，沒有定位就看整個台灣
+        if cs.isEmpty {
+            let r = store.here.map { MKCoordinateRegion(center: $0.coordinate, latitudinalMeters: 3000, longitudinalMeters: 3000) }
+                ?? MKCoordinateRegion(center: .init(latitude: 23.7, longitude: 121.0), span: .init(latitudeDelta: 4.2, longitudeDelta: 3.2))
+            if animated { withAnimation(.easeInOut(duration: 0.5)) { pos = .region(r) } } else { pos = .region(r) }
+            return
+        }
+        guard size.height > 0 else { return }
         let lats = cs.map(\.latitude), lngs = cs.map(\.longitude)
         let latR = max(0.004, lats.max()! - lats.min()!)
         let lngR = max(0.004, lngs.max()! - lngs.min()!)
