@@ -601,11 +601,12 @@ struct Snapshot: Codable {
     // 只有店名時：先找到那個城市在哪，搜尋範圍設在那裡（不然 Apple 會照手機所在地找，人在國外就找不到）；
     // 店名有中英文（「泓品牛排 Mimi‘s Steakhouse」）整串找不到，就拆開中文、英文各找一次；彎引號換成直的
     @MainActor static func locate(_ p: Place) async -> (coord: CLLocationCoordinate2D, approx: Bool)? {
-        if !(p.address ?? "").isEmpty, let c = await geocode(p) { return (c, false) }
-        let full = clean([p.name, p.branch ?? ""].joined(separator: " "))
-        guard !full.isEmpty else { return nil }
         let city = [normCity(p.city), p.district ?? ""].joined(separator: " ").trimmingCharacters(in: .whitespaces)
         let center = await cityCenter(city)
+        // 有地址：查地址；查到的地方離城市 80 公里外就不算（地址打錯、同名路在別的城市）
+        if !(p.address ?? "").isEmpty, let c = await geocode(p), inCity(c, center) { return (c, false) }
+        let full = clean([p.name, p.branch ?? ""].joined(separator: " "))
+        guard !full.isEmpty else { return nil }
         var names = [full]
         for part in nameParts(clean(p.name)) where !names.contains(part) { names.append(part) }
         for n in names {
@@ -624,14 +625,16 @@ struct Snapshot: Codable {
             if let center { r.region = MKCoordinateRegion(center: center, latitudinalMeters: 60_000, longitudinalMeters: 60_000) }
             guard let items = try? await MKLocalSearch(request: r).start().mapItems else { continue }
             // 知道城市在哪：離城市 80 公里外的不算（同名的店在別的城市）
-            let ok = items.first { item in
-                guard let center else { return true }
-                let c = item.placemark.coordinate
-                return CLLocation(latitude: c.latitude, longitude: c.longitude).distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude)) < 80_000
-            }
+            let ok = items.first { inCity($0.placemark.coordinate, center) }
             if let ok { return ok.placemark.coordinate }
         }
         return nil
+    }
+
+    // 離城市中心 80 公里內（不知道城市在哪就都算）
+    private static func inCity(_ c: CLLocationCoordinate2D, _ center: CLLocationCoordinate2D?) -> Bool {
+        guard let center else { return true }
+        return CLLocation(latitude: c.latitude, longitude: c.longitude).distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude)) < 80_000
     }
 
     // 城市（「台中」「台北 大安區」）的中心；查過的記起來

@@ -96,7 +96,7 @@ struct Root: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .accessibilityAddTraits(.isButton)
                 .onAppear { AccessibilityNotification.Announcement(t).post() }
-                .task(id: t) { try? await Task.sleep(for: .seconds(act == nil ? 2.6 : 4)); withAnimation(.snappy) { if store.toast == t { store.toast = nil; store.toastAction = nil } } }
+                .task(id: t) { try? await Task.sleep(for: .seconds(act == nil ? 2.6 : store.toastTap != nil ? 5 : 4)); withAnimation(.snappy) { if store.toast == t { store.toast = nil; store.toastAction = nil } } }
                 .onTapGesture {
                     let tap = store.toastTap
                     withAnimation(.snappy) { store.toast = nil; store.toastTap = nil }

@@ -27,6 +27,14 @@ struct TripPage: View {
     @State private var focused = false
     @State private var size: CGSize = .zero
     @State private var adding = false
+    // 出發
+    @State private var going = false
+    @State private var me: CLLocation?          // 出發時的目前位置（只在 App 開著時更新）
+    @State private var pinged: String?          // 已經為「快到了」震過的那站
+    @State private var rate: String?            // 問「好吃嗎」的那站
+    @State private var finished = false
+    @State private var party = 0
+    @State private var navAsk: TripStop?
 
     enum Level { case low, mid, high }
 
@@ -74,13 +82,26 @@ struct TripPage: View {
         let plan = TripCalc.plan(order, legs: legs.map { $0?.min }, backLeg: backLeg(t, order, origin: origin))
         let segs = segsOf(t, order, origin: origin, legs: legs)
         let marks = marksOf(order)
-        return ZStack(alignment: .bottom) {
+        let next = order.first { $0.done_at == nil }
+        let core = ZStack(alignment: .bottom) {
             TripMap(pos: $pos, segs: segs, marks: marks)
                 .ignoresSafeArea()
-            panel(t, d: d, base: base, order: order, legs: legs, plan: plan)
-            actions(t)
+            if !going {
+                panel(t, d: d, base: base, order: order, legs: legs, plan: plan)
+                    .transition(.move(edge: .bottom))
+                actions(t, base: base)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                goBottom(order)
+            }
         }
-        .overlay(alignment: .top) { header(t, d: d, order: order, plan: plan) }
+        let top = core.overlay(alignment: .top) {
+            VStack(spacing: 10) {
+                header(t, d: d, order: order, plan: plan)
+                if going, let next { goCard(t, order: order, next: next, plan: plan).padding(.horizontal, 14) }
+            }
+        }
+        return goMods(top, t, order: order, next: next)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
         // 換天、加站、刪站：地圖 0.5 秒縮放到包住這天所有站
         .onChange(of: fitKey(d, base)) { fit(base, origin: origin, animated: true) }
@@ -188,8 +209,9 @@ struct TripPage: View {
     }
 
     // 面板最下面一排：＋ 加一站（之後還有幫我排順序、出發）
-    private func actions(_ t: Trip) -> some View {
-        HStack(spacing: 10) {
+    private func actions(_ t: Trip, base: [TripStop]) -> some View {
+        let allDone = !base.isEmpty && base.allSatisfy { $0.done_at != nil }
+        return HStack(spacing: 10) {
             Button {
                 Haptic.light()
                 Perf.shared.mark("按加一站")
@@ -197,8 +219,14 @@ struct TripPage: View {
             } label: {
                 Label("加一站", systemImage: "plus").font(.headline).frame(maxWidth: .infinity)
             }
-            .buttonStyle(ChunkyStyle(radius: 18))
+            .buttonStyle(ChunkyStyle(color: .panel, edge: .cardShadow, fg: .ink, radius: 18))
             .accessibilityLabel("加一站")
+            Button { startGo(base, again: allDone) } label: {
+                Label(allDone ? "重新出發" : "出發", systemImage: "location.north.fill").font(.headline).frame(maxWidth: .infinity)
+            }
+            .buttonStyle(ChunkyStyle(radius: 18))
+            .disabled(base.isEmpty)
+            .opacity(base.isEmpty ? 0.5 : 1)
         }
         .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 6)
         .background {
@@ -425,7 +453,7 @@ struct TripPage: View {
             guard let a else { continue }
             let leg = legs[i]
             let line = leg?.coords
-            out.append(TripSeg(id: (i == 0 ? "o" : order[i - 1].id) + ">" + s.id, coords: line ?? [a, b], color: TripColor.of(i), routed: line != nil))
+            out.append(TripSeg(id: (i == 0 ? "o" : order[i - 1].id) + ">" + s.id, coords: line ?? [a, b], color: TripColor.of(i), routed: line != nil, faded: s.done_at != nil))
         }
         return out
     }
@@ -433,7 +461,7 @@ struct TripPage: View {
     private func marksOf(_ order: [TripStop]) -> [TripMark] {
         order.enumerated().compactMap { i, s in
             guard let c = s.coord else { return nil }
-            return TripMark(id: s.id, n: i + 1, coord: c, color: TripColor.of(i), place: s.isPlace, icon: POI.icon(s.poi, kind: s.kind))
+            return TripMark(id: s.id, n: i + 1, coord: c, color: TripColor.of(i), place: s.isPlace, icon: POI.icon(s.poi, kind: s.kind), done: s.done_at != nil)
         }
     }
 
@@ -464,6 +492,181 @@ struct TripPage: View {
         day = min(s.day, t.days)
         expanded = f
         focused = true
+    }
+
+    // ----- 出發 -----
+
+    // 出發時的全畫面：全部到完的卡片、定位、路線、快到了輕震、選導航 App
+    private func goMods<V: View>(_ v: V, _ t: Trip, order: [TripStop], next: TripStop?) -> some View {
+        let eaten = order.filter { $0.isPlace && $0.done_at != nil }.count
+        let near = nearNext(next)
+        let ask = Binding(get: { navAsk != nil }, set: { if !$0 { navAsk = nil } })
+        return v
+            .overlay {
+                if finished {
+                    ZStack {
+                        Color.black.opacity(0.25).ignoresSafeArea().onTapGesture { endGo() }
+                        DoneCard(eaten: eaten, shot: party) { endGo() }
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .task(id: going) { await follow() }
+            .task(id: goKey(t, next)) { if let k = goNeed(t, order, next) { router.need([k]) } }
+            .onChange(of: near) { _, on in
+                guard on, let next, pinged != next.id else { return }
+                pinged = next.id
+                Haptic.success()
+            }
+            .confirmationDialog("用哪個地圖導航？", isPresented: ask, titleVisibility: .visible, presenting: navAsk) { s in
+                ForEach(NavApp.allCases, id: \.self) { a in
+                    Button(a.name) { NavApp.saved = a; openNav(t, s, a) }
+                }
+            }
+    }
+
+    private func startGo(_ base: [TripStop], again: Bool) {
+        Haptic.medium()
+        Perf.shared.mark("出發")
+        // 全部到過了：清掉「到了」重新走一次
+        if again {
+            for s in base { var x = s; x.done_at = nil; trips.update(x, store: store) }
+        }
+        expanded = nil
+        pinged = nil
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { going = true }
+        withAnimation(.easeInOut(duration: 0.6)) { pos = .userLocation(fallback: pos) }
+    }
+
+    private func endGo() {
+        Haptic.light()
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { going = false; finished = false; rate = nil }
+        if let t = trips.trip(tid) {
+            let base = trips.stops(t.id, day: min(day, t.days))
+            Task { try? await Task.sleep(for: .seconds(0.05)); fit(base, origin: originOf(base), animated: true) }
+        }
+    }
+
+    // 出發時才開定位（App 在前景時更新；不用背景定位）
+    private func follow() async {
+        guard going else { return }
+        do {
+            for try await u in CLLocationUpdate.liveUpdates() {
+                if Task.isCancelled || !going { break }
+                if let l = u.location { me = l }
+            }
+        } catch {}
+    }
+
+    private var here: CLLocation? { me ?? store.here }
+
+    // 目前位置四捨五入到約 100 公尺，免得一直重算路線
+    private func hereRounded() -> CLLocationCoordinate2D? {
+        guard let h = here?.coordinate else { return nil }
+        return CLLocationCoordinate2D(latitude: (h.latitude * 1000).rounded() / 1000, longitude: (h.longitude * 1000).rounded() / 1000)
+    }
+
+    private func goMode(_ t: Trip, _ order: [TripStop], _ s: TripStop) -> TravelMode {
+        order.first?.id == s.id ? (TravelMode(rawValue: t.mode) ?? .walk) : mode(t, s)
+    }
+
+    private func goNeed(_ t: Trip, _ order: [TripStop], _ next: TripStop?) -> (CLLocationCoordinate2D, CLLocationCoordinate2D, TravelMode)? {
+        guard going, let next, let b = next.coord, let a = hereRounded() else { return nil }
+        return (a, b, goMode(t, order, next))
+    }
+
+    private func goKey(_ t: Trip, _ next: TripStop?) -> String {
+        guard going, let next, let a = hereRounded(), let b = next.coord else { return "" }
+        return TripRouter.key(a, b, TravelMode(rawValue: next.mode ?? t.mode) ?? .walk)
+    }
+
+    private func nearNext(_ next: TripStop?) -> Bool {
+        guard going, let c = next?.coord, let h = here else { return false }
+        return h.distance(from: CLLocation(latitude: c.latitude, longitude: c.longitude)) < 80
+    }
+
+    private func goCard(_ t: Trip, order: [TripStop], next: TripStop, plan: DayPlan) -> some View {
+        let i = order.firstIndex { $0.id == next.id } ?? 0
+        let m = goMode(t, order, next)
+        return GoCard(stop: next, n: i + 1, total: order.count, dots: order.map { $0.done_at != nil },
+                      line: goLine(t, m: m, next: next, row: i < plan.rows.count ? plan.rows[i] : nil),
+                      near: nearNext(next),
+                      nav: { goNav(t, order, next) },
+                      arrived: { arrive(t, order, next) },
+                      close: { endGo() })
+            .id(next.id)
+            .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .move(edge: .leading).combined(with: .opacity)))
+    }
+
+    // 🚶 走路 6 分・13:10 到・比預定早 4 分
+    private func goLine(_ t: Trip, m: TravelMode, next: TripStop, row: DayPlan.Row?) -> String {
+        guard let a = hereRounded(), let b = next.coord else { return "\(m.emoji) \(m.verb)" }
+        let leg = router.leg(a, b, m)
+        let c = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        let eta = (c.hour ?? 0) * 60 + (c.minute ?? 0) + leg.min
+        var p = ["\(m.emoji) \(m.verb) \(leg.approx ? "約 " : "")\(TripDate.span(leg.min))", "\(TripDate.clock(eta)) 到"]
+        // 排的是今天（或沒排日期）才比較跟預定差多少
+        let today = t.start.map { s in (0..<t.days).contains { Calendar.current.isDate(TripDate.add(s, $0), inSameDayAs: Date()) } } ?? true
+        if today, let row {
+            let diff = row.arrive - eta
+            p.append(abs(diff) < 2 ? "準時" : diff > 0 ? "比預定早 \(diff) 分" : "比預定晚 \(-diff) 分")
+        }
+        return p.joined(separator: "・")
+    }
+
+    private func goNav(_ t: Trip, _ order: [TripStop], _ next: TripStop) {
+        Haptic.light()
+        askAbout(before: next, order)
+        if let a = NavApp.saved { openNav(t, next, a) } else { navAsk = next }
+    }
+
+    private func openNav(_ t: Trip, _ s: TripStop, _ app: NavApp) {
+        guard let c = s.coord else { return }
+        let order = trips.stops(t.id, day: s.day)
+        if let u = tripNavURL(c, name: s.name, mode: goMode(t, order, s), app: app) { openURL(u) }
+    }
+
+    private func arrive(_ t: Trip, _ order: [TripStop], _ s: TripStop) {
+        Haptic.success()
+        Perf.shared.mark("到了")
+        var x = s; x.done_at = ISO8601DateFormatter().string(from: Date())
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { trips.update(x, store: store) }
+        askAbout(before: s, order)
+        // 最後一站：撒糖粒，也問最後那間好不好吃
+        if order.allSatisfy({ $0.id == s.id || $0.done_at != nil }) {
+            if s.isPlace { ask(s) }
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { finished = true }
+            party += 1
+        }
+    }
+
+    // 離開上一間收藏的店：問好不好吃（自己的收藏才問，問過不再問）
+    private func askAbout(before s: TripStop, _ order: [TripStop]) {
+        guard let i = order.firstIndex(where: { $0.id == s.id }), i > 0 else { return }
+        let prev = order[i - 1]
+        if prev.done_at != nil { ask(prev) }
+    }
+
+    private func ask(_ s: TripStop) {
+        guard s.isPlace, let pid = s.place_id, let p = store.place(pid), store.isMine(p), !TripAsked.has(s.id) else { return }
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { rate = s.id }
+    }
+
+    @ViewBuilder private func goBottom(_ order: [TripStop]) -> some View {
+        if let id = rate, let s = order.first(where: { $0.id == id }), let pid = s.place_id, let p = store.place(pid) {
+            RateCard(place: p) { n in
+                TripAsked.add(id)
+                var x = p; x.status = "been"; x.rating = n
+                Task { [x] in await store.save(x) }
+                store.say("記下來了：\(p.name) \(n) 顆星", icon: .check)
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { rate = nil }
+            } close: {
+                TripAsked.add(id)
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { rate = nil }
+            }
+            .padding(.horizontal, 14).padding(.bottom, 8)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
     }
 
     // ----- 分享：文字版（日期、每站時間＋名字＋地址、Google 地圖多站網址） -----
@@ -548,6 +751,7 @@ struct TripSeg: Identifiable {
     let coords: [CLLocationCoordinate2D]
     let color: Color
     let routed: Bool
+    var faded = false      // 出發後走過的路：變淡
 
     // 實際道路：7pt 實線＋13pt 白邊；還沒算好：同色虛線直線
     var style: StrokeStyle { routed ? StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round) : StrokeStyle(lineWidth: 5, lineCap: .round, dash: [0.5, 11]) }
@@ -561,6 +765,7 @@ struct TripMark: Identifiable {
     let color: Color
     let place: Bool
     let icon: String
+    var done = false       // 出發後到過的站：灰色勾勾
 }
 
 // 地圖：每段用下一站的顏色，7pt 線加 13pt 白邊；還沒算好的段先畫同色虛線直線
@@ -573,8 +778,8 @@ struct TripMap: View {
         Map(position: $pos) {
             UserAnnotation()
             ForEach(segs) { s in
-                MapPolyline(coordinates: s.coords).stroke(Color.white.opacity(s.routed ? 1 : 0), style: s.under)
-                MapPolyline(coordinates: s.coords).stroke(s.routed ? s.color : s.color.opacity(0.85), style: s.style)
+                MapPolyline(coordinates: s.coords).stroke(Color.white.opacity(s.routed ? (s.faded ? 0.5 : 1) : 0), style: s.under)
+                MapPolyline(coordinates: s.coords).stroke(s.color.opacity(s.faded ? 0.3 : s.routed ? 1 : 0.85), style: s.style)
             }
             ForEach(marks) { m in
                 Annotation("", coordinate: m.coord, anchor: .center) { MarkView(m: m) }
@@ -594,7 +799,12 @@ private struct MarkView: View {
 
     var body: some View {
         Group {
-            if m.place {
+            if m.done {
+                Image(systemName: "checkmark").font(.system(size: 13, weight: .black)).foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(TripColor.side.opacity(0.85), in: .circle)
+                    .overlay(Circle().strokeBorder(.white, lineWidth: 2.5))
+            } else if m.place {
                 Text("\(m.n)").font(.system(size: 17, weight: .black)).foregroundStyle(m.color)
                     .contentTransition(.numericText())
                     .frame(width: 40, height: 40)
