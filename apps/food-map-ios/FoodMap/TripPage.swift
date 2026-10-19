@@ -497,7 +497,7 @@ struct RowDrag: Equatable {
         return l
     }
 
-    mutating func retarget(_ geo: RowGeo, base: [TripStop]) {
+    @MainActor mutating func retarget(_ geo: RowGeo, base: [TripStop]) {
         guard let id, let f = geo.rows[id] else { return }
         let center = f.midY + dy
         var t = 0
