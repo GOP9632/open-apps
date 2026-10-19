@@ -85,19 +85,33 @@ async function tiktok(url: string) {
 }
 
 // Google 地圖連結：短網址轉成完整網址後，從網址拿店名和座標
+// 新版的 share.google 短網址會轉到 Google 搜尋，網址裡沒有店名和座標，只能靠預覽卡片
 async function googleMaps(url: string) {
   const page = await get(url, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36");
-  const final = page.url || url;
+  const final = /\/maps/.test(page.url) ? page.url : url;
   let name = decodeURIComponent((final.match(/\/place\/([^/@?]+)/) || [])[1] ?? "").replace(/\+/g, " ");
   const c = final.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) || final.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) || final.match(/[?&](?:q|ll)=(-?\d+\.\d+),(-?\d+\.\d+)/);
   // 一般瀏覽器拿到的 og:image 是靜態地圖；用連結預覽的 UA 才會拿到店家照片和「店名 · 地址」
-  const card = await get(final, "facebookexternalhit/1.1");
-  const pic = meta(card.html, "og:image");
-  const thumb = /googleusercontent\.com/.test(pic) ? pic.replace(/=w\d+-h\d+/, "=w1080-h1080") : "";
-  const title = meta(card.html, "og:title") || meta(page.html, "og:title"), d = meta(page.html, "og:description");
-  // iPhone 分享的連結常常是 ?q=…&ftid=…，網址裡沒有 /place/店名，改用預覽標題「店名 · 地址」
-  if (!name && title && title !== "Google Maps") name = title.split(" · ")[0];
-  return { name, lat: c ? +c[1] : null, lng: c ? +c[2] : null, caption: [name, title, d].filter(Boolean).join("\n"), final, thumb };
+  let card = await get(url, "facebookexternalhit/1.1");
+  let thumb = placePhoto(meta(card.html, "og:image"));
+  if (!thumb && final !== url) thumb = placePhoto(meta((card = await get(final, "facebookexternalhit/1.1")).html, "og:image"));
+  // 搜尋卡片是 ISO-8859-1，「·」會變成亂碼
+  const title = (meta(card.html, "og:title") || meta(page.html, "og:title")).replace(/\uFFFD/g, "·"), d = meta(page.html, "og:description");
+  const [head, address = ""] = title.split(/\s+·\s+/);
+  // iPhone 分享的連結常常是 ?q=…&ftid=… 或 share.google，網址裡沒有 /place/店名，改用預覽標題「店名 · 地址」
+  if (!name && head && !/^Google( Maps)?$/.test(head)) name = head;
+  return { name, address, lat: c ? +c[1] : null, lng: c ? +c[2] : null, caption: [name, title, d].filter(Boolean).join("\n"), final, thumb };
+}
+
+// 店家照片：地圖頁直接給 googleusercontent 的圖；搜尋卡片給 dimg 拼貼圖，裡面用 base64 包著原圖網址，拿第一張
+function placePhoto(pic: string) {
+  if (/dimg-pa\.googleapis\.com\/ic\//.test(pic)) {
+    try {
+      const b64 = pic.split("/ic/")[1].split(/[.?]/)[0].replace(/-/g, "+").replace(/_/g, "/");
+      pic = (atob(b64 + "=".repeat(-b64.length & 3)).match(/https:\/\/lh\d\.googleusercontent\.com\/[\w\-/=]+/) || [""])[0];
+    } catch { pic = ""; }
+  }
+  return /googleusercontent\.com/.test(pic) ? pic.replace(/=w\d+-h\d+/, "=w1080-h1080") : "";
 }
 
 async function webpage(url: string) {
@@ -155,13 +169,14 @@ export async function extract(body: { url?: string; text?: string; image?: strin
   let text = body.text ?? "";
   let places: Record<string, unknown>[] = [];
   if (body.url) {
-    const u = body.url.trim();
+    // 分享文字常常寫成「店名（https://…）」，網址後面會黏著括號
+    const u = body.url.trim().replace(/[)）\]】」>.,，。、!！?？]+$/, "");
     if (/instagram\.com/.test(u)) Object.assign(src, await instagram(u));
     else if (/tiktok\.com/.test(u)) Object.assign(src, await tiktok(u));
-    else if (/maps\.app\.goo\.gl|goo\.gl\/maps|google\.[a-z.]+\/maps|maps\.google\./.test(u)) {
+    else if (/maps\.app\.goo\.gl|goo\.gl\/maps|google\.[a-z.]+\/maps|maps\.google\.|share\.google\//.test(u)) {
       const g = await googleMaps(u);
       Object.assign(src, { caption: g.caption, url: g.final, thumb: g.thumb });
-      if (g.name) places = [{ name: g.name, lat: g.lat, lng: g.lng }];
+      if (g.name) places = [{ name: g.name, address: g.address, lat: g.lat, lng: g.lng }];
     } else Object.assign(src, await webpage(u));
     const loc = src.location as Record<string, unknown> | null;
     text = [src.author ? `發文者：@${src.author}` : "", loc?.name ? `地點標記：${loc.name}${loc.address ? `（${loc.address}）` : ""}` : "", String(src.caption ?? ""), text].filter(Boolean).join("\n");
