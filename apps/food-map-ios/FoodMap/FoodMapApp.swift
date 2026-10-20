@@ -23,6 +23,7 @@ struct Root: View {
     @Environment(\.scenePhase) private var phase
     // 去過的分頁才建（第一次打開只建地圖），之後留著，切回來還在原來的位置
     @State private var opened: Set<Int> = [0]
+    @State private var myName = ""
     // 刪除時卡片縮小飛到訊息條（卡片和訊息條左邊的小照片共用）
     @Namespace private var toastNS
     // 冷啟動：啟動畫面的甜甜圈咬一口再放大淡掉（減少動態時不播）
@@ -60,6 +61,24 @@ struct Root: View {
                     Task { if await store.join(code) != nil { withAnimation(.snappy) { store.tab = 2 } } }
                 }
                 .overlay { CoachOverlay().ignoresSafeArea() }
+                // 剛用 Apple／Google 登入、帳號是空的：可能以前用 Email 註冊過
+                .alert("以前用 Email 註冊過嗎？", isPresented: Binding(get: { store.askOld != nil }, set: { _ in }),
+                       presenting: store.askOld) { p in
+                    Button("有，登入舊帳號") { Task { await store.useOld() } }
+                    Button("沒有，這是新帳號", role: .cancel) { store.keepNew() }
+                } message: { p in
+                    Text("這個帳號還是空的。以前的收藏在 Email 帳號裡：登入那個帳號，會幫你把 \(LoginKind(rawValue: p)?.name ?? p) 連過去，以後按 \(LoginKind(rawValue: p)?.name ?? p) 就能直接進去。")
+                }
+                .alert("你的名字", isPresented: $store.askName) {
+                    TextField("群組裡的朋友會看到這個名字", text: $myName)
+                    Button("之後再說", role: .cancel) {}
+                    Button("好") {
+                        let n = myName.trimmingCharacters(in: .whitespaces)
+                        if !n.isEmpty { Task { await store.setMyName(n) } }
+                    }
+                } message: {
+                    Text("Apple 沒有給名字，填一個朋友認得的（之後可以在「我的」改）")
+                }
                 .fullScreenCover(isPresented: $store.showIG) { IGTutorial() }
                 // 「加進行程」後點訊息條：換到別的行程
                 .sheet(item: Binding(get: { TripStore.shared.picking }, set: { TripStore.shared.picking = $0 })) { r in

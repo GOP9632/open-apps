@@ -2,6 +2,7 @@ import SwiftUI
 import Observation
 import CoreLocation
 import MapKit
+import AuthenticationServices
 
 // 存在手機裡的那一份（下次打開先畫這份，不用等網路）
 struct Snapshot: Codable {
@@ -58,6 +59,19 @@ struct Snapshot: Codable {
     var coachFrames: [CoachStep: CGRect] = [:]
     var showIG = false
     var igFromCoach = false
+
+    // Apple／Google 登入（Login.swift）
+    // 剛用 Apple／Google 登入、帳號是空的：問一次「以前用 Email 註冊過嗎？」（值是用哪個登入的：apple／google）
+    var askOld: String?
+    // 登入舊的 Email 帳號之後，要幫他連上的登入方式
+    var pendingLink: String?
+    // 新帳號沒有名字（Apple 沒給）：請他填
+    var askName = false
+    @ObservationIgnored private var needsName = false
+    // 這個帳號連了哪些登入方式
+    var logins: [(provider: String, email: String?)] = []
+    // 後台開了哪些登入方式（記在手機裡，下次打開按鈕不會晚一拍才冒出來）
+    var providers: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "providers") ?? [])
     // 收藏碼同時放進 App Group，讓分享選單裡的 Bitemap 不用打開 App 也能收藏
     var quickKey: String? {
         didSet { Store.shared?.set(quickKey, forKey: "quickKey") }
@@ -269,7 +283,97 @@ struct Snapshot: Codable {
 
     @MainActor func signIn(_ email: String, _ pw: String) async {
         do { try await Supa.signIn(email: email, password: pw); loggedIn = true; error = nil; await sync() }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = error.localizedDescription; return }
+        // 從「以前用 Email 註冊過嗎？」過來的：登入舊帳號後接著連 Apple／Google
+        if let p = pendingLink { pendingLink = nil; await link(p) }
+    }
+
+    @MainActor func signInApple(_ c: ASAuthorizationAppleIDCredential, nonce: String) async {
+        guard let tok = c.token else { error = "Apple 沒有回傳登入資料，請再試一次"; return }
+        do {
+            try await Supa.signInApple(idToken: tok, nonce: nonce)
+            await afterOAuth("apple", name: c.name)
+        } catch { self.error = error.localizedDescription }
+    }
+
+    @MainActor func signInGoogle() async {
+        do {
+            try await Supa.signInGoogle()
+            await afterOAuth("google", name: nil)
+        } catch let e where isCancel(e) {
+        } catch { self.error = error.localizedDescription }
+    }
+
+    // Apple／Google 登入好了：同步，空的新帳號補名字、問一次是不是以前用 Email 註冊過
+    private func afterOAuth(_ provider: String, name: String?) async {
+        loggedIn = true; error = nil
+        await sync()
+        guard let me, error == nil, mine.isEmpty, groups.isEmpty else { return }
+        if let name {
+            // Apple 只有第一次登入給名字：寫進帳號資料和朋友看到的名字
+            try? await Supa.setName(name)
+            if profiles[me]?.name != name {
+                profiles[me] = Profile(id: me, name: name)
+                try? await Supa.write("PATCH", "profiles", query: "id=eq.\(me)", body: ["name": AnyCodable.s(name)])
+            }
+        }
+        // Apple 隱藏信箱又沒給名字：名字會是一串亂碼，請他填
+        needsName = name == nil && (Supa.session?.user.email ?? "").contains("privaterelay.appleid.com")
+        if UserDefaults.standard.bool(forKey: "askedOld." + me) { askName = needsName } else { askOld = provider }
+    }
+
+    // 「以前用 Email 註冊過嗎？」→ 沒有，這是新帳號
+    @MainActor func keepNew() {
+        guard askOld != nil else { return }
+        askOld = nil
+        if let me { UserDefaults.standard.set(true, forKey: "askedOld." + me) }
+        if needsName { askName = true }
+    }
+
+    // 「以前用 Email 註冊過嗎？」→ 有：清掉剛建的空帳號（不然 Apple／Google 連不到舊帳號），登出，回到 Email 登入
+    @MainActor func useOld() async {
+        guard let p = askOld else { return }
+        askOld = nil
+        pendingLink = p
+        // 雲端只清「沒有密碼、沒有任何資料」的帳號；雲端沒有這個函式就跳過，連結時再告訴他
+        try? await Supa.write("POST", "rpc/delete_empty_account", body: [String: AnyCodable]())
+        signOut()
+    }
+
+    // 「我的 > 登入方式」連結 Apple／Google（連好之後用哪個登入都是同一個帳號）
+    @MainActor func link(_ p: String) async {
+        let name = LoginKind(rawValue: p)?.name ?? p
+        do {
+            if p == "apple" {
+                let n = PKCE.random()
+                let c = try await AppleAuth.shared.run(nonce: n)
+                guard let tok = c.token else { throw Supa.Fail(msg: "Apple 沒有回傳登入資料，請再試一次") }
+                try await Supa.linkApple(idToken: tok, nonce: n)
+            } else {
+                try await Supa.linkGoogle()
+            }
+            Haptic.success()
+            say("已連結 \(name)，以後可以直接用 \(name) 登入", icon: .check)
+            await loadLogins()
+        } catch let e where isCancel(e) {
+        } catch {
+            say("連結 \(name) 失敗：" + error.localizedDescription)
+        }
+    }
+
+    @MainActor func loadProviders() async {
+        guard let p = try? await Supa.providers(), p != providers else { return }
+        withAnimation(.snappy) { providers = p }
+        UserDefaults.standard.set(Array(p), forKey: "providers")
+    }
+
+    @MainActor func loadLogins() async {
+        if let l = try? await Supa.identities() { logins = l }
+    }
+
+    @MainActor func setMyName(_ n: String) async {
+        try? await Supa.setName(n)
+        await rename(n)
     }
 
     // 建好帳號就直接登入，並用他填的名字建 profile（朋友在群組裡看到的名字）
@@ -294,6 +398,7 @@ struct Snapshot: Codable {
         mapPath = NavigationPath(); depth = [0, 0, 0, 0]; tab = 0; coach = []; listF = Filter(); mapF = Filter()
         try? FileManager.default.removeItem(at: cacheFile)
         TripStore.shared.reset()
+        logins = []; askOld = nil; askName = false
     }
 
     @MainActor func say(_ s: String, icon: ToastIcon? = nil, place: Place? = nil, action: (label: String, run: () -> Void)? = nil, tap: (() -> Void)? = nil) {

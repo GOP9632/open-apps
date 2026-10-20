@@ -58,9 +58,125 @@ import Security
         guard (res as? HTTPURLResponse)?.statusCode == 200 else { throw Fail(msg: message(d, "寄信失敗，請稍後再試")) }
     }
 
-    private static func message(_ d: Data, _ fallback: String) -> String {
+    // ----- Apple／Google 登入（不裝 SDK：Apple 用系統的 Sign in with Apple，Google 走 Supabase 的網頁登入＋PKCE）-----
+
+    static let callback = "bitemap://login-callback"
+
+    // 後台開了哪些登入方式（{"external":{"apple":true,"google":false,…}}）；還沒開的按鈕先不顯示
+    static func providers() async throws -> Set<String> {
+        var r = URLRequest(url: URL(string: "\(url.absoluteString)/auth/v1/settings")!)
+        r.setValue(key, forHTTPHeaderField: "apikey")
+        r.cachePolicy = .reloadIgnoringLocalCacheData
+        let (d, _) = try await URLSession.shared.data(for: r)
+        let j = try JSONSerialization.jsonObject(with: d) as? [String: Any]
+        let ex = j?["external"] as? [String: Any] ?? [:]
+        return Set(ex.compactMap { k, v in (v as? Bool) == true ? k : nil })
+    }
+
+    // Apple：拿 Apple 給的 id_token 換 Supabase 的登入憑證（nonce 是沒雜湊過的原始值）
+    static func signInApple(idToken: String, nonce: String) async throws {
+        session = try await auth("token?grant_type=id_token", ["provider": "apple", "id_token": idToken, "nonce": nonce])
+    }
+
+    // Google：開 Supabase 的登入頁（裡面轉去 Google），回到 bitemap://login-callback?code=… 再換憑證
+    static func signInGoogle() async throws {
+        let (verifier, challenge) = PKCE.make()
+        var c = URLComponents(string: "\(url.absoluteString)/auth/v1/authorize")!
+        c.queryItems = [.init(name: "provider", value: "google"), .init(name: "redirect_to", value: callback),
+                        .init(name: "code_challenge", value: challenge), .init(name: "code_challenge_method", value: "s256")]
+        let back = try await WebAuth.shared.open(c.url!)
+        let ac = try code(back)
+        session = try await auth("token?grant_type=pkce", ["auth_code": ac, "code_verifier": verifier])
+    }
+
+    // 已登入時再連一個 Google：跟 Supabase 拿連結用的網址，一樣開網頁，回來換憑證（還是同一個帳號）
+    static func linkGoogle() async throws {
+        let s = try await fresh()
+        let (verifier, challenge) = PKCE.make()
+        var c = URLComponents(string: "\(url.absoluteString)/auth/v1/user/identities/authorize")!
+        c.queryItems = [.init(name: "provider", value: "google"), .init(name: "redirect_to", value: callback),
+                        .init(name: "skip_http_redirect", value: "true"),
+                        .init(name: "code_challenge", value: challenge), .init(name: "code_challenge_method", value: "s256")]
+        var r = URLRequest(url: c.url!)
+        r.setValue(key, forHTTPHeaderField: "apikey")
+        r.setValue("Bearer \(s.access_token)", forHTTPHeaderField: "Authorization")
+        let (d, res) = try await URLSession.shared.data(for: r)
+        let code0 = (res as? HTTPURLResponse)?.statusCode ?? 0
+        guard code0 == 200 else { throw Fail(msg: message(d, "連結失敗"), code: code0) }
+        struct R: Decodable { let url: String }
+        guard let u = URL(string: try JSONDecoder().decode(R.self, from: d).url) else { throw Fail(msg: "連結失敗") }
+        let back = try await WebAuth.shared.open(u)
+        let ac = try code(back)
+        session = try await auth("token?grant_type=pkce", ["auth_code": ac, "code_verifier": verifier])
+    }
+
+    // 已登入時再連一個 Apple：用 Apple 給的 id_token，帶 link_identity（不用開網頁）
+    static func linkApple(idToken: String, nonce: String) async throws {
+        let s = try await fresh()
+        var r = URLRequest(url: URL(string: "\(url.absoluteString)/auth/v1/token?grant_type=id_token")!)
+        r.httpMethod = "POST"
+        r.setValue(key, forHTTPHeaderField: "apikey")
+        r.setValue("Bearer \(s.access_token)", forHTTPHeaderField: "Authorization")
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.httpBody = try JSONSerialization.data(withJSONObject: ["provider": "apple", "id_token": idToken, "nonce": nonce, "link_identity": true] as [String: Any])
+        let (d, res) = try await URLSession.shared.data(for: r)
+        let code0 = (res as? HTTPURLResponse)?.statusCode ?? 0
+        guard code0 == 200 else { throw Fail(msg: message(d, "連結失敗"), code: code0) }
+        if let n = try? JSONDecoder().decode(Session.self, from: d) { session = n }
+    }
+
+    // 這個帳號連了哪些登入方式（email／apple／google）和各自的信箱
+    static func identities() async throws -> [(provider: String, email: String?)] {
+        let s = try await fresh()
+        var r = URLRequest(url: URL(string: "\(url.absoluteString)/auth/v1/user")!)
+        r.setValue(key, forHTTPHeaderField: "apikey")
+        r.setValue("Bearer \(s.access_token)", forHTTPHeaderField: "Authorization")
+        r.cachePolicy = .reloadIgnoringLocalCacheData
+        let (d, res) = try await URLSession.shared.data(for: r)
+        let code0 = (res as? HTTPURLResponse)?.statusCode ?? 0
+        guard code0 == 200 else { throw Fail(msg: message(d, "讀不到登入方式"), code: code0) }
+        let j = try JSONSerialization.jsonObject(with: d) as? [String: Any]
+        let ids = j?["identities"] as? [[String: Any]] ?? []
+        return ids.compactMap { i -> (provider: String, email: String?)? in
+            guard let p = i["provider"] as? String else { return nil }
+            return (p, (i["identity_data"] as? [String: Any])?["email"] as? String ?? i["email"] as? String)
+        }
+    }
+
+    // 名字寫進帳號資料（跟 Email 註冊時一樣放在 user metadata 的 name）
+    static func setName(_ name: String) async throws {
+        let s = try await fresh()
+        var r = URLRequest(url: URL(string: "\(url.absoluteString)/auth/v1/user")!)
+        r.httpMethod = "PUT"
+        r.setValue(key, forHTTPHeaderField: "apikey")
+        r.setValue("Bearer \(s.access_token)", forHTTPHeaderField: "Authorization")
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.httpBody = try JSONSerialization.data(withJSONObject: ["data": ["name": name]])
+        let (d, res) = try await URLSession.shared.data(for: r)
+        let code0 = (res as? HTTPURLResponse)?.statusCode ?? 0
+        guard code0 == 200 else { throw Fail(msg: message(d, "存名字失敗"), code: code0) }
+    }
+
+    // bitemap://login-callback?code=…（失敗時是 error_description，可能在 ? 或 # 後面）
+    private static func code(_ back: URL) throws -> String {
+        let c = URLComponents(url: back, resolvingAgainstBaseURL: false)
+        var items = c?.queryItems ?? []
+        if let f = c?.fragment { items += URLComponents(string: "?" + f)?.queryItems ?? [] }
+        if let v = items.first(where: { $0.name == "code" })?.value { return v }
+        let e = items.first { $0.name == "error_description" }?.value ?? items.first { $0.name == "error" }?.value ?? ""
+        throw Fail(msg: message(Data(), "登入失敗", raw: e.replacingOccurrences(of: "+", with: " ")))
+    }
+
+    private static func message(_ d: Data, _ fallback: String, raw: String? = nil) -> String {
         let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
-        let m = (j?["msg"] ?? j?["error_description"] ?? j?["message"]) as? String ?? ""
+        let m = raw ?? (j?["msg"] ?? j?["error_description"] ?? j?["message"]) as? String ?? ""
+        let ec = j?["error_code"] as? String ?? ""
+        if ec == "identity_already_exists" || m.contains("already linked") || m.contains("already exists") && m.lowercased().contains("identity") {
+            return "這個帳號已經連在另一個 Bitemap 帳號上了"
+        }
+        if ec == "manual_linking_disabled" || m.lowercased().contains("manual linking") { return "帳號連結還沒開放，請稍後再試" }
+        if ec == "provider_disabled" || m.contains("provider is not enabled") || m.contains("Unsupported provider") { return "這個登入方式還沒開放，請先用 Email 登入" }
+        if m.lowercased().contains("nonce") { return "Apple 登入驗證失敗，請再試一次" }
         if m == "Invalid login credentials" { return "Email 或密碼不對" }
         if m.contains("already registered") { return "這個 Email 已經註冊過，請直接登入" }
         if m.contains("at least") && m.lowercased().contains("password") { return "密碼至少要 6 個字" }
