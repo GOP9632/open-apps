@@ -310,9 +310,12 @@ struct SwipeToDelete<C: View>: View {
     @State private var dx: CGFloat = 0
     @State private var horizontal: Bool?
     @State private var w: CGFloat = 300
+    // 正在左滑（和放開後一下下）：裡面的按鈕／連結不要被當成點了一下
+    @State private var swiped = false
 
     var body: some View {
         content()
+            .disabled(swiped)
             .offset(x: dx)
             .background(alignment: .trailing) {
                 if dx < 0 {
@@ -326,6 +329,7 @@ struct SwipeToDelete<C: View>: View {
             .simultaneousGesture(DragGesture(minimumDistance: 18).onChanged { v in
                 if horizontal == nil { horizontal = abs(v.translation.width) > abs(v.translation.height) * 1.3 }
                 guard horizontal == true else { return }
+                if !swiped { swiped = true }
                 let was = -dx > w * 0.4
                 dx = min(0, v.translation.width)
                 if (-dx > w * 0.4) != was { Haptic.tick() }
@@ -333,6 +337,7 @@ struct SwipeToDelete<C: View>: View {
             .onEnded { v in
                 defer { horizontal = nil }
                 guard horizontal == true else { return }
+                Task { try? await Task.sleep(for: .seconds(0.35)); swiped = false }
                 if -dx > w * 0.4 || v.predictedEndTranslation.width < -w {
                     withAnimation(.easeIn(duration: 0.18)) { dx = -w - 40 }
                     onDelete()
