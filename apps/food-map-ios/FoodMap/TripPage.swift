@@ -636,7 +636,14 @@ struct TripPage: View {
                 if finished {
                     ZStack {
                         Color.black.opacity(0.25).ignoresSafeArea().onTapGesture { endGo() }
-                        DoneCard(eaten: eaten, shot: party) { endGo() }
+                        // 最後一間好不好吃，直接在這張卡上問（不另外疊一張評分卡在後面）
+                        let last = rate.flatMap { id in order.first { $0.id == id } }.flatMap { $0.place_id }.flatMap { store.place($0) }
+                        DoneCard(eaten: eaten, shot: party, last: last) { n in
+                            if let id = rate, let last { rated(id, last, n) }
+                        } close: {
+                            if let id = rate { TripAsked.add(id) }
+                            endGo()
+                        }
                     }
                     .transition(.opacity)
                 }
@@ -737,7 +744,8 @@ struct TripPage: View {
         var p = ["\(m.emoji) \(m.verb) \(leg.approx ? "約 " : "")\(TripDate.span(leg.min))", "\(TripDate.clock(eta)) 到"]
         // 排的是今天（或沒排日期）才比較跟預定差多少
         let today = t.start.map { s in (0..<t.days).contains { Calendar.current.isDate(TripDate.add(s, $0), inSameDayAs: Date()) } } ?? true
-        if today, let row {
+        // 差超過一小時（例如計畫 10:00 開始、現在才出發）就不顯示，免得一直跳「晚 173 分」
+        if today, let row, abs(row.arrive - eta) <= 60 {
             let diff = row.arrive - eta
             p.append(abs(diff) < 2 ? "準時" : diff > 0 ? "比預定早 \(diff) 分" : "比預定晚 \(-diff) 分")
         }
@@ -782,14 +790,18 @@ struct TripPage: View {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { rate = s.id }
     }
 
+    private func rated(_ id: String, _ p: Place, _ n: Int) {
+        TripAsked.add(id)
+        var x = p; x.status = "been"; x.rating = n
+        Task { [x] in await store.save(x) }
+        store.say("記下來了：\(p.name) \(n) 顆星", icon: .check)
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { rate = nil }
+    }
+
     @ViewBuilder private func goBottom(_ order: [TripStop]) -> some View {
-        if let id = rate, let s = order.first(where: { $0.id == id }), let pid = s.place_id, let p = store.place(pid) {
+        if !finished, let id = rate, let s = order.first(where: { $0.id == id }), let pid = s.place_id, let p = store.place(pid) {
             RateCard(place: p) { n in
-                TripAsked.add(id)
-                var x = p; x.status = "been"; x.rating = n
-                Task { [x] in await store.save(x) }
-                store.say("記下來了：\(p.name) \(n) 顆星", icon: .check)
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { rate = nil }
+                rated(id, p, n)
             } close: {
                 TripAsked.add(id)
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { rate = nil }

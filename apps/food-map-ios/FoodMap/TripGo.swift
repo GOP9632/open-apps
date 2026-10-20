@@ -128,6 +128,8 @@ struct RateCard: View {
 struct DoneCard: View {
     let eaten: Int
     let shot: Int
+    var last: Place? = nil      // 最後一間收藏的店：順便問好不好吃
+    var rate: (Int) -> Void = { _ in }
     let close: () -> Void
     @State private var shown = false
     @Environment(\.accessibilityReduceMotion) private var reduce
@@ -136,6 +138,15 @@ struct DoneCard: View {
         VStack(spacing: 10) {
             Text("🍩").font(.system(size: 44))
             Text(eaten > 0 ? "今天吃了 \(eaten) 間！" : "今天的行程走完了！").font(.system(size: 22, weight: .heavy)).foregroundStyle(Color.ink)
+            if let last {
+                VStack(spacing: 4) {
+                    Text("最後一間\(last.name)，好吃嗎？").font(.system(size: 15, weight: .bold)).foregroundStyle(Color.ink.opacity(0.7))
+                        .lineLimit(2).multilineTextAlignment(.center)
+                    Stars(value: nil, size: 28, animated: true) { n in if let n { rate(n) } }
+                }
+                .padding(.top, 2)
+                .transition(.opacity)
+            }
             Button(action: close) { Text("好").frame(minWidth: 120) }
                 .buttonStyle(ChunkyStyle())
         }
