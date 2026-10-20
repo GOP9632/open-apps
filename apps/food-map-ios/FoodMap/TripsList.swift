@@ -43,7 +43,7 @@ struct TripsList: View {
         }
         .background(Color.bg)
         .toolbarVisibility(.hidden, for: .navigationBar)
-        .sheet(isPresented: $adding) { TripForm(trip: nil) { t in open(t) } }
+        .sheet(isPresented: $adding) { TripForm(trip: nil) { t in enterTrip(t) } }
         .task { await trips.load() }
         .refreshable { await trips.load() }
         .onAppear { Perf.shared.mark("我的行程") }
@@ -63,14 +63,14 @@ struct TripsList: View {
         SwipeToDelete(enabled: t.owner == nil || t.owner == store.me) {
             trips.deleteWithUndo(t, store: store)
         } content: {
-            Button { Haptic.light(); open(t) } label: { TripCard(trip: t, today: today) }
+            Button { Haptic.light(); enterTrip(t) } label: { TripCard(trip: t, today: today) }
                 .buttonStyle(PressStyle())
         }
         .transition(.opacity.combined(with: .scale(scale: 0.95)))
     }
 
     // 關掉這張 sheet，首頁地圖變成這個行程
-    private func open(_ t: Trip) {
+    private func enterTrip(_ t: Trip) {
         let mode = TripMode.shared
         mode.listing = false
         mode.open(t.id, store: store)
