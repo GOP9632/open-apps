@@ -186,7 +186,7 @@ struct PlaceDetail: View {
     // 加進行程：有進行中的行程就加到最後一站；已經在行程裡就打開那個行程、捲到那一站
     @ViewBuilder private func tripButton(_ place: Place) -> some View {
         if let s = trips.stopOf(place: place.id) {
-            NavigationLink(value: TripRoute.trip(s.trip_id, focus: s.id)) {
+            Button { Haptic.light(); TripMode.shared.open(s.trip_id, focus: s.id, store: store) } label: {
                 ActLabel(icon: "checkmark", text: "在行程裡")
             }
             .buttonStyle(ChunkyStyle(color: .sprMint, edge: Color.sprMint.mix(with: .black, by: 0.2), radius: 18))

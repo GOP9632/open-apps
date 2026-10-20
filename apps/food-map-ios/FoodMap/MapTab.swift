@@ -29,6 +29,9 @@ struct MapTab: View {
     @State private var flight: Flight?
     // 長按圖釘選「導航」但還沒選過用哪個地圖
     @State private var navAsk: Place?
+    // 行程模式：同一張地圖變成某個行程（上面標題列、下面行程面板）
+    @State private var trip = TripMode.shared
+    @State private var tripStore = TripStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduce
     @Environment(\.openURL) private var openURL
 
@@ -45,7 +48,14 @@ struct MapTab: View {
         @Bindable var store = store
         // 篩選結果只算一次；有座標的店下面每個地方共用
         let all = store.shown(store.mapF, in: store.mapBase)
-        let list = withExtra(all.filter { $0.lat != nil && $0.lng != nil })
+        // 行程模式：這天已經排進去的店畫成號碼，不再畫一次圖釘
+        let tripHide = tripHidden
+        let list = withExtra(all.filter { $0.lat != nil && $0.lng != nil }).filter { !tripHide.contains($0.id) }
+        // 行程模式搜尋：符合的收藏照常畫（不淡），被篩選篩掉的也補畫
+        let found = trip.on && trip.searchOn ? trip.search.found : []
+        let foundIds = Set(found.map(\.id))
+        let extraFound = found.filter { f in f.lat != nil && f.lng != nil && !tripHide.contains(f.id) && !list.contains { $0.id == f.id } }
+        let hits = trip.on && trip.searchOn ? trip.search.mapHits(found) : []
         // 第一次畫圖釘、換看誰的收藏：排好落下順序（由近到遠）
         let _ = pins.arm(store.mapGroup ?? "mine", list, from: store.here ?? (shownRegion ?? store.mapRegion).map { CLLocation(latitude: $0.center.latitude, longitude: $0.center.longitude) })
         // 篩選拿掉的，多畫 0.25 秒縮小淡掉
@@ -59,7 +69,12 @@ struct MapTab: View {
                     UserAnnotation()
                     ForEach(list.filter { !hidden.contains($0.id) }) { p in
                         Annotation(p.name, coordinate: .init(latitude: p.lat!, longitude: p.lng!), anchor: .bottom) {
+                            // 行程模式：其他收藏縮小變淡（搜到的、正在看要不要加的那間照常）
+                            let dim = trip.on && !foundIds.contains(p.id) && trip.cand?.id != p.id
                             FoodPin(place: p, pins: pins, reduce: reduce, saver: gname == nil ? nil : p.owner.map { ($0, store.name($0)) })
+                                .scaleEffect(dim ? 0.75 : 1, anchor: .bottom)
+                                .opacity(dim ? 0.6 : 1)
+                                .animation(.easeInOut(duration: 0.3), value: dim)
                         }
                         .tag(p.id)
                         .annotationTitles(.hidden)
@@ -71,12 +86,62 @@ struct MapTab: View {
                     ForEach(clusters) { c in
                         Annotation("", coordinate: .init(latitude: c.lat, longitude: c.lng), anchor: .center) {
                             ClusterBubble(c: c, reduce: reduce) { zoom(c) }
+                                .opacity(trip.on ? 0.6 : 1)
                         }
                         .annotationTitles(.hidden)
+                    }
+                    if trip.on {
+                        ForEach(extraFound) { p in
+                            Annotation(p.name, coordinate: .init(latitude: p.lat!, longitude: p.lng!), anchor: .bottom) {
+                                FoodPin(place: p, pins: pins, reduce: reduce)
+                            }
+                            .tag(p.id)
+                            .annotationTitles(.hidden)
+                        }
+                        // 這天的路線：每段用下一站的顏色，7pt 線加 13pt 白邊；還沒算好的段先畫同色虛線直線
+                        ForEach(trip.segs) { s in
+                            MapPolyline(coordinates: s.coords).stroke(Color.white.opacity(s.routed ? (s.faded ? 0.5 : 1) : 0), style: s.under)
+                            MapPolyline(coordinates: s.coords).stroke(s.color.opacity(s.faded ? 0.3 : s.routed ? 1 : 0.85), style: s.style)
+                        }
+                        // 加站卡：前一站 → 這間 → 後一站 的虛線
+                        if let pv = trip.preview {
+                            MapPolyline(coordinates: pv.coords).stroke(pv.color, style: StrokeStyle(lineWidth: 5, lineCap: .round, dash: [9, 9]))
+                        }
+                        ForEach(trip.marks) { m in
+                            Annotation("", coordinate: m.coord, anchor: .center) {
+                                Button { tapMark(m.id) } label: { MarkView(m: m, hot: trip.hot == m.id) }
+                                    .buttonStyle(PressStyle())
+                                    .accessibilityLabel("第 \(m.n) 站")
+                            }
+                            .annotationTitles(.hidden)
+                        }
+                        ForEach(hits) { h in
+                            Annotation(h.name, coordinate: h.coord, anchor: .top) {
+                                HitPin(hit: h, on: trip.cand?.id == h.id) { pins.select("hit:" + h.id) }
+                                    .offset(y: -15)
+                            }
+                            .tag("hit:" + h.id)
+                            .annotationTitles(.hidden)
+                        }
+                        if let n = trip.previewN, let c = trip.cand?.coord {
+                            Annotation("", coordinate: c, anchor: .bottom) {
+                                Text("新的第 \(n) 站").font(.system(size: 12, weight: .heavy)).foregroundStyle(.white)
+                                    .padding(.horizontal, 9).frame(height: 24)
+                                    .background(trip.preview?.color ?? Color.accent, in: .capsule)
+                                    .overlay(Capsule().strokeBorder(.white, lineWidth: 2))
+                                    .fixedSize()
+                                    .offset(y: trip.cand?.place != nil ? -70 : -22)
+                                    .transition(.scale(scale: 0.5).combined(with: .opacity))
+                                    .allowsHitTesting(false)
+                            }
+                            .annotationTitles(.hidden)
+                        }
                     }
                 }
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
                 .mapControls { MapCompass() }
+                // 行程模式點地圖空白處：收掉加站卡、搜尋（點到圖釘不算）
+                .simultaneousGesture(TapGesture().onEnded { blankTap() }, including: trip.on ? .all : .subviews)
                 .onMapCameraChange(frequency: .continuous) { _ in
                     pinFrame(proxy)
                     if let c = spot.coord, Date() < spot.until { spot.at = proxy.convert(c, to: .global) }
@@ -107,68 +172,92 @@ struct MapTab: View {
                 .overlay { PinBurst(spot: spot) }
                 // 長按圖釘的選單要知道圖釘在螢幕哪裡
                 .task { pins.locate = { c in proxy.convert(c, to: .global) } }
+                .onChange(of: trip.cand?.id) { _, _ in
+                    // 正在看要不要加的那間：圖釘放大（收藏用店的 id，搜到的地點用 hit: 開頭）
+                    pins.select(trip.cand.map { $0.place != nil ? $0.id : "hit:" + $0.id })
+                }
+            }
+            // 行程面板蓋在地圖上（標題列下面）；打開時從下面彈上來
+            .overlay {
+                if let tid = trip.tid {
+                    TripPanel(tid: tid, pos: $pos)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
             .safeAreaInset(edge: .top, spacing: 0) {
-                VStack(spacing: 8) {
-                    SearchField(text: $store.mapF.q, prompt: gname.map { "在「\($0)」裡找" } ?? "今天想吃什麼？") {
-                        AddButton { adding = true }.coachAnchor(.add)
+                ZStack(alignment: .top) {
+                    if let tid = trip.tid {
+                        TripTop(tid: tid)
+                            .transition(.opacity)
+                    } else {
+                        VStack(spacing: 8) {
+                            SearchField(text: $store.mapF.q, prompt: gname.map { "在「\($0)」裡找" } ?? "今天想吃什麼？") {
+                                AddButton { adding = true }.coachAnchor(.add)
+                            }
+                            .padding(.horizontal, 16)
+                            FilterChips(f: $store.mapF, solid: true, lead: store.groups.isEmpty ? nil : AnyView(scopePill(gname)))
+                        }
+                        .padding(.top, 6)
+                        .transition(.opacity)
                     }
-                    .padding(.horizontal, 16)
-                    FilterChips(f: $store.mapF, solid: true, lead: store.groups.isEmpty ? nil : AnyView(scopePill(gname)))
                 }
-                .padding(.top, 6)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                VStack(alignment: .trailing, spacing: 10) {
-                    // AI 在背景找剛新增的店
-                    if store.pendingAdds.contains(where: { $0.state == .finding }) {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small).tint(.white)
-                            Text("找店中…").font(.footnote.weight(.heavy)).foregroundStyle(.white)
-                        }
-                        .padding(.horizontal, 14).frame(height: 36)
-                        .background(Color(hex: 0x2a1a0a), in: .capsule)
-                        .frame(maxWidth: .infinity)
-                        .transition(.scale(scale: 0.6).combined(with: .opacity))
-                    }
-                    HStack(alignment: .bottom) {
-                        // 沒有座標的店不會出現在地圖上，提醒一下，點了可以補地址
-                        if missing > 0 {
-                            Button { noAddr = true } label: {
-                                Label("\(missing) 間還沒有地址", systemImage: "mappin.slash")
-                                    .font(.footnote.weight(.heavy)).foregroundStyle(Color.ink)
-                                    .padding(.horizontal, 12).frame(height: 36)
-                                    .background(.white, in: .capsule).shadow(color: .black.opacity(0.12), radius: 6, y: 2)
-                            }
-                            .buttonStyle(PressStyle())
-                        }
-                        Spacer()
-                        VStack(spacing: 10) {
-                            // 我的行程：跟定位鈕一樣的白色圓角方塊，路線圖示加小字
-                            NavigationLink(value: TripRoute.list) {
-                                VStack(spacing: 1) {
-                                    Image(systemName: "point.topleft.down.to.point.bottomright.curvepath.fill").font(.system(size: 17, weight: .bold))
-                                    Text("行程").font(.system(size: 10, weight: .heavy))
+                ZStack {
+                    if !trip.on {
+                        VStack(alignment: .trailing, spacing: 10) {
+                            // AI 在背景找剛新增的店
+                            if store.pendingAdds.contains(where: { $0.state == .finding }) {
+                                HStack(spacing: 8) {
+                                    ProgressView().controlSize(.small).tint(.white)
+                                    Text("找店中…").font(.footnote.weight(.heavy)).foregroundStyle(.white)
                                 }
-                                .foregroundStyle(Color.accentDeep)
-                                .frame(width: 44, height: 50)
-                                .background(.white, in: .rect(cornerRadius: 14))
-                                .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                                .padding(.horizontal, 14).frame(height: 36)
+                                .background(Color(hex: 0x2a1a0a), in: .capsule)
+                                .frame(maxWidth: .infinity)
+                                .transition(.scale(scale: 0.6).combined(with: .opacity))
                             }
-                            .buttonStyle(PressStyle(haptic: true))
-                            .accessibilityLabel("我的行程")
-                            Button {
-                                Haptic.light()
-                                withAnimation(.smooth(duration: 0.5)) { pos = .userLocation(fallback: pos) }
-                            } label: { CircleIcon(icon: "location.fill") }
-                            .buttonStyle(PressStyle())
-                            .accessibilityLabel("我的位置")
+                            HStack(alignment: .bottom) {
+                                // 沒有座標的店不會出現在地圖上，提醒一下，點了可以補地址
+                                if missing > 0 {
+                                    Button { noAddr = true } label: {
+                                        Label("\(missing) 間還沒有地址", systemImage: "mappin.slash")
+                                            .font(.footnote.weight(.heavy)).foregroundStyle(Color.ink)
+                                            .padding(.horizontal, 12).frame(height: 36)
+                                            .background(.white, in: .capsule).shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                                    }
+                                    .buttonStyle(PressStyle())
+                                }
+                                Spacer()
+                                VStack(spacing: 10) {
+                                    // 行程：上次打開的行程直接進行程模式；沒有就開「我的行程」
+                                    Button { openTrip() } label: {
+                                        VStack(spacing: 1) {
+                                            Image(systemName: "point.topleft.down.to.point.bottomright.curvepath.fill").font(.system(size: 17, weight: .bold))
+                                            Text("行程").font(.system(size: 10, weight: .heavy))
+                                        }
+                                        .foregroundStyle(Color.accentDeep)
+                                        .frame(width: 44, height: 50)
+                                        .background(.white, in: .rect(cornerRadius: 14))
+                                        .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                                    }
+                                    .buttonStyle(PressStyle(haptic: true))
+                                    .accessibilityLabel("我的行程")
+                                    Button {
+                                        Haptic.light()
+                                        withAnimation(.smooth(duration: 0.5)) { pos = .userLocation(fallback: pos) }
+                                    } label: { CircleIcon(icon: "location.fill") }
+                                    .buttonStyle(PressStyle())
+                                    .accessibilityLabel("我的位置")
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            NearbySheet(near: near, pins: pins, list: list, group: gname, draw: draw, panel: openPanel, choose: choose, dropKey: pins.dropKey, focus: focus)
                         }
+                        .animation(.snappy, value: store.pendingAdds.map(\.state))
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
-                    .padding(.horizontal, 16)
-                    NearbySheet(near: near, pins: pins, list: list, group: gname, draw: draw, panel: openPanel, choose: choose, dropKey: pins.dropKey, focus: focus)
                 }
-                .animation(.snappy, value: store.pendingAdds.map(\.state))
             }
             // 長按圖釘：背景變暗、圖釘放大，旁邊彈出「加進行程／導航／看店家」
             .overlay { PinMenu(pins: pins, list: list, act: pinAct) }
@@ -190,6 +279,7 @@ struct MapTab: View {
                 .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $adding) { AddSheet() }
+        .sheet(isPresented: $trip.listing) { TripsList().presentationDetents([.medium, .large]) }
         .confirmationDialog("用哪個地圖導航？", isPresented: Binding(get: { navAsk != nil }, set: { if !$0 { navAsk = nil } }), titleVisibility: .visible, presenting: navAsk) { p in
             ForEach(NavApp.allCases, id: \.self) { a in
                 Button(a.name) { NavApp.saved = a; if let u = p.navURL(a) { openURL(u) } }
@@ -275,6 +365,8 @@ struct MapTab: View {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { pins.menu = nil }
         let trips = TripStore.shared
         switch a {
+        case .add where trip.on:
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) { trip.cand = TripCand(place: p) }
         case .add:
             Task {
                 // 還沒讀過行程（第一次按）：先讀，免得多開一個新行程
@@ -282,7 +374,7 @@ struct MapTab: View {
                 trips.addPlace(p, store: store)
             }
         case .trip(let s):
-            store.mapPath.append(TripRoute.trip(s.trip_id, focus: s.id))
+            trip.open(s.trip_id, focus: s.id, store: store)
         case .nav:
             if let n = NavApp.saved { if let u = p.navURL(n) { openURL(u) } } else { navAsk = p }
         case .open:
@@ -326,6 +418,22 @@ struct MapTab: View {
 
     // 選到一根圖釘之後：光圈、量測、地圖移過去（不改縮放）
     private func picked(_ id: String?, _ list: [Place], _ proxy: MapProxy) {
+        // 行程模式：點收藏的圖釘或搜到的地點 → 下面換成加站卡（地圖由面板框住前後兩站）
+        if trip.on {
+            trip.pickAt = CACurrentMediaTime()
+            guard let id else {
+                if trip.cand != nil { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { trip.cand = nil } }
+                return
+            }
+            var c: TripCand?
+            if id.hasPrefix("hit:") { c = trip.search.hits.first { "hit:" + $0.id == id }.map { TripCand(hit: $0) } }
+            else { c = store.place(id).map { TripCand(place: $0) } }
+            guard let c, c != trip.cand else { return }
+            Perf.shared.mark("點收藏加站")
+            trip.typing = false
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) { trip.cand = c }
+            return
+        }
         guard let id, let p = list.first(where: { $0.id == id }) else { return }
         Perf.shared.mark(pins.drawn == id ? "抽一間（抽中）" : "點圖釘")
         // 先把大卡片和店家頁要用的照片載好，點進去時第一幀就有
@@ -351,7 +459,46 @@ struct MapTab: View {
         UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow?.bounds.width }.first ?? 390
     }
 
-    private var currentList: [Place] { withExtra(store.shown(store.mapF, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil }) }
+    private var currentList: [Place] {
+        let hide = tripHidden
+        return withExtra(store.shown(store.mapF, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil }).filter { !hide.contains($0.id) }
+    }
+
+    // 行程模式：這天已經排進行程的店（畫成號碼）
+    private var tripHidden: Set<String> {
+        guard let tid = trip.tid else { return [] }
+        let days = tripStore.trip(tid)?.days ?? 1
+        return Set(tripStore.stops(tid, day: min(trip.day, days)).compactMap(\.place_id))
+    }
+
+    // 右邊「行程」：上次打開的行程直接進行程模式；沒有就開「我的行程」
+    private func openTrip() {
+        if let last = tripStore.lastOpened, !(tripStore.loaded && tripStore.trip(last) == nil) {
+            trip.open(last, store: store)
+        } else {
+            Perf.shared.mark("我的行程")
+            trip.listing = true
+        }
+    }
+
+    // 地圖上的號碼：地圖飛過去、清單捲到那站
+    private func tapMark(_ id: String) {
+        trip.pickAt = CACurrentMediaTime()
+        if trip.cand != nil { withAnimation(.snappy) { trip.cand = nil } }
+        trip.tap(id)
+        trip.scrollTo = id
+    }
+
+    // 點地圖空白處：等一下看是不是其實點到圖釘（圖釘的點擊可能晚一點才到）
+    private func blankTap() {
+        guard trip.on else { return }
+        Task {
+            try? await Task.sleep(for: .milliseconds(180))
+            guard CACurrentMediaTime() - trip.pickAt > 0.4 else { return }
+            if trip.typing { trip.typing = false }
+            trip.blank()
+        }
+    }
 
     // 擠在一起的圖釘合成泡泡（選到的、抽中被篩掉的那根不合）：拆開的從泡泡飛回自己的位置，合起來的先飛進泡泡再收掉
     private func recluster(_ proxy: MapProxy) {
@@ -367,9 +514,11 @@ struct MapTab: View {
         let cell = pow(2, ceil(log2(max(r.span.longitudeDelta / Double(Self.mapWidth) * 44, 1e-7))))
         var pts: [String: CGPoint] = [:]
         var cells: [String: [Place]] = [:]
+        // 行程模式搜到的收藏不合進泡泡（要看得到）
+        let keep: Set<String> = trip.on && trip.searchOn ? Set(trip.search.found.map(\.id)) : []
         for p in currentList {
             if let pt = proxy.convert(CLLocationCoordinate2D(latitude: p.lat!, longitude: p.lng!), to: .local) { pts[p.id] = pt }
-            guard p.id != pins.sel, p.id != pins.extra else { continue }
+            guard p.id != pins.sel, p.id != pins.extra, !keep.contains(p.id) else { continue }
             let y = log(tan(.pi / 4 + p.lat! * .pi / 360)) * 180 / .pi
             cells["\(Int((p.lng! / cell).rounded(.down))),\(Int((y / cell).rounded(.down)))", default: []].append(p)
         }
@@ -555,7 +704,9 @@ struct NearbySheet: View {
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        title.font(.system(size: 19, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1)
+                        // 標題（群組名稱可能很長）先拿位置，小字不夠放就先截掉小字
+                        title.font(.system(size: 19, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1).minimumScaleFactor(0.8)
+                            .layoutPriority(1)
                         Text(near.subtitle).font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.45)).lineLimit(1)
                         Spacer(minLength: 0)
                         if let draw, !list.isEmpty {

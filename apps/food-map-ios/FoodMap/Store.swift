@@ -50,7 +50,8 @@ struct Snapshot: Codable {
     var depth = [0, 0, 0, 0]
     // 抽一間丟到群組投票：群組頁直接打開這個群組（開好那一輪再推進去）
     var groupJump: GroupJump?
-    var barHidden: Bool { tab == 0 ? !mapPath.isEmpty : depth[tab] > 0 }
+    // 行程模式出發時：全畫面導航，分頁列收起來
+    var barHidden: Bool { tab == 0 ? (!mapPath.isEmpty || TripMode.shared.going) : depth[tab] > 0 }
 
     // 教學（Coach.swift）：在真的畫面上把要按的東西圈起來
     var coach: [CoachStep] = []

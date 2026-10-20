@@ -80,10 +80,6 @@ struct Root: View {
                     Text("Apple 沒有給名字，填一個朋友認得的（之後可以在「我的」改）")
                 }
                 .fullScreenCover(isPresented: $store.showIG) { IGTutorial() }
-                // 「加進行程」後點訊息條：換到別的行程
-                .sheet(item: Binding(get: { TripStore.shared.picking }, set: { TripStore.shared.picking = $0 })) { r in
-                    TripPickSheet(stopId: r.id).presentationDetents([.medium, .large])
-                }
             } else {
                 LoginView()
             }

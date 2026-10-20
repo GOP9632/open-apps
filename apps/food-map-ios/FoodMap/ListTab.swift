@@ -27,9 +27,10 @@ struct ListTab: View {
                     HStack {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text("我的收藏").font(.system(size: 30, weight: .black)).foregroundStyle(Color.ink)
-                            Text("\(groups.count) 家").font(.headline).foregroundStyle(Color.accent)
-                                .contentTransition(.numericText(value: Double(groups.count)))
-                                .animation(.snappy, value: groups.count)
+                            // 跟地圖、「我的」一樣算間數（同一家的分店在這裡合成一張卡，但數字照分店算）
+                            Text("\(visible.count) 間").font(.headline).foregroundStyle(Color.accent)
+                                .contentTransition(.numericText(value: Double(visible.count)))
+                                .animation(.snappy, value: visible.count)
                         }
                         Spacer()
                         // 抽一間：跟地圖同一份設定（長按改），這裡沒座標的店也抽得到；分店多的不會比較容易抽到，抽中離你最近的那間

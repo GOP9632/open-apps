@@ -1,52 +1,42 @@
 import SwiftUI
 import MapKit
 
-// 排行程頁：上面地圖、下面可以拉的面板（只露標題／一半／幾乎全螢幕）
-// 每站一列：彩色號碼、照片、名字、停留多久、幾點到幾點走；兩站之間可以換走路／開車／捷運
-// 長按一站拖曳換順序：拖的時候地圖上的號碼和路線馬上跟著換；拖到上面的「第 N 天」就換到那天
-struct TripPage: View {
+// 行程面板：蓋在首頁地圖下面（行程模式時），可以拉成三段高度
+// 一半、全開：每站一列（號碼、照片、名字、停留、時間），兩站之間一行交通；長按拖曳換順序，拖到上面「第 N 天」就換天
+// 最低：只剩一排橫向站卡，地圖全開；長按站卡左右拖換順序
+// 點地圖上的收藏：面板換成「加站卡」，自動找最順的位置
+struct TripPanel: View {
     let tid: String
-    var focus: String? = nil
+    @Binding var pos: MapCameraPosition
     @Environment(Store.self) private var store
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var phase
     @Environment(\.openURL) private var openURL
+    @State private var mode = TripMode.shared
     @State private var trips = TripStore.shared
     @State private var router = TripRouter.shared
-    @State private var day = 1
     @State private var expanded: String?
-    @State private var pos: MapCameraPosition = .automatic
-    @State private var level: Level = .mid
     @State private var pull: CGFloat = 0
     @State private var drag = RowDrag()
-    @State private var geo = RowGeo()
-    @State private var renaming = false
-    @State private var newTitle = ""
-    @State private var setting = false
-    @State private var deleting = false
-    @State private var focused = false
     @State private var size: CGSize = .zero
-    @State private var addReq: AddReq?
+    @State private var cardPull: CGFloat = 0
+    @State private var loving = false
+    @State private var placed = false
     // 出發
-    @State private var going = false
     @State private var me: CLLocation?          // 出發時的目前位置（只在 App 開著時更新）
     @State private var pinged: String?          // 已經為「快到了」震過的那站
     @State private var rate: String?            // 問「好吃嗎」的那站
     @State private var finished = false
-    @State private var back: CGFloat = 0       // 面板上往右滑回上一頁拉了多遠
-    @State private var backLock: Bool?         // 這次拖曳是不是橫向往右（一開始就決定）
     @State private var party = 0
     @State private var navAsk: TripStop?
 
-    enum Level { case low, mid, high }
+    // 下面浮著的分頁列要留的位置
+    private var barRoom: CGFloat { mode.going ? 0 : 82 }
 
     var body: some View {
         Group {
             if let t = trips.trip(tid) { content(t) } else { gone }
         }
-        .toolbarVisibility(.hidden, for: .navigationBar)
         .task(id: tid) {
-            trips.lastOpened = tid
             await trips.load()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(20))
@@ -55,182 +45,146 @@ struct TripPage: View {
             }
         }
         .onChange(of: phase) { _, p in if p == .active { Task { await trips.load() } } }
-        .onAppear { Perf.shared.mark("進行程") }
+        // 打字時鍵盤不要把面板頂上去（面板本來就降到最低）
+        .ignoresSafeArea(.keyboard, edges: .bottom)
     }
 
     private var gone: some View {
-        VStack(spacing: 14) {
-            HStack {
-                Button { store.pop(dismiss) } label: { CircleIcon(icon: "chevron.left") }.buttonStyle(PressStyle())
-                Spacer()
+        VStack(spacing: 10) {
+            if trips.loaded {
+                Text("這個行程不見了").font(.headline).foregroundStyle(Color.ink)
+                Text("可能被建立的人刪掉了").font(.subheadline).foregroundStyle(Color.ink.opacity(0.5))
+                Button("回到地圖") { mode.close() }.buttonStyle(ChunkyStyle(radius: 16))
+            } else {
+                ProgressView()
             }
-            Spacer()
-            if trips.loaded { ContentUnavailableView("這個行程不見了", systemImage: "map", description: Text("可能被建立的人刪掉了")) }
-            else { ProgressView() }
-            Spacer()
         }
-        .padding(16)
-        .background(Color.bg)
+        .frame(maxWidth: .infinity).padding(.vertical, 24).padding(.bottom, barRoom)
+        .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg).ignoresSafeArea(edges: .bottom))
+        .frame(maxHeight: .infinity, alignment: .bottom)
     }
 
     // ----- 版面 -----
 
     private func content(_ t: Trip) -> some View {
-        let d = min(day, t.days)
+        let d = min(mode.day, t.days)
         let base = trips.stops(t.id, day: d)
         let order = drag.preview(base)
-        let origin = originOf(order)
-        let legs = legsOf(t, order, origin: origin)
-        let plan = TripCalc.plan(order, legs: legs.map { $0?.min }, backLeg: backLeg(t, order, origin: origin))
-        let segs = segsOf(t, order, origin: origin, legs: legs)
-        let marks = marksOf(order)
+        let origin = TripMath.origin(order, here: store.here)
+        let legs = TripMath.legs(t, order, origin: origin, router: router)
+        let plan = TripCalc.plan(order, legs: legs.map { $0?.min }, backLeg: TripMath.backLeg(t, order, origin: origin, router: router))
         let next = order.first { $0.done_at == nil }
         let core = ZStack(alignment: .bottom) {
-            TripMap(pos: $pos, segs: segs, marks: marks)
-                .ignoresSafeArea()
-            if !going {
+            Color.clear.allowsHitTesting(false)
+            if mode.going {
+                goBottom(order)
+            } else if let c = mode.cand {
+                addCard(t, c, order: order)
+                    .id(c.id)
+                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
+            } else {
                 panel(t, d: d, base: base, order: order, legs: legs, plan: plan)
                     .transition(.move(edge: .bottom))
-                actions(t, base: base)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else {
-                goBottom(order)
             }
-        }
-        let top = core.overlay(alignment: .leading) {
-            if back > 0 { backBubble }
         }
         .overlay(alignment: .top) {
-            VStack(spacing: 10) {
-                header(t, d: d, order: order, plan: plan)
-                if going, let next { goCard(t, order: order, next: next, plan: plan).padding(.horizontal, 14) }
+            if mode.going, let next {
+                goCard(t, order: order, next: next, plan: plan).padding(.horizontal, 14).padding(.top, 6)
+            } else if mode.searchOn && mode.cand == nil && !mode.going {
+                TripResults().transition(.opacity.combined(with: .offset(y: -8)))
             }
         }
-        return goMods(top, t, order: order, next: next)
+        .animation(.snappy(duration: 0.22), value: mode.searchOn && mode.cand == nil)
+        return goMods(core, t, order: order, next: next)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+        // 地圖要畫的路線、號碼；上面標題列的「4 站・16:40 回」
+        .onChange(of: pubKey(order, legs, origin: origin, plan: plan), initial: true) {
+            mode.segs = TripMath.segs(order, origin: origin, legs: legs)
+            mode.marks = TripMath.marks(order)
+            mode.summary = TripMath.summary(order, plan: plan)
+        }
         // 換天、加站、刪站：地圖 0.5 秒縮放到包住這天所有站
         .onChange(of: fitKey(d, base)) { fit(base, origin: origin, animated: true) }
-        .onChange(of: size) { fit(base, origin: origin, animated: false) }
-        .onChange(of: level) { fit(base, origin: origin, animated: true) }
-        .task(id: needKey(t, base, origin: origin)) { router.need(needs(t, base, origin: origin)) }
-        .onAppear { openFocus(t) }
-        .alert("行程名稱", isPresented: $renaming) {
-            TextField("名稱", text: $newTitle)
-            Button("取消", role: .cancel) {}
-            Button("好") {
-                let n = newTitle.trimmingCharacters(in: .whitespaces)
-                if !n.isEmpty, var x = trips.trip(tid) { x.title = n; trips.update(x, store: store) }
-            }
+        .onChange(of: mode.fitTick) { fit(base, origin: origin, animated: true) }
+        // 第一次量到大小（剛進行程模式）：0.5 秒縮放到這天的站（從店家頁進來的就飛到那站）
+        .onChange(of: size) {
+            if placed { fit(base, origin: origin, animated: false); return }
+            placed = true
+            if mode.hot != nil { flyTo(mode.hot) } else { fit(base, origin: origin, animated: true) }
         }
-        .sheet(isPresented: $setting) { TripForm(trip: t) }
-        .fullScreenCover(item: $addReq) { r in
-            TripAddSheet(tid: t.id, day: d, start: r.filter, slot: r.slot, seg: r.seg).environment(store)
-        }
-        .confirmationDialog("刪除「\(t.title)」？每一站都會一起刪掉", isPresented: $deleting, titleVisibility: .visible) {
-            Button("刪除行程", role: .destructive) { store.pop(dismiss); trips.deleteWithUndo(t, store: store) }
+        .onChange(of: mode.level) { if mode.cand == nil { fit(base, origin: origin, animated: true) } }
+        .onChange(of: mode.fly) { flyTo(mode.hot) }
+        .onChange(of: mode.day) { expanded = nil }
+        // 正在看要不要加的店：算插在哪、地圖框住前後兩站和這間
+        .onChange(of: candKey(order), initial: true) { placeCand(t, order) }
+        .onChange(of: mode.sharing) { share(t) }
+        // 搜尋結果：地圖框住結果和這天的站
+        .onChange(of: resultKey) { fit(base, origin: origin, animated: true) }
+        .task(id: needKey(t, base, origin: origin)) { router.need(TripMath.needs(t, base, origin: origin)) }
+        .onAppear {
+            if let e = mode.expand { expanded = e; mode.expand = nil }
         }
     }
 
-    private func header(_ t: Trip, d: Int, order: [TripStop], plan: DayPlan) -> some View {
-        HStack(spacing: 8) {
-            Button { store.pop(dismiss) } label: { CircleIcon(icon: "chevron.left") }
-                .buttonStyle(PressStyle()).accessibilityLabel("返回")
-            Button { newTitle = t.title; renaming = true } label: {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(t.title).font(.system(size: 17, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1)
-                    Text(subtitle(t, d: d, order: order, plan: plan)).font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5)).lineLimit(1)
-                        .contentTransition(.numericText())
-                }
-                .padding(.horizontal, 14)
-                .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-                .background(.white, in: .rect(cornerRadius: 16))
-                .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
-            }
-            .buttonStyle(PressStyle())
-            .accessibilityHint("改名稱")
-            Button { share(t) } label: { CircleIcon(icon: "square.and.arrow.up") }
-                .buttonStyle(PressStyle()).accessibilityLabel("分享")
-            Menu {
-                Button("行程設定", systemImage: "slider.horizontal.3") { setting = true }
-                Button("改名稱", systemImage: "pencil") { newTitle = t.title; renaming = true }
-                if t.owner == nil || t.owner == store.me {
-                    Button("刪除行程", systemImage: "trash", role: .destructive) { deleting = true }
-                }
-            } label: { CircleIcon(icon: "ellipsis") }
-            .accessibilityLabel("更多")
-        }
-        .padding(.horizontal, 14).padding(.top, 4)
-        .environment(\.colorScheme, .light)
-    }
-
-    // 9/20 週六・11:40 出發・回到 16:40
-    private func subtitle(_ t: Trip, d: Int, order: [TripStop], plan: DayPlan) -> String {
-        var p: [String] = []
-        if let date = t.date(of: d) { p.append(TripDate.label(date)) } else if t.days > 1 { p.append("第 \(d) 天") }
-        guard !order.isEmpty else { p.append("還沒有站"); return p.joined(separator: "・") }
-        p.append("\(TripDate.clock(plan.depart)) 出發")
-        if let b = plan.back { p.append("回到 \(TripDate.clock(b))") }
-        else if let l = plan.rows.last { p.append("\(TripDate.clock(l.leave)) 結束") }
-        return p.joined(separator: "・")
+    private func pubKey(_ order: [TripStop], _ legs: [Leg?], origin: CLLocationCoordinate2D?, plan: DayPlan) -> String {
+        let a = order.map { $0.id + ($0.done_at == nil ? "" : "✓") }.joined(separator: ",")
+        let b = legs.map { l in "\(l?.min ?? -1)\(l?.line != nil ? "r" : "")" }.joined(separator: ",")
+        return a + "|" + b + "|\(origin.map { "\($0.latitude),\($0.longitude)" } ?? "-")|\(plan.back ?? -1)|\(plan.rows.last?.leave ?? -1)"
     }
 
     // ----- 下面的面板 -----
 
     private func heights() -> (low: CGFloat, mid: CGFloat, high: CGFloat) {
         let h = max(size.height, 500)
-        return (176, h * 0.52, h - 76)
+        return (168 + barRoom, h * 0.5, h - 8)
     }
 
     private func panelHeight() -> CGFloat {
         let hs = heights()
-        let base: CGFloat = level == .low ? hs.low : level == .mid ? hs.mid : hs.high
+        let base: CGFloat = mode.level == .low ? hs.low : mode.level == .mid ? hs.mid : hs.high
         return min(hs.high + 30, max(hs.low - 30, base + pull))
     }
 
     private func panel(_ t: Trip, d: Int, base: [TripStop], order: [TripStop], legs: [Leg?], plan: DayPlan) -> some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 10) {
-                Capsule().fill(Color.ink.opacity(0.18)).frame(width: 40, height: 5).padding(.top, 8)
-                dayChips(t, d: d)
-            }
-            .padding(.bottom, 6)
-            .contentShape(.rect)
-            .gesture(sheetDrag)
-            ScrollViewReader { sp in
-                ScrollView {
-                    rows(t, d: d, base: base, order: order, legs: legs, plan: plan)
-                        .padding(.horizontal, 14).padding(.top, 4).padding(.bottom, 120)
+        let strip = mode.level == .low && pull >= -20
+        return VStack(spacing: 0) {
+            Capsule().fill(Color.ink.opacity(0.18)).frame(width: 40, height: 5)
+                .frame(maxWidth: .infinity).frame(height: 22)
+                .contentShape(.rect)
+                .gesture(sheetDrag)
+            if strip {
+                cards(t, base: base, order: order, plan: plan)
+                    .transition(.opacity)
+            } else {
+                ScrollViewReader { sp in
+                    ScrollView {
+                        rows(t, d: d, base: base, order: order, legs: legs, plan: plan)
+                            .padding(.horizontal, 14).padding(.top, 2).padding(.bottom, 16)
+                    }
+                    .scrollDisabled(drag.id != nil)
+                    .onChange(of: mode.scrollTo, initial: true) { _, id in
+                        guard let id else { return }
+                        mode.scrollTo = nil
+                        Task { try? await Task.sleep(for: .seconds(0.35)); withAnimation(.snappy) { sp.scrollTo(id, anchor: .center) } }
+                    }
                 }
-                .scrollDisabled(drag.id != nil)
-                .simultaneousGesture(backSwipe)
-                .onChange(of: focused) { _, f in
-                    guard f, let id = focus else { return }
-                    Task { try? await Task.sleep(for: .seconds(0.35)); withAnimation(.snappy) { sp.scrollTo(id, anchor: .center) } }
-                }
+                .transition(.opacity)
             }
+            actions(t, base: base)
         }
+        .padding(.bottom, barRoom)
         .frame(maxWidth: .infinity)
         .frame(height: panelHeight(), alignment: .top)
-        .swipeBackAllowed()
-        .background(Color.bg, in: UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28))
-        .shadow(color: .black.opacity(0.14), radius: 14, y: -2)
-        .ignoresSafeArea(edges: .bottom)
+        .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg)
+            .shadow(color: .black.opacity(0.14), radius: 14, y: -2).ignoresSafeArea(edges: .bottom))
+        .animation(.snappy(duration: 0.25), value: strip)
     }
 
-    // 面板最下面一排：＋ 加一站、✨ 幫我排順序、出發
+    // 面板最下面一排：✨ 幫我排順序、出發
     private func actions(_ t: Trip, base: [TripStop]) -> some View {
         let allDone = !base.isEmpty && base.allSatisfy { $0.done_at != nil }
         let canSort = base.filter(TripSort.movable).count >= 2
         return HStack(spacing: 8) {
-            Button {
-                Haptic.light()
-                Perf.shared.mark("按加一站")
-                addReq = AddReq()
-            } label: {
-                Label("加一站", systemImage: "plus").font(.headline).lineLimit(1).frame(maxWidth: .infinity)
-            }
-            .buttonStyle(ChunkyStyle(color: .panel, edge: .cardShadow, fg: .ink, radius: 18))
-            .accessibilityLabel("加一站")
             Button { sortDay(t, base) } label: {
                 Text("✨ 排順序").font(.headline).lineLimit(1).minimumScaleFactor(0.8).frame(maxWidth: .infinity)
             }
@@ -245,52 +199,9 @@ struct TripPage: View {
             .disabled(base.isEmpty)
             .opacity(base.isEmpty ? 0.5 : 1)
         }
-        .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 6)
-        .background {
-            LinearGradient(colors: [Color.bg.opacity(0), Color.bg], startPoint: .top, endPoint: .init(x: 0.5, y: 0.35))
-                .ignoresSafeArea(edges: .bottom)
-                .allowsHitTesting(false)
-        }
+        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 6)
         .opacity(drag.id == nil ? 1 : 0)
         .animation(.snappy(duration: 0.2), value: drag.id == nil)
-    }
-
-    // 面板蓋在地圖上，系統「從畫面中間往右滑回上一頁」在這裡起不來（手指被當成在拖底下的地圖），
-    // 所以面板自己接：往右滑，左邊冒出返回圓鈕跟著手指，拉過 90 點放開就回上一頁
-    private var backSwipe: some Gesture {
-        DragGesture(minimumDistance: 16, coordinateSpace: .global)
-            .onChanged { v in
-                guard drag.id == nil, !SwipeBack.recentlyBegan else { return }
-                if backLock == nil {
-                    let dx = v.translation.width, dy = v.translation.height
-                    backLock = dx > 0 && dx > abs(dy) * 1.5 && !SwipeBackBlock.contains(v.startLocation)
-                }
-                guard backLock == true else { return }
-                let was = back >= 90
-                back = max(0, v.translation.width)
-                if (back >= 90) != was { Haptic.tick() }
-            }
-            .onEnded { v in
-                defer { backLock = nil }
-                guard backLock == true else { return }
-                let go = back >= 90 || (back > 30 && v.predictedEndTranslation.width > 240)
-                withAnimation(.snappy(duration: 0.2)) { back = 0 }
-                if go && !SwipeBack.recentlyBegan { store.pop(dismiss) }
-            }
-    }
-
-    private var backBubble: some View {
-        let on = back >= 90
-        return Image(systemName: "chevron.left").font(.system(size: 18, weight: .heavy))
-            .foregroundStyle(on ? Color.white : Color.ink)
-            .frame(width: 44, height: 44)
-            .background(on ? Color.accent : Color.panel, in: .circle)
-            .shadow(color: .black.opacity(0.2), radius: 8, y: 3)
-            .scaleEffect(on ? 1.1 : 1)
-            .animation(.snappy(duration: 0.15), value: on)
-            .offset(x: min(back, 140) * 0.45 - 34)
-            .opacity(min(1, back / 40))
-            .allowsHitTesting(false)
     }
 
     // 拉面板：放開時停在最近的一段（甩得快就往甩的方向）
@@ -299,61 +210,14 @@ struct TripPage: View {
             .onChanged { v in pull = -v.translation.height }
             .onEnded { v in
                 let hs = heights()
-                let now: CGFloat = (level == .low ? hs.low : level == .mid ? hs.mid : hs.high) - v.predictedEndTranslation.height * 0.6
-                let pick: Level = [(Level.low, hs.low), (Level.mid, hs.mid), (Level.high, hs.high)].min { abs($0.1 - now) < abs($1.1 - now) }!.0
-                if pick != level { Haptic.light() }
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { level = pick; pull = 0 }
+                let now: CGFloat = (mode.level == .low ? hs.low : mode.level == .mid ? hs.mid : hs.high) - v.predictedEndTranslation.height * 0.6
+                let pick: TripLevel = [(TripLevel.low, hs.low), (TripLevel.mid, hs.mid), (TripLevel.high, hs.high)].min { abs($0.1 - now) < abs($1.1 - now) }!.0
+                if pick != mode.level { Haptic.light() }
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { mode.level = pick; pull = 0 }
             }
     }
 
-    private func dayChips(_ t: Trip, d: Int) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(1...max(1, t.days), id: \.self) { n in dayChip(n, on: n == d) }
-                if t.days < 14 {
-                    Button {
-                        Haptic.light()
-                        var x = t; x.days += 1
-                        trips.update(x, store: store)
-                        withAnimation(.snappy) { day = x.days }
-                    } label: {
-                        Text("＋ 加一天").font(.subheadline.weight(.heavy)).foregroundStyle(Color.ink.opacity(0.55))
-                            .padding(.horizontal, 12).frame(height: 34)
-                            .background(Color.bg2, in: .capsule)
-                            .frame(minHeight: 44).contentShape(.rect)
-                    }
-                    .buttonStyle(PressStyle())
-                }
-                startChip(t, d: d)
-            }
-            .padding(.horizontal, 14)
-        }
-        // 天數多到要橫著捲：在這排往右滑是捲回去，不是回上一頁
-        .swipeBackBlocked(t.days >= 3)
-    }
-
-    private func dayChip(_ n: Int, on: Bool) -> some View {
-        let over = drag.overDay == n && n != day
-        return Button {
-            guard n != day else { return }
-            Haptic.light()
-            Perf.shared.mark("換天")
-            withAnimation(.snappy) { day = n; expanded = nil }
-        } label: {
-            Text("第 \(n) 天").font(.subheadline.weight(.heavy))
-                .padding(.horizontal, 14).frame(height: 34)
-                .background(on ? Color.ink : over ? Color.accent.opacity(0.25) : .white, in: .capsule)
-                .overlay(Capsule().strokeBorder(over ? Color.accent : on ? .clear : Color.ink.opacity(0.1), lineWidth: over ? 2 : 1))
-                .foregroundStyle(on ? .white : Color.ink)
-                .scaleEffect(over ? 1.12 : 1)
-                .frame(minHeight: 44).contentShape(.rect)
-        }
-        .buttonStyle(PressStyle())
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { geo.chips[n] = $0 }
-        .animation(.snappy, value: over)
-    }
-
-    // ----- 每一站 -----
+    // ----- 每一站（一半、全開） -----
 
     @ViewBuilder
     private func rows(_ t: Trip, d: Int, base: [TripStop], order: [TripStop], legs: [Leg?], plan: DayPlan) -> some View {
@@ -361,10 +225,10 @@ struct TripPage: View {
             VStack(spacing: 8) {
                 Text("🍩").font(.system(size: 40))
                 Text("這天還沒有站").font(.headline).foregroundStyle(Color.ink)
-                Text("按下面的「＋ 加一站」，或到店家頁按「加進行程」").font(.subheadline).foregroundStyle(Color.ink.opacity(0.5))
+                Text("點地圖上的收藏就能加進來，\n或在上面搜尋景點、飯店").font(.subheadline).foregroundStyle(Color.ink.opacity(0.5))
                     .multilineTextAlignment(.center)
             }
-            .frame(maxWidth: .infinity).padding(.vertical, 30)
+            .frame(maxWidth: .infinity).padding(.vertical, 24)
         }
         VStack(spacing: 0) {
             ForEach(Array(base.enumerated()), id: \.element.id) { k, s in
@@ -387,8 +251,7 @@ struct TripPage: View {
                 // 空檔推薦：下一站有固定時間、中間多出 1 小時以上
                 if let row, row.wait >= 60, drag.id == nil {
                     gapHint(row.wait, count: gapCount(t, prev, s)) {
-                        Haptic.light()
-                        addReq = AddReq(filter: .route, slot: .between(prev.pos, s.pos), seg: [prev.id, s.id])
+                        mode.startSearch(.route, slot: .between(prev.pos, s.pos), seg: [prev.id, s.id])
                     }
                 }
             }
@@ -397,14 +260,20 @@ struct TripPage: View {
                 if expanded == s.id { expanded = nil }
                 trips.deleteWithUndo(s, store: store)
             } content: {
-                StopCard(stop: s, n: i + 1, row: row, open: expanded == s.id, me: store.me, tap: {
-                    Haptic.light()
-                    withAnimation(.snappy) { expanded = expanded == s.id ? nil : s.id }
+                StopCard(stop: s, n: i + 1, row: row, open: expanded == s.id, me: store.me, hot: mode.hot == s.id, tap: {
+                    // 第一下：地圖飛到這站；同一站再點一下才展開
+                    if mode.hot == s.id {
+                        Haptic.light()
+                        withAnimation(.snappy) { expanded = expanded == s.id ? nil : s.id }
+                    } else {
+                        mode.tap(s.id)
+                        if expanded != nil { withAnimation(.snappy) { expanded = nil } }
+                    }
                 }, hold: AnyGesture(reorder(t, s, k: k).map { _ in () }))
             }
         }
         .id(s.id)
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { if drag.id == nil { geo.rows[s.id] = $0 } }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { if drag.id == nil { mode.geo.rows[s.id] = $0 } }
         .offset(y: dragging ? drag.dy : drag.shift(k))
         .scaleEffect(dragging ? 1.03 : 1)
         .shadow(color: .black.opacity(dragging ? 0.18 : 0), radius: 12, y: 6)
@@ -419,26 +288,34 @@ struct TripPage: View {
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
             .onChanged { v in
                 guard case .second(true, let g) = v else { return }
-                if drag.id == nil { begin(s, k: k) }
+                if drag.id == nil { begin(s, k: k, size: mode.geo.rows[s.id]?.height ?? 80) }
                 guard let g else { return }
                 drag.dy = g.translation.height
-                drag.retarget(geo, base: trips.stops(t.id, day: min(day, t.days)))
-                let over = geo.chips.first { $0.value.contains(g.location) }?.key
-                if over != drag.overDay { drag.overDay = over; if over != nil { Haptic.tick() } }
+                drag.retarget(mode.geo, base: trips.stops(t.id, day: min(mode.day, t.days)))
+                overDay(g.location)
             }
             .onEnded { _ in drop(t) }
     }
 
-    private func begin(_ s: TripStop, k: Int) {
+    private func overDay(_ p: CGPoint) {
+        let over = mode.geo.chips.first { $0.value.contains(p) }?.key
+        if over != drag.overDay {
+            drag.overDay = over
+            mode.overDay = over
+            if over != nil { Haptic.tick() }
+        }
+    }
+
+    private func begin(_ s: TripStop, k: Int, size h: CGFloat) {
         Haptic.medium()
         Perf.shared.mark("拿起一站")
-        let h = geo.rows[s.id]?.height ?? 80
         withAnimation(.snappy(duration: 0.2)) { drag = RowDrag(id: s.id, from: k, to: k, h: h) }
     }
 
     private func drop(_ t: Trip) {
+        mode.overDay = nil
         guard let id = drag.id, var s = trips.stops.first(where: { $0.id == id }) else { drag = RowDrag(); return }
-        let d = min(day, t.days)
+        let d = min(mode.day, t.days)
         if let nd = drag.overDay, nd != d {
             s.day = nd; s.pos = trips.nextPos(t.id, nd)
             Haptic.success()
@@ -462,95 +339,298 @@ struct TripPage: View {
         withAnimation(.snappy(duration: 0.28)) { trips.update(s, store: store); drag = RowDrag() }
     }
 
-    // ----- 地圖 -----
+    // ----- 最低：一排橫向站卡 -----
 
-    private func originOf(_ order: [TripStop]) -> CLLocationCoordinate2D? {
-        // 第一站是住宿：從住宿出發（住宿就是第 1 站），不用目前位置
-        if order.first?.kind == "stay" { return nil }
-        // 目前位置離第一站 30 公里內才當起點（人在台北排台南的行程就不算）
-        guard let here = store.here, let f = order.first(where: { $0.coord != nil })?.coord else { return nil }
-        return here.distance(from: CLLocation(latitude: f.latitude, longitude: f.longitude)) < 30_000 ? here.coordinate : nil
-    }
-
-    private func mode(_ t: Trip, _ s: TripStop) -> TravelMode { TravelMode(rawValue: s.mode ?? t.mode) ?? .walk }
-
-    // legs[i] = 到第 i 站的那段（第 0 站從起點來）
-    private func legsOf(_ t: Trip, _ order: [TripStop], origin: CLLocationCoordinate2D?) -> [Leg?] {
-        order.enumerated().map { i, s in
-            guard let b = s.coord else { return nil }
-            let a: CLLocationCoordinate2D? = i == 0 ? origin : order[i - 1].coord
-            guard let a else { return nil }
-            return router.leg(a, b, i == 0 ? (TravelMode(rawValue: t.mode) ?? .walk) : mode(t, s))
+    private func cards(_ t: Trip, base: [TripStop], order: [TripStop], plan: DayPlan) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if base.isEmpty {
+                    Text("點地圖上的收藏就能加進來").font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
+                        .frame(height: 70).padding(.horizontal, 6)
+                }
+                ForEach(Array(base.enumerated()), id: \.element.id) { k, s in
+                    let i = order.firstIndex { $0.id == s.id } ?? k
+                    let dragging = drag.id == s.id
+                    MiniStop(stop: s, n: i + 1, row: i < plan.rows.count ? plan.rows[i] : nil, hot: mode.hot == s.id)
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { if drag.id == nil { mode.geo.cards[s.id] = $0 } }
+                        .contentShape(.rect)
+                        .onTapGesture { mode.tap(s.id) }
+                        .gesture(reorderX(t, s, k: k))
+                        .offset(x: dragging ? drag.dy : drag.shift(k))
+                        .scaleEffect(dragging ? 1.06 : 1)
+                        .shadow(color: .black.opacity(dragging ? 0.2 : 0), radius: 10, y: 5)
+                        .zIndex(dragging ? 10 : 0)
+                        .animation(dragging ? nil : .snappy(duration: 0.25), value: drag.shift(k))
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
+                }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 4)
         }
+        .scrollDisabled(drag.id != nil)
+        .swipeBackBlocked()
+        .frame(height: 82)
     }
 
-    // 一天結束回到哪：目前位置出發就回目前位置；從住宿出發就回住宿
-    private func backTo(_ order: [TripStop], origin: CLLocationCoordinate2D?) -> CLLocationCoordinate2D? {
-        if let origin { return origin }
-        guard order.count > 1, let f = order.first, f.kind == "stay", order.last?.kind != "stay" else { return nil }
-        return f.coord
+    // 站卡長按拿起來左右拖：地圖上的號碼和路線跟著換
+    private func reorderX(_ t: Trip, _ s: TripStop, k: Int) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.35)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+            .onChanged { v in
+                guard case .second(true, let g) = v else { return }
+                if drag.id == nil { begin(s, k: k, size: (mode.geo.cards[s.id]?.width ?? 150) + 8) }
+                guard let g else { return }
+                drag.dy = g.translation.width
+                drag.retargetX(mode.geo, base: trips.stops(t.id, day: min(mode.day, t.days)))
+                overDay(g.location)
+            }
+            .onEnded { _ in drop(t) }
     }
 
-    private func backLeg(_ t: Trip, _ order: [TripStop], origin: CLLocationCoordinate2D?) -> Int? {
-        guard let o = backTo(order, origin: origin), let l = order.last?.coord else { return nil }
-        return router.leg(l, o, TravelMode(rawValue: t.mode) ?? .walk).min
+    // ----- 加站卡：點了地圖上的收藏、或搜尋結果 -----
+
+    private func candAt(_ order: [TripStop], _ c: TripCand) -> (at: Int, extra: Double) {
+        guard let co = c.coord else { return (order.count, 0) }
+        if let s = mode.slot {
+            let i = TripInsert.at(order, slot: s)
+            return (i, TripInsert.extra(order, co, at: i))
+        }
+        return TripInsert.best(order, co)
     }
 
-    private func needs(_ t: Trip, _ base: [TripStop], origin: CLLocationCoordinate2D?) -> [(CLLocationCoordinate2D, CLLocationCoordinate2D, TravelMode)] {
-        var out: [(CLLocationCoordinate2D, CLLocationCoordinate2D, TravelMode)] = []
+    private func candKey(_ order: [TripStop]) -> String {
+        (mode.cand?.id ?? "") + "|" + order.map(\.id).joined(separator: ",")
+    }
+
+    // 地圖上畫「前一站 → 這間 → 後一站」的虛線，框住這三個點
+    private func placeCand(_ t: Trip, _ order: [TripStop]) {
+        guard let c = mode.cand, let co = c.coord, stopOf(c, t) == nil else {
+            if mode.preview != nil { mode.preview = nil; mode.previewN = nil }
+            return
+        }
+        let r = candAt(order, c)
+        var line: [CLLocationCoordinate2D] = []
+        if r.at > 0, let a = order[r.at - 1].coord { line.append(a) }
+        line.append(co)
+        if r.at < order.count, let b = order[r.at].coord { line.append(b) }
+        mode.preview = line.count > 1 ? TripSeg(id: "cand", coords: line, color: TripColor.of(r.at), routed: false) : nil
+        mode.previewN = r.at + 1
+        fitCoords(line, card: true, animated: true)
+    }
+
+    // 這間已經在這個行程裡：哪一站
+    private func stopOf(_ c: TripCand, _ t: Trip) -> TripStop? {
+        guard let p = c.place else { return nil }
+        return trips.stops(t.id).first { $0.place_id == p.id }
+    }
+
+    private func addCard(_ t: Trip, _ c: TripCand, order: [TripStop]) -> some View {
+        let r = candAt(order, c)
         let tm = TravelMode(rawValue: t.mode) ?? .walk
-        for (i, s) in base.enumerated() {
-            guard let b = s.coord else { continue }
-            if i == 0 { if let o = origin { out.append((o, b, tm)) } }
-            else if let a = base[i - 1].coord { out.append((a, b, mode(t, s))) }
+        let inTrip = stopOf(c, t)
+        let n = r.at + 1
+        return VStack(alignment: .leading, spacing: 12) {
+            Capsule().fill(Color.ink.opacity(0.15)).frame(width: 38, height: 5).frame(maxWidth: .infinity)
+            HStack(alignment: .top, spacing: 12) {
+                Group {
+                    if let p = c.place {
+                        PhotoView(place: p, px: 300)
+                    } else if let h = c.hit {
+                        Image(systemName: POI.icon(h.poi, kind: h.stay ? "stay" : "spot")).font(.system(size: 24, weight: .bold)).foregroundStyle(.white)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(h.food ? Color.accent : TripColor.side)
+                    }
+                }
+                .frame(width: 72, height: 72).clipShape(.rect(cornerRadius: 16))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(c.name).font(.system(size: 19, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(2)
+                    Text(candMeta(c)).font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.55)).lineLimit(1)
+                    if let s = inTrip {
+                        Text(s.day == min(mode.day, t.days) ? "已經在第 \(order.firstIndex { $0.id == s.id }.map { $0 + 1 } ?? 0) 站" : "已經在第 \(s.day) 天")
+                            .font(.subheadline.weight(.heavy)).foregroundStyle(Color.sprMint)
+                    } else {
+                        Text(where_(order, r.at, extra: r.extra, mode: tm)).font(.subheadline.weight(.heavy)).foregroundStyle(Color.accentDeep)
+                            .contentTransition(.numericText())
+                    }
+                }
+                Spacer(minLength: 0)
+                Button { cancelCand() } label: {
+                    Image(systemName: "xmark").font(.system(size: 13, weight: .heavy)).foregroundStyle(Color.ink)
+                        .frame(width: 32, height: 32).background(Color.ink.opacity(0.07), in: .circle)
+                        .frame(width: 44, height: 44).contentShape(.rect)
+                }
+                .accessibilityLabel("不加")
+            }
+            if let s = inTrip {
+                HStack(spacing: 10) {
+                    Button {
+                        Haptic.light()
+                        mode.cand = nil
+                        mode.day = s.day
+                        mode.tap(s.id)
+                    } label: { Text("看這站").frame(maxWidth: .infinity) }
+                        .buttonStyle(ChunkyStyle(color: .panel, edge: .cardShadow, fg: .ink, radius: 16))
+                    Button {
+                        Haptic.light()
+                        withAnimation(.snappy) { mode.cand = nil }
+                        trips.deleteWithUndo(s, store: store)
+                    } label: { Text("從行程拿掉").frame(maxWidth: .infinity) }
+                        .buttonStyle(ChunkyStyle(color: .sprPink, edge: Color.sprPink.mix(with: .black, by: 0.2), radius: 16))
+                }
+            } else {
+                Button { add(t, c, order: order, at: r.at) } label: {
+                    Label("加進行程（第 \(n) 站）", systemImage: "plus").font(.headline).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(ChunkyStyle(radius: 18))
+                HStack(spacing: 8) {
+                    if r.at != order.count && !order.isEmpty {
+                        smallButton("加到最後", icon: "arrow.down.to.line") { add(t, c, order: order, at: order.count) }
+                    }
+                    if let p = c.place {
+                        NavigationLink(value: p) {
+                            smallLabel("看店家", icon: "fork.knife")
+                        }
+                        .buttonStyle(PressStyle())
+                    } else if let h = c.hit, h.food {
+                        smallButton(loving ? "收藏中…" : "♥ 收藏", icon: nil) { love(h) }
+                            .disabled(loving)
+                    }
+                }
+            }
         }
-        if let o = backTo(base, origin: origin), let l = base.last?.coord { out.append((l, o, tm)) }
-        return out
+        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 12 + barRoom)
+        .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg)
+            .shadow(color: .black.opacity(0.14), radius: 14, y: -2).ignoresSafeArea(edges: .bottom))
+        .offset(y: cardPull)
+        .gesture(DragGesture(minimumDistance: 8)
+            .onChanged { v in cardPull = max(0, v.translation.height) }
+            .onEnded { v in
+                if cardPull > 80 || v.predictedEndTranslation.height > 200 { cancelCand() }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { cardPull = 0 }
+            })
     }
 
-    private func needKey(_ t: Trip, _ base: [TripStop], origin: CLLocationCoordinate2D?) -> String {
-        needs(t, base, origin: origin).map { TripRouter.key($0.0, $0.1, $0.2) }.joined(separator: ";")
+    private func smallLabel(_ text: String, icon: String?) -> some View {
+        HStack(spacing: 5) {
+            if let icon { Image(systemName: icon).font(.system(size: 12, weight: .heavy)) }
+            Text(text).font(.subheadline.weight(.heavy))
+        }
+        .foregroundStyle(Color.ink.opacity(0.75))
+        .frame(maxWidth: .infinity).frame(height: 40)
+        .background(Color.ink.opacity(0.06), in: .rect(cornerRadius: 12))
+        .frame(minHeight: 44).contentShape(.rect)
     }
 
-    private func segsOf(_ t: Trip, _ order: [TripStop], origin: CLLocationCoordinate2D?, legs: [Leg?]) -> [TripSeg] {
-        var out: [TripSeg] = []
-        for (i, s) in order.enumerated() {
-            guard let b = s.coord else { continue }
-            let a: CLLocationCoordinate2D? = i == 0 ? origin : order[i - 1].coord
-            guard let a else { continue }
-            let leg = legs[i]
-            let line = leg?.coords
-            out.append(TripSeg(id: (i == 0 ? "o" : order[i - 1].id) + ">" + s.id, coords: line ?? [a, b], color: TripColor.of(i), routed: line != nil, faded: s.done_at != nil))
-        }
-        return out
+    private func smallButton(_ text: String, icon: String?, run: @escaping () -> Void) -> some View {
+        Button { Haptic.light(); run() } label: { smallLabel(text, icon: icon) }.buttonStyle(PressStyle())
     }
 
-    private func marksOf(_ order: [TripStop]) -> [TripMark] {
-        order.enumerated().compactMap { i, s in
-            guard let c = s.coord else { return nil }
-            return TripMark(id: s.id, n: i + 1, coord: c, color: TripColor.of(i), place: s.isPlace, icon: POI.icon(s.poi, kind: s.kind), done: s.done_at != nil)
+    private func candMeta(_ c: TripCand) -> String {
+        if let p = c.place {
+            var s = [p.been ? "✓ 去過" : "♥ 想去", "\(p.cat.emoji) \(p.cuisine?.isEmpty == false ? p.cuisine! : p.cat.name)"]
+            if !p.area.isEmpty { s.append(p.area) }
+            return s.joined(separator: " · ")
+        }
+        guard let h = c.hit else { return "" }
+        return [POI.name(h.poi), h.address].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    // 「插在第 2、3 站中間，只多走 4 分」
+    private func where_(_ order: [TripStop], _ at: Int, extra: Double, mode m: TravelMode) -> String {
+        if order.isEmpty { return "這天的第 1 站" }
+        let more = "\(m.verb) \(TripInsert.minutes(extra, m)) 分"
+        if at >= order.count { return "加在最後，多\(more)" }
+        if at == 0 { return "加在最前面，多\(more)" }
+        return "插在第 \(at)、\(at + 1) 站中間，只多\(more)"
+    }
+
+    private func cancelCand() {
+        Haptic.light()
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { mode.cand = nil }
+    }
+
+    private func add(_ t: Trip, _ c: TripCand, order: [TripStop], at i: Int) {
+        let d = min(mode.day, t.days)
+        var s: TripStop
+        if let p = c.place { s = trips.makeStop(t.id, day: d, place: p) }
+        else if let h = c.hit { s = trips.makeStop(t.id, day: d, hit: h) }
+        else { return }
+        s.pos = TripInsert.pos(order, at: i)
+        Haptic.success()
+        Perf.shared.mark("加站")
+        trips.insert(s, store: store)
+        store.say("加到第 \(i + 1) 站", icon: .check, action: ("復原", {
+            TripStore.shared.remove(s, dropTrip: false, store: store)
+            store.toast = nil
+        }))
+        // 空檔推薦只加一間：用完就收起搜尋
+        if mode.slot != nil { mode.clearSearch() }
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            mode.cand = nil
+            mode.hot = s.id
+            if mode.level == .low && !mode.searchOn { mode.level = .mid }
+        }
+        mode.scrollTo = s.id
+    }
+
+    // 搜到的餐廳存進收藏：存好後這張卡換成收藏的店（再按加進行程）
+    private func love(_ h: MapHit) {
+        guard !loving else { return }
+        Haptic.success()
+        loving = true
+        var p = Place(id: UUID().uuidString.lowercased(), name: h.name)
+        p.address = h.address; p.city = h.city; p.district = h.district
+        p.lat = h.coord.latitude; p.lng = h.coord.longitude
+        p.category = h.category; p.status = "want"
+        Task { [p] in
+            if let np = await store.create(p), mode.cand?.hit?.id == h.id {
+                withAnimation(.snappy) { mode.cand = TripCand(place: np) }
+            }
+            loving = false
         }
     }
+
+    // ----- 地圖 -----
 
     private func fitKey(_ d: Int, _ base: [TripStop]) -> String { "\(d)|" + base.map(\.id).joined(separator: ",") }
 
+    private var resultKey: String {
+        guard mode.searchOn else { return "" }
+        return mode.search.found.map(\.id).joined(separator: ",") + "|" + mode.search.hits.map(\.id).joined(separator: ",")
+    }
+
+    private func needKey(_ t: Trip, _ base: [TripStop], origin: CLLocationCoordinate2D?) -> String {
+        TripMath.needs(t, base, origin: origin).map { TripRouter.key($0.0, $0.1, $0.2) }.joined(separator: ";")
+    }
+
     // 把這天所有站框進「面板上面」那塊看得到的地圖
     private func fit(_ base: [TripStop], origin: CLLocationCoordinate2D?, animated: Bool) {
+        guard mode.cand == nil, !mode.going else { return }
+        if mode.searchOn {
+            let found = mode.search.found.compactMap { p in p.lat.flatMap { la in p.lng.map { CLLocationCoordinate2D(latitude: la, longitude: $0) } } }
+            let hits = mode.search.mapHits(mode.search.found).map(\.coord)
+            guard !(found + hits).isEmpty else { return }
+            fitCoords(found + hits + base.compactMap(\.coord), card: false, animated: animated, top: TripResults.height(mode) + 8)
+            return
+        }
         var cs = base.compactMap(\.coord)
         if cs.isEmpty, let o = origin { cs = [o] }
-        // 這天沒有站：回到目前位置（放在面板上面看得到的那塊正中間），沒有定位就看整個台灣
+        // 這天沒有站：回到目前位置；沒有定位就看整個台灣
         if cs.isEmpty, let h = store.here { cs = [h.coordinate] }
         if cs.isEmpty {
             let r = MKCoordinateRegion(center: .init(latitude: 23.7, longitude: 121.0), span: .init(latitudeDelta: 4.2, longitudeDelta: 3.2))
             if animated { withAnimation(.easeInOut(duration: 0.5)) { pos = .region(r) } } else { pos = .region(r) }
             return
         }
-        guard size.height > 0 else { return }
+        fitCoords(cs, card: false, animated: animated)
+    }
+
+    private func fitCoords(_ cs: [CLLocationCoordinate2D], card: Bool, animated: Bool, minSpan: Double = 0.004, top: CGFloat = 12) {
+        guard !cs.isEmpty, size.height > 0 else { return }
         let lats = cs.map(\.latitude), lngs = cs.map(\.longitude)
-        let latR = max(0.004, lats.max()! - lats.min()!)
-        let lngR = max(0.004, lngs.max()! - lngs.min()!)
-        let top: CGFloat = 80
-        let window = max(120, size.height - panelHeight() - top)
+        let latR = max(minSpan, lats.max()! - lats.min()!)
+        let lngR = max(minSpan, lngs.max()! - lngs.min()!)
+        let cover: CGFloat = card ? 300 : panelHeight()
+        let window = max(120, size.height - cover - top)
         let k = Double(window * 0.72) / latR                         // 每一度緯度幾點
         let full = Double(size.height) / k                          // 整張地圖的緯度範圍
         let mid = (lats.max()! + lats.min()!) / 2
@@ -561,11 +641,10 @@ struct TripPage: View {
         if animated { withAnimation(.easeInOut(duration: 0.5)) { pos = .region(r) } } else { pos = .region(r) }
     }
 
-    private func openFocus(_ t: Trip) {
-        guard !focused, let f = focus, let s = trips.stops.first(where: { $0.id == f }) else { return }
-        day = min(s.day, t.days)
-        expanded = f
-        focused = true
+    // 清單或地圖上點一站：地圖飛過去（放大到看得清楚附近）
+    private func flyTo(_ id: String?) {
+        guard let id, let c = trips.stops.first(where: { $0.id == id })?.coord else { return }
+        fitCoords([c], card: false, animated: true, minSpan: 0.008)
     }
 
     // ----- 幫我排順序 -----
@@ -576,7 +655,7 @@ struct TripPage: View {
         let n = base.filter(TripSort.movable).count
         if n > TripSort.maxStops { store.say("超過 \(TripSort.maxStops) 站，先移一些到別天再排"); return }
         let tm = TravelMode(rawValue: t.mode) ?? .walk
-        guard let r = TripSort.best(base, origin: originOf(base), mode: tm), r.saved >= 3 else {
+        guard let r = TripSort.best(base, origin: TripMath.origin(base, here: store.here), mode: tm), r.saved >= 3 else {
             store.say("已經很順了", icon: .check)
             return
         }
@@ -595,7 +674,7 @@ struct TripPage: View {
     // 這段路 400 公尺內、還沒去過、不在這個行程裡的收藏有幾間
     private func gapCount(_ t: Trip, _ a: TripStop, _ b: TripStop) -> Int {
         guard let ca = a.coord, let cb = b.coord else { return 0 }
-        let line = router.leg(ca, cb, mode(t, b)).coords ?? [ca, cb]
+        let line = router.leg(ca, cb, TripMath.mode(t, b)).coords ?? [ca, cb]
         let near = RouteNear([line])
         let inTrip = Set(trips.stops(t.id).compactMap(\.place_id))
         return store.places.filter { p in
@@ -620,57 +699,6 @@ struct TripPage: View {
         .buttonStyle(PressStyle())
         .padding(.vertical, 2)
     }
-
-    // ----- 起點：目前位置或住宿 -----
-
-    private func startChip(_ t: Trip, d: Int) -> some View {
-        let base = trips.stops(t.id, day: d)
-        let first = base.first
-        let label: String
-        if let first, first.kind == "stay" { label = "🏨 住宿：" + first.name }
-        else if originOf(base) != nil { label = "🏠 目前位置出發" }
-        else { label = "📍 從第 1 站出發" }
-        var names: Set<String> = []
-        let stays = trips.stops(t.id).filter { $0.kind == "stay" && names.insert($0.name).inserted }
-        return Menu {
-            Button("🏠 從目前位置出發") { startHere(base) }
-            ForEach(stays) { st in
-                Button("🏨 " + st.name) { startAt(st, t, d: d, base: base) }
-            }
-            Button("🔍 搜尋飯店…") { addReq = AddReq(filter: .stay, slot: .first) }
-        } label: {
-            Text(label).font(.footnote.weight(.heavy)).foregroundStyle(Color.ink.opacity(0.7)).lineLimit(1)
-                .padding(.horizontal, 12).frame(height: 34)
-                .background(.white, in: .capsule).overlay(Capsule().strokeBorder(Color.ink.opacity(0.1)))
-                .frame(minHeight: 44).contentShape(.rect)
-        }
-        .accessibilityLabel("起點：" + label)
-    }
-
-    // 改從目前位置出發：第一站的住宿移到最後（晚上回飯店）
-    private func startHere(_ base: [TripStop]) {
-        Haptic.light()
-        guard var f = base.first, f.kind == "stay", base.count > 1 else { return }
-        f.pos = (base.last?.pos ?? 0) + 1
-        withAnimation(.snappy) { trips.update(f, store: store) }
-    }
-
-    // 從某間住宿出發：這天有就移到最前面，沒有就複製一份放在最前面
-    private func startAt(_ st: TripStop, _ t: Trip, d: Int, base: [TripStop]) {
-        Haptic.light()
-        let top = (base.first?.pos ?? 1) - 1
-        if var x = base.first(where: { $0.id == st.id }) {
-            guard base.first?.id != st.id else { return }
-            x.pos = top
-            withAnimation(.snappy) { trips.update(x, store: store) }
-            return
-        }
-        let c = TripStop(id: UUID().uuidString.lowercased(), trip_id: t.id, day: d, pos: top, kind: "stay", place_id: nil, name: st.name,
-                         address: st.address, lat: st.lat, lng: st.lng, poi: st.poi, stay_min: 0, mode: nil, fixed_time: nil, done_at: nil,
-                         added_by: Supa.session?.user.id, created_at: nil, updated_at: nil)
-        trips.insert(c, store: store)
-    }
-
     // ----- 出發 -----
 
     // 出發時的全畫面：全部到完的卡片、定位、路線、快到了輕震、選導航 App
@@ -695,7 +723,7 @@ struct TripPage: View {
                     .transition(.opacity)
                 }
             }
-            .task(id: going) { await follow() }
+            .task(id: mode.going) { await follow() }
             .task(id: goKey(t, next)) { if let k = goNeed(t, order, next) { router.need([k]) } }
             .onChange(of: near) { _, on in
                 guard on, let next, pinged != next.id else { return }
@@ -718,25 +746,23 @@ struct TripPage: View {
         }
         expanded = nil
         pinged = nil
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { going = true }
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { mode.going = true; mode.cand = nil }
+        mode.clearSearch()
         withAnimation(.easeInOut(duration: 0.6)) { pos = .userLocation(fallback: pos) }
     }
 
     private func endGo() {
         Haptic.light()
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { going = false; finished = false; rate = nil }
-        if let t = trips.trip(tid) {
-            let base = trips.stops(t.id, day: min(day, t.days))
-            Task { try? await Task.sleep(for: .seconds(0.05)); fit(base, origin: originOf(base), animated: true) }
-        }
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { mode.going = false; finished = false; rate = nil }
+        Task { try? await Task.sleep(for: .seconds(0.05)); mode.fitTick += 1 }
     }
 
     // 出發時才開定位（App 在前景時更新；不用背景定位）
     private func follow() async {
-        guard going else { return }
+        guard mode.going else { return }
         do {
             for try await u in CLLocationUpdate.liveUpdates() {
-                if Task.isCancelled || !going { break }
+                if Task.isCancelled || !mode.going { break }
                 if let l = u.location { me = l }
             }
         } catch {}
@@ -751,21 +777,21 @@ struct TripPage: View {
     }
 
     private func goMode(_ t: Trip, _ order: [TripStop], _ s: TripStop) -> TravelMode {
-        order.first?.id == s.id ? (TravelMode(rawValue: t.mode) ?? .walk) : mode(t, s)
+        order.first?.id == s.id ? (TravelMode(rawValue: t.mode) ?? .walk) : TripMath.mode(t, s)
     }
 
     private func goNeed(_ t: Trip, _ order: [TripStop], _ next: TripStop?) -> (CLLocationCoordinate2D, CLLocationCoordinate2D, TravelMode)? {
-        guard going, let next, let b = next.coord, let a = hereRounded() else { return nil }
+        guard mode.going, let next, let b = next.coord, let a = hereRounded() else { return nil }
         return (a, b, goMode(t, order, next))
     }
 
     private func goKey(_ t: Trip, _ next: TripStop?) -> String {
-        guard going, let next, let a = hereRounded(), let b = next.coord else { return "" }
+        guard mode.going, let next, let a = hereRounded(), let b = next.coord else { return "" }
         return TripRouter.key(a, b, TravelMode(rawValue: next.mode ?? t.mode) ?? .walk)
     }
 
     private func nearNext(_ next: TripStop?) -> Bool {
-        guard going, let c = next?.coord, let h = here else { return false }
+        guard mode.going, let c = next?.coord, let h = here else { return false }
         return h.distance(from: CLLocation(latitude: c.latitude, longitude: c.longitude)) < 80
     }
 
@@ -865,8 +891,8 @@ struct TripPage: View {
         for d in 1...max(1, t.days) {
             let ss = trips.stops(t.id, day: d)
             guard !ss.isEmpty else { continue }
-            let origin = originOf(ss)
-            let plan = TripCalc.plan(ss, legs: legsOf(t, ss, origin: origin).map { $0?.min }, backLeg: nil)
+            let origin = TripMath.origin(ss, here: store.here)
+            let plan = TripCalc.plan(ss, legs: TripMath.legs(t, ss, origin: origin, router: router).map { $0?.min }, backLeg: nil)
             lines.append("")
             var head = t.days > 1 ? "第 \(d) 天" : ""
             if let date = t.date(of: d) { head += (head.isEmpty ? "" : " ") + TripDate.label(date) }
@@ -927,12 +953,26 @@ struct RowDrag: Equatable {
         }
         if t != to { to = t; Haptic.tick() }
     }
+
+    // 最低那排站卡：左右拖（dy 當成橫向移了多少）
+    @MainActor mutating func retargetX(_ geo: RowGeo, base: [TripStop]) {
+        guard let id, let f = geo.cards[id] else { return }
+        let center = f.midX + dy
+        var t = 0
+        for (k, s) in base.enumerated() where s.id != id {
+            guard let r = geo.cards[s.id] else { continue }
+            let mid = k > from ? r.midX - h : r.midX
+            if mid < center { t += 1 }
+        }
+        if t != to { to = t; Haptic.tick() }
+    }
 }
 
 // 每列、每個「第 N 天」在螢幕上的位置（拖曳時算插到哪；不用觀察，改了不重畫）
 final class RowGeo {
     var rows: [String: CGRect] = [:]
     var chips: [Int: CGRect] = [:]
+    var cards: [String: CGRect] = [:]
 }
 
 struct TripSeg: Identifiable {
@@ -957,32 +997,10 @@ struct TripMark: Identifiable {
     var done = false       // 出發後到過的站：灰色勾勾
 }
 
-// 地圖：每段用下一站的顏色，7pt 線加 13pt 白邊；還沒算好的段先畫同色虛線直線
-struct TripMap: View {
-    @Binding var pos: MapCameraPosition
-    let segs: [TripSeg]
-    let marks: [TripMark]
-
-    var body: some View {
-        Map(position: $pos) {
-            UserAnnotation()
-            ForEach(segs) { s in
-                MapPolyline(coordinates: s.coords).stroke(Color.white.opacity(s.routed ? (s.faded ? 0.5 : 1) : 0), style: s.under)
-                MapPolyline(coordinates: s.coords).stroke(s.color.opacity(s.faded ? 0.3 : s.routed ? 1 : 0.85), style: s.style)
-            }
-            ForEach(marks) { m in
-                Annotation("", coordinate: m.coord, anchor: .center) { MarkView(m: m) }
-                    .annotationTitles(.hidden)
-            }
-        }
-        .mapStyle(.standard(pointsOfInterest: .excludingAll))
-        .mapControls { MapCompass() }
-    }
-}
-
 // 地圖上的站：收藏是 40pt 甜甜圈號碼（白底、粗彩色圈、數字同色）；景點、住宿是 28pt 小灰點
-private struct MarkView: View {
+struct MarkView: View {
     let m: TripMark
+    var hot = false
     @State private var shown = false
     @Environment(\.accessibilityReduceMotion) private var reduce
 
@@ -1006,9 +1024,10 @@ private struct MarkView: View {
                     .overlay(Circle().strokeBorder(.white, lineWidth: 2.5))
             }
         }
-        .shadow(color: .black.opacity(0.22), radius: 3, y: 1)
-        .scaleEffect(shown || reduce ? 1 : 0.3)
+        .shadow(color: .black.opacity(hot ? 0.35 : 0.22), radius: hot ? 6 : 3, y: 1)
+        .scaleEffect(shown || reduce ? (hot ? 1.3 : 1) : 0.3)
         .animation(.snappy, value: m.n)
+        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: hot)
         .onAppear { withAnimation(.spring(response: 0.35, dampingFraction: 0.55)) { shown = true } }
     }
 }
@@ -1034,6 +1053,7 @@ struct StopCard: View {
     let row: DayPlan.Row?
     let open: Bool
     let me: String?
+    var hot = false        // 地圖上正放大的那站
     // 點一下展開、長按拿起來換順序：只放在上面那排，展開後的停留滑桿、開關不會被吃掉
     var tap: () -> Void = {}
     var hold: AnyGesture<Void> = AnyGesture(LongPressGesture(minimumDuration: 99).map { _ in () })
@@ -1089,6 +1109,10 @@ struct StopCard: View {
                     .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(TripColor.side.opacity(0.45), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
             }
         }
+        .overlay {
+            if hot { RoundedRectangle(cornerRadius: 20).strokeBorder(TripColor.of(n - 1), lineWidth: 2.5).transition(.opacity) }
+        }
+        .animation(.snappy(duration: 0.2), value: hot)
         .padding(.vertical, 3)
     }
 
@@ -1235,4 +1259,59 @@ private struct LegRow: View {
 
 private struct Line: Shape {
     func path(in r: CGRect) -> Path { Path { p in p.move(to: CGPoint(x: r.midX, y: r.minY)); p.addLine(to: CGPoint(x: r.midX, y: r.maxY)) } }
+}
+
+// 最低高度那排橫向站卡：號碼、小照片、名字、幾點到；景點、住宿是虛線卡
+struct MiniStop: View {
+    @Environment(Store.self) private var store
+    let stop: TripStop
+    let n: Int
+    let row: DayPlan.Row?
+    var hot = false
+
+    var body: some View {
+        let color = TripColor.of(n - 1)
+        let place = stop.place_id.flatMap { store.place($0) }
+        HStack(spacing: 8) {
+            ZStack(alignment: .topLeading) {
+                Group {
+                    if stop.isPlace {
+                        if let place { PhotoView(place: place, px: 120) } else { Color.bg2.overlay { Text("🍽️").font(.system(size: 16)) } }
+                    } else {
+                        Image(systemName: POI.icon(stop.poi, kind: stop.kind)).font(.system(size: 14, weight: .bold)).foregroundStyle(TripColor.side)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(TripColor.side.opacity(0.14))
+                    }
+                }
+                .frame(width: 40, height: 40).clipShape(.rect(cornerRadius: 10))
+                NumberDonut(n: n, color: color, side: !stop.isPlace)
+                    .scaleEffect(0.72)
+                    .offset(x: -12, y: -12)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(stop.name).font(.system(size: 14, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1)
+                if let row {
+                    Text(TripDate.clock(row.arrive)).font(.caption.weight(.bold)).foregroundStyle(Color.ink.opacity(0.5))
+                        .contentTransition(.numericText())
+                }
+            }
+            .frame(maxWidth: 92, alignment: .leading)
+        }
+        .padding(.leading, 12).padding(.trailing, 10)
+        .frame(height: 62)
+        .background {
+            if stop.isPlace {
+                RoundedRectangle(cornerRadius: 18).fill(Color.panel).shadow(color: .cardShadow, radius: 0, y: 3)
+            } else {
+                RoundedRectangle(cornerRadius: 18).fill(Color.panel.opacity(0.6))
+                    .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(TripColor.side.opacity(0.45), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
+            }
+        }
+        .overlay {
+            if hot { RoundedRectangle(cornerRadius: 18).strokeBorder(color, lineWidth: 2.5) }
+        }
+        .animation(.snappy(duration: 0.2), value: hot)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("第 \(n) 站 \(stop.name)")
+    }
 }

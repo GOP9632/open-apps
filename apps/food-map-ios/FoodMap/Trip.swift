@@ -48,19 +48,16 @@ struct TripStop: Codable, Identifiable, Hashable {
     var fixedMin: Int? { fixed_time.flatMap(TripDate.minutes) }
 }
 
-// 推頁用：我的行程、某個行程（focus = 打開時捲到哪一站）
+// 推頁用：我的行程（行程本身不是一頁，是首頁地圖的行程模式，見 TripMode）
 enum TripRoute: Hashable {
     case list
-    case trip(String, focus: String?)
 }
 
 extension View {
-    // 三個分頁的導覽都要認得行程的頁面（店家頁的「✓ 在行程裡」在哪個分頁都會推）
     func tripDestinations() -> some View {
         navigationDestination(for: TripRoute.self) { r in
             switch r {
             case .list: TripsList()
-            case .trip(let id, let focus): TripPage(tid: id, focus: focus)
             }
         }
     }
@@ -269,9 +266,6 @@ enum TripSort {
     private(set) var trips: [Trip] = []
     private(set) var stops: [TripStop] = []
     var loaded = false
-    // 剛加進行程的那一站：點訊息條可以換到別的行程
-    var picking: PickReq?
-    struct PickReq: Identifiable { let id: String }
 
     // 正在存的筆數；存檔中讀回來的舊資料不能蓋掉剛改的
     @ObservationIgnored private var inflight = 0
@@ -293,7 +287,7 @@ enum TripSort {
     }
 
     func reset() {
-        trips = []; stops = []; loaded = false; picking = nil
+        trips = []; stops = []; loaded = false
         hiddenTrips = []; hiddenStops = []; lastOpened = nil
         try? FileManager.default.removeItem(at: cacheFile)
     }
@@ -542,7 +536,7 @@ enum TripSort {
         store.say("加到 \(t.title)・第 \(n) 站", icon: .check, action: ("復原", { [weak self] in
             self?.remove(s, dropTrip: made, store: store)
             store.toast = nil
-        }), tap: { [weak self] in self?.picking = PickReq(id: s.id) })
+        }), tap: { TripMode.shared.open(t.id, focus: s.id, store: store) })
     }
 
     // 整天換順序（幫我排順序、復原）：pos 依序改成 1、2、3…，只送有變的站

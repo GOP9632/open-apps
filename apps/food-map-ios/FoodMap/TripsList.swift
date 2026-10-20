@@ -1,10 +1,10 @@
 import SwiftUI
 import MapKit
 
-// 我的行程：今天的最上面 → 之後的 → 還沒排日期的 → 過去的收在最下面
+// 我的行程（從地圖右邊「行程」或行程模式的「換行程」打開的 sheet）：
+// 今天的最上面 → 之後的 → 還沒排日期的 → 過去的收在最下面；點一個就在首頁地圖進那個行程
 struct TripsList: View {
     @Environment(Store.self) private var store
-    @Environment(\.dismiss) private var dismiss
     @State private var trips = TripStore.shared
     @State private var adding = false
     @State private var showPast = false
@@ -19,13 +19,11 @@ struct TripsList: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
-                    Button { store.pop(dismiss) } label: { CircleIcon(icon: "chevron.left") }
-                        .buttonStyle(PressStyle()).accessibilityLabel("返回")
                     Text("我的行程").font(.system(size: 30, weight: .black)).foregroundStyle(Color.ink)
                     Spacer()
                     AddButton(size: 44) { Haptic.light(); adding = true }.accessibilityLabel("新增行程")
                 }
-                .padding(.top, 4)
+                .padding(.top, 20)
                 if all.isEmpty { empty }
                 ForEach(now + next + open) { t in card(t, today: now.contains(t)) }
                 if !past.isEmpty {
@@ -45,7 +43,7 @@ struct TripsList: View {
         }
         .background(Color.bg)
         .toolbarVisibility(.hidden, for: .navigationBar)
-        .sheet(isPresented: $adding) { TripForm(trip: nil) }
+        .sheet(isPresented: $adding) { TripForm(trip: nil) { t in open(t) } }
         .task { await trips.load() }
         .refreshable { await trips.load() }
         .onAppear { Perf.shared.mark("我的行程") }
@@ -65,10 +63,17 @@ struct TripsList: View {
         SwipeToDelete(enabled: t.owner == nil || t.owner == store.me) {
             trips.deleteWithUndo(t, store: store)
         } content: {
-            NavigationLink(value: TripRoute.trip(t.id, focus: nil)) { TripCard(trip: t, today: today) }
+            Button { Haptic.light(); open(t) } label: { TripCard(trip: t, today: today) }
                 .buttonStyle(PressStyle())
         }
         .transition(.opacity.combined(with: .scale(scale: 0.95)))
+    }
+
+    // 關掉這張 sheet，首頁地圖變成這個行程
+    private func open(_ t: Trip) {
+        let mode = TripMode.shared
+        mode.listing = false
+        mode.open(t.id, store: store)
     }
 }
 
@@ -346,53 +351,5 @@ struct SwipeToDelete<C: View>: View {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { dx = 0 }
                 }
             }, including: enabled ? .all : .subviews)
-    }
-}
-
-// 「加進行程」後點訊息條：換到別的行程，或開一個新的
-struct TripPickSheet: View {
-    @Environment(Store.self) private var store
-    @Environment(\.dismiss) private var dismiss
-    let stopId: String
-    @State private var trips = TripStore.shared
-    @State private var making = false
-
-    var body: some View {
-        let today = TripDate.today
-        let cur = trips.stops.first { $0.id == stopId }?.trip_id
-        let list = trips.trips.filter { ($0.end ?? .distantFuture) >= today }
-        NavigationStack {
-            List {
-                Button { making = true } label: {
-                    Label("新行程", systemImage: "plus.circle.fill").font(.headline).foregroundStyle(Color.accent)
-                }
-                ForEach(list) { t in
-                    Button {
-                        guard t.id != cur else { dismiss(); return }
-                        Haptic.light()
-                        trips.move(stopId, to: t, store: store)
-                        dismiss()
-                    } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(t.title).font(.headline).foregroundStyle(Color.ink)
-                                Text(t.start.map(TripDate.label) ?? "還沒排日期").font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if t.id == cur { Image(systemName: "checkmark").font(.headline).foregroundStyle(Color.accent) }
-                        }
-                        .contentShape(.rect)
-                    }
-                }
-            }
-            .navigationTitle("加到哪個行程").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
-            .sheet(isPresented: $making) {
-                TripForm(trip: nil) { t in
-                    trips.move(stopId, to: t, store: store)
-                    dismiss()
-                }
-            }
-        }
     }
 }
