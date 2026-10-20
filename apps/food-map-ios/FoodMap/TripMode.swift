@@ -307,15 +307,25 @@ enum TripInsert {
 
     func meters(_ p: Place) -> Double? { dist[p.id] }
 
-    // 收藏裡已經有的（同名、80 公尺內）不再畫成地圖地點
+    // 收藏裡已經有的（名字一樣或互相包含，不管大小寫、重音、空白；300 公尺內）不再畫成地圖地點
     func mapHits(_ ps: [Place]) -> [MapHit] {
-        hits.filter { h in
-            !ps.contains { p in
-                guard let la = p.lat, let ln = p.lng else { return false }
-                let d = CLLocation(latitude: la, longitude: ln).distance(from: CLLocation(latitude: h.coord.latitude, longitude: h.coord.longitude))
-                return d < 80 && (p.name.localizedStandardContains(h.name) || h.name.localizedStandardContains(p.name))
+        let mine = ps.compactMap { p -> (String, CLLocation)? in
+            guard let la = p.lat, let ln = p.lng else { return nil }
+            return (Self.norm(p.name), CLLocation(latitude: la, longitude: ln))
+        }
+        return hits.filter { h in
+            let n = Self.norm(h.name)
+            let c = CLLocation(latitude: h.coord.latitude, longitude: h.coord.longitude)
+            return !mine.contains { m in
+                !n.isEmpty && !m.0.isEmpty && (m.0.contains(n) || n.contains(m.0)) && m.1.distance(from: c) < 300
             }
         }
+    }
+
+    // 「Le Park Café」=「le park cafe」：比對店名用
+    static func norm(_ s: String) -> String {
+        s.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
+            .unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
     }
 
     // 離路線（沒有路線就離目前位置）幾公尺

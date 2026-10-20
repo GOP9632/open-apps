@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import MapKit
 
 // 我的行程（從地圖右邊「行程」或行程模式的「換行程」打開的 sheet）：
@@ -257,6 +258,7 @@ struct TripForm: View {
     @State private var hasDate = false
     @State private var date = Date()
     @State private var group: String?
+    @State private var saving = false
 
     var body: some View {
         NavigationStack {
@@ -280,7 +282,16 @@ struct TripForm: View {
             .navigationTitle(trip == nil ? "新行程" : "行程設定").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button(trip == nil ? "建立" : "完成") { save() }.fontWeight(.bold) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(trip == nil ? "建立" : "完成") {
+                        guard !saving else { return }
+                        saving = true
+                        // 中文輸入法還沒選字的那段要先收進來（不然「TEST trip」可能只存到「TES」）
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                        Task { try? await Task.sleep(for: .milliseconds(60)); save() }
+                    }
+                    .fontWeight(.bold)
+                }
             }
             .onAppear {
                 guard let t = trip else { return }

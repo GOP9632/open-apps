@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import MapKit
 
 // 行程模式的標題列：深色膠囊（行程名稱、「4 站・16:40 回」，點了是設定選單）＋ 橘色「完成」
@@ -50,11 +51,7 @@ struct TripTop: View {
         }
         .padding(.top, 6)
         .onChange(of: focused) { _, f in
-            guard f != mode.typing else { return }
-            mode.typing = f
-            if f {
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) { mode.cand = nil; mode.level = .low }
-            }
+            if f { beginTyping() } else if mode.typing { mode.typing = false }
         }
         .onChange(of: mode.typing) { _, v in if !v && focused { focused = false } }
         // 符合的收藏：搜尋結果和地圖上的圖釘共用
@@ -76,6 +73,18 @@ struct TripTop: View {
                 mode.close()
                 trips.deleteWithUndo(t, store: store)
             }
+        }
+    }
+
+    // 點搜尋框（還沒打字）：馬上換成分類那排、面板降到最低，下面露出搜尋結果框
+    private func beginTyping() {
+        TripMode.shared.pickAt = CACurrentMediaTime()
+        guard !mode.typing else { return }
+        Perf.shared.mark("行程搜尋")
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) {
+            mode.typing = true
+            mode.cand = nil
+            mode.level = .low
         }
     }
 
@@ -137,6 +146,11 @@ struct TripTop: View {
                 .focused($focused)
                 .autocorrectionDisabled()
                 .onSubmit { mode.typing = false }
+                // 焦點變化有時晚到：手指一點就先換畫面（只接在輸入框上，✕ 不算）
+                .simultaneousGesture(TapGesture().onEnded {
+                    beginTyping()
+                    if !focused { focused = true }
+                })
             if mode.searchOn {
                 Button {
                     Haptic.light()

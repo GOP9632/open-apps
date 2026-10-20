@@ -742,7 +742,9 @@ struct NearbySheet: View {
         }
         // 圖釘落下時，「附近 N 間」跟著從 0 往上數
         .task(id: dropKey) {
-            guard dropKey != nil, !reduce else { return }
+            // 同一次落下只數一次（離開行程模式、這排重新出現時不要再從 0 數）
+            guard dropKey != nil, !reduce, pins.countedKey != dropKey else { return }
+            pins.countedKey = dropKey
             let total = near.places.count
             guard total > 1 else { return }
             let steps = min(total, 20)
@@ -878,6 +880,7 @@ struct PickedCard: View {
     var mergeTo: [String: CGSize] = [:]          // 要合進泡泡的圖釘：往泡泡的位置飛過去並淡掉
     var menu: String?                            // 長按開了選單的那根
     @ObservationIgnored var longFired = false    // 長按剛開過選單（放開手指時不要當成點一下）
+    @ObservationIgnored var countedKey: String?  // 「附近 N 間」已經為這次落下數過了
     @ObservationIgnored var locate: ((CLLocationCoordinate2D) -> CGPoint?)?   // 地圖座標 → 螢幕位置
 
     // 圖釘落下（第一次畫圖釘、換看誰的收藏時播一次）：由近到遠，每根晚 0.025 秒，最多錯開 40 根，之後的直接淡入
