@@ -215,7 +215,7 @@ struct TripAddSheet: View {
         }
         .background(Color.bg)
         .safeAreaInset(edge: .bottom, spacing: 0) { bar(dayStops.count) }
-        .task(id: routeKey(dayStops)) { measure(dayStops) }
+        .task(id: routeKey(dayStops)) { measure(base(dayStops)) }
         .task(id: "\(q)|\(filter?.rawValue ?? "")|\(near.center?.latitude ?? 0)") { await search() }
         .onAppear { typing = true; Perf.shared.mark("打開加一站") }
         .task {
@@ -232,7 +232,7 @@ struct TripAddSheet: View {
                 .focused($typing)
                 .autocorrectionDisabled()
             if !q.isEmpty {
-                Button { q = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary).frame(width: 44, height: 44).contentShape(.rect) }
+                Button { q = ""; typing = true } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary).frame(width: 44, height: 44).contentShape(.rect) }
                     .accessibilityLabel("清除")
             }
         }
@@ -283,9 +283,16 @@ struct TripAddSheet: View {
 
     // ----- 路線：這天每段的實際道路（還沒算好就用兩站直線） -----
 
+    // 打開時就有的站（這次加的不算）：路線和每間離路線多遠都照這些算，
+    // 按 ＋ 之後列表不會重排（不然手指下一下會點到別間）
+    private func base(_ ss: [TripStop]) -> [TripStop] {
+        let mine = Set(added.values)
+        return ss.filter { !mine.contains($0.id) }
+    }
+
     private func routeKey(_ ss: [TripStop]) -> String {
-        let a = ss.map { "\($0.id)\($0.mode ?? "")" }.joined(separator: ",")
-        return a + "|\(router.legs.count)|\(store.places.count)"
+        let a = base(ss).map { "\($0.id)\($0.mode ?? "")" }.joined(separator: ",")
+        return a + "|\(store.places.count)"
     }
 
     private func measure(_ all: [TripStop]) {
