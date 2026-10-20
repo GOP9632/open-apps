@@ -345,17 +345,15 @@ struct TripPage: View {
                     }
                 }
             }
-            SwipeToDelete(enabled: drag.id == nil) {
+            // 展開時不能左滑刪（不然拉停留滑桿會被當成左滑）
+            SwipeToDelete(enabled: drag.id == nil && expanded != s.id) {
                 if expanded == s.id { expanded = nil }
                 trips.deleteWithUndo(s, store: store)
             } content: {
-                StopCard(stop: s, n: i + 1, row: row, open: expanded == s.id, me: store.me)
-                    .contentShape(.rect)
-                    .onTapGesture {
-                        Haptic.light()
-                        withAnimation(.snappy) { expanded = expanded == s.id ? nil : s.id }
-                    }
-                    .gesture(reorder(t, s, k: k))
+                StopCard(stop: s, n: i + 1, row: row, open: expanded == s.id, me: store.me, tap: {
+                    Haptic.light()
+                    withAnimation(.snappy) { expanded = expanded == s.id ? nil : s.id }
+                }, hold: AnyGesture(reorder(t, s, k: k).map { _ in () }))
             }
         }
         .id(s.id)
@@ -977,6 +975,9 @@ struct StopCard: View {
     let row: DayPlan.Row?
     let open: Bool
     let me: String?
+    // 點一下展開、長按拿起來換順序：只放在上面那排，展開後的停留滑桿、開關不會被吃掉
+    var tap: () -> Void = {}
+    var hold: AnyGesture<Void> = AnyGesture(LongPressGesture(minimumDuration: 99).map { _ in () })
 
     var body: some View {
         let color = TripColor.of(n - 1)
@@ -1015,9 +1016,12 @@ struct StopCard: View {
                 Spacer(minLength: 4)
                 times
             }
-            if open { StopEditor(stop: stop, place: place, arrive: row?.arrive) }
+            .padding(12)
+            .contentShape(.rect)
+            .onTapGesture(perform: tap)
+            .gesture(hold)
+            if open { StopEditor(stop: stop, place: place, arrive: row?.arrive).padding(.horizontal, 12).padding(.bottom, 12) }
         }
-        .padding(12)
         .background {
             if stop.isPlace {
                 RoundedRectangle(cornerRadius: 20).fill(Color.panel).shadow(color: .cardShadow, radius: 0, y: 3)
