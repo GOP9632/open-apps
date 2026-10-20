@@ -114,8 +114,7 @@ struct MapTab: View {
                         AddButton { adding = true }.coachAnchor(.add)
                     }
                     .padding(.horizontal, 16)
-                    if !store.groups.isEmpty { scopePill(gname) }
-                    FilterChips(f: $store.mapF, solid: true)
+                    FilterChips(f: $store.mapF, solid: true, lead: store.groups.isEmpty ? nil : AnyView(scopePill(gname)))
                 }
                 .padding(.top, 6)
             }
@@ -439,7 +438,7 @@ struct MapTab: View {
 
     // 搜尋框下面的深色膠囊：現在看誰的收藏，點了換；群組時旁邊有 ✕ 回到我的收藏
     private func scopePill(_ gname: String?) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 4) {
             Button { scoping = true } label: {
                 HStack(spacing: 8) {
                     if let g = store.mapGroup {
@@ -465,9 +464,9 @@ struct MapTab: View {
                 }
                 .accessibilityLabel("回到我的收藏")
             }
-            Spacer()
+            // 跟分類中間隔一條細線
+            Capsule().fill(Color.ink.opacity(0.15)).frame(width: 1.5, height: 22)
         }
-        .padding(.horizontal, 16)
     }
 
     // 教學第一步：量出那間店的圖釘在螢幕上的位置（圖釘的尖端就是店的座標）

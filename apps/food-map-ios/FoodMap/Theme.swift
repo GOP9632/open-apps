@@ -80,9 +80,12 @@ struct Badge: View {
 struct FilterChips: View {
     @Binding var f: Filter
     var solid = false
+    // 排在最前面的東西（地圖頁的「看誰的收藏」），跟分類放同一排，不另外佔一排
+    var lead: AnyView? = nil
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
+                if let lead { lead }
                 Chip(text: "全部", on: !f.on, solid: solid) { tap { f.status = ""; f.cat = "" } }
                 Chip(text: "♥ 想去", on: f.status == "want", color: .sprPink, solid: solid) { tap { f.status = f.status == "want" ? "" : "want" } }
                 Chip(text: "✓ 去過", on: f.status == "been", color: .sprMint, solid: solid) { tap { f.status = f.status == "been" ? "" : "been" } }
