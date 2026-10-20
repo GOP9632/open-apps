@@ -7,12 +7,24 @@ import MapKit
 // 並且在手指一開始落在本身就能橫滑的東西上（橫向卡片列、地圖、滑卡、轉盤、滑桿）時不搶，讓它自己處理。
 // 只用公開的 API；iOS 18–25 只有系統原本的「從左邊緣滑回」。
 enum SwipeBack {
+    // 系統的滑回剛開始（自己畫的備用滑回就不要再退一次）
+    @MainActor static var lastBegan: Date?
+    @MainActor static var recentlyBegan: Bool { lastBegan.map { Date().timeIntervalSince($0) < 1 } ?? false }
+
     @MainActor static func shouldBegin(_ g: UIGestureRecognizer, nav: UINavigationController) -> Bool {
-        guard nav.viewControllers.count > 1, nav.transitionCoordinator == nil else { return false }
+        let ok = decide(g, nav: nav)
+        if ok { lastBegan = Date() }
+        return ok
+    }
+
+    @MainActor private static func decide(_ g: UIGestureRecognizer, nav: UINavigationController) -> Bool {
+        print("[swipeback] 判斷：\(nav.viewControllers.count) 頁")
+        guard nav.viewControllers.count > 1 else { print("[swipeback] 不回：第一頁"); return false }
+        guard nav.transitionCoordinator == nil else { print("[swipeback] 不回：正在換頁"); return false }
         if let pan = g as? UIPanGestureRecognizer {
             let v = pan.velocity(in: nav.view)
             // 往右、而且以橫向為主
-            guard v.x > 0, abs(v.x) > abs(v.y) * 1.5 else { return false }
+            guard v.x > 0, abs(v.x) > abs(v.y) * 1.5 else { print("[swipeback] 不回：方向 \(Int(v.x)),\(Int(v.y))"); return false }
         }
         let p = g.location(in: nil)
         if SwipeBackBlock.contains(p) { print("[swipeback] 不回：手指在自己橫滑的區塊"); return false }
@@ -28,6 +40,7 @@ enum SwipeBack {
             }
             hit = h.superview
         }
+        print("[swipeback] 回上一頁")
         return true
     }
 }

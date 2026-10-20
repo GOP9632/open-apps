@@ -33,6 +33,8 @@ struct TripPage: View {
     @State private var pinged: String?          // 已經為「快到了」震過的那站
     @State private var rate: String?            // 問「好吃嗎」的那站
     @State private var finished = false
+    @State private var back: CGFloat = 0       // 面板上往右滑回上一頁拉了多遠
+    @State private var backLock: Bool?         // 這次拖曳是不是橫向往右（一開始就決定）
     @State private var party = 0
     @State private var navAsk: TripStop?
 
@@ -95,7 +97,10 @@ struct TripPage: View {
                 goBottom(order)
             }
         }
-        let top = core.overlay(alignment: .top) {
+        let top = core.overlay(alignment: .leading) {
+            if back > 0 { backBubble }
+        }
+        .overlay(alignment: .top) {
             VStack(spacing: 10) {
                 header(t, d: d, order: order, plan: plan)
                 if going, let next { goCard(t, order: order, next: next, plan: plan).padding(.horizontal, 14) }
@@ -197,6 +202,7 @@ struct TripPage: View {
                         .padding(.horizontal, 14).padding(.top, 4).padding(.bottom, 120)
                 }
                 .scrollDisabled(drag.id != nil)
+                .simultaneousGesture(backSwipe)
                 .onChange(of: focused) { _, f in
                     guard f, let id = focus else { return }
                     Task { try? await Task.sleep(for: .seconds(0.35)); withAnimation(.snappy) { sp.scrollTo(id, anchor: .center) } }
@@ -247,6 +253,44 @@ struct TripPage: View {
         }
         .opacity(drag.id == nil ? 1 : 0)
         .animation(.snappy(duration: 0.2), value: drag.id == nil)
+    }
+
+    // 面板蓋在地圖上，系統「從畫面中間往右滑回上一頁」在這裡起不來（手指被當成在拖底下的地圖），
+    // 所以面板自己接：往右滑，左邊冒出返回圓鈕跟著手指，拉過 90 點放開就回上一頁
+    private var backSwipe: some Gesture {
+        DragGesture(minimumDistance: 16, coordinateSpace: .global)
+            .onChanged { v in
+                guard drag.id == nil, !SwipeBack.recentlyBegan else { return }
+                if backLock == nil {
+                    let dx = v.translation.width, dy = v.translation.height
+                    backLock = dx > 0 && dx > abs(dy) * 1.5 && !SwipeBackBlock.contains(v.startLocation)
+                }
+                guard backLock == true else { return }
+                let was = back >= 90
+                back = max(0, v.translation.width)
+                if (back >= 90) != was { Haptic.tick() }
+            }
+            .onEnded { v in
+                defer { backLock = nil }
+                guard backLock == true else { return }
+                let go = back >= 90 || (back > 30 && v.predictedEndTranslation.width > 240)
+                withAnimation(.snappy(duration: 0.2)) { back = 0 }
+                if go && !SwipeBack.recentlyBegan { store.pop(dismiss) }
+            }
+    }
+
+    private var backBubble: some View {
+        let on = back >= 90
+        return Image(systemName: "chevron.left").font(.system(size: 18, weight: .heavy))
+            .foregroundStyle(on ? Color.white : Color.ink)
+            .frame(width: 44, height: 44)
+            .background(on ? Color.accent : Color.panel, in: .circle)
+            .shadow(color: .black.opacity(0.2), radius: 8, y: 3)
+            .scaleEffect(on ? 1.1 : 1)
+            .animation(.snappy(duration: 0.15), value: on)
+            .offset(x: min(back, 140) * 0.45 - 34)
+            .opacity(min(1, back / 40))
+            .allowsHitTesting(false)
     }
 
     // 拉面板：放開時停在最近的一段（甩得快就往甩的方向）
