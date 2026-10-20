@@ -82,7 +82,7 @@ struct TripCard: View {
 
     var body: some View {
         let ss = trips.stops(trip.id)
-        let spots = ss.filter { !$0.isPlace }.count
+        let spots = ss.filter { !$0.isPlace && $0.kind != "stay" }.count
         VStack(alignment: .leading, spacing: 0) {
             if ss.contains(where: { $0.coord != nil }) {
                 TripThumb(trip: trip, stops: ss).frame(height: 120).clipped()
@@ -119,8 +119,9 @@ struct TripCard: View {
             .background(c.opacity(0.14), in: .capsule).foregroundStyle(c.mix(with: .black, by: 0.15))
     }
 
-    // 9/20 週六・4 站・走路共 35 分；多天：10/3–10/4・2 天・11 站（4 個景點）
+    // 9/20 週六・4 站・走路共 35 分；多天：10/3–10/4・2 天・11 站（4 個景點・1 間住宿）
     private func meta(_ ss: [TripStop], spots: Int) -> String {
+        let stays = Set(ss.filter { $0.kind == "stay" }.map(\.name)).count
         var parts: [String] = []
         if let s = trip.start {
             parts.append(trip.days > 1 ? "\(TripDate.short(s))–\(TripDate.short(trip.end ?? s))" : TripDate.label(s))
@@ -128,7 +129,10 @@ struct TripCard: View {
             parts.append("還沒排日期")
         }
         if trip.days > 1 { parts.append("\(trip.days) 天") }
-        parts.append("\(ss.count) 站" + (spots > 0 && trip.days > 1 ? "（\(spots) 個景點）" : ""))
+        var side: [String] = []
+        if spots > 0 { side.append("\(spots) 個景點") }
+        if stays > 0 { side.append("\(stays) 間住宿") }
+        parts.append("\(ss.count) 站" + (!side.isEmpty && trip.days > 1 ? "（\(side.joined(separator: "・"))）" : ""))
         if trip.days == 1 && ss.count > 1 {
             let m = TravelMode(rawValue: trip.mode) ?? .walk
             let t = total(ss)

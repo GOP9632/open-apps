@@ -14,11 +14,18 @@ enum SwipeBack {
             // 往右、而且以橫向為主
             guard v.x > 0, abs(v.x) > abs(v.y) * 1.5 else { return false }
         }
-        if SwipeBackBlock.contains(g.location(in: nil)) { return false }
+        let p = g.location(in: nil)
+        if SwipeBackBlock.contains(p) { print("[swipeback] 不回：手指在自己橫滑的區塊"); return false }
+        // 蓋在地圖上面的面板：SwiftUI 畫的東西 hitTest 常常直接穿過去打到底下的地圖，所以面板自己登記「這裡可以滑回」
+        let over = SwipeBackAllow.contains(p)
         var hit = nav.view.hitTest(g.location(in: nav.view), with: nil)
         while let h = hit, h !== nav.view {
-            if h is MKMapView || h is UISlider { return false }
-            if let s = h as? UIScrollView, s.isScrollEnabled, s.contentSize.width > s.bounds.width + 1 { return false }
+            if h is MKMapView, !over { print("[swipeback] 不回：地圖"); return false }
+            if h is UISlider { print("[swipeback] 不回：滑桿"); return false }
+            if let s = h as? UIScrollView, s.isScrollEnabled, s.contentSize.width > s.bounds.width + 1 {
+                print("[swipeback] 不回：橫向捲動 \(s.contentSize.width)>\(s.bounds.width)")
+                return false
+            }
             hit = h.superview
         }
         return true
@@ -32,16 +39,37 @@ enum SwipeBack {
     static func contains(_ p: CGPoint) -> Bool { rects.values.contains { $0.contains(p) } }
 }
 
-private struct SwipeBackBlocked: ViewModifier {
+// 蓋在地圖上的面板、卡片：在這裡往右滑要回上一頁（不是拖地圖）
+@MainActor enum SwipeBackAllow {
+    private static var rects: [UUID: CGRect] = [:]
+    static func set(_ id: UUID, _ r: CGRect?) { rects[id] = r }
+    static func contains(_ p: CGPoint) -> Bool { rects.values.contains { $0.contains(p) } }
+}
+
+private struct SwipeBackAllowed: ViewModifier {
     @State private var id = UUID()
     func body(content: Content) -> some View {
         content
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SwipeBackBlock.set(id, $0) }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { SwipeBackAllow.set(id, $0) }
+            .onDisappear { SwipeBackAllow.set(id, nil) }
+    }
+}
+
+private struct SwipeBackBlocked: ViewModifier {
+    var on = true
+    @State private var id = UUID()
+    @State private var rect: CGRect?
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rect = $0; SwipeBackBlock.set(id, on ? $0 : nil) }
+            .onChange(of: on) { SwipeBackBlock.set(id, on ? rect : nil) }
             .onDisappear { SwipeBackBlock.set(id, nil) }
     }
 }
 
 extension View {
     // 這塊自己要橫向拖曳：在這裡往右滑不會回上一頁
-    func swipeBackBlocked() -> some View { modifier(SwipeBackBlocked()) }
+    func swipeBackBlocked(_ on: Bool = true) -> some View { modifier(SwipeBackBlocked(on: on)) }
+    // 這塊蓋在地圖上：在這裡往右滑回上一頁，不拖地圖
+    func swipeBackAllowed() -> some View { modifier(SwipeBackAllowed()) }
 }

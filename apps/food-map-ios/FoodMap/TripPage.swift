@@ -205,6 +205,7 @@ struct TripPage: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: panelHeight(), alignment: .top)
+        .swipeBackAllowed()
         .background(Color.bg, in: UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28))
         .shadow(color: .black.opacity(0.14), radius: 14, y: -2)
         .ignoresSafeArea(edges: .bottom)
@@ -283,6 +284,8 @@ struct TripPage: View {
             }
             .padding(.horizontal, 14)
         }
+        // 天數多到要橫著捲：在這排往右滑是捲回去，不是回上一頁
+        .swipeBackBlocked(t.days >= 3)
     }
 
     private func dayChip(_ n: Int, on: Bool) -> some View {
@@ -1081,6 +1084,7 @@ private struct StopEditor: View {
                 TripStore.shared.update(s, store: store)
             }
             .tint(.accent)
+            .swipeBackBlocked()
             .onChange(of: stay) { Haptic.tick() }
             Toggle(isOn: Binding(get: { stop.fixed_time != nil }, set: { on in
                 Haptic.light()
