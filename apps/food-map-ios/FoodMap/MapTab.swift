@@ -496,7 +496,6 @@ struct MapTab: View {
         Task {
             try? await Task.sleep(for: .milliseconds(180))
             guard CACurrentMediaTime() - trip.pickAt > 0.4 else { return }
-            if trip.typing { trip.typing = false }
             trip.blank()
         }
     }

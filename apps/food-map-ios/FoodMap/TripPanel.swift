@@ -174,7 +174,8 @@ struct TripPanel: View {
                 }
                 .transition(.opacity)
             }
-            actions(t, base: base)
+            // 這天還沒有站：不放「排順序／出發」，空白提示不會被蓋住
+            if !base.isEmpty { actions(t, base: base) }
         }
         .padding(.bottom, barRoom)
         .frame(maxWidth: .infinity)

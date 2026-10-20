@@ -54,6 +54,11 @@ struct TripTop: View {
             if f { beginTyping() } else if mode.typing { mode.typing = false }
         }
         .onChange(of: mode.typing) { _, v in if !v && focused { focused = false } }
+        // 搜尋收起來（不管是 ✕、點地圖空白處、還是收鍵盤）：面板回到一半
+        .onChange(of: mode.searchOn) { _, on in
+            guard !on, mode.level == .low, !mode.going, mode.cand == nil else { return }
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) { mode.level = .mid }
+        }
         // 符合的收藏：搜尋結果和地圖上的圖釘共用
         .onChange(of: foundKey, initial: true) {
             mode.search.found = mode.searchOn ? mode.search.places(mode.q, mode.filter, store: store) : []
@@ -375,6 +380,9 @@ struct TripResults: View {
         if let d = mode.search.meters(p), d < 2000 { s.append(d < 60 ? "就在路上" : "離路線 \(max(1, Int((d / 75).rounded()))) 分") }
         s.append("\(p.cat.emoji) \(p.cuisine?.isEmpty == false ? p.cuisine! : p.cat.name)")
         if let o = p.owner, o != store.me { s.append("\(store.name(o)) 的收藏") }
+        if let os = mode.search.also[p.id], !os.isEmpty {
+            s.append("也在" + os.map { store.name($0) }.joined(separator: "、") + "的收藏")
+        }
         return s.joined(separator: " · ")
     }
 

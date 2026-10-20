@@ -104,6 +104,7 @@ struct TripCand: Equatable {
         if cand != nil {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { cand = nil }
         } else if searchOn {
+            // 跟搜尋框的 ✕ 一樣：收起搜尋、面板回到一半
             withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) { clearSearch(); level = .mid }
         }
     }
@@ -302,10 +303,35 @@ enum TripInsert {
             let limit: Double = filter == .route ? 400 : 3000
             l = l.filter { (dist[$0.id] ?? .infinity) <= limit }
         }
-        return Array(l.sorted { (dist[$0.id] ?? .infinity) < (dist[$1.id] ?? .infinity) }.prefix(40))
+        return Array(merged(l.sorted { (dist[$0.id] ?? .infinity) < (dist[$1.id] ?? .infinity) }, store: store).prefix(40))
     }
 
     func meters(_ p: Place) -> Double? { dist[p.id] }
+
+    // 同一間店好幾個人都收了（名字一樣、300 公尺內）：只列一列，留自己收的那筆，記下還有誰收
+    private(set) var also: [String: [String]] = [:]   // 留下那筆的 id → 其他收的人
+
+    private func merged(_ ps: [Place], store: Store) -> [Place] {
+        var kept: [Place] = []
+        var more: [String: [String]] = [:]
+        for p in ps {
+            let n = Self.norm(p.name)
+            let i = kept.firstIndex { k in
+                guard let a = k.lat, let b = k.lng, let c = p.lat, let d = p.lng, Self.norm(k.name) == n, !n.isEmpty else { return false }
+                return CLLocation(latitude: a, longitude: b).distance(from: CLLocation(latitude: c, longitude: d)) < 300
+            }
+            guard let i else { kept.append(p); continue }
+            var drop = p
+            if store.isMine(p) && !store.isMine(kept[i]) {
+                drop = kept[i]
+                more[p.id] = more.removeValue(forKey: drop.id) ?? []
+                kept[i] = p
+            }
+            if let o = drop.owner { more[kept[i].id, default: []].append(o) }
+        }
+        if more != also { also = more }
+        return kept
+    }
 
     // 收藏裡已經有的（名字一樣或互相包含，不管大小寫、重音、空白；300 公尺內）不再畫成地圖地點
     func mapHits(_ ps: [Place]) -> [MapHit] {
