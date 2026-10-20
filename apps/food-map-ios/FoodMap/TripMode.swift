@@ -173,7 +173,7 @@ enum TripInsert {
 }
 
 // 行程的路線計算（面板、標題列、分享都用）
-enum TripMath {
+@MainActor enum TripMath {
     // 第一站是住宿：從住宿出發；不然目前位置離第一站 30 公里內才當起點
     static func origin(_ order: [TripStop], here: CLLocation?) -> CLLocationCoordinate2D? {
         if order.first?.kind == "stay" { return nil }
