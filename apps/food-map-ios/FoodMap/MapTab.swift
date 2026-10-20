@@ -472,13 +472,14 @@ struct MapTab: View {
     }
 
     // 右邊「行程」：上次打開的行程直接進行程模式；沒有就開「我的行程」
+    // 上次的行程已經被刪掉：當成沒有上次，直接開「我的行程」
     private func openTrip() {
-        if let last = tripStore.lastOpened, !(tripStore.loaded && tripStore.trip(last) == nil) {
-            trip.open(last, store: store)
-        } else {
-            Perf.shared.mark("我的行程")
-            trip.listing = true
+        if let last = tripStore.lastOpened {
+            if tripStore.trip(last) != nil { trip.open(last, store: store); return }
+            tripStore.lastOpened = nil
         }
+        Perf.shared.mark("我的行程")
+        trip.listing = true
     }
 
     // 地圖上的號碼：地圖飛過去、清單捲到那站

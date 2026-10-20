@@ -398,6 +398,7 @@ enum TripSort {
         let at = trips.firstIndex { $0.id == t.id } ?? 0
         let ss = stops(t.id)
         hiddenTrips.insert(t.id); rev += 1
+        if lastOpened == t.id { lastOpened = nil }
         withAnimation(.snappy(duration: 0.35)) {
             trips.removeAll { $0.id == t.id }
             stops.removeAll { $0.trip_id == t.id }

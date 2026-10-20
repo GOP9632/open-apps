@@ -54,7 +54,11 @@ struct TripPanel: View {
             if trips.loaded {
                 Text("這個行程不見了").font(.headline).foregroundStyle(Color.ink)
                 Text("可能被建立的人刪掉了").font(.subheadline).foregroundStyle(Color.ink.opacity(0.5))
-                Button("回到地圖") { mode.close() }.buttonStyle(ChunkyStyle(radius: 16))
+                Button("回到地圖") {
+                    if trips.lastOpened == tid { trips.lastOpened = nil }
+                    mode.close()
+                }
+                .buttonStyle(ChunkyStyle(radius: 16))
             } else {
                 ProgressView()
             }
