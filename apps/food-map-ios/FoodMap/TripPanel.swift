@@ -111,7 +111,11 @@ struct TripPanel: View {
         }
         // 換天、加站、刪站：地圖 0.5 秒縮放到包住這天所有站
         .onChange(of: fitKey(d, base)) { fit(base, origin: origin, animated: true) }
-        .onChange(of: mode.fitTick) { fit(base, origin: origin, animated: true) }
+        .onChange(of: mode.fitTick) {
+            // 重新打開行程（店家頁「在行程裡」、訊息條）：不管之前拖到一半的狀態
+            if !holding && drag.id != nil { drag = RowDrag(); mode.overDay = nil }
+            fit(base, origin: origin, animated: true)
+        }
         // 第一次量到大小（剛進行程模式）：0.5 秒縮放到這天的站（從店家頁進來的就飛到那站）
         .onChange(of: size) {
             if placed { fit(base, origin: origin, animated: false); return }
