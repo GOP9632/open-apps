@@ -33,6 +33,17 @@ struct Snapshot: Codable {
     var toastAction: (label: String, run: () -> Void)?
     // 點訊息條本身要做的事（例如「加進行程」後換別的行程）；沒有就只是收起來
     var toastTap: (() -> Void)?
+    // 訊息條停多久（nil = 照預設）；手指按著時不倒數
+    var toastSeconds: Double?
+    @ObservationIgnored var toastHeld = false
+    // 模擬器自動測試用（只有 Debug 版）：啟動參數 -uitestSlowToasts 讓訊息條停 20 秒，按得到「復原」
+    static let slowToasts: Bool = {
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains("-uitestSlowToasts")
+        #else
+        return false
+        #endif
+    }()
     // 訊息左邊畫出來的勾勾或垃圾桶；刪除時還有那間的小照片（卡片縮小飛過去）
     var toastIcon: ToastIcon?
     var toastPlace: Place?
@@ -402,8 +413,9 @@ struct Snapshot: Codable {
         logins = []; askOld = nil; askName = false
     }
 
-    @MainActor func say(_ s: String, icon: ToastIcon? = nil, place: Place? = nil, action: (label: String, run: () -> Void)? = nil, tap: (() -> Void)? = nil) {
-        withAnimation(.snappy(duration: 0.35)) { toast = s; toastAction = action; toastIcon = icon; toastPlace = place; toastTap = tap }
+    @MainActor func say(_ s: String, icon: ToastIcon? = nil, place: Place? = nil, action: (label: String, run: () -> Void)? = nil, tap: (() -> Void)? = nil, seconds: Double? = nil) {
+        toastHeld = false
+        withAnimation(.snappy(duration: 0.35)) { toast = s; toastAction = action; toastIcon = icon; toastPlace = place; toastTap = tap; toastSeconds = seconds }
     }
 
     // 回上一頁：地圖分頁的頁面記在 mapPath，直接從那裡退一頁（dismiss 在地圖那邊沒反應）

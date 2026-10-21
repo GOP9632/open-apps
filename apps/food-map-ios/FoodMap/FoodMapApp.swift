@@ -97,7 +97,7 @@ struct Root: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(t).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
                         if store.toastTap != nil {
-                            Text("按一下換別的行程").font(.caption2.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
+                            Text("按一下打開行程").font(.caption2.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
                         }
                     }
                     .padding(.trailing, act == nil ? 0 : 4)
@@ -111,7 +111,19 @@ struct Root: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .accessibilityAddTraits(.isButton)
                 .onAppear { AccessibilityNotification.Announcement(t).post() }
-                .task(id: t) { try? await Task.sleep(for: .seconds(act == nil ? 2.6 : store.toastTap != nil ? 5 : 4)); withAnimation(.snappy) { if store.toast == t { store.toast = nil; store.toastAction = nil } } }
+                // 時間到自己收起來；手指按著訊息條時暫停倒數
+                .task(id: t) {
+                    var left: Double = Store.slowToasts ? 20 : (store.toastSeconds ?? (act == nil ? 2.6 : store.toastTap != nil ? 5 : 4))
+                    while left > 0 {
+                        try? await Task.sleep(for: .milliseconds(100))
+                        if Task.isCancelled { return }
+                        if !store.toastHeld { left -= 0.1 }
+                    }
+                    withAnimation(.snappy) { if store.toast == t { store.toast = nil; store.toastAction = nil } }
+                }
+                .simultaneousGesture(DragGesture(minimumDistance: 0)
+                    .onChanged { _ in if !store.toastHeld { store.toastHeld = true } }
+                    .onEnded { _ in store.toastHeld = false })
                 .onTapGesture {
                     let tap = store.toastTap
                     withAnimation(.snappy) { store.toast = nil; store.toastTap = nil }

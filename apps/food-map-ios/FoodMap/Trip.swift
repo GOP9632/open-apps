@@ -393,7 +393,7 @@ enum TripSort {
         }
     }
 
-    // 刪整個行程：先從畫面拿掉，4 秒內可以復原
+    // 刪整個行程：先從畫面拿掉，6 秒內可以復原（訊息條按著不放就一直能復原）
     func deleteWithUndo(_ t: Trip, store: Store) {
         let at = trips.firstIndex { $0.id == t.id } ?? 0
         let ss = stops(t.id)
@@ -412,9 +412,11 @@ enum TripSort {
                 store.toast = nil
             }
             self.saveCache()
-        }))
+        }), seconds: 6)
         Task {
-            try? await Task.sleep(for: .seconds(4.2))
+            // 等訊息條收起來才真的刪（按著訊息條時繼續等）
+            try? await Task.sleep(for: .seconds(Store.slowToasts ? 20.5 : 6.5))
+            while store.toastHeld && store.toast?.hasPrefix("已刪除") == true { try? await Task.sleep(for: .milliseconds(200)) }
             guard hiddenTrips.contains(t.id) else { return }
             do { try await Supa.write("DELETE", "trips", query: "id=eq.\(t.id)"); hiddenTrips.remove(t.id) }
             catch {
