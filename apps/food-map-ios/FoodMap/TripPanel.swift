@@ -169,7 +169,7 @@ struct TripPanel: View {
                     .onChange(of: mode.scrollTo, initial: true) { _, id in
                         guard let id else { return }
                         mode.scrollTo = nil
-                        Task { try? await Task.sleep(for: .seconds(0.35)); withAnimation(.snappy) { sp.scrollTo(id, anchor: .center) } }
+                        Task { try? await Task.sleep(for: .seconds(0.35)); withAnimation(.snappy) { sp.scrollTo(id, anchor: .top) } }
                     }
                 }
                 .transition(.opacity)

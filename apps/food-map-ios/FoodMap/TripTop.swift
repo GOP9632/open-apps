@@ -15,7 +15,6 @@ struct TripTop: View {
     @State private var renaming = false
     @State private var newTitle = ""
     @State private var setting = false
-    @State private var deleting = false
 
     var body: some View {
         let t = trips.trip(tid)
@@ -72,13 +71,6 @@ struct TripTop: View {
             }
         }
         .sheet(isPresented: $setting) { if let t { TripForm(trip: t) } }
-        .confirmationDialog("刪除「\(t?.title ?? "")」？每一站都會一起刪掉", isPresented: $deleting, titleVisibility: .visible) {
-            Button("刪除行程", role: .destructive) {
-                guard let t else { return }
-                mode.close()
-                trips.deleteWithUndo(t, store: store)
-            }
-        }
     }
 
     // 點搜尋框（還沒打字）：馬上換成分類那排、面板降到最低，下面露出搜尋結果框
@@ -119,7 +111,7 @@ struct TripTop: View {
             Button("分享", systemImage: "square.and.arrow.up") { mode.sharing += 1 }
             Button("換行程", systemImage: "list.bullet") { mode.listing = true }
             if t.owner == nil || t.owner == store.me {
-                Button("刪除行程", systemImage: "trash", role: .destructive) { deleting = true }
+                Button("刪除行程", systemImage: "trash", role: .destructive) { mode.deleting = t }
             }
         } label: {
             HStack(spacing: 10) {

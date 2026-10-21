@@ -47,6 +47,7 @@ struct TripCand: Equatable {
     var slot: AddSlot?               // 空檔推薦、選住宿當起點：加的位置固定
     var seg: [String]?               // 空檔推薦：順路只看那兩站中間
     var listing = false              // 「我的行程」sheet
+    var deleting: Trip?              // 問「刪除行程？」（對話框放在地圖那層，按了馬上離開行程模式）
     var sharing = 0
     @ObservationIgnored var pickAt: CFTimeInterval = 0   // 剛點了地圖上的圖釘、號碼（點空白處要分得出來）
     @ObservationIgnored let geo = RowGeo()

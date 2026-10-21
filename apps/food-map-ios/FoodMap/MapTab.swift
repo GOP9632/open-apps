@@ -69,12 +69,7 @@ struct MapTab: View {
                     UserAnnotation()
                     ForEach(list.filter { !hidden.contains($0.id) }) { p in
                         Annotation(p.name, coordinate: .init(latitude: p.lat!, longitude: p.lng!), anchor: .bottom) {
-                            // 行程模式：其他收藏縮小變淡（搜到的、正在看要不要加的那間照常）
-                            let dim = trip.on && !foundIds.contains(p.id) && trip.cand?.id != p.id
                             FoodPin(place: p, pins: pins, reduce: reduce, saver: gname == nil ? nil : p.owner.map { ($0, store.name($0)) })
-                                .scaleEffect(dim ? 0.75 : 1, anchor: .bottom)
-                                .opacity(dim ? 0.6 : 1)
-                                .animation(.easeInOut(duration: 0.3), value: dim)
                         }
                         .tag(p.id)
                         .annotationTitles(.hidden)
@@ -85,8 +80,7 @@ struct MapTab: View {
                     }
                     ForEach(clusters) { c in
                         Annotation("", coordinate: .init(latitude: c.lat, longitude: c.lng), anchor: .center) {
-                            ClusterBubble(c: c, reduce: reduce) { zoom(c) }
-                                .opacity(trip.on ? 0.6 : 1)
+                            ClusterBubble(c: c, reduce: reduce, pins: pins) { zoom(c) }
                         }
                         .annotationTitles(.hidden)
                     }
@@ -172,6 +166,12 @@ struct MapTab: View {
                 .overlay { PinBurst(spot: spot) }
                 // 長按圖釘的選單要知道圖釘在螢幕哪裡
                 .task { pins.locate = { c in proxy.convert(c, to: .global) } }
+                // 行程模式：其他收藏縮小變淡（搜到的、正在看要不要加的那間照常）。
+                // 地圖上的圖釘不會跟著 MapTab 重畫，所以交給 PinState，每根自己看
+                .onChange(of: "\(trip.on)|\(foundIds.sorted().joined(separator: ","))", initial: true) {
+                    pins.dimAll = trip.on
+                    pins.bright = foundIds
+                }
                 .onChange(of: trip.cand?.id) { _, _ in
                     // 正在看要不要加的那間：圖釘放大（收藏用店的 id，搜到的地點用 hit: 開頭）
                     pins.select(trip.cand.map { $0.place != nil ? $0.id : "hit:" + $0.id })
@@ -280,6 +280,13 @@ struct MapTab: View {
         }
         .sheet(isPresented: $adding) { AddSheet() }
         .sheet(isPresented: $trip.listing) { TripsList().presentationDetents([.medium, .large]) }
+        // 刪除行程：按下確定就回一般地圖，刪除在背景做（有復原）
+        .confirmationDialog("刪除「\(trip.deleting?.title ?? "")」？每一站都會一起刪掉", isPresented: Binding(get: { trip.deleting != nil }, set: { if !$0 { trip.deleting = nil } }), titleVisibility: .visible, presenting: trip.deleting) { t in
+            Button("刪除行程", role: .destructive) {
+                trip.close()
+                Task { try? await Task.sleep(for: .milliseconds(450)); tripStore.deleteWithUndo(t, store: store) }
+            }
+        }
         .confirmationDialog("用哪個地圖導航？", isPresented: Binding(get: { navAsk != nil }, set: { if !$0 { navAsk = nil } }), titleVisibility: .visible, presenting: navAsk) { p in
             ForEach(NavApp.allCases, id: \.self) { a in
                 Button(a.name) { NavApp.saved = a; if let u = p.navURL(a) { openURL(u) } }
@@ -496,6 +503,8 @@ struct MapTab: View {
         Task {
             try? await Task.sleep(for: .milliseconds(180))
             guard CACurrentMediaTime() - trip.pickAt > 0.4 else { return }
+            // 收鍵盤、游標也不要再閃
+            if trip.searchOn { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
             trip.blank()
         }
     }
@@ -880,6 +889,8 @@ struct PickedCard: View {
     var menu: String?                            // 長按開了選單的那根
     @ObservationIgnored var longFired = false    // 長按剛開過選單（放開手指時不要當成點一下）
     @ObservationIgnored var countedKey: String?  // 「附近 N 間」已經為這次落下數過了
+    var dimAll = false                           // 行程模式：圖釘縮小變淡
+    var bright: Set<String> = []                 // 行程模式搜到的：照常大小
     @ObservationIgnored var locate: ((CLLocationCoordinate2D) -> CGPoint?)?   // 地圖座標 → 螢幕位置
 
     // 圖釘落下（第一次畫圖釘、換看誰的收藏時播一次）：由近到遠，每根晚 0.025 秒，最多錯開 40 根，之後的直接淡入
@@ -1003,6 +1014,7 @@ struct FoodPin: View {
         // 選到的那根永遠不跟泡泡合、也不從泡泡飛（店名小牌子才會跟著圖釘）
         let merge = on ? nil : pins.mergeTo[place.id]
         let faded = pins.sel != nil && !on && !hopping   // 別間被選到時變淡（只改透明度，76 根一起動也不吃力）
+        let dim = pins.dimAll && !on && !hopping && !pins.bright.contains(place.id)   // 行程模式的其他收藏
         let hop = pins.hops[place.id] ?? 0
         // 自己接點擊：手指一按下就壓扁、輕震，放開就選中，不用等地圖確認「是不是點兩下放大」
         Button {
@@ -1041,8 +1053,10 @@ struct FoodPin: View {
                 .animation(reduce ? .easeOut(duration: 0.25) : .spring(response: 0.38, dampingFraction: 0.55), value: on)
                 .allowsHitTesting(false)
             }
-            .opacity(faded ? 0.5 : 1)
+            .opacity(faded ? 0.5 : dim ? 0.6 : 1)
             .animation(.snappy(duration: 0.25), value: faded)
+            .scaleEffect(dim ? 0.75 : 1, anchor: .bottom)
+            .animation(.easeInOut(duration: 0.3), value: dim)
             .scaleEffect(x: dsx, y: dsy, anchor: .bottom)
             .offset(x: fly.width + (merge?.width ?? 0), y: dy + fly.height + (merge?.height ?? 0))
             .opacity(dOp * (merge == nil ? 1 : 0))
@@ -1323,6 +1337,7 @@ struct PinCluster: Identifiable, Equatable {
 private struct ClusterBubble: View {
     let c: PinCluster
     var reduce = false
+    var pins: PinState? = nil
     let tap: () -> Void
     @State private var on = false
     var body: some View {
@@ -1336,7 +1351,8 @@ private struct ClusterBubble: View {
         }
         .buttonStyle(PinPress(reduce: reduce))
         .scaleEffect(on || reduce ? 1 : 0.6)
-        .opacity(on ? 1 : 0)
+        .opacity(on ? (pins?.dimAll == true ? 0.6 : 1) : 0)
+        .animation(.easeInOut(duration: 0.3), value: pins?.dimAll)
         .onAppear { withAnimation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.6)) { on = true } }
         .accessibilityLabel("\(c.ids.count) 間店，點了放大")
     }
