@@ -274,6 +274,9 @@ enum TripSort {
     @ObservationIgnored private var hiddenTrips: Set<String> = []
     @ObservationIgnored private var hiddenStops: Set<String> = []
     @ObservationIgnored private var loading: Task<Void, Never>?
+    // 這台手機剛建的行程、剛加的站（id → 什麼時候）：一分鐘內伺服器那份沒有也先留著，
+    // 免得讀到存之前的舊資料就讓它從畫面上消失
+    @ObservationIgnored private var recent: [String: Date] = [:]
     // 最近打開的行程（「加進行程」預設加到這個）
     @ObservationIgnored var lastOpened: String? = UserDefaults.standard.string(forKey: "tripLast") {
         didSet { UserDefaults.standard.set(lastOpened, forKey: "tripLast") }
@@ -341,8 +344,14 @@ enum TripSort {
             let a = try await Supa.rpc("load_trips", [:], as: All.self)
             // 讀的途中自己又改了東西，這份是舊的，丟掉（存完會再讀一次）
             guard r == rev, inflight == 0, Supa.session != nil else { return }
-            let nt = (a.trips ?? []).filter { !hiddenTrips.contains($0.id) }
-            let ns = (a.stops ?? []).filter { !hiddenStops.contains($0.id) && !hiddenTrips.contains($0.trip_id) }
+            var nt = (a.trips ?? []).filter { !hiddenTrips.contains($0.id) }
+            var ns = (a.stops ?? []).filter { !hiddenStops.contains($0.id) && !hiddenTrips.contains($0.trip_id) }
+            // 剛建、剛加還沒出現在伺服器那份的：留著本機的
+            let now = Date()
+            recent = recent.filter { now.timeIntervalSince($0.value) < 60 }
+            let tids = Set(nt.map(\.id)), sids = Set(ns.map(\.id))
+            for t in trips where recent[t.id] != nil && !tids.contains(t.id) { nt.insert(t, at: 0) }
+            for s in stops where recent[s.id] != nil && !sids.contains(s.id) && nt.contains(where: { $0.id == s.trip_id }) { ns.append(s) }
             // 沒變就不重設，畫面不重畫；朋友新加的站淡入
             if nt != trips || ns != stops {
                 withAnimation(.easeOut(duration: 0.3)) {
@@ -381,9 +390,10 @@ enum TripSort {
         let t = Trip(id: UUID().uuidString.lowercased(), owner: store?.me, group_id: group, title: title, start_date: date.map(TripDate.string),
                      days: 1, mode: "walk", created_at: nil, updated_at: ISO8601DateFormatter().string(from: Date()))
         withAnimation(.snappy) { trips.insert(t, at: 0) }
+        recent[t.id] = Date()
         lastOpened = t.id
         let body: [String: AnyCodable] = ["id": .s(t.id), "title": .s(t.title), "start_date": opt(t.start_date), "days": .i(1), "mode": .s("walk"), "group_id": opt(group)]
-        send(store, "行程沒建好：", undo: { self.trips.removeAll { $0.id == t.id }; self.stops.removeAll { $0.trip_id == t.id } }) {
+        send(store, "行程沒建好：", undo: { self.recent[t.id] = nil; self.trips.removeAll { $0.id == t.id }; self.stops.removeAll { $0.trip_id == t.id } }) {
             try await Supa.write("POST", "trips", body: body)
         }
         return t
@@ -461,13 +471,14 @@ enum TripSort {
 
     func insert(_ s: TripStop, store: Store?) {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { stops.append(s) }
+        recent[s.id] = Date()
         touch(s.trip_id)
         var body: [String: AnyCodable] = ["id": .s(s.id), "trip_id": .s(s.trip_id), "day": .i(s.day), "pos": .d(s.pos), "kind": .s(s.kind),
                                           "name": .s(s.name), "stay_min": .i(s.stay_min)]
         body["place_id"] = opt(s.place_id); body["address"] = opt(s.address); body["poi"] = opt(s.poi)
         body["lat"] = s.lat.map { AnyCodable.d($0) } ?? .null; body["lng"] = s.lng.map { AnyCodable.d($0) } ?? .null
         body["mode"] = opt(s.mode); body["fixed_time"] = opt(s.fixed_time)
-        send(store, "這站沒加到：", undo: { self.stops.removeAll { $0.id == s.id } }) {
+        send(store, "這站沒加到：", undo: { self.recent[s.id] = nil; self.stops.removeAll { $0.id == s.id } }) {
             try await Supa.write("POST", "trip_stops", body: body)
         }
     }
@@ -520,10 +531,11 @@ enum TripSort {
 
     // 復原「加進行程」：直接拿掉（剛為它建的空行程也一起刪）
     func remove(_ s: TripStop, dropTrip: Bool, store: Store) {
+        recent[s.id] = nil
         withAnimation(.snappy) { stops.removeAll { $0.id == s.id } }
         let t = trip(s.trip_id)
         let empty = dropTrip && stops(s.trip_id).isEmpty
-        if empty { withAnimation(.snappy) { trips.removeAll { $0.id == s.trip_id } } }
+        if empty { recent[s.trip_id] = nil; withAnimation(.snappy) { trips.removeAll { $0.id == s.trip_id } } }
         send(store, "復原失敗：", undo: {
             self.stops.append(s)
             if empty, let t { self.trips.insert(t, at: 0) }
