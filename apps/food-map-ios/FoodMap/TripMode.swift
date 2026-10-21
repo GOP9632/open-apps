@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import MapKit
 
 // 行程模式：首頁地圖的一個狀態，不是另一頁。
@@ -95,8 +96,15 @@ struct TripCand: Equatable {
         withAnimation(.snappy) { filter = f; level = .low }
     }
 
+    // 收鍵盤（不靠 @FocusState，見 TripTop）
+    func endTyping() {
+        typing = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
     func clearSearch() {
-        q = ""; filter = nil; typing = false; slot = nil; seg = nil
+        if typing { endTyping() }
+        q = ""; filter = nil; slot = nil; seg = nil
         search.clear()
     }
 

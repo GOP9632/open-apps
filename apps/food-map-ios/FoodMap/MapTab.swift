@@ -437,7 +437,7 @@ struct MapTab: View {
             else { c = store.place(id).map { TripCand(place: $0) } }
             guard let c, c != trip.cand else { return }
             Perf.shared.mark("點收藏加站")
-            trip.typing = false
+            trip.endTyping()
             withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) { trip.cand = c }
             return
         }
@@ -503,8 +503,6 @@ struct MapTab: View {
         Task {
             try? await Task.sleep(for: .milliseconds(180))
             guard CACurrentMediaTime() - trip.pickAt > 0.4 else { return }
-            // 收鍵盤、游標也不要再閃
-            if trip.searchOn { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
             trip.blank()
         }
     }
@@ -1055,7 +1053,7 @@ struct FoodPin: View {
             }
             .opacity(faded ? 0.5 : dim ? 0.6 : 1)
             .animation(.snappy(duration: 0.25), value: faded)
-            .scaleEffect(dim ? 0.75 : 1, anchor: .bottom)
+            .scaleEffect(dim ? 0.65 : 1, anchor: .bottom)
             .animation(.easeInOut(duration: 0.3), value: dim)
             .scaleEffect(x: dsx, y: dsy, anchor: .bottom)
             .offset(x: fly.width + (merge?.width ?? 0), y: dy + fly.height + (merge?.height ?? 0))

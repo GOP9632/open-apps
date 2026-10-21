@@ -11,7 +11,6 @@ struct TripTop: View {
     @State private var mode = TripMode.shared
     @State private var trips = TripStore.shared
     @State private var router = TripRouter.shared
-    @FocusState private var focused: Bool
     @State private var renaming = false
     @State private var newTitle = ""
     @State private var setting = false
@@ -49,10 +48,11 @@ struct TripTop: View {
             }
         }
         .padding(.top, 6)
-        .onChange(of: focused) { _, f in
-            if f { beginTyping() } else if mode.typing { mode.typing = false }
+        // 鍵盤收起來（捲結果、按搜尋、點地圖）：不算在打字了；沒打字也沒選分類就等於離開搜尋
+        // （這裡的輸入框在地圖的 safeAreaInset 裡，@FocusState 收不到焦點變化，所以直接看鍵盤）
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            if mode.typing { mode.typing = false }
         }
-        .onChange(of: mode.typing) { _, v in if !v && focused { focused = false } }
         // 搜尋收起來（不管是 ✕、點地圖空白處、還是收鍵盤）：面板回到一半
         .onChange(of: mode.searchOn) { _, on in
             guard !on, mode.level == .low, !mode.going, mode.cand == nil else { return }
@@ -140,18 +140,15 @@ struct TripTop: View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField("搜尋景點、收藏，或直接點地圖上的店", text: $mode.q).font(.body).submitLabel(.search)
-                .focused($focused)
                 .autocorrectionDisabled()
-                .onSubmit { mode.typing = false }
+                .onSubmit { mode.endTyping() }
                 // 焦點變化有時晚到：手指一點就先換畫面（只接在輸入框上，✕ 不算）
                 .simultaneousGesture(TapGesture().onEnded {
                     beginTyping()
-                    if !focused { focused = true }
                 })
             if mode.searchOn {
                 Button {
                     Haptic.light()
-                    focused = false
                     withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) {
                         mode.clearSearch()
                         mode.cand = nil
@@ -347,7 +344,7 @@ struct TripResults: View {
 
     private func pick(_ c: TripCand) {
         Haptic.light()
-        mode.typing = false
+        mode.endTyping()
         withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) { mode.cand = c }
     }
 

@@ -21,6 +21,8 @@ struct TripPanel: View {
     @State private var cardPull: CGFloat = 0
     @State private var loving = false
     @State private var placed = false
+    // 拖曳手勢被系統取消時 onEnded 不會來（站卡那排會卡在拖到一半）：手勢一結束（含取消）就放下
+    @GestureState private var holding = false
     // 出發
     @State private var me: CLLocation?          // 出發時的目前位置（只在 App 開著時更新）
     @State private var pinged: String?          // 已經為「快到了」震過的那站
@@ -122,6 +124,7 @@ struct TripPanel: View {
         // 正在看要不要加的店：算插在哪、地圖框住前後兩站和這間
         .onChange(of: candKey(order), initial: true) { placeCand(t, order) }
         .onChange(of: mode.sharing) { share(t) }
+        .onChange(of: holding) { _, h in if !h && drag.id != nil { drop(t) } }
         // 搜尋結果：地圖框住結果和這天的站
         .onChange(of: resultKey) { fit(base, origin: origin, animated: true) }
         .task(id: needKey(t, base, origin: origin)) { router.need(TripMath.needs(t, base, origin: origin)) }
@@ -291,6 +294,7 @@ struct TripPanel: View {
     private func reorder(_ t: Trip, _ s: TripStop, k: Int) -> some Gesture {
         LongPressGesture(minimumDuration: 0.35)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+            .updating($holding) { _, st, _ in st = true }
             .onChanged { v in
                 guard case .second(true, let g) = v else { return }
                 if drag.id == nil { begin(s, k: k, size: mode.geo.rows[s.id]?.height ?? 80) }
@@ -380,6 +384,7 @@ struct TripPanel: View {
     private func reorderX(_ t: Trip, _ s: TripStop, k: Int) -> some Gesture {
         LongPressGesture(minimumDuration: 0.35)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+            .updating($holding) { _, st, _ in st = true }
             .onChanged { v in
                 guard case .second(true, let g) = v else { return }
                 if drag.id == nil { begin(s, k: k, size: (mode.geo.cards[s.id]?.width ?? 150) + 8) }
