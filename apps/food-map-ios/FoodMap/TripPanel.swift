@@ -570,13 +570,13 @@ struct TripPanel: View {
         return [POI.name(h.poi), h.address].compactMap { $0 }.joined(separator: " · ")
     }
 
-    // 「插在第 2、3 站中間，只多走 4 分」
+    // 「插在第 2、3 站中間，只多走 4 分」；離很遠（搜到別的城市）就講多遠，不講幾千分
     private func where_(_ order: [TripStop], _ at: Int, extra: Double, mode m: TravelMode) -> String {
         if order.isEmpty { return "這天的第 1 站" }
-        let more = "\(m.verb) \(TripInsert.minutes(extra, m)) 分"
-        if at >= order.count { return "加在最後，多\(more)" }
-        if at == 0 { return "加在最前面，多\(more)" }
-        return "插在第 \(at)、\(at + 1) 站中間，只多\(more)"
+        let spot = at >= order.count ? "加在最後" : at == 0 ? "加在最前面" : "插在第 \(at)、\(at + 1) 站中間"
+        if extra > 15_000 { return "\(spot)，要多繞約 \(Int((extra / 1000).rounded())) 公里" }
+        let more = "\(m.verb) \(TripDate.span(TripInsert.minutes(extra, m)))"
+        return at > 0 && at < order.count ? "\(spot)，只多\(more)" : "\(spot)，多\(more)"
     }
 
     private func cancelCand() {
