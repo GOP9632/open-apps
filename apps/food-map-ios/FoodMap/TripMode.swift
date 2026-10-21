@@ -366,14 +366,19 @@ enum TripInsert {
     // 離路線（沒有路線就離目前位置）幾公尺
     func far(_ h: MapHit, here: CLLocation?) -> Double {
         if !near.isEmpty { return near.meters(h.coord) }
-        guard let here else { return 0 }
-        return here.distance(from: CLLocation(latitude: h.coord.latitude, longitude: h.coord.longitude))
+        let ref = here ?? viewCenter.map { CLLocation(latitude: $0.latitude, longitude: $0.longitude) }
+        guard let ref else { return 0 }
+        return ref.distance(from: CLLocation(latitude: h.coord.latitude, longitude: h.coord.longitude))
     }
 
+    // 這天還沒有站、也沒有定位：用地圖現在看的地方當搜尋中心（不然會搜到全台灣）
+    @ObservationIgnored private var viewCenter: CLLocationCoordinate2D?
+
     // Apple 地圖：打字就搜（停 0.35 秒才問），沒打字但選了景點／住宿／咖啡／甜點就列路線附近的
-    func run(_ q: String, _ filter: AddFilter?, here: CLLocation?) async {
+    func run(_ q: String, _ filter: AddFilter?, here: CLLocation?, view: MKCoordinateRegion?) async {
         let text = q.trimmingCharacters(in: .whitespaces)
-        let center = near.center ?? here?.coordinate
+        viewCenter = view?.center
+        let center = near.center ?? here?.coordinate ?? view?.center
         if text.isEmpty && (filter?.poi == nil || center == nil) {
             withAnimation(.snappy) { hits = []; busy = false }
             return

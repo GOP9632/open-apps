@@ -122,9 +122,19 @@ struct TripPanel: View {
             placed = true
             if mode.hot != nil { flyTo(mode.hot) } else { fit(base, origin: origin, animated: true) }
         }
-        .onChange(of: mode.level) { if mode.cand == nil { fit(base, origin: origin, animated: true) } }
+        .onChange(of: mode.level) {
+            guard mode.cand == nil else { return }
+            // 展開著一站：地圖對準那站；不然框住這天的站
+            if let e = expanded { flyTo(e) } else { fit(base, origin: origin, animated: true) }
+        }
         .onChange(of: mode.fly) { flyTo(mode.hot) }
-        .onChange(of: mode.day) { expanded = nil }
+        .onChange(of: mode.day) { if mode.expand == nil { expanded = nil } }
+        // 面板已經開著時又從店家頁「在行程裡」進來：展開那站
+        .onChange(of: mode.expand) { _, e in
+            guard let e else { return }
+            mode.expand = nil
+            Task { try? await Task.sleep(for: .milliseconds(30)); expandStop(e) }
+        }
         // 正在看要不要加的店：算插在哪、地圖框住前後兩站和這間
         .onChange(of: candKey(order), initial: true) { placeCand(t, order) }
         .onChange(of: mode.sharing) { share(t) }
@@ -133,7 +143,7 @@ struct TripPanel: View {
         .onChange(of: resultKey) { fit(base, origin: origin, animated: true) }
         .task(id: needKey(t, base, origin: origin)) { router.need(TripMath.needs(t, base, origin: origin)) }
         .onAppear {
-            if let e = mode.expand { expanded = e; mode.expand = nil }
+            if let e = mode.expand { mode.expand = nil; expandStop(e) }
         }
     }
 
@@ -276,7 +286,7 @@ struct TripPanel: View {
                     // 第一下：地圖飛到這站；同一站再點一下才展開
                     if mode.hot == s.id {
                         Haptic.light()
-                        withAnimation(.snappy) { expanded = expanded == s.id ? nil : s.id }
+                        if expanded == s.id { withAnimation(.snappy) { expanded = nil } } else { expandStop(s.id) }
                     } else {
                         mode.tap(s.id)
                         if expanded != nil { withAnimation(.snappy) { expanded = nil } }
@@ -292,6 +302,15 @@ struct TripPanel: View {
         .zIndex(dragging ? 10 : 0)
         .animation(dragging ? nil : .snappy(duration: 0.25), value: drag.shift(k))
         .transition(.asymmetric(insertion: .scale(scale: 0.9).combined(with: .opacity), removal: .opacity))
+    }
+
+    // 展開一站的編輯（停留多久、固定時間…）：面板拉到最高、捲到那站，整個編輯區都看得到，不被下面的按鈕蓋住
+    private func expandStop(_ id: String) {
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) {
+            expanded = id
+            if mode.level != .high { mode.level = .high }
+        }
+        mode.scrollTo = id
     }
 
     // 長按 0.35 秒拿起來，拖到別的位置放開；拖到上面的「第 N 天」放開就換天

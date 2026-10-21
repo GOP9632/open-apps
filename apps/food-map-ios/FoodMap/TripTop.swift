@@ -39,7 +39,7 @@ struct TripTop: View {
                 .animation(.snappy(duration: 0.2), value: mode.searchOn)
                 .task(id: searchKey) {
                     guard mode.searchOn else { return }
-                    await mode.search.run(mode.q, mode.filter, here: store.here)
+                    await mode.search.run(mode.q, mode.filter, here: store.here, view: store.mapRegion)
                 }
                 .task(id: routeKey(t)) {
                     let d = min(mode.day, t.days)
