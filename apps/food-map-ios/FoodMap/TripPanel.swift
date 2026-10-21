@@ -639,7 +639,10 @@ struct TripPanel: View {
     private func fit(_ base: [TripStop], origin: CLLocationCoordinate2D?, animated: Bool) {
         guard mode.cand == nil, !mode.going else { return }
         if mode.searchOn {
-            let found = mode.search.found.compactMap { p in p.lat.flatMap { la in p.lng.map { CLLocationCoordinate2D(latitude: la, longitude: $0) } } }
+            // 收藏可能遍布全台：只框路線 15 公里內的（都太遠就框最近的 3 間），地圖才不會一下拉到全台灣
+            var ps = mode.search.found.filter { (mode.search.meters($0) ?? 0) <= 15_000 }
+            if ps.isEmpty { ps = Array(mode.search.found.prefix(3)) }
+            let found = ps.compactMap { p in p.lat.flatMap { la in p.lng.map { CLLocationCoordinate2D(latitude: la, longitude: $0) } } }
             let hits = mode.search.mapHits(mode.search.found).map(\.coord)
             guard !(found + hits).isEmpty else { return }
             fitCoords(found + hits + base.compactMap(\.coord), card: false, animated: animated, top: TripResults.height(mode) + 8)
