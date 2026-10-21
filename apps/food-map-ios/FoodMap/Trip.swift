@@ -320,8 +320,13 @@ enum TripSort {
         return hits.first { s in trip(s.trip_id).map { ($0.end ?? .distantFuture) >= today } ?? false }
     }
 
-    func load() async {
-        if let t = loading { return await t.value }
+    // fresh：剛存完東西，正在讀的那份可能是存之前開始讀的（舊的），讀完再讀一次新的
+    func load(fresh: Bool = false) async {
+        if let t = loading {
+            await t.value
+            if !fresh { return }
+            if let t2 = loading { return await t2.value }
+        }
         let t = Task { await loadNow() }
         loading = t
         await t.value
@@ -364,8 +369,10 @@ enum TripSort {
                 store?.say(fail + error.localizedDescription)
             }
             inflight -= 1
+            // 存完之前就開始讀的那份不算（伺服器可能還沒有剛存的東西，套上去會讓剛建的行程、剛加的站不見）
+            rev += 1
             saveCache()
-            if inflight == 0 { await load() }
+            if inflight == 0 { await load(fresh: true) }
         }
     }
 

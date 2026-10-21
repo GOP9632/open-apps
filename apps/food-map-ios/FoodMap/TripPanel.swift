@@ -21,6 +21,7 @@ struct TripPanel: View {
     @State private var cardPull: CGFloat = 0
     @State private var loving = false
     @State private var placed = false
+    @State private var checked = false          // 行程找不到時，已經重新跟伺服器確認過
     // 拖曳手勢被系統取消時 onEnded 不會來（站卡那排會卡在拖到一半）：手勢一結束（含取消）就放下
     @GestureState private var holding = false
     // 出發
@@ -53,7 +54,7 @@ struct TripPanel: View {
 
     private var gone: some View {
         VStack(spacing: 10) {
-            if trips.loaded {
+            if trips.loaded && checked {
                 Text("這個行程不見了").font(.headline).foregroundStyle(Color.ink)
                 Text("可能被建立的人刪掉了").font(.subheadline).foregroundStyle(Color.ink.opacity(0.5))
                 Button("回到地圖") {
@@ -68,6 +69,8 @@ struct TripPanel: View {
         .frame(maxWidth: .infinity).padding(.vertical, 24).padding(.bottom, barRoom)
         .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg).ignoresSafeArea(edges: .bottom))
         .frame(maxHeight: .infinity, alignment: .bottom)
+        // 再跟伺服器確認一次（萬一是讀到舊資料）；真的不見才留著這個畫面
+        .task { await trips.load(fresh: true); checked = true }
     }
 
     // ----- 版面 -----
