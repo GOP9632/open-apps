@@ -357,9 +357,9 @@ enum TripInsert {
         }
     }
 
-    // 「Le Park Café」=「le park cafe」：比對店名用
+    // 「Le Park Café」=「le park cafe」、「臺北」=「台北」：比對店名用
     static func norm(_ s: String) -> String {
-        s.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
+        s.replacingOccurrences(of: "臺", with: "台").folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
             .unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
     }
 
@@ -386,6 +386,8 @@ enum TripInsert {
         if !text.isEmpty { try? await Task.sleep(for: .seconds(0.35)) }
         guard !Task.isCancelled else { return }
         busy = true
+        // 同時不限範圍再找一次（「台北101」「協同街80號」在路線範圍外也找得到；像門牌的另外用地址查）
+        async let wideItems = wide(text, filter: filter, near: center)
         var items: [MKMapItem] = []
         do {
             if text.isEmpty, let cats = filter?.poi, let c = center {
@@ -408,18 +410,58 @@ enum TripInsert {
         } catch {
             items = []
         }
+        let extra = await wideItems
         guard !Task.isCancelled else { return }
         var seen: Set<String> = []
         let limit = max(30_000, near.radius * 3)
+        // 名字對得上打的字（或是門牌）排前面，再照遠近；範圍外的只留名字對得上的
+        let key = Self.norm(text)
+        let addr = Self.isAddress(text)
+        let match = { (h: MapHit) in !key.isEmpty && (Self.norm(h.name).contains(key) || (addr && h.poi == nil)) }
         let list = items.map(MapHit.init).filter { seen.insert($0.id).inserted && far($0, here: here) <= limit }
+        let more = extra.map(MapHit.init).filter { seen.insert($0.id).inserted && (far($0, here: here) <= limit || (match($0) && far($0, here: here) <= 400_000)) }
+        let ranked = (list + more).map { (h: $0, m: match($0) ? 0 : 1, d: far($0, here: here)) }
+            .sorted { ($0.m, $0.d) < ($1.m, $1.d) }.map { $0.h }
         // 同一間店 Apple 有時給兩筆（座標差一點點）：同名、150 公尺內只留一筆
         var kept: [MapHit] = []
-        for h in list.sorted(by: { far($0, here: here) < far($1, here: here) }) {
+        for h in ranked {
             let c = CLLocation(latitude: h.coord.latitude, longitude: h.coord.longitude)
             if kept.contains(where: { $0.name == h.name && c.distance(from: CLLocation(latitude: $0.coord.latitude, longitude: $0.coord.longitude)) < 150 }) { continue }
             kept.append(h)
         }
         let sorted = kept
         withAnimation(.snappy(duration: 0.25)) { hits = Array(sorted.prefix(20)); busy = false }
+    }
+
+    // 門牌：路名＋號、巷、弄、段，或「80 Main St」
+    static func isAddress(_ s: String) -> Bool {
+        s.rangeOfCharacter(from: .decimalDigits) != nil
+            && s.range(of: "[路街段巷弄號号]|大道|^\\d+\\s+\\p{L}", options: .regularExpression) != nil
+    }
+
+    // 上面那次只要路線附近的（不然人在國外會搜到國外的店），所以範圍外的地標、門牌會被濾掉；
+    // 這次範圍只當參考。像門牌的另外用地址查詢（geocoder）和只找地址的搜尋各查一次
+    private func wide(_ text: String, filter: AddFilter?, near c: CLLocationCoordinate2D?) async -> [MKMapItem] {
+        guard !text.isEmpty else { return [] }
+        let addr = filter?.poi == nil && Self.isAddress(text)
+        async let geo = Self.geocode(addr ? text : "", near: c)
+        let r = MKLocalSearch.Request()
+        r.naturalLanguageQuery = text
+        r.resultTypes = addr ? .address : [.pointOfInterest, .address]
+        if let c { r.region = MKCoordinateRegion(center: c, latitudinalMeters: 60_000, longitudinalMeters: 60_000) }
+        if let cats = filter?.poi { r.pointOfInterestFilter = MKPointOfInterestFilter(including: cats) }
+        var found = (try? await MKLocalSearch(request: r).start().mapItems) ?? []
+        if addr, found.isEmpty {
+            r.resultTypes = [.pointOfInterest, .address]
+            found = (try? await MKLocalSearch(request: r).start().mapItems) ?? []
+        }
+        let pms = await geo
+        return pms.filter { $0.location != nil }.map { MKMapItem(placemark: MKPlacemark(placemark: $0)) } + found
+    }
+
+    private nonisolated static func geocode(_ text: String, near c: CLLocationCoordinate2D?) async -> [CLPlacemark] {
+        guard !text.isEmpty else { return [] }
+        let hint = c.map { CLCircularRegion(center: $0, radius: 50_000, identifier: "trip") }
+        return (try? await CLGeocoder().geocodeAddressString(text, in: hint, preferredLocale: Locale(identifier: "zh_TW"))) ?? []
     }
 }
