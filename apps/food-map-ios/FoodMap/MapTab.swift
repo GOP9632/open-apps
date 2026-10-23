@@ -134,6 +134,7 @@ struct MapTab: View {
                 }
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
                 .mapControls { MapCompass() }
+                .modifier(FixedMapInsets(on: Perf.fixedMap))
                 // 行程模式點地圖空白處：收掉加站卡、搜尋（點到圖釘不算）
                 .simultaneousGesture(TapGesture().onEnded { blankTap() }, including: trip.on ? .all : .subviews)
                 .onMapCameraChange(frequency: .continuous) { _ in
@@ -252,7 +253,9 @@ struct MapTab: View {
                                 }
                             }
                             .padding(.horizontal, 16)
-                            NearbySheet(near: near, pins: pins, list: list, group: gname, draw: draw, panel: openPanel, choose: choose, dropKey: pins.dropKey, focus: focus)
+                            if !Perf.noSheet {
+                                NearbySheet(near: near, pins: pins, list: list, group: gname, draw: draw, panel: openPanel, choose: choose, dropKey: pins.dropKey, focus: focus)
+                            }
                         }
                         .animation(.snappy, value: store.pendingAdds.map(\.state))
                         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -1368,5 +1371,17 @@ private struct GonePin: View {
             .allowsHitTesting(false)
             .accessibilityHidden(true)
             .onAppear { withAnimation(.easeIn(duration: 0.2)) { on = false } }
+    }
+}
+
+// 量測用（-perfFixedMap）：地圖鋪滿整個畫面、邊距固定，進出行程時上下欄高度變了也不用重排地圖
+private struct FixedMapInsets: ViewModifier {
+    let on: Bool
+    func body(content: Content) -> some View {
+        if on {
+            content.safeAreaPadding(.top, 150).safeAreaPadding(.bottom, 260).ignoresSafeArea()
+        } else {
+            content
+        }
     }
 }
