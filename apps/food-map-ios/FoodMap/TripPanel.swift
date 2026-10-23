@@ -18,6 +18,7 @@ struct TripPanel: View {
     @State private var pull: CGFloat = 0
     @State private var drag = RowDrag()
     @State private var size: CGSize = .zero
+    @State private var top0: CGFloat = 0            // 面板頂端在螢幕上的位置
     @State private var cardPull: CGFloat = 0
     @State private var loving = false
     @State private var placed = false
@@ -106,6 +107,7 @@ struct TripPanel: View {
         .animation(.snappy(duration: 0.22), value: mode.searchOn && mode.cand == nil)
         return goMods(core, t, order: order, next: next)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { top0 = $0 }
         // 地圖要畫的路線、號碼；上面標題列的「4 站・16:40 回」
         .onChange(of: pubKey(order, legs, origin: origin, plan: plan), initial: true) {
             mode.segs = TripMath.segs(order, origin: origin, legs: legs)
@@ -671,10 +673,13 @@ struct TripPanel: View {
         let cover: CGFloat = card ? 300 : panelHeight()
         let window = max(120, size.height - cover - top)
         let k = Double(window * 0.72) / latR                         // 每一度緯度幾點
-        let full = Double(size.height) / k                          // 整張地圖的緯度範圍
+        // 地圖框鏡頭的那塊（螢幕座標）；還沒量到就當成面板這塊
+        let ft = Double(mode.mapBottom > mode.mapTop ? mode.mapTop : top0)
+        let fb = Double(mode.mapBottom > mode.mapTop ? mode.mapBottom : top0 + size.height)
+        let full = (fb - ft) / k                                    // 那塊的緯度範圍
         let mid = (lats.max()! + lats.min()!) / 2
-        let winCenter = Double(top + window / 2)                    // 看得到那塊的中心離頂端幾點
-        let center = mid + (winCenter - Double(size.height) / 2) / k
+        let winCenter = Double(top0 + top + window / 2)             // 看得到那塊的中心（螢幕座標）
+        let center = mid + (winCenter - (ft + fb) / 2) / k
         let r = MKCoordinateRegion(center: .init(latitude: center, longitude: (lngs.max()! + lngs.min()!) / 2),
                                    span: .init(latitudeDelta: full, longitudeDelta: lngR * 1.4))
         if animated { withAnimation(.easeInOut(duration: 0.5)) { pos = .region(r) } } else { pos = .region(r) }
@@ -788,7 +793,9 @@ struct TripPanel: View {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { mode.going = true; mode.cand = nil }
         mode.clearSearch()
         if let h = here {
-            let span = store.mapRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
+            // 拉近到街道（已經比這更近就不動縮放）
+            let near = MKCoordinateRegion(center: h.coordinate, latitudinalMeters: 900, longitudinalMeters: 900)
+            let span = store.mapRegion.map { $0.span.latitudeDelta < near.span.latitudeDelta ? $0.span : near.span } ?? near.span
             withAnimation(.easeInOut(duration: 0.6)) { pos = .region(MKCoordinateRegion(center: h.coordinate, span: span)) }
         } else {
             withAnimation(.easeInOut(duration: 0.6)) { pos = .userLocation(fallback: pos) }

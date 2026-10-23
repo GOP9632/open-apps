@@ -22,10 +22,11 @@ struct MeTab: View {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("我的").font(.system(size: 30, weight: .black)).foregroundStyle(Color.ink).padding(.top, 8)
                     profile
+                    // 三格數字點了直接去看：收藏、去過（收藏頁篩好）、群組
                     HStack(spacing: 10) {
-                        stat("\(store.mine.count)", "收藏", .accent)
-                        stat("\(store.mine.filter(\.been).count)", "去過", .sprMint)
-                        stat("\(store.groups.count)", "群組", .sprPurple)
+                        stat("\(store.mine.count)", "收藏", .accent) { go(1, Filter()) }
+                        stat("\(store.mine.filter(\.been).count)", "去過", .sprMint) { go(1, Filter(status: "been")) }
+                        stat("\(store.groups.count)", "群組", .sprPurple) { go(2, nil) }
                     }
                     // 教學常駐在這：隨時可以再看一次
                     box("教學") {
@@ -59,12 +60,7 @@ struct MeTab: View {
                             .padding(.horizontal, 12).padding(.vertical, 11)
                         }
                     }
-                    Button { leaving = true } label: {
-                        Text("登出").font(.headline).foregroundStyle(Color.sprPink)
-                            .frame(maxWidth: .infinity).frame(height: 50).candy(18).contentShape(.rect)
-                    }
-                    .buttonStyle(PressStyle())
-                    // 很少用到的收在「進階」
+                    // 很少用到的收在「進階」（登出也在這）
                     DisclosureGroup(isExpanded: $advanced.animation(.snappy)) {
                         VStack(alignment: .leading, spacing: 16) {
                             box("IG 分享捷徑（網頁版用）", footer: "網頁版設定好的分享捷徑可以繼續用。換新的收藏碼之後，舊的捷徑就不能用了。App 裡的分享選單不受影響。") {
@@ -76,6 +72,11 @@ struct MeTab: View {
                                     ProgressView().frame(maxWidth: .infinity).padding()
                                 }
                             }
+                            Button { leaving = true } label: {
+                                Text("登出").font(.headline).foregroundStyle(Color.sprPink)
+                                    .frame(maxWidth: .infinity).frame(height: 50).candy(18).contentShape(.rect)
+                            }
+                            .buttonStyle(PressStyle())
                             Button { killing = true } label: {
                                 Text("刪除帳號").font(.headline).foregroundStyle(.red)
                                     .frame(maxWidth: .infinity).frame(height: 50).candy(18).contentShape(.rect)
@@ -185,13 +186,25 @@ struct MeTab: View {
         .padding(.horizontal, 12).padding(.vertical, 9)
     }
 
-    private func stat(_ n: String, _ t: String, _ c: Color) -> some View {
-        VStack(spacing: 2) {
-            Text(n).font(.system(size: 26, weight: .black)).foregroundStyle(c)
-            Text(t).font(.caption.weight(.bold)).foregroundStyle(Color.ink.opacity(0.5))
+    private func stat(_ n: String, _ t: String, _ c: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                Text(n).font(.system(size: 26, weight: .black)).foregroundStyle(c)
+                Text(t).font(.caption.weight(.bold)).foregroundStyle(Color.ink.opacity(0.5))
+            }
+            .frame(maxWidth: .infinity).padding(.vertical, 12)
+            .candy(20)
+            .contentShape(.rect)
         }
-        .frame(maxWidth: .infinity).padding(.vertical, 12)
-        .candy(20)
+        .buttonStyle(PressStyle(haptic: true))
+        .accessibilityLabel("\(t) \(n)")
+    }
+
+    // 換到收藏頁（篩好）或群組頁
+    private func go(_ tab: Int, _ f: Filter?) {
+        Perf.shared.mark("換分頁")
+        if let f { store.listF = f }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { store.tab = tab }
     }
 
     private func box<C: View>(_ title: String, footer: String? = nil, @ViewBuilder _ c: () -> C) -> some View {
@@ -238,9 +251,16 @@ struct LoginView: View {
     var body: some View {
         VStack(spacing: 16) {
             Spacer()
-            Image("Logo").resizable().frame(width: 96, height: 96).clipShape(.rect(cornerRadius: 24))
+            Image("Logo").resizable().frame(width: 80, height: 80).clipShape(.rect(cornerRadius: 20))
                 .shadow(color: .cardShadow, radius: 0, y: 4)
-            Text("美食收藏").font(.system(size: 32, weight: .black)).foregroundStyle(Color.ink)
+            VStack(spacing: 2) {
+                Text("Bitemap").font(.system(size: 32, weight: .black)).foregroundStyle(Color.ink)
+                Text("美食收藏").font(.subheadline.weight(.bold)).foregroundStyle(Color.ink.opacity(0.5))
+            }
+            // 三格介紹（填 Email 時收起來，鍵盤才不會擠）
+            if !useEmail && store.pendingLink == nil {
+                LoginCarousel().transition(.opacity)
+            }
             if useEmail || store.pendingLink != nil {
                 emailForm.transition(.move(edge: .trailing).combined(with: .opacity))
             } else {

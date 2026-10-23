@@ -52,6 +52,10 @@ struct TripCand: Equatable {
     var sharing = 0
     @ObservationIgnored var pickAt: CFTimeInterval = 0   // 剛點了地圖上的圖釘、號碼（點空白處要分得出來）
     @ObservationIgnored let geo = RowGeo()
+    // 地圖框鏡頭用的那塊（螢幕座標的上下緣）。進出行程時地圖大小、邊距不變（變了整張地圖要重排，很卡），
+    // 所以面板框站時要自己換算；0 = 還沒量到，就當成面板那塊
+    @ObservationIgnored var mapTop: CGFloat = 0
+    @ObservationIgnored var mapBottom: CGFloat = 0
     let search = TripSearch()
 
     var on: Bool { tid != nil }

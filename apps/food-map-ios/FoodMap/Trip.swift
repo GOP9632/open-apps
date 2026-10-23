@@ -545,17 +545,65 @@ enum TripSort {
         }
     }
 
-    // 店家頁「加進行程」：有進行中的行程就加到最後一天最後一站，沒有就建一個新的
+    // 「加到哪個行程？」正在問的那間（TripChooser 的 sheet 看這個）
+    var choosing: Place?
+
+    // 可以加的行程：今天的排第一，之後的依日期，沒排日期的接著；過去的不列
+    var upcoming: [Trip] {
+        let today = TripDate.today
+        func rank(_ t: Trip) -> (Int, Date) {
+            guard let s = t.start else { return (2, .distantFuture) }
+            return s <= today ? (0, s) : (1, s)
+        }
+        return trips.filter { ($0.end ?? .distantFuture) >= today }
+            .sorted { a, b in
+                let x = rank(a), y = rank(b)
+                if x.0 != y.0 { return x.0 < y.0 }
+                if x.1 != y.1 { return x.1 < y.1 }
+                return (a.updated_at ?? "") > (b.updated_at ?? "")
+            }
+    }
+
+    // 店家頁、長按圖釘「加進行程」：只有一個還沒過期的行程而且就是進行中的那個 → 直接加；不然問加到哪個
     func addPlace(_ p: Place, store: Store) {
         Perf.shared.mark("加進行程")
-        var made = false
-        let t: Trip
-        if let a = active { t = a } else { t = create(title: "新行程", date: nil, group: nil, store: store); made = true }
-        let s = makeStop(t.id, day: t.days, place: p)
+        let list = upcoming
+        if list.count == 1, let a = active, a.id == list[0].id {
+            add(p, to: a, made: false, store: store)
+        } else {
+            Haptic.light()
+            choosing = p
+        }
+    }
+
+    // 「加到哪個行程？」最下面的「＋ 開新行程」
+    func addToNew(_ p: Place, store: Store) {
+        let t = create(title: "新行程", date: nil, group: nil, store: store)
+        add(p, to: t, made: true, store: store)
+    }
+
+    // 加到指定的行程：今天在這個行程裡就加到今天那天，不然最後一天；插在多走最少的地方（多繞超過 10 分鐘就放最後）
+    func add(_ p: Place, to t: Trip, made: Bool, store: Store) {
+        choosing = nil
+        lastOpened = t.id
+        let today = TripDate.today
+        var day = t.days
+        if let st = t.start, st <= today, let n = Calendar.current.dateComponents([.day], from: st, to: today).day, n < t.days { day = n + 1 }
+        let order = stops(t.id, day: day)
+        var s = makeStop(t.id, day: day, place: p)
+        var at = order.count
+        var smooth = false
+        if let c = s.coord, !order.isEmpty {
+            let b = TripInsert.best(order, c)
+            let tm = TravelMode(rawValue: t.mode) ?? .walk
+            if TripInsert.minutes(b.extra, tm) <= 10 { at = b.at; smooth = true }
+        }
+        s.pos = TripInsert.pos(order, at: at)
         insert(s, store: store)
         Haptic.success()
-        let n = stops(t.id, day: t.days).count
-        store.say("加到 \(t.title)・第 \(n) 站", icon: .check, action: ("復原", { [weak self] in
+        let n = at + 1
+        let msg = smooth ? "加到 \(t.title) 第 \(n) 站・順路" : order.isEmpty ? "加到 \(t.title)・第 1 站" : "加到 \(t.title) 最後・第 \(n) 站"
+        store.say(msg, icon: .check, action: ("復原", { [weak self] in
             self?.remove(s, dropTrip: made, store: store)
             store.toast = nil
         }), tap: { TripMode.shared.open(t.id, focus: s.id, store: store) })

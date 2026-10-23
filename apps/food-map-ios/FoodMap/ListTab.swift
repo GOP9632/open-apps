@@ -54,6 +54,14 @@ struct ListTab: View {
                             })
                             .accessibilityLabel("抽一間")
                             .accessibilityHint("長按改設定")
+                            // 跟地圖一樣的小齒輪：抽一間的設定
+                            Button { openPanel() } label: {
+                                Image(systemName: "slider.horizontal.3").font(.system(size: 14, weight: .heavy)).foregroundStyle(Color.accent)
+                                    .frame(width: 36, height: 36).background(Color.accent.opacity(0.13), in: .circle)
+                                    .frame(width: 40, height: 44).contentShape(.rect)
+                            }
+                            .buttonStyle(PressStyle(haptic: true))
+                            .accessibilityLabel("抽一間的設定")
                         }
                         AddButton(size: 42) { adding = true }
                     }

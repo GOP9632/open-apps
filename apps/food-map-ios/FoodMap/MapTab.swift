@@ -27,6 +27,11 @@ struct MapTab: View {
     @State private var clusterTask: Task<Void, Never>?
     // 選到很遠的店：先拉遠再降落
     @State private var flight: Flight?
+    // 地圖鋪滿整個畫面，鏡頭框的那塊（上面搜尋列下緣、下面卡片列上緣，螢幕座標）只在一般地圖時跟著量；
+    // 進出行程時地圖大小、邊距都不變，不然整張地圖要重排（每次 0.5 秒左右的卡頓）
+    @State private var mapRect: CGRect = .zero
+    @State private var headY: CGFloat = 0
+    @State private var footY: CGFloat = 0
     // 長按圖釘選「導航」但還沒選過用哪個地圖
     @State private var navAsk: Place?
     // 行程模式：同一張地圖變成某個行程（上面標題列、下面行程面板）
@@ -64,6 +69,7 @@ struct MapTab: View {
         let near = Nearby(list: list, here: store.here, region: shownRegion, total: all.count)
         let missing = all.count - list.count
         NavigationStack(path: $store.mapPath) {
+          ZStack {
             MapReader { proxy in
                 Map(position: $pos, selection: Binding(get: { pins.sel }, set: { pins.select($0) })) {
                     UserAnnotation()
@@ -134,7 +140,8 @@ struct MapTab: View {
                 }
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
                 .mapControls { MapCompass() }
-                .modifier(FixedMapInsets(on: Perf.fixedMap))
+                .safeAreaPadding(.top, max(0, headY - mapRect.minY))
+                .safeAreaPadding(.bottom, footY > 0 ? max(0, mapRect.maxY - footY) : 0)
                 // 行程模式點地圖空白處：收掉加站卡、搜尋（點到圖釘不算）
                 .simultaneousGesture(TapGesture().onEnded { blankTap() }, including: trip.on ? .all : .subviews)
                 .onMapCameraChange(frequency: .continuous) { _ in
@@ -178,6 +185,11 @@ struct MapTab: View {
                     pins.select(trip.cand.map { $0.place != nil ? $0.id : "hit:" + $0.id })
                 }
             }
+            .ignoresSafeArea()
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { mapRect = $0; trip.mapBottom = footY > 0 ? footY : $0.maxY }
+            // 搜尋列、卡片列、行程面板放在地圖上面另一層：它們的高度變了不會動到地圖
+            Color.clear
+            .allowsHitTesting(false)
             // 行程面板蓋在地圖上（標題列下面）；打開時從下面彈上來
             .overlay {
                 if let tid = trip.tid {
@@ -190,7 +202,8 @@ struct MapTab: View {
                     if let tid = trip.tid {
                         TripTop(tid: tid)
                             .transition(.opacity)
-                    } else {
+                    }
+                    // 一般地圖的搜尋列：行程模式時收起來但不拿掉（拿掉再建一次很慢）
                         VStack(spacing: 8) {
                             SearchField(text: $store.mapF.q, prompt: gname.map { "在「\($0)」裡找" } ?? "今天想吃什麼？") {
                                 AddButton { adding = true }.coachAnchor(.add)
@@ -199,13 +212,18 @@ struct MapTab: View {
                             FilterChips(f: $store.mapF, solid: true, lead: store.groups.isEmpty ? nil : AnyView(scopePill(gname)))
                         }
                         .padding(.top, 6)
-                        .transition(.opacity)
-                    }
+                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { y in
+                            guard !trip.on, abs(y - headY) > 0.5 else { return }
+                            headY = y; trip.mapTop = y
+                        }
+                        .opacity(trip.on ? 0 : 1)
+                        .frame(height: trip.on ? 0 : nil, alignment: .top)
+                        .allowsHitTesting(!trip.on)
+                        .accessibilityHidden(trip.on)
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                ZStack {
-                    if !trip.on {
+                // 卡片列：行程模式時收起來但不拿掉（拿掉再建一次很慢）
                         VStack(alignment: .trailing, spacing: 10) {
                             // AI 在背景找剛新增的店
                             if store.pendingAdds.contains(where: { $0.state == .finding }) {
@@ -248,7 +266,9 @@ struct MapTab: View {
                                         Haptic.light()
                                         // 移到目前位置一次就好。不用 .userLocation：那會一直跟著走，位置一動整張地圖就每幀重畫，手機會燙
                                         if let l = loc.location ?? store.here {
-                                            let span = store.mapRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+                                            // 拉近到街道（已經比這更近就不動縮放）
+                                            let near = MKCoordinateRegion(center: l.coordinate, latitudinalMeters: 1200, longitudinalMeters: 1200)
+                                            let span = store.mapRegion.map { $0.span.latitudeDelta < near.span.latitudeDelta ? $0.span : near.span } ?? near.span
                                             withAnimation(.smooth(duration: 0.5)) { pos = .region(MKCoordinateRegion(center: l.coordinate, span: span)) }
                                         } else {
                                             withAnimation(.smooth(duration: 0.5)) { pos = .userLocation(fallback: pos) }
@@ -259,14 +279,18 @@ struct MapTab: View {
                                 }
                             }
                             .padding(.horizontal, 16)
-                            if !Perf.noSheet {
-                                NearbySheet(near: near, pins: pins, list: list, group: gname, draw: draw, panel: openPanel, choose: choose, dropKey: pins.dropKey, focus: focus)
-                            }
+                            NearbySheet(near: near, pins: pins, list: list, group: gname, draw: draw, panel: openPanel, choose: choose, dropKey: pins.dropKey, focus: focus)
                         }
                         .animation(.snappy, value: store.pendingAdds.map(\.state))
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                }
+                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in
+                            guard !trip.on, abs(y - footY) > 0.5 else { return }
+                            footY = y; trip.mapBottom = y
+                        }
+                        .offset(y: trip.on ? 60 : 0)
+                        .opacity(trip.on ? 0 : 1)
+                        .frame(height: trip.on ? 0 : nil, alignment: .top)
+                        .allowsHitTesting(!trip.on)
+                        .accessibilityHidden(trip.on)
             }
             // 長按圖釘：背景變暗、圖釘放大，旁邊彈出「加進行程／導航／看店家」
             .overlay { PinMenu(pins: pins, list: list, act: pinAct) }
@@ -279,6 +303,7 @@ struct MapTab: View {
                     choose(p)
                 })
             }
+          }
             .toolbarVisibility(.hidden, for: .navigationBar)
             .navigationDestination(for: Place.self) { PlaceDetail(place: $0) }
             .tripDestinations()
@@ -643,7 +668,11 @@ struct MapTab: View {
     }
 
     private func fit() {
-        if !fitted, let b = bounds { fitted = true; pos = .region(b) }
+        if !fitted, let b = bounds { fitted = true; pos = .region(b); return }
+        // 新帳號一間都沒有：有定位就看目前位置附近約 3 公里（沒有就停在預設的台北市）；之後有店了再框收藏
+        if !fitted, bounds == nil, store.mine.isEmpty, store.mapGroup == nil, let h = store.here {
+            pos = .region(MKCoordinateRegion(center: h.coordinate, latitudinalMeters: 3000, longitudinalMeters: 3000))
+        }
     }
 
     private var bounds: MKCoordinateRegion? {
@@ -702,6 +731,7 @@ struct NearbySheet: View {
     @State private var scrolled: String?      // 卡片列停在哪一間
     @State private var skip: String?          // 自己捲過去的（關掉大卡），不用再移地圖
     @Environment(\.accessibilityReduceMotion) private var reduce
+    @Environment(Store.self) private var store
 
     var body: some View {
         // 選到的那間（點圖釘或抽中）：下面換成那間的大卡片
@@ -717,6 +747,9 @@ struct NearbySheet: View {
                 }
                     .id(p.id)
                     .transition(.asymmetric(insertion: .offset(y: 44).combined(with: .opacity), removal: .opacity))
+            } else if group == nil && store.mine.isEmpty && !store.loading {
+                // 新帳號還沒有收藏：一張「收藏第一間店」大卡
+                FirstPlaceCard().transition(.opacity)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -1377,17 +1410,5 @@ private struct GonePin: View {
             .allowsHitTesting(false)
             .accessibilityHidden(true)
             .onAppear { withAnimation(.easeIn(duration: 0.2)) { on = false } }
-    }
-}
-
-// 量測用（-perfFixedMap）：地圖鋪滿整個畫面、邊距固定，進出行程時上下欄高度變了也不用重排地圖
-private struct FixedMapInsets: ViewModifier {
-    let on: Bool
-    func body(content: Content) -> some View {
-        if on {
-            content.safeAreaPadding(.top, 150).safeAreaPadding(.bottom, 260).ignoresSafeArea()
-        } else {
-            content
-        }
     }
 }

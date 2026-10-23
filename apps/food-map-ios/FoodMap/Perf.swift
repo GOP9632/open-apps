@@ -21,15 +21,6 @@ import os
     @ObservationIgnored private var last: CFTimeInterval = 0
     @ObservationIgnored private var drops: [CFTimeInterval] = []
 
-    // 模擬器量測用的開關（啟動參數），用來拆出開關行程時哪一塊最花時間；實機永遠是 false
-    #if targetEnvironment(simulator)
-    static let fixedMap = ProcessInfo.processInfo.arguments.contains("-perfFixedMap")   // 地圖大小、邊距固定，不跟上下欄變
-    static let noSheet = ProcessInfo.processInfo.arguments.contains("-perfNoSheet")     // 不畫下面的附近卡片列
-    #else
-    static let fixedMap = false
-    static let noSheet = false
-    #endif
-
     // 只在開發版、模擬器和 TestFlight 出現，App Store 版不會有
     static var allowed: Bool {
         #if DEBUG || targetEnvironment(simulator)

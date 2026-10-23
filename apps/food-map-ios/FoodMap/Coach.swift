@@ -271,7 +271,7 @@ struct IGTutorial: View {
             let t = texts[step]
             Spotlight(rect: ready == step ? frames[step] : nil, title: t.0, message: t.1, counter: "IG 收藏 \(step + 1)/3",
                       button: step == 2 ? "我學會了" : nil, hint: step == 2 ? nil : "點圈起來的地方",
-                      onTarget: next, onButton: finish, onSkip: finish)
+                      onTarget: next, onButton: { finish(done: true) }, onSkip: { finish(done: false) })
                 .id(step)
         }
         .background(.white)
@@ -285,12 +285,14 @@ struct IGTutorial: View {
 
     private func next() {
         Haptic.light()
-        if step < 2 { withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { step += 1 } } else { finish() }
+        if step < 2 { withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { step += 1 } } else { finish(done: true) }
     }
 
-    private func finish() {
+    // 看完最後一步：問要不要找好時通知（分享過來的店要靠通知說一聲；略過的不問）
+    private func finish(done: Bool) {
         store.showIG = false
         if store.igFromCoach { store.igFromCoach = false; store.advanceCoach() }
+        if done { store.maybeAskNotify() }
     }
 
     private func mark(_ i: Int) -> some View {

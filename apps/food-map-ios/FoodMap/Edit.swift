@@ -10,6 +10,7 @@ struct AddSheet: View {
     @State private var manual = false
     @State private var been = false
     @State private var rating: Int?
+    @State private var clip = false        // 剪貼簿裡有連結（不讀內容，按「貼上」才填）
     @FocusState private var focus: Bool
 
     var body: some View {
@@ -20,17 +21,21 @@ struct AddSheet: View {
                     .lineLimit(3...6).focused($focus)
                     .padding(14).background(Color.panel, in: .rect(cornerRadius: 14))
                 HStack {
-                    PasteButton(payloadType: String.self) { s in if let t = s.first { input = t } }
-                        .buttonBorderShape(.capsule).labelStyle(.titleAndIcon)
+                    PasteButton(payloadType: String.self) { s in
+                        if let t = s.first { input = t }
+                        Task { @MainActor in ClipWatch.shared.markSeen(); ClipWatch.shared.dismiss() }
+                        withAnimation(.snappy) { clip = false }
+                    }
+                    .buttonBorderShape(.capsule).labelStyle(.titleAndIcon)
+                    if clip {
+                        Text("剛複製的連結，按「貼上」就填好").font(.footnote.weight(.bold)).foregroundStyle(Color.accentDeep)
+                            .lineLimit(2).transition(.opacity)
+                    }
                     Spacer()
                     Button("自己填") { manual = true }.font(.subheadline.weight(.semibold))
                 }
-                // 已經吃過的店也能收：選「去過」，順手給星星
-                Picker("", selection: $been.animation(.snappy)) {
-                    Text("想去").tag(false)
-                    Text("去過了").tag(true)
-                }
-                .pickerStyle(.segmented)
+                // 已經吃過的店也能收：選「去過」，順手給星星（跟店家頁一樣的粉紅／薄荷切換）
+                StatusSwitch(been: $been.animation(.snappy))
                 if been {
                     HStack {
                         Text("好吃嗎？").font(.subheadline).foregroundStyle(.secondary)
@@ -62,6 +67,11 @@ struct AddSheet: View {
             // 等視窗彈上來（約 0.35 秒）再叫鍵盤，兩個動畫不搶。
             // 在視窗裡 SwiftUI 的 focus 有時不生效，就直接叫最上層畫面裡的輸入框接手
             .task {
+                // 剪貼簿是連結：不叫鍵盤，提示按「貼上」（直接讀剪貼簿會跳「允許貼上」）
+                if await ClipWatch.hasLink() {
+                    withAnimation(.snappy) { clip = true }
+                    return
+                }
                 try? await Task.sleep(for: .milliseconds(350))
                 focus = true
                 for _ in 0..<4 {

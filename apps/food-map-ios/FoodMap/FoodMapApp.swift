@@ -28,6 +28,7 @@ struct Root: View {
     @Namespace private var toastNS
     // 冷啟動：啟動畫面的甜甜圈咬一口再放大淡掉（減少動態時不播）
     @State private var bite = !UIAccessibility.isReduceMotionEnabled
+    @State private var clip = ClipWatch.shared
 
     var body: some View {
         @Bindable var store = store
@@ -45,10 +46,13 @@ struct Root: View {
                     }
                 }
                 .animation(.snappy, value: store.barHidden)
+                // 加進行程：兩個以上的行程時問加到哪個
+                .tripChooser()
                 .onChange(of: store.tab) { _, t in opened.insert(t) }
                 .task {
                     await store.sync()
                     store.maybeStartCoach()
+                    ClipWatch.shared.check(store)
                     // 第一個畫面出來、空閒一下之後，先把另外三頁建好，第一次點過去不會頓
                     try? await Task.sleep(for: .seconds(1))
                     opened.formUnion([1, 2, 3])
@@ -61,6 +65,25 @@ struct Root: View {
                     Task { if await store.join(code) != nil { withAnimation(.snappy) { store.tab = 2 } } }
                 }
                 .overlay { CoachOverlay().ignoresSafeArea() }
+                // 剛複製了 IG／Google 地圖連結：上面浮一條膠囊問要不要收（地圖分頁放在搜尋列下面）
+                .overlay(alignment: .top) {
+                    if clip.showing && store.coach.isEmpty {
+                        ClipCapsule().padding(.top, store.tab == 0 ? 104 : 6)
+                    }
+                }
+                // 問通知前的小卡（教學跑完才出來）
+                .overlay {
+                    if store.askNotify && store.coach.isEmpty {
+                        Color.black.opacity(0.25).ignoresSafeArea()
+                            .onTapGesture { store.answerNotify(false) }
+                            .transition(.opacity)
+                    }
+                }
+                .overlay(alignment: .bottom) {
+                    if store.askNotify && store.coach.isEmpty {
+                        NotifyCard().transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                }
                 // 剛用 Apple／Google 登入、帳號是空的：可能以前用 Email 註冊過
                 .alert("以前用 Email 註冊過嗎？", isPresented: Binding(get: { store.askOld != nil }, set: { _ in }),
                        presenting: store.askOld) { p in
@@ -148,7 +171,12 @@ struct Root: View {
         }
         // 切回 App 時跟網頁版一樣重新同步一次
         // 憑證快到期就先在背景換好，接下來的請求不用等
-        .onChange(of: phase) { _, p in if p == .active { Task { _ = try? await Supa.fresh(); await store.sync() } } }
+        .onChange(of: phase) { _, p in
+            if p == .active {
+                ClipWatch.shared.check(store)
+                Task { _ = try? await Supa.fresh(); await store.sync() }
+            }
+        }
     }
 
     // 四個分頁疊在一起，只顯示目前這個（切換不重建，捲到哪、地圖看到哪都留著）
@@ -303,8 +331,7 @@ extension View {
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ app: UIApplication, didFinishLaunchingWithOptions o: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
-        // 第一次打開就問能不能發通知（分享選單存好要靠通知告訴他）
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        // 不在一打開就問通知：IG 教學看完、第一次新增時才問（Onboard.swift 的 maybeAskNotify）
         return true
     }
 

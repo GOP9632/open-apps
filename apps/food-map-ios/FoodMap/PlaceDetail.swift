@@ -1,7 +1,7 @@
 import SwiftUI
 import MapKit
 
-// 店家頁：大張圓角照片、白色資料卡（想去／去過切換）、三顆彩色按鈕、彩色必點
+// 店家頁：4:3 圓角照片（看影片放在照片上）、白色資料卡（想去／去過切換）、彩色必點；導航、行程、分享固定在最下面
 // 自己的店可以改想去／去過、星等、分享到群組、編輯、刪除；朋友的店只能看
 struct PlaceDetail: View {
     let place: Place
@@ -29,15 +29,16 @@ struct PlaceDetail: View {
                 top(place, mine: mine)
                 photo(place)
                 info(place, mine: mine, branches: branches)
-                actions(place, branched: branches.count > 1)
                 if let d = place.dishes, !d.isEmpty { dishes(d) }
                 details(place)
                 if mine && !store.groups.isEmpty { groups(place) }
                 if let lat = place.lat, let lng = place.lng { map(place, CLLocationCoordinate2D(latitude: lat, longitude: lng)) }
             }
             .padding(.horizontal, 14)
-            .padding(.bottom, 30)
+            .padding(.bottom, 20)
         }
+        // 導航、加進行程、分享固定在最下面，捲到哪都按得到（單手大拇指剛好）
+        .safeAreaInset(edge: .bottom, spacing: 0) { actions(place, branched: branches.count > 1) }
         // 往下拉超過頂端時大圖放大、往上滑時大圖慢一半（只有大圖跟著重畫）
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in scroll.y = y }
         .background(Color.bg)
@@ -83,14 +84,30 @@ struct PlaceDetail: View {
 
     private func photo(_ place: Place) -> some View {
         Stretchy(scroll: scroll) {
-            Color.clear.aspectRatio(1, contentMode: .fit)
+            Color.clear.aspectRatio(4 / 3, contentMode: .fit)
                 .overlay { PlaceMedia(place: place) }
                 .clipShape(.rect(cornerRadius: 28))
         }
+            // 看影片／看貼文：照片左下的黑色膠囊
             .overlay(alignment: .bottomLeading) {
+                if let s = place.source_url, let u = URL(string: s), !s.isEmpty {
+                    // 只有 IG Reels 是影片，其他貼文叫「看貼文」
+                    let reel = s.contains("/reel/") || s.contains("/reels/")
+                    Button { openURL(u) } label: {
+                        Text(reel ? "▶ 看影片" : "看貼文").font(.system(size: 15, weight: .heavy)).foregroundStyle(.white)
+                            .padding(.horizontal, 14).frame(height: 36)
+                            .background(.black.opacity(0.55), in: .capsule)
+                            .frame(minHeight: 44).contentShape(.rect)
+                    }
+                    .buttonStyle(PressStyle())
+                    .padding(10)
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
                 Text("\(place.cat.emoji) \(place.cat.name)").font(.footnote.weight(.heavy)).foregroundStyle(.white)
                     .padding(.horizontal, 11).frame(height: 30).background(place.cat.color, in: .capsule)
                     .overlay(Capsule().strokeBorder(.white, lineWidth: 2)).padding(14)
+                    .allowsHitTesting(false)
             }
     }
 
@@ -165,31 +182,45 @@ struct PlaceDetail: View {
         .padding(.top, 2)
     }
 
+    // 最下面固定的一排：導航（主按鈕，1.4 份寬）、加進行程／在行程裡（白底，1 份）、分享（只有圖示的方塊）
     private func actions(_ place: Place, branched: Bool) -> some View {
-        HStack(spacing: 8) {
-            Button {
-                if let a = NavApp.saved { if let u = place.navURL(a) { openURL(u) } } else { askNav = true }
-            } label: { ActLabel(icon: "location.fill", text: branched ? "導航到\(branchLabel(place))" : "導航") }
+        GeometryReader { g in
+            let rest = max(0, g.size.width - 54 - 16)
+            HStack(spacing: 8) {
+                Button {
+                    if let a = NavApp.saved { if let u = place.navURL(a) { openURL(u) } } else { askNav = true }
+                } label: {
+                    Label(branched ? "導航到\(branchLabel(place))" : "導航", systemImage: "location.fill")
+                        .font(.system(size: 17, weight: .heavy)).lineLimit(1).minimumScaleFactor(0.7)
+                        .frame(maxWidth: .infinity).frame(height: 54)
+                }
                 .buttonStyle(ChunkyStyle(color: .accent, edge: .accentDeep, radius: 18))
-            tripButton(place)
-            if let s = place.source_url, let u = URL(string: s), !s.isEmpty {
-                // 只有 IG Reels 是影片，其他貼文叫「看貼文」
-                let reel = s.contains("/reel/") || s.contains("/reels/")
-                Button { openURL(u) } label: { ActLabel(icon: reel ? "play.fill" : "doc.richtext", text: reel ? "看影片" : "看貼文") }
-                    .buttonStyle(ChunkyStyle(color: .sprPink, edge: Color.sprPink.mix(with: .black, by: 0.2), radius: 18))
+                .frame(width: rest * 1.4 / 2.4)
+                tripButton(place)
+                    .frame(width: rest / 2.4)
+                Button { share(place) } label: {
+                    Image(systemName: "square.and.arrow.up").font(.system(size: 19, weight: .heavy)).foregroundStyle(Color.ink)
+                        .frame(width: 54, height: 54)
+                        .background(RoundedRectangle(cornerRadius: 18).fill(Color.panel).shadow(color: .cardShadow, radius: 0, y: 4))
+                        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Color.cardShadow, lineWidth: 2.5))
+                }
+                .buttonStyle(PressStyle())
+                .accessibilityLabel("分享")
             }
-            Button { share(place) } label: { ActLabel(icon: "square.and.arrow.up", text: "分享") }
-                .buttonStyle(ChunkyStyle(color: .sprBlue, edge: Color.sprBlue.mix(with: .black, by: 0.2), radius: 18))
         }
+        .frame(height: 58)
+        .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 6)
+        .background(Color.bg.shadow(color: .black.opacity(0.08), radius: 8, y: -3).ignoresSafeArea(edges: .bottom))
     }
 
-    // 加進行程：有進行中的行程就加到最後一站；已經在行程裡就打開那個行程、捲到那一站
+    // 加進行程：只有一個進行中的行程就直接加在最順的位置，不然先問加到哪個；已經在行程裡就打開那個行程、捲到那一站
     @ViewBuilder private func tripButton(_ place: Place) -> some View {
         if let s = trips.stopOf(place: place.id) {
             Button { Haptic.light(); TripMode.shared.open(s.trip_id, focus: s.id, store: store) } label: {
-                ActLabel(icon: "checkmark", text: "在行程裡")
+                Label("在行程裡", systemImage: "checkmark").foregroundStyle(Color.sprMint.mix(with: .black, by: 0.15))
+                    .modifier(TripBtnLook())
             }
-            .buttonStyle(ChunkyStyle(color: .sprMint, edge: Color.sprMint.mix(with: .black, by: 0.2), radius: 18))
+            .buttonStyle(PressStyle())
             .transition(.scale(scale: 0.9).combined(with: .opacity))
         } else {
             Button {
@@ -198,8 +229,11 @@ struct PlaceDetail: View {
                     if !trips.loaded { await trips.load() }
                     trips.addPlace(place, store: store)
                 }
-            } label: { ActLabel(icon: "point.topleft.down.to.point.bottomright.curvepath.fill", text: "加進行程") }
-            .buttonStyle(ChunkyStyle(color: .sprYellow, edge: Color.sprYellow.mix(with: .black, by: 0.25), fg: .ink, radius: 18))
+            } label: {
+                Label("加進行程", systemImage: "plus").foregroundStyle(Color.ink)
+                    .modifier(TripBtnLook())
+            }
+            .buttonStyle(PressStyle())
         }
     }
 
@@ -271,37 +305,52 @@ struct PlaceDetail: View {
     }
 }
 
-// 想去／去過切換：想去是粉紅、去過是薄荷綠。「去過」是教學第三步要圈的地方
+// 店家頁的想去／去過：存回收藏。「去過」是教學第三步要圈的地方
 struct StatusToggle: View {
     @Environment(Store.self) private var store
-    @Environment(\.accessibilityReduceMotion) private var reduce
     let place: Place
+
+    var body: some View {
+        StatusSwitch(been: Binding(get: { place.been }, set: { b in
+            Perf.shared.mark("想去/去過")
+            var p = place; p.status = b ? "been" : "want"
+            if !b { p.rating = nil }
+            Task { await store.save(p) }
+        }), coach: store.coachStep == .been && store.coachPlace?.id == place.id && store.tab == 0)
+    }
+}
+
+// 想去／去過切換的樣子：想去是粉紅、去過是薄荷綠，色塊滑到另一邊（新增視窗也用這個）
+struct StatusSwitch: View {
+    @Binding var been: Bool
+    var coach = false
+    @Environment(\.accessibilityReduceMotion) private var reduce
     @Namespace private var ns
     @State private var burst = 0
 
+    init(been: Binding<Bool>) { _been = been }
+    init(been: Binding<Bool>, coach: Bool) { _been = been; self.coach = coach }
+
     var body: some View {
         HStack(spacing: 6) {
-            seg("♥ 想去", "want", .sprPink)
-            seg("✓ 去過", "been", .sprMint)
+            seg("♥ 想去", false, .sprPink)
+            seg("✓ 去過", true, .sprMint)
                 .overlay { Confetti(shot: burst).allowsHitTesting(false) }
-                .coachAnchor(.been, on: store.coachStep == .been && store.coachPlace?.id == place.id && store.tab == 0)
+                .coachAnchor(.been, on: coach)
         }
         .padding(5)
         .background(Color.bg2, in: .rect(cornerRadius: 16))
         // 色塊滑到另一邊
-        .animation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.8), value: place.status)
+        .animation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.8), value: been)
     }
 
-    private func seg(_ t: String, _ v: String, _ c: Color) -> some View {
-        let on = (place.status ?? "want") == v
+    private func seg(_ t: String, _ v: Bool, _ c: Color) -> some View {
+        let on = been == v
         return Button {
             guard !on else { return }
             Haptic.medium()
-            Perf.shared.mark("想去/去過")
-            if v == "been" && !reduce { burst += 1 }
-            var p = place; p.status = v
-            if v == "want" { p.rating = nil }
-            Task { await store.save(p) }
+            if v && !reduce { burst += 1 }
+            been = v
         } label: {
             Text(t).font(.system(size: 16, weight: .heavy))
                 .frame(maxWidth: .infinity).frame(height: 42)
@@ -313,6 +362,19 @@ struct StatusToggle: View {
         }
         .buttonStyle(PressStyle())
         .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
+// 店家頁最下面「加進行程／在行程裡」：白底、淡色粗框、底下一條奶油色影子
+private struct TripBtnLook: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(.system(size: 16, weight: .heavy)).lineLimit(1).minimumScaleFactor(0.7)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity).frame(height: 54)
+            .background(RoundedRectangle(cornerRadius: 18).fill(Color.panel).shadow(color: .cardShadow, radius: 0, y: 4))
+            .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Color.cardShadow, lineWidth: 2.5))
+            .contentShape(.rect)
     }
 }
 

@@ -71,6 +71,8 @@ struct Snapshot: Codable {
     var coachFrames: [CoachStep: CGRect] = [:]
     var showIG = false
     var igFromCoach = false
+    // 問通知之前先跳的自己的小卡（Onboard.swift）
+    var askNotify = false
 
     // Apple／Google 登入（Login.swift）
     // 剛用 Apple／Google 登入、帳號是空的：問一次「以前用 Email 註冊過嗎？」（值是用哪個登入的：apple／google）
@@ -90,9 +92,12 @@ struct Snapshot: Codable {
     }
     static let shared = UserDefaults(suiteName: "group.io.github.gop9632.foodmap")
 
-    // 篩選：收藏頁和地圖各有一份，互不影響
-    var listF = Filter()
+    // 篩選：收藏頁和地圖共用同一份（分類、去過/想去、搜尋字），在地圖選「咖啡」切到收藏頁也是咖啡
     var mapF = Filter()
+    var listF: Filter {
+        get { mapF }
+        set { mapF = newValue }
+    }
     // 地圖看誰的收藏：nil = 我的收藏，否則是某個群組（只記這次打開，重開 App 回到我的收藏）
     var mapGroup: String?
     // 目前位置（地圖頁拿到就放這），分店「由近到遠」用
@@ -449,6 +454,8 @@ struct Snapshot: Codable {
         let a = PendingAdd(text: text, been: been, rating: rating)
         withAnimation(.snappy) { pendingAdds.insert(a, at: 0) }
         Task { await runAdd(a.id) }
+        // 第一次新增：問要不要找好時通知（問過就不再問）
+        maybeAskNotify()
     }
 
     func retryAdd(_ id: UUID) {

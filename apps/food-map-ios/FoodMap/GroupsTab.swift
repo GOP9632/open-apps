@@ -6,39 +6,44 @@ struct GroupsTab: View {
     @State private var path = NavigationPath()
     @State private var asking: Ask?
     @State private var text = ""
+    @State private var starting: String?     // 正在開一輪的群組
 
     enum Ask: Identifiable { case create, join; var id: Self { self } }
 
     var body: some View {
         NavigationStack(path: $path) {
-            List {
-                ForEach(store.groups) { g in
-                    NavigationLink(value: g) { GroupRow(group: g) }
-                }
-            }
-            .overlay {
-                if store.groups.isEmpty {
-                    ContentUnavailableView {
-                        Label("還沒有群組", systemImage: "person.3")
-                    } description: {
-                        Text("建立一個群組邀朋友加入，或輸入朋友給你的邀請碼")
-                    } actions: {
-                        Button("建立群組") { ask(.create) }.buttonStyle(.borderedProminent)
-                        Button("輸入邀請碼") { ask(.join) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        Text("群組").font(.system(size: 30, weight: .black)).foregroundStyle(Color.ink)
+                        Spacer()
+                        // 跟收藏頁一樣的橘色＋鈕，點了選建立或加入
+                        Menu {
+                            Button("建立群組", systemImage: "plus") { ask(.create) }
+                            Button("輸入邀請碼", systemImage: "ticket") { ask(.join) }
+                        } label: {
+                            Image(systemName: "plus").font(.system(size: 21, weight: .heavy)).foregroundStyle(.white)
+                                .frame(width: 42, height: 42)
+                                .background(RoundedRectangle(cornerRadius: 42 * 0.32).fill(Color.accent).shadow(color: .accentDeep, radius: 0, y: 3))
+                                .frame(minWidth: 44, minHeight: 44).contentShape(.rect)
+                        }
+                        .accessibilityLabel("新增群組")
+                    }
+                    .padding(.horizontal, 16)
+
+                    if store.groups.isEmpty {
+                        emptyCard.padding(.horizontal, 16)
+                    }
+                    ForEach(store.groups) { g in
+                        GroupCard(group: g, open: { path.append(g) }, start: { quick(g) }, starting: starting == g.id)
+                            .padding(.horizontal, 16)
                     }
                 }
+                .padding(.top, 8).padding(.bottom, 24)
             }
-            .scrollContentBackground(.hidden)
-            .background(Color.bg)
             .tabBarRoom()
-            .navigationTitle("群組")
-            .toolbar {
-                Menu {
-                    Button("建立群組", systemImage: "plus") { ask(.create) }
-                    Button("輸入邀請碼", systemImage: "ticket") { ask(.join) }
-                } label: { Image(systemName: "plus.circle.fill").font(.title3) }
-                .accessibilityLabel("新增群組")
-            }
+            .background(Color.bg)
+            .toolbarVisibility(.hidden, for: .navigationBar)
             .refreshable { await store.sync() }
             .navigationDestination(for: FoodGroup.self) { GroupView(gid: $0.id, path: $path) }
             .navigationDestination(for: Round.self) { RoundView(rid: $0.id) }
@@ -53,6 +58,36 @@ struct GroupsTab: View {
                 Button("取消", role: .cancel) {}
                 Button(asking == .join ? "加入" : "建立") { go(asking) }
             }
+        }
+    }
+
+    // 還沒有群組：甜甜圈＋兩顆厚按鈕
+    private var emptyCard: some View {
+        VStack(spacing: 14) {
+            Image("Logo").resizable().frame(width: 96, height: 96).clipShape(.rect(cornerRadius: 26))
+            Text("還沒有群組").font(.system(size: 20, weight: .black)).foregroundStyle(Color.ink)
+            Text("建立一個群組邀朋友加入，或輸入朋友給你的邀請碼。大家的收藏放一起，滑卡決定吃什麼。")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.6))
+                .multilineTextAlignment(.center)
+            HStack(spacing: 10) {
+                Button { ask(.create) } label: { Text("建立群組").frame(maxWidth: .infinity) }
+                    .buttonStyle(ChunkyStyle(radius: 14))
+                Button { ask(.join) } label: { Text("輸入邀請碼").frame(maxWidth: .infinity) }
+                    .buttonStyle(ChunkyStyle(color: .white, edge: .cardShadow, fg: .ink, radius: 14))
+            }
+        }
+        .padding(20).frame(maxWidth: .infinity)
+        .candy()
+    }
+
+    // 卡片上的「開始滑卡」：直接開一輪（預設條件），開好推進群組再推進滑卡
+    private func quick(_ g: FoodGroup) {
+        guard starting == nil else { return }
+        Haptic.light()
+        starting = g.id
+        Task {
+            if let r = await store.quickRound(g.id) { path = NavigationPath([g]); path.append(r) }
+            starting = nil
         }
     }
 
@@ -91,19 +126,82 @@ struct GroupsTab: View {
     }
 }
 
-struct GroupRow: View {
+// 群組分頁的一張卡：頭像疊、群組名、人數店數，下面一行這輪滑卡的狀態，右下「開始滑卡」
+struct GroupCard: View {
     @Environment(Store.self) private var store
     let group: FoodGroup
+    let open: () -> Void
+    let start: () -> Void
+    var starting = false
+
     var body: some View {
-        HStack(spacing: 12) {
-            Text(String(group.name.prefix(1))).font(.title3.bold()).foregroundStyle(.white)
-                .frame(width: 46, height: 46).background(Color.grad, in: .rect(cornerRadius: 14))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(group.name).font(.headline)
-                Text("\(store.membersOf(group.id).count) 人・\(store.placesIn(group.id).count) 間店").font(.caption).foregroundStyle(.secondary)
+        let mem = store.membersOf(group.id)
+        let count = store.placesIn(group.id).count
+        Button(action: open) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    HStack(spacing: -10) {
+                        ForEach(Array(mem.prefix(4)), id: \.self) { Avatar(name: store.name($0), id: $0, size: 34) }
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(group.name).font(.system(size: 18, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1)
+                        Text("\(mem.count) 人・\(count) 間店").font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
+                    }
+                    Spacer(minLength: 0)
+                }
+                status(mem)
+                    .padding(.trailing, 110)      // 右下留給「開始滑卡」
             }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .candy()
+            .contentShape(.rect)
         }
-        .padding(.vertical, 4)
+        .buttonStyle(PressStyle())
+        .overlay(alignment: .bottomTrailing) {
+            Button(action: start) {
+                HStack(spacing: 5) {
+                    if starting { ProgressView().controlSize(.small).tint(.white) } else { Image(systemName: "heart.fill").font(.system(size: 12, weight: .heavy)) }
+                    Text("開始滑卡").font(.system(size: 15, weight: .heavy))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12).frame(height: 36)
+                .background(Capsule().fill(Color.accent).shadow(color: .accentDeep, radius: 0, y: 3))
+                .frame(minHeight: 44).contentShape(.rect)
+            }
+            .buttonStyle(PressStyle())
+            .disabled(count == 0 || starting)
+            .opacity(count == 0 ? 0.45 : 1)
+            .padding(.trailing, 14).padding(.bottom, 12)
+            .accessibilityLabel("在「\(group.name)」開始滑卡")
+        }
+    }
+
+    // 最新那一輪：有配對就顯示配對幾間；還有人沒滑完就說誰還有幾張（自己優先）
+    @ViewBuilder private func status(_ mem: [String]) -> some View {
+        if let r = store.roundsOf(group.id).first {
+            let hits = store.matches(r).filter(\.all).count
+            let left = mem.map { u in (u, r.place_ids.count - Set(store.swipes.filter { $0.round_id == r.id && $0.user_id == u }.map(\.place_id)).count) }
+                .filter { $0.1 > 0 }
+            let who = left.first { $0.0 == store.me } ?? left.first
+            HStack(spacing: 8) {
+                if hits > 0 {
+                    Text("配對 \(hits) 間").font(.caption.weight(.heavy)).foregroundStyle(.white)
+                        .padding(.horizontal, 10).frame(height: 24)
+                        .background(Color.sprMint, in: .capsule)
+                }
+                if let who {
+                    Text("這輪：\(who.0 == store.me ? "你" : store.name(who.0)) 還有 \(who.1) 張沒滑")
+                        .font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.65)).lineLimit(1)
+                } else if hits == 0 {
+                    Text("這輪大家都滑完了，沒有配對").font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.45)).lineLimit(1)
+                }
+            }
+            .frame(minHeight: 24)
+        } else {
+            Text("還沒開始滑卡").font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.4))
+                .frame(minHeight: 24)
+        }
     }
 }
 
@@ -131,6 +229,7 @@ struct GroupView: View {
     @State private var picking = false
     @State private var leaving = false
     @State private var dropping: Round?
+    @State private var starting = false
 
     var body: some View {
         if let g = store.groups.first(where: { $0.id == gid }) { content(g) }
@@ -145,21 +244,42 @@ struct GroupView: View {
                 HStack(spacing: -8) {
                     ForEach(mem, id: \.self) { Avatar(name: store.name($0), id: $0, size: 36) }
                     Spacer().frame(width: 18)
-                    Text(mem.map { store.name($0) }.joined(separator: "、")).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    Text(mem.map { store.name($0) }.joined(separator: "、")).font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.55)).lineLimit(1)
+                    Spacer(minLength: 8)
+                    // 地圖切成看這個群組的店（跟地圖上「我的收藏 ▾」選群組一樣）
+                    Button { showOnMap() } label: {
+                        Text("🗺 在地圖上看").font(.system(size: 13, weight: .heavy)).foregroundStyle(Color.ink)
+                            .padding(.horizontal, 11).frame(height: 32)
+                            .background(.white, in: .capsule)
+                            .overlay(Capsule().strokeBorder(Color.cardShadow, lineWidth: 2))
+                            .fixedSize()
+                            .frame(minHeight: 44).contentShape(.rect)
+                    }
+                    .buttonStyle(PressStyle(haptic: true))
+                    .disabled(list.isEmpty)
+                    .accessibilityLabel("在地圖上看這個群組的店")
                 }
                 .padding(.horizontal, 16)
 
                 HStack(spacing: 10) {
-                    Button { newRound = true } label: {
-                        Label("開始滑卡", systemImage: "heart.fill").font(.headline).frame(maxWidth: .infinity).frame(height: 52)
-                            .background(Color.grad, in: .rect(cornerRadius: 16)).foregroundStyle(.white)
+                    // 直接用預設條件開一輪（這一餐、離你近的 10 張），不用先填表
+                    Button { quick() } label: {
+                        HStack(spacing: 6) {
+                            if starting { ProgressView().controlSize(.small).tint(.white) } else { Image(systemName: "heart.fill") }
+                            Text("開始滑卡")
+                        }
+                        .frame(maxWidth: .infinity).frame(height: 44)
                     }
-                    .buttonStyle(PressStyle()).disabled(list.isEmpty)
+                    .buttonStyle(ChunkyStyle(radius: 16)).disabled(list.isEmpty || starting)
+                    Button("調整條件") { newRound = true }
+                        .font(.subheadline.weight(.heavy)).foregroundStyle(Color.accentDeep)
+                        .frame(minWidth: 44, minHeight: 44).contentShape(.rect)
+                        .buttonStyle(PressStyle())
+                        .disabled(list.isEmpty)
                     ShareLink(item: g.inviteText) {
-                        Label("邀請", systemImage: "person.badge.plus").font(.headline).frame(width: 100, height: 52)
-                            .background(Color.panel, in: .rect(cornerRadius: 16))
+                        Label("邀請", systemImage: "person.badge.plus").frame(height: 44)
                     }
-                    .buttonStyle(PressStyle())
+                    .buttonStyle(ChunkyStyle(color: .white, edge: .cardShadow, fg: .ink, radius: 16))
                 }
                 .padding(.horizontal, 16)
 
@@ -173,8 +293,8 @@ struct GroupView: View {
                 }
 
                 if !rounds.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("滑卡").font(.headline).padding(.horizontal, 16)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("滑卡").font(.system(size: 20, weight: .black)).foregroundStyle(Color.ink).padding(.horizontal, 16)
                         ForEach(rounds) { r in
                             NavigationLink(value: r) { RoundRow(round: r) }.buttonStyle(PressStyle()).padding(.horizontal, 16)
                                 .contextMenu {
@@ -186,15 +306,29 @@ struct GroupView: View {
                     }
                 }
 
-                HStack {
-                    Text("群組裡的店・\(list.count) 間").font(.headline)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("群組裡的店").font(.system(size: 20, weight: .black)).foregroundStyle(Color.ink)
+                    Text("\(list.count) 間").font(.headline).foregroundStyle(Color.accent)
                     Spacer()
-                    Button("從我的收藏加入", systemImage: "plus") { picking = true }.font(.subheadline.weight(.semibold))
+                    Button { picking = true } label: {
+                        Label("從收藏加入", systemImage: "plus").font(.system(size: 14, weight: .heavy)).foregroundStyle(Color.accentDeep)
+                            .padding(.horizontal, 12).frame(height: 34)
+                            .background(Color.accent.opacity(0.13), in: .capsule)
+                            .frame(minHeight: 44).contentShape(.rect)
+                    }
+                    .buttonStyle(PressStyle())
                 }
                 .padding(.horizontal, 16)
 
                 if list.isEmpty {
-                    Text("還沒有店。把你收藏的店分享進來，大家就能一起滑卡。").font(.subheadline).foregroundStyle(.secondary).padding(.horizontal, 16)
+                    VStack(spacing: 12) {
+                        Text("還沒有店。把你收藏的店分享進來，大家就能一起滑卡。")
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.6)).multilineTextAlignment(.center)
+                        Button("從我的收藏加入") { picking = true }.buttonStyle(ChunkyStyle(radius: 14))
+                    }
+                    .padding(18).frame(maxWidth: .infinity)
+                    .candy()
+                    .padding(.horizontal, 16)
                 }
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 16) {
                     ForEach(list) { p in
@@ -232,6 +366,24 @@ struct GroupView: View {
         }
         .sheet(isPresented: $picking) { PickSheet(gid: gid) }
     }
+
+    private func quick() {
+        guard !starting else { return }
+        Haptic.light()
+        starting = true
+        Task {
+            if let r = await store.quickRound(gid) { path.append(r) }
+            starting = false
+        }
+    }
+
+    // 切到地圖分頁、看這個群組的店（地圖換群組時會自己框住那些店）
+    private func showOnMap() {
+        if TripMode.shared.on { TripMode.shared.close() }
+        if !store.mapPath.isEmpty { store.mapPath = NavigationPath() }
+        withAnimation(.snappy) { store.mapGroup = gid }
+        store.tab = 0
+    }
 }
 
 struct RoundRow: View {
@@ -241,15 +393,15 @@ struct RoundRow: View {
         let left = store.todo(round).count, hits = store.matches(round).filter(\.all).count
         HStack {
             VStack(alignment: .leading, spacing: 3) {
-                Text(round.title.isEmpty ? "一起決定吃什麼" : round.title).font(.subheadline.weight(.bold)).foregroundStyle(.primary)
-                Text("\(round.place_ids.count) 張・" + (left > 0 ? "你還有 \(left) 張沒滑" : "你滑完了")).font(.caption).foregroundStyle(.secondary)
+                Text(round.title.isEmpty ? "一起決定吃什麼" : round.title).font(.system(size: 16, weight: .heavy)).foregroundStyle(Color.ink)
+                Text("\(round.place_ids.count) 張・" + (left > 0 ? "你還有 \(left) 張沒滑" : "你滑完了")).font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
             }
             Spacer()
-            if hits > 0 { Text("配對 \(hits)").font(.caption.bold()).padding(.horizontal, 9).frame(height: 24).background(Color.accent2, in: .capsule).foregroundStyle(.white) }
-            Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
+            if hits > 0 { Text("配對 \(hits) 間").font(.caption.weight(.heavy)).padding(.horizontal, 10).frame(height: 24).background(Color.sprMint, in: .capsule).foregroundStyle(.white) }
+            Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(Color.ink.opacity(0.3))
         }
         .padding(14)
-        .background(Color.panel, in: .rect(cornerRadius: 16))
+        .candy(18)
     }
 }
 
@@ -475,45 +627,58 @@ struct RoundView: View {
         let all = store.matches(r), total = store.membersOf(r.group_id).count
         let swiped = Set(store.swipes.filter { $0.round_id == r.id }.map(\.user_id))
         let g = store.groups.first { $0.id == r.group_id }
-        return List {
-            Section {
-                Text(done ? "你滑完了！" + (swiped.count < total ? "等其他人滑完，結果會自己更新。" : "大家都滑完了。") : "你還沒滑完，這是目前的結果。")
-                    .font(.subheadline).foregroundStyle(.secondary)
-                if !history.isEmpty {
-                    Button("↶ 收回上一張") { undo(r) }.font(.subheadline.weight(.bold)).foregroundStyle(Color.accent)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(done ? "你滑完了！" + (swiped.count < total ? "等其他人滑完，結果會自己更新。" : "大家都滑完了。") : "你還沒滑完，這是目前的結果。")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.6))
+                    Spacer(minLength: 8)
+                    if !history.isEmpty {
+                        Button("↶ 收回上一張") { undo(r) }
+                            .font(.subheadline.weight(.heavy)).foregroundStyle(Color.accentDeep)
+                            .frame(minHeight: 44).contentShape(.rect)
+                            .buttonStyle(PressStyle())
+                    }
                 }
-            }
-            // 群組只有一個人不會有配對
-            if total < 2, let g {
-                Section {
+                // 群組只有一個人不會有配對
+                if total < 2, let g {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("邀朋友加入才會配對").font(.headline).foregroundStyle(Color.ink)
+                        Text("邀朋友加入才會配對").font(.system(size: 18, weight: .heavy)).foregroundStyle(Color.ink)
                         Text("配對是大家都想吃的店。把邀請連結傳給朋友，他們滑完結果就會出現。").font(.subheadline).foregroundStyle(Color.ink.opacity(0.6))
                         ShareLink(item: g.inviteText) { Label("邀請朋友", systemImage: "person.badge.plus").frame(maxWidth: .infinity) }
                             .buttonStyle(ChunkyStyle(radius: 14))
                     }
-                    .padding(.vertical, 6)
+                    .padding(16)
+                    .candy()
                 }
-            }
-            ForEach(all) { m in
-                Button { detail = store.branchesOf(m.place).first ?? m.place } label: {
-                    HStack(spacing: 12) {
-                        PhotoView(place: m.place, px: 160).frame(width: 58, height: 58).clipShape(.rect(cornerRadius: 12))
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(m.place.name).font(.headline).foregroundStyle(.primary)
-                            HStack(spacing: -6) { ForEach(m.who, id: \.self) { Avatar(name: store.name($0), id: $0, size: 22) } }
+                ForEach(all) { m in
+                    Button { detail = store.branchesOf(m.place).first ?? m.place } label: {
+                        HStack(spacing: 12) {
+                            PhotoView(place: m.place, px: 160).frame(width: 58, height: 58).clipShape(.rect(cornerRadius: 12))
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(m.place.name).font(.system(size: 16, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1)
+                                HStack(spacing: -6) { ForEach(m.who, id: \.self) { Avatar(name: store.name($0), id: $0, size: 22) } }
+                            }
+                            Spacer(minLength: 4)
+                            VStack(alignment: .trailing, spacing: 3) {
+                                if m.all {
+                                    Text("配對成功").font(.caption.weight(.heavy)).foregroundStyle(.white)
+                                        .padding(.horizontal, 9).frame(height: 22)
+                                        .background(Color.sprMint, in: .capsule)
+                                }
+                                Text("\(m.who.count)/\(total) 想吃").font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
+                            }
                         }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            if m.all { Text("配對成功").font(.caption.bold()).foregroundStyle(Color.sprMint) }
-                            Text("\(m.who.count)/\(total) 想吃").font(.caption).foregroundStyle(.secondary)
-                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .candy(18, fill: m.all ? Color(light: 0xdcf7ec, dark: 0x163a2e) : .panel)
+                        .contentShape(.rect)
                     }
+                    .buttonStyle(PressStyle())
                 }
-                .listRowBackground(m.all ? Color.sprMint.opacity(0.15) : Color.panel)
             }
+            .padding(16)
         }
-        .scrollContentBackground(.hidden)
     }
 
     private func celebrate(_ m: Store.Match) {
@@ -634,5 +799,25 @@ extension FoodGroup {
             if let r = try? NSRegularExpression(pattern: p), let m = r.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)), let g = Range(m.range(at: 1), in: t) { return String(t[g]) }
         }
         return nil
+    }
+}
+
+extension Store {
+    // 一鍵開一輪滑卡：時段＝現在這一餐、地區不限、離你近的排前面、最多 10 張。
+    // 這一餐符合的不到 3 張就不看時段再算一次；同一家的分店只出一張
+    @MainActor func quickRound(_ gid: String) async -> Round? {
+        let meal = Drawer.meal().key
+        func pool(_ m: String?) -> [Place] {
+            var l = placesIn(gid)
+            if let m { l = l.filter { ($0.meals ?? []).isEmpty || $0.meals!.contains(m) } }
+            var seen = Set<String>()
+            return nearFirst(l).filter { seen.insert(brand($0)).inserted }
+        }
+        var used: String? = meal
+        var l = pool(meal)
+        if l.count < 3 { used = nil; l = pool(nil) }
+        guard !l.isEmpty else { say("群組裡還沒有店"); return nil }
+        let f: [String: AnyCodable] = ["cities": .a([]), "cats": .a([]), "meal": .s(used ?? ""), "price": .i(0)]
+        return await startRound(gid, title: "一起決定吃什麼", pool: Array(l.prefix(10)), filters: f)
     }
 }
