@@ -58,6 +58,7 @@ struct TripCand: Equatable {
     // 地圖框鏡頭用的那塊（螢幕座標的上下緣）。進出行程時地圖大小、邊距不變（變了整張地圖要重排，很卡），
     // 所以面板框站時要自己換算；0 = 還沒量到，就當成面板那塊
     @ObservationIgnored var mapTop: CGFloat = 0
+    @ObservationIgnored var barBottom: CGFloat = 0     // 上面那排（膠囊、🔍、完成）的下緣，螢幕座標
     @ObservationIgnored var mapBottom: CGFloat = 0
     let search = TripSearch()
 

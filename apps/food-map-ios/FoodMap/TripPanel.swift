@@ -797,17 +797,21 @@ struct TripPanel: View {
         let lats = cs.map(\.latitude), lngs = cs.map(\.longitude)
         let latR = max(minSpan, lats.max()! - lats.min()!)
         let lngR = max(minSpan, lngs.max()! - lngs.min()!)
-        // 加站卡約 224 高；上面展開著搜尋框時也要避開
+        // 加站卡約 224 高；上面展開著搜尋框時也要避開；上緣不高過膠囊、🔍 那排
         let cover: CGFloat = card ? 224 : panelHeight()
         let pad = top + (mode.searchOn ? TripFind.height : 0)
-        let window = max(120, size.height - cover - pad)
-        let k = Double(window * 0.72) / latR                         // 每一度緯度幾點
+        let winTop = max(top0, mode.barBottom) + pad
+        let window = max(120, top0 + size.height - cover - winTop)
+        // 圖釘畫在座標上面：最北那點上面要留圖釘的高度（加站卡還有「新的第 N 站」牌子），下面留一點
+        let head: CGFloat = card ? 100 : 64
+        let band = max(60, window - head - 18)
+        let k = Double(band) / latR                                 // 每一度緯度幾點
         // 地圖框鏡頭的那塊（螢幕座標）；還沒量到就當成面板這塊
         let ft = Double(mode.mapBottom > mode.mapTop ? mode.mapTop : top0)
         let fb = Double(mode.mapBottom > mode.mapTop ? mode.mapBottom : top0 + size.height)
         let full = (fb - ft) / k                                    // 那塊的緯度範圍
         let mid = (lats.max()! + lats.min()!) / 2
-        let winCenter = Double(top0 + pad + window / 2)             // 看得到那塊的中心（螢幕座標）
+        let winCenter = Double(winTop + head + band / 2)            // 座標要落在的那條帶子的中心（螢幕座標）
         let center = mid + (winCenter - (ft + fb) / 2) / k
         let r = MKCoordinateRegion(center: .init(latitude: center, longitude: (lngs.max()! + lngs.min()!) / 2),
                                    span: .init(latitudeDelta: full, longitudeDelta: lngR * 1.4))

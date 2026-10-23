@@ -26,6 +26,8 @@ struct TripTop: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 6)
+        // 框地圖時圖釘要在這條線下面（不被 🔍 蓋住）
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { mode.barBottom = $0 }
         // 拖一站時：下面露出「第 N 天」，拖過去放開就換天
         .overlay(alignment: .bottom) {
             if mode.moving, let t, t.days > 1 {
