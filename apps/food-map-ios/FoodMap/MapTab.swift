@@ -992,7 +992,7 @@ struct NearbySheet: View {
     }
 
     private var grip: PanelDrag {
-        PanelDrag(changed: { up in drag(up) }, ended: { up in settle(target(mp.stage) + up * 0.6) }, released: released)
+        PanelDrag(changed: { up in drag(up) }, ended: { up in settle(target(mp.stage) + up * 0.6, push: up) }, released: released)
     }
 
     private func drag(_ up: CGFloat) {
@@ -1001,9 +1001,15 @@ struct NearbySheet: View {
     }
 
     // 放開：停在最近的一段（甩得快就往甩的方向），換段輕震
-    private func settle(_ now: CGFloat) {
+    private func settle(_ now: CGFloat, push: CGFloat = 0) {
         guard mp.dragging else { return }
-        let pick = [MapStage.low, .mid, .high].min { abs(target($0) - now) < abs(target($1) - now) }!
+        let all: [MapStage] = [.low, .mid, .high]
+        var pick = all.min { abs(target($0) - now) < abs(target($1) - now) }!
+        // 往一個方向拉超過 60 就至少換一段（段距大時才不會彈回原位像沒反應）
+        if pick == mp.stage, abs(push) > 60 {
+            let i = all.firstIndex(of: mp.stage)! + (push > 0 ? 1 : -1)
+            if all.indices.contains(i) { pick = all[i] }
+        }
         mp.dragging = false
         mp.calmUntil = CACurrentMediaTime() + 0.8
         if pick != mp.stage { Haptic.light() }
@@ -1273,6 +1279,10 @@ private struct SelWatcher: View {
     let act: (String?) -> Void
     var body: some View {
         Color.clear.onChange(of: pins.sel) { _, id in act(id) }
+            // 行程模式的加站卡關掉了（往下拖、✕、加好了）：圖釘也取消選取，再點同一根才會重新打開
+            .onChange(of: TripMode.shared.cand == nil) { _, gone in
+                if gone, TripMode.shared.on, pins.sel != nil { pins.select(nil) }
+            }
     }
 }
 

@@ -355,8 +355,15 @@ struct TripPanel: View {
             .onEnded { v in
                 guard drag.id == nil else { pull = 0; return }
                 let hs = heights()
-                let now: CGFloat = (mode.level == .low ? hs.low : mode.level == .mid ? hs.mid : hs.high) - v.predictedEndTranslation.height * 0.6
-                let pick: TripLevel = [(TripLevel.low, hs.low), (TripLevel.mid, hs.mid), (TripLevel.high, hs.high)].min { abs($0.1 - now) < abs($1.1 - now) }!.0
+                let up = -v.predictedEndTranslation.height
+                let now: CGFloat = (mode.level == .low ? hs.low : mode.level == .mid ? hs.mid : hs.high) + up * 0.6
+                var pick: TripLevel = [(TripLevel.low, hs.low), (TripLevel.mid, hs.mid), (TripLevel.high, hs.high)].min { abs($0.1 - now) < abs($1.1 - now) }!.0
+                // 段跟段距離很大（最高到中間三百多點）：往一個方向拉超過 60 就至少換一段，不會彈回原位像沒反應
+                if pick == mode.level, abs(up) > 60 {
+                    let all: [TripLevel] = [.low, .mid, .high]
+                    let i = all.firstIndex(of: mode.level)! + (up > 0 ? 1 : -1)
+                    if all.indices.contains(i) { pick = all[i] }
+                }
                 if pick != mode.level { Haptic.light() }
                 withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { mode.level = pick; pull = 0 }
             }
