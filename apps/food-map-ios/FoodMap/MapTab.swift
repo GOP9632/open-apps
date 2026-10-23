@@ -68,6 +68,7 @@ struct MapTab: View {
         let _ = pins.arm(store.mapGroup ?? "mine", list, from: store.here ?? (shownRegion ?? store.mapRegion).map { CLLocation(latitude: $0.center.latitude, longitude: $0.center.longitude) })
         // 篩選拿掉的，多畫 0.25 秒縮小淡掉
         let gone = pins.track(list)
+        let _ = pins.cleared
         let gname = store.mapGroupName
         let near = Nearby(list: list, here: store.here, region: seen(shownRegion), total: all.count)
         let missing = all.count - list.count
@@ -119,7 +120,7 @@ struct MapTab: View {
                         }
                         ForEach(hits) { h in
                             Annotation(h.name, coordinate: h.coord, anchor: .top) {
-                                HitPin(hit: h, on: trip.cand?.id == h.id) { pins.select("hit:" + h.id) }
+                                HitPin(hit: h, on: trip.cand?.id == h.id) { pins.tap("hit:" + h.id) }
                                     .offset(y: -15)
                             }
                             .tag("hit:" + h.id)
@@ -1199,6 +1200,8 @@ struct PickedCard: View {
 // 地圖上選到哪根圖釘、抽一間跳哪幾根
 @MainActor @Observable final class PinState {
     private(set) var sel: String?
+    // 取消選取的次數：MapTab 只看這個（不看 sel），取消時重畫一次，地圖才會真的放掉那根，再點同一根才有反應
+    private(set) var cleared = 0
     var drawn: String?                  // 抽一間抽中的那間（還選著它時，按鈕變「再抽一次」）
     var hops: [String: Int] = [:]       // 抽一間時跳一下的圖釘（每跳一次加一）
     var extra: String?                  // 抽中但被篩選篩掉的店：照樣畫出圖釘（選別間就收掉）
@@ -1264,11 +1267,18 @@ struct PickedCard: View {
         return now < goneUntil ? gone : []
     }
 
+    // 手指點圖釘：點到已經選著的那根也通知一次（例如加站卡關掉後再點同一根）
+    private(set) var again = 0
+    func tap(_ id: String) {
+        if sel == id { again += 1 } else { select(id) }
+    }
+
     func select(_ id: String?) {
         guard sel != id else { return }
         // 手動選別根或點空白處，就取消還在跳的抽一間
         if drawWin != nil, id != drawWin { drawTask?.cancel(); drawTask = nil; drawWin = nil }
         if extra != nil, id != extra { extra = nil }
+        if id == nil { cleared += 1 }
         sel = id
     }
 }
@@ -1279,6 +1289,7 @@ private struct SelWatcher: View {
     let act: (String?) -> Void
     var body: some View {
         Color.clear.onChange(of: pins.sel) { _, id in act(id) }
+            .onChange(of: pins.again) { act(pins.sel) }
             // 行程模式的加站卡關掉了（往下拖、✕、加好了）：圖釘也取消選取，再點同一根才會重新打開
             .onChange(of: TripMode.shared.cand == nil) { _, gone in
                 if gone, TripMode.shared.on, pins.sel != nil { pins.select(nil) }
@@ -1343,7 +1354,7 @@ struct FoodPin: View {
         Button {
             // 長按開過選單：放開手指不算點一下
             if pins.longFired { pins.longFired = false; return }
-            pins.select(place.id)
+            pins.tap(place.id)
         } label: { pin(on) }
             .buttonStyle(PinPress(reduce: reduce) { pins.longFired = false })
             .simultaneousGesture(LongPressGesture(minimumDuration: 0.35).onEnded { _ in
