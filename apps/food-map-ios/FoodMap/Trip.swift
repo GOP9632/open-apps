@@ -91,10 +91,12 @@ enum POI {
             ("nightlife", "music.note"), ("cafe", "cup.and.saucer.fill"), ("bakery", "birthday.cake.fill"), ("restaurant", "fork.knife"),
             ("airport", "airplane"), ("train", "tram.fill"), ("transit", "tram.fill"), ("parking", "parkingsign"), ("landmark", "building.columns.fill"),
             ("campground", "tent.fill"), ("marina", "sailboat.fill"), ("nationalpark", "mountain.2.fill"), ("winery", "wineglass.fill"),
+            ("monument", "building.columns.fill"), ("castle", "building.columns.fill"), ("fortress", "building.columns.fill"), ("planetarium", "sparkles"),
         ]
         return table.first { r.contains($0.0) }?.1 ?? "mappin"
     }
-    static func label(_ s: TripStop) -> String { s.kind == "stay" ? "住宿" : "其他行程" }
+    // 站卡上的小標籤：不是收藏的站寫它是什麼（地標、博物館…），看不出來就寫「地點」（以前寫「其他行程」會被看成別的行程）
+    static func label(_ s: TripStop) -> String { s.kind == "stay" ? "住宿" : name(s.poi) ?? "地點" }
     // 搜尋結果上的類別小字（Apple 給的是英文代號）
     static func name(_ raw: String?) -> String? {
         let r = (raw ?? "").lowercased()
@@ -105,6 +107,7 @@ enum POI {
             ("nightlife", "夜生活"), ("cafe", "咖啡廳"), ("bakery", "麵包甜點"), ("restaurant", "餐廳"), ("foodmarket", "市場"), ("brewery", "酒吧"),
             ("winery", "酒莊"), ("store", "商店"), ("airport", "機場"), ("train", "車站"), ("transit", "車站"), ("parking", "停車場"),
             ("marina", "碼頭"), ("campground", "露營地"), ("university", "學校"), ("school", "學校"), ("hospital", "醫院"),
+            ("landmark", "地標"), ("monument", "紀念建築"), ("castle", "古蹟"), ("fortress", "古蹟"), ("planetarium", "天文館"),
         ]
         return table.first { r.contains($0.0) }?.1
     }

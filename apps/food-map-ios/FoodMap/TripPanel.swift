@@ -22,6 +22,7 @@ struct TripPanel: View {
     @State private var size: CGSize = .zero
     @State private var top0: CGFloat = 0            // 面板頂端在螢幕上的位置
     @State private var cardH: CGFloat = 224         // 加站卡量到的高度
+    @State private var fitSeq = 0                   // 第幾次框地圖（停好後修正時，看是不是還是同一次）
     // 出發中：上面「下一站」卡片的下緣、下面那塊的上緣（螢幕座標），藍點要放在中間看得到的地方
     @State private var goTop: CGFloat = 0
     @State private var goBot: CGFloat = 0
@@ -851,6 +852,28 @@ struct TripPanel: View {
         let r = MKCoordinateRegion(center: .init(latitude: center, longitude: (lngs.max()! + lngs.min()!) / 2),
                                    span: .init(latitudeDelta: full, longitudeDelta: lngR * 1.4))
         if animated { withAnimation(.easeInOut(duration: 0.5)) { pos = .region(r) } } else { pos = .region(r) }
+        // 地圖停好後量一次：實際放得比算的大（點地圖圖釘那條路曾經大了 1.37 倍，圖釘跑到 🔍 底下）或偏了，就修正一次
+        fitSeq += 1
+        let seq = fitSeq
+        Task {
+            try? await Task.sleep(for: .milliseconds(animated ? 650 : 120))
+            guard seq == fitSeq, !pos.positionedByUser, let f = mode.toScreen else { return }
+            let hi = mid + latR / 2, lo = mid - latR / 2
+            let lng = r.center.longitude
+            guard let yHi = f(.init(latitude: hi, longitude: lng))?.y, let yLo = f(.init(latitude: lo, longitude: lng))?.y,
+                  let yC = f(r.center)?.y, yLo > yHi else { return }
+            let kAct = Double(yLo - yHi) / latR
+            let rho = kAct / k
+            let yMid = Double(yHi + yLo) / 2
+            guard abs(rho - 1) > 0.04 || abs(yMid - winCenter) > 6 else { return }
+            // 放太大才縮；放太小（東西向比較寬）不動縮放，只移中心
+            let z = max(1, rho)
+            let k2 = kAct / z
+            let c2 = mid + (winCenter - Double(yC)) / k2
+            let r2 = MKCoordinateRegion(center: .init(latitude: c2, longitude: lng),
+                                        span: .init(latitudeDelta: r.span.latitudeDelta * z, longitudeDelta: r.span.longitudeDelta * z))
+            withAnimation(.snappy(duration: 0.3)) { pos = .region(r2) }
+        }
     }
 
     // 清單或地圖上點一站：地圖飛過去（放大到看得清楚附近）

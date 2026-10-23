@@ -158,6 +158,7 @@ struct MapTab: View {
                     if let c = spot.coord, Date() < spot.until { spot.at = proxy.convert(c, to: .global) }
                 }
                 .onMapCameraChange { c in
+                    trip.toScreen = { proxy.convert($0, to: .global) }
                     if selfMoved { selfMoved = false } else { shownRegion = c.region }
                     store.mapRegion = c.region
                     recluster(proxy)

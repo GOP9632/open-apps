@@ -59,6 +59,7 @@ struct TripCand: Equatable {
     // 所以面板框站時要自己換算；0 = 還沒量到，就當成面板那塊
     @ObservationIgnored var mapTop: CGFloat = 0
     @ObservationIgnored var barBottom: CGFloat = 0     // 上面那排（膠囊、🔍、完成）的下緣，螢幕座標
+    @ObservationIgnored var toScreen: ((CLLocationCoordinate2D) -> CGPoint?)?   // 地圖上的點在螢幕哪裡（MapTab 給的）
     @ObservationIgnored var mapBottom: CGFloat = 0
     let search = TripSearch()
 
@@ -440,9 +441,15 @@ enum TripInsert {
         let key = Self.norm(text)
         let addr = Self.isAddress(text)
         let match = { (h: MapHit) in !key.isEmpty && (Self.norm(h.name).contains(key) || (addr && h.poi == nil)) }
+        // 名字完全一樣排最前，其次開頭一樣（「台北101」要排在「台北101時尚婚紗館」前面），再來是名字裡有
+        let tier = { (h: MapHit) -> Int in
+            guard match(h) else { return 3 }
+            let n = Self.norm(h.name)
+            return n == key ? 0 : n.hasPrefix(key) ? 1 : 2
+        }
         let list = items.map(MapHit.init).filter { seen.insert($0.id).inserted && far($0, here: here) <= limit }
         let more = extra.map(MapHit.init).filter { seen.insert($0.id).inserted && (far($0, here: here) <= limit || (match($0) && far($0, here: here) <= 400_000)) }
-        let ranked = (list + more).map { (h: $0, m: match($0) ? 0 : 1, d: far($0, here: here)) }
+        let ranked = (list + more).map { (h: $0, m: tier($0), d: far($0, here: here)) }
             .sorted { ($0.m, $0.d) < ($1.m, $1.d) }.map { $0.h }
         // 同一間店 Apple 有時給兩筆（座標差一點點）：同名、150 公尺內只留一筆
         var kept: [MapHit] = []
