@@ -855,8 +855,8 @@ struct TripPanel: View {
         // 地圖停好後量一次：實際放得比算的大（點地圖圖釘那條路曾經大了 1.37 倍，圖釘跑到 🔍 底下）或偏了，就修正一次
         fitSeq += 1
         let seq = fitSeq
-        Task {
-            try? await Task.sleep(for: .milliseconds(animated ? 650 : 120))
+        // 等地圖真的停下來（MapTab 在鏡頭停好時呼叫）才量；還在飛就量會拿到舊的位置
+        mode.afterFit = {
             guard seq == fitSeq, !pos.positionedByUser, let f = mode.toScreen else { return }
             let hi = mid + latR / 2, lo = mid - latR / 2
             let lng = r.center.longitude
@@ -864,6 +864,8 @@ struct TripPanel: View {
                   let yC = f(r.center)?.y, yLo > yHi else { return }
             let kAct = Double(yLo - yHi) / latR
             let rho = kAct / k
+            // 差太多代表鏡頭不是這次框的結果（被打斷、還沒到）：不要修，免得飛到別處
+            guard rho > 0.7, rho < 2.5, abs(Double(yC) - (ft + fb) / 2) < 120 else { return }
             let yMid = Double(yHi + yLo) / 2
             guard abs(rho - 1) > 0.04 || abs(yMid - winCenter) > 6 else { return }
             // 放太大才縮；放太小（東西向比較寬）不動縮放，只移中心
