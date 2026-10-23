@@ -109,9 +109,12 @@ struct FilterChips: View {
 struct SearchField<Trailing: View>: View {
     @Binding var text: String
     let prompt: String
+    // 放在最左邊的東西（地圖頁的「我的收藏 ▾」膠囊）
+    var lead: AnyView? = nil
     @ViewBuilder var trailing: () -> Trailing
     var body: some View {
         HStack(spacing: 10) {
+            if let lead { lead }
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField(prompt, text: $text).font(.body).submitLabel(.search)
             if !text.isEmpty {
@@ -120,7 +123,7 @@ struct SearchField<Trailing: View>: View {
             }
             trailing()
         }
-        .padding(.leading, 16).padding(.trailing, 6)
+        .padding(.leading, lead == nil ? 16 : 8).padding(.trailing, 6)
         .frame(height: 52)
         .candy(18)
     }

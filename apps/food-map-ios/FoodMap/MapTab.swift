@@ -33,6 +33,8 @@ struct MapTab: View {
     @State private var dot = MyDot.shared
     @State private var headY: CGFloat = 0
     @State private var footY: CGFloat = 0
+    // 鏡頭是自己移的（點圖釘、框收藏、邊距變了）：這段時間的鏡頭變動不算「手指拖地圖」
+    @State private var quiet = CamQuiet()
     // 長按圖釘選「導航」但還沒選過用哪個地圖
     @State private var navAsk: Place?
     // 行程模式：同一張地圖變成某個行程（上面標題列、下面行程面板）
@@ -67,7 +69,7 @@ struct MapTab: View {
         // 篩選拿掉的，多畫 0.25 秒縮小淡掉
         let gone = pins.track(list)
         let gname = store.mapGroupName
-        let near = Nearby(list: list, here: store.here, region: shownRegion, total: all.count)
+        let near = Nearby(list: list, here: store.here, region: seen(shownRegion), total: all.count)
         let missing = all.count - list.count
         NavigationStack(path: $store.mapPath) {
           ZStack {
@@ -145,6 +147,11 @@ struct MapTab: View {
                 // 行程模式點地圖空白處：收掉加站卡、搜尋（點到圖釘不算）
                 .simultaneousGesture(TapGesture().onEnded { blankTap() }, including: trip.on ? .all : .subviews)
                 .onMapCameraChange(frequency: .continuous) { _ in
+                    // 手指拖地圖：下面那塊降到一行（停下來不自動彈回）
+                    let now = CACurrentMediaTime()
+                    if !trip.on, pos.positionedByUser, now > quiet.until, now > MapPanel.shared.calmUntil, !MapPanel.shared.dragging {
+                        MapPanel.shared.go(.low)
+                    }
                     dot.refresh()
                     pinFrame(proxy)
                     if let c = spot.coord, Date() < spot.until { spot.at = proxy.convert(c, to: .global) }
@@ -182,6 +189,7 @@ struct MapTab: View {
                 // 行程模式：其他收藏縮小變淡（搜到的、正在看要不要加的那間照常）。
                 // 地圖上的圖釘不會跟著 MapTab 重畫，所以交給 PinState，每根自己看
                 .onChange(of: "\(trip.on)|\(foundIds.sorted().joined(separator: ","))", initial: true) {
+                    quiet.hush()
                     pins.dimAll = trip.on
                     pins.bright = foundIds
                 }
@@ -212,15 +220,18 @@ struct MapTab: View {
                     }
                     // 一般地圖的搜尋列：行程模式時收起來但不拿掉（拿掉再建一次很慢）
                         VStack(spacing: 8) {
-                            SearchField(text: $store.mapF.q, prompt: gname.map { "在「\($0)」裡找" } ?? "今天想吃什麼？") {
+                            // 「我的收藏 ▾」放在搜尋框最左邊（沒有群組就不放）；分類那排只剩分類
+                            SearchField(text: $store.mapF.q, prompt: gname != nil ? "在群組裡找" : "今天想吃什麼？",
+                                        lead: store.groups.isEmpty ? nil : AnyView(scopePill(gname))) {
                                 AddButton { adding = true }.coachAnchor(.add)
                             }
                             .padding(.horizontal, 16)
-                            FilterChips(f: $store.mapF, solid: true, lead: store.groups.isEmpty ? nil : AnyView(scopePill(gname)))
+                            FilterChips(f: $store.mapF, solid: true)
                         }
                         .padding(.top, 6)
                         .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { y in
                             guard !trip.on, abs(y - headY) > 0.5 else { return }
+                            quiet.hush()
                             headY = y; trip.mapTop = y
                         }
                         .opacity(trip.on ? 0 : 1)
@@ -230,7 +241,10 @@ struct MapTab: View {
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                // 卡片列：行程模式時收起來但不拿掉（拿掉再建一次很慢）
+                // 下面那塊（三段）：行程模式時收起來但不拿掉（拿掉再建一次很慢）
+                // 行程、定位兩顆浮在面板上緣，跟著面板上下；地圖邊距只在面板停在中間段時才跟著量
+                NearbySheet(near: near, pins: pins, list: list, group: gname, draw: draw, panel: openPanel, choose: choose, dropKey: pins.dropKey, focus: focus,
+                            ceiling: headY + 8, top: AnyView(
                         VStack(alignment: .trailing, spacing: 10) {
                             // AI 在背景找剛新增的店
                             if store.pendingAdds.contains(where: { $0.state == .finding }) {
@@ -286,13 +300,9 @@ struct MapTab: View {
                                 }
                             }
                             .padding(.horizontal, 16)
-                            NearbySheet(near: near, pins: pins, list: list, group: gname, draw: draw, panel: openPanel, choose: choose, dropKey: pins.dropKey, focus: focus)
                         }
                         .animation(.snappy, value: store.pendingAdds.map(\.state))
-                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in
-                            guard !trip.on, abs(y - footY) > 0.5 else { return }
-                            footY = y; trip.mapBottom = y
-                        }
+                    ), foot: setFoot)
                         .offset(y: trip.on ? 60 : 0)
                         .opacity(trip.on ? 0 : 1)
                         .frame(height: trip.on ? 0 : nil, alignment: .top)
@@ -357,6 +367,7 @@ struct MapTab: View {
 
     // 抽一間：照存好的設定抽（範圍、分類、價位…長按 🎲 改）。同一家的分店只算一次、抽中離你最近的那間；再抽一次不會抽到同一家
     private func draw() {
+        MapPanel.shared.atLeastMid()
         // 跳的過程中再按一次：直接出結果
         if let win = pins.drawWin {
             pins.drawTask?.cancel(); pins.drawTask = nil; pins.drawWin = nil
@@ -489,6 +500,9 @@ struct MapTab: View {
         }
         guard let id, let p = list.first(where: { $0.id == id }) else { return }
         Perf.shared.mark(pins.drawn == id ? "抽一間（抽中）" : "點圖釘")
+        // 下面那塊升到中間段顯示大卡片；接下來地圖移過去不算拖地圖
+        quiet.hush()
+        MapPanel.shared.go(.mid)
         // 先把大卡片和店家頁要用的照片載好，點進去時第一幀就有
         if let u = p.photoURL { Task { _ = await PhotoLoader.shared.load(u, 400); _ = await PhotoLoader.shared.load(u, 1200) } }
         ReelCache.warm(p)
@@ -506,6 +520,24 @@ struct MapTab: View {
         let far = cur.map { abs(c.latitude - $0.center.latitude) > $0.span.latitudeDelta * 0.6 || abs(c.longitude - $0.center.longitude) > $0.span.longitudeDelta * 0.6 } ?? false
         if far && !reduce { flight = Flight(lat: c.latitude, lng: c.longitude) }
         else { withAnimation(.smooth(duration: 0.55)) { pos = .region(MKCoordinateRegion(center: c, span: span)) } }
+    }
+
+    // 面板停在中間段時才把上緣（含行程、定位兩顆）當地圖下面的邊距；拉的時候、最低和最高段都不動，地圖不用重排
+    private func setFoot(_ y: CGFloat) {
+        guard !trip.on, MapPanel.shared.stage == .mid, !MapPanel.shared.dragging, abs(y - footY) > 0.5 else { return }
+        quiet.hush()
+        footY = y; trip.mapBottom = y
+    }
+
+    // 「附近」只算看得到的那塊：搜尋列下緣到面板上緣（停好的位置）
+    private func seen(_ r: MKCoordinateRegion?) -> MKCoordinateRegion? {
+        let bottom = MapPanel.shared.top
+        guard let r, mapRect.height > 1, bottom > headY, headY > mapRect.minY else { return r }
+        let t = (headY - mapRect.minY) / mapRect.height, b = min(1, (bottom - mapRect.minY) / mapRect.height)
+        let north = r.center.latitude + r.span.latitudeDelta / 2
+        let hi = north - r.span.latitudeDelta * Double(t), lo = north - r.span.latitudeDelta * Double(b)
+        return MKCoordinateRegion(center: .init(latitude: (hi + lo) / 2, longitude: r.center.longitude),
+                                  span: .init(latitudeDelta: max(hi - lo, 1e-6), longitudeDelta: r.span.longitudeDelta))
     }
 
     static var mapWidth: CGFloat {
@@ -577,10 +609,12 @@ struct MapTab: View {
         }
         let groups = cells.values.filter { $0.count >= 2 }
         let next = groups.map { g -> PinCluster in
-            let cats = Dictionary(grouping: g, by: \.cat.key).sorted { $0.value.count > $1.value.count }.prefix(2).map { $0.value[0].cat.color }
+            let top = Dictionary(grouping: g, by: \.cat.key).sorted { $0.value.count > $1.value.count }.prefix(2)
+            let cats = top.map { $0.value[0].cat.color }
             return PinCluster(id: g.map(\.id).sorted().joined(separator: ","), ids: g.map(\.id),
                               lat: g.map { $0.lat! }.reduce(0, +) / Double(g.count), lng: g.map { $0.lng! }.reduce(0, +) / Double(g.count),
-                              colors: cats.count > 1 ? cats : [cats[0], cats[0].opacity(0.75)])
+                              colors: cats.count > 1 ? cats : [cats[0], cats[0].opacity(0.75)],
+                              emoji: top.first?.value[0].cat.emoji ?? "")
         }.sorted { $0.id < $1.id }
         let nextHidden = Set(groups.flatMap { $0.map(\.id) })
         guard nextHidden != hidden || next.map(\.id) != clusters.map(\.id) else { return }
@@ -615,6 +649,8 @@ struct MapTab: View {
     // 點泡泡：放大到框住這幾家
     private func zoom(_ c: PinCluster) {
         Haptic.light()
+        quiet.hush()
+        MapPanel.shared.atLeastMid()
         let ps = currentList.filter { c.ids.contains($0.id) }
         guard !ps.isEmpty else { return }
         let la = ps.map { $0.lat! }, lo = ps.map { $0.lng! }
@@ -633,43 +669,51 @@ struct MapTab: View {
         // 上面有搜尋列、下面有卡片蓋住，只算中間那塊
         guard dy > 0.38 || dy < -0.12 || abs(dx) > 0.42 else { return }
         selfMoved = true
+        quiet.hush()
         withAnimation(.smooth(duration: 0.45)) {
             pos = .region(MKCoordinateRegion(center: .init(latitude: la - r.span.latitudeDelta * 0.12, longitude: lo), span: r.span))
         }
     }
 
-    // 搜尋框下面的深色膠囊：現在看誰的收藏，點了換；群組時旁邊有 ✕ 回到我的收藏
+    // 搜尋框最左邊的深色膠囊：現在看誰的收藏，點了換；群組時是頭像＋縮短的群組名，✕ 在膠囊裡（回到我的收藏）
     private func scopePill(_ gname: String?) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             Button { scoping = true } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     if let g = store.mapGroup {
-                        HStack(spacing: -6) { ForEach(store.membersOf(g).prefix(4), id: \.self) { Avatar(name: store.name($0), id: $0, size: 22) } }
-                        Text("\(gname ?? "") · \(store.placesIn(g).count) 間").lineLimit(1)
+                        HStack(spacing: -6) { ForEach(store.membersOf(g).prefix(3), id: \.self) { Avatar(name: store.name($0), id: $0, size: 22) } }
+                        Text(Self.short(gname ?? "")).lineLimit(1)
                     } else {
                         Text("我的收藏")
                     }
-                    Image(systemName: "chevron.down").font(.caption.weight(.heavy))
+                    Image(systemName: "chevron.down").font(.caption2.weight(.heavy))
                 }
-                .font(.subheadline.weight(.heavy)).foregroundStyle(.white)
-                .padding(.horizontal, 14).frame(height: 36)
-                .background(Color(hex: 0x2a1a0a), in: .capsule)
-                .frame(minHeight: 44).contentShape(.rect)
+                .foregroundStyle(.white)
+                .padding(.leading, store.mapGroup == nil ? 12 : 7)
+                .frame(height: 36).contentShape(.rect)
             }
             .buttonStyle(PressStyle())
             .accessibilityLabel("地圖要看誰的收藏，現在是" + (gname ?? "我的收藏"))
             if store.mapGroup != nil {
                 Button { withAnimation(.snappy) { store.mapGroup = nil } } label: {
-                    Image(systemName: "xmark").font(.system(size: 13, weight: .heavy)).foregroundStyle(Color.ink)
-                        .frame(width: 36, height: 36).background(.white, in: .circle).shadow(color: .black.opacity(0.12), radius: 4, y: 1)
-                        .frame(width: 44, height: 44).contentShape(.rect)
+                    Image(systemName: "xmark").font(.system(size: 10, weight: .heavy)).foregroundStyle(.white)
+                        .frame(width: 22, height: 22).background(.white.opacity(0.18), in: .circle)
+                        .frame(width: 32, height: 36).contentShape(.rect)
                 }
+                .buttonStyle(PressStyle())
                 .accessibilityLabel("回到我的收藏")
+            } else {
+                Color.clear.frame(width: 10, height: 1)
             }
-            // 跟分類中間隔一條細線
-            Capsule().fill(Color.ink.opacity(0.15)).frame(width: 1.5, height: 22)
         }
+        .font(.subheadline.weight(.heavy)).foregroundStyle(.white)
+        .frame(height: 36)
+        .background(Color(hex: 0x2a1a0a), in: .capsule)
+        .fixedSize()
     }
+
+    // 群組名太長：膠囊裡只放前 5 個字
+    private static func short(_ s: String) -> String { s.count > 5 ? String(s.prefix(5)) + "…" : s }
 
     // 教學第一步：量出那間店的圖釘在螢幕上的位置（圖釘的尖端就是店的座標）
     private func pinFrame(_ proxy: MapProxy) {
@@ -680,6 +724,7 @@ struct MapTab: View {
     }
 
     private func fit() {
+        quiet.hush()
         if !fitted, let b = bounds { fitted = true; pos = .region(b); return }
         // 新帳號一間都沒有：有定位就看目前位置附近約 3 公里（沒有就停在預設的台北市）；之後有店了再框收藏
         if !fitted, bounds == nil, store.mine.isEmpty, store.mapGroup == nil, let h = store.here {
@@ -729,6 +774,8 @@ struct Nearby {
     }
 }
 
+// 下面那塊：三段高度（一行／一排卡片／整份附近清單），拉橫條或標題那行換段，甩一下跳段。
+// 拉的時候只有這塊重畫；地圖的邊距只在停好時才量（不然地圖每幀重排）
 struct NearbySheet: View {
     let near: Nearby
     let pins: PinState
@@ -739,20 +786,114 @@ struct NearbySheet: View {
     var choose: (Place) -> Void = { _ in }
     var dropKey: String? = nil
     var focus: (String) -> Void = { _ in }
+    var ceiling: CGFloat = 0                    // 拉到最高時面板上緣停在這（搜尋列下緣再下面一點，螢幕座標）
+    var top: AnyView? = nil                     // 浮在面板上緣的東西（行程、定位兩顆），跟著面板上下
+    var foot: (CGFloat) -> Void = { _ in }      // 停好時回報上緣（含上面那排按鈕）給地圖當邊距
     @State private var counted: Int?          // 圖釘落下時「附近 N 間」從 0 數上去
     @State private var scrolled: String?      // 卡片列停在哪一間
     @State private var skip: String?          // 自己捲過去的（關掉大卡），不用再移地圖
+    @State private var mp = MapPanel.shared
+    @State private var pull: CGFloat = 0        // 手指拉了多少（往上為正）
+    @State private var midH: CGFloat = 0        // 中間段的自然高度（卡片列或大卡片）
+    @State private var bottomY: CGFloat = 0     // 面板內容下緣（螢幕座標）
+    @State private var lowering = false         // 最高段清單捲到頂再往下拉過頭：放開時降一段
+    @State private var highUsed = false         // 整份清單出現過就留著（不要拿掉再建）
+    @State private var probe = PanelProbe()
     @Environment(\.accessibilityReduceMotion) private var reduce
     @Environment(Store.self) private var store
+
+    private static let grabH: CGFloat = 23      // 橫條那塊（上 8、橫條 5、下 10）
+    private static let lowH: CGFloat = 72       // 最低：橫條＋標題那行（🎲 有 44pt 高）
+    private var midT: CGFloat { max(Self.lowH + 40, midH) }
+    private var highT: CGFloat { ceiling > 0 && bottomY > 0 ? max(midT + 60, bottomY - ceiling) : midT + 60 }
+    private func target(_ s: MapStage) -> CGFloat { s == .low ? Self.lowH : s == .mid ? midT : highT }
+    private var height: CGFloat { min(highT + 30, max(Self.lowH - 30, target(mp.stage) + pull)) }
 
     var body: some View {
         // 選到的那間（點圖釘或抽中）：下面換成那間的大卡片
         let picked = pins.sel.flatMap { id in list.first { $0.id == id } }
         let drawn = pins.drawn != nil && pins.drawn == pins.sel
-        VStack(alignment: .leading, spacing: 10) {
-            Capsule().fill(Color.ink.opacity(0.15)).frame(width: 38, height: 5).frame(maxWidth: .infinity).padding(.top, 8)
+        let h = height
+        // 拉過中間和最高的一半：內容換成直的清單
+        let tall = h > (midT + highT) / 2
+        // 快到最高時，上面的行程、定位兩顆淡掉
+        let fade = min(1, max(0, (highT - h - 40) / 80))
+        VStack(spacing: 0) {
+            Capsule().fill(Color.ink.opacity(0.15)).frame(width: 38, height: 5)
+                .frame(maxWidth: .infinity).padding(.top, 8).padding(.bottom, 10)
+                .modifier(grip)
+            ZStack(alignment: .top) {
+                mid(picked, drawn)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { v in
+                        let n = Self.grabH + v
+                        guard abs(n - midH) > 0.5 else { return }
+                        // 換成大卡片時面板跟著卡片一起彈上來
+                        if midH == 0 || mp.dragging { midH = n } else { withAnimation(reduce ? .easeOut(duration: 0.25) : .spring(response: 0.45, dampingFraction: 0.68)) { midH = n } }
+                    }
+                    .opacity(tall ? 0 : 1)
+                    .allowsHitTesting(!tall)
+                    .accessibilityHidden(tall)
+                if tall || highUsed {
+                    high
+                        .frame(height: max(0, highT - Self.grabH), alignment: .top)
+                        .opacity(tall ? 1 : 0)
+                        .allowsHitTesting(tall)
+                        .accessibilityHidden(!tall)
+                        .onAppear { highUsed = true }
+                }
+            }
+            .animation(.easeOut(duration: 0.18), value: tall)
+        }
+        .frame(height: h, alignment: .top)
+        .clipped()
+        // 被裁掉的卡片列（最低段）不要還點得到
+        .contentShape(.rect)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { r in
+            probe.top = r.minY
+            if !mp.dragging, !TripMode.shared.on, abs(r.maxY - bottomY) > 0.5 { bottomY = r.maxY }
+            report()
+        }
+        // 圖釘落下時，「附近 N 間」跟著從 0 往上數
+        .task(id: dropKey) {
+            // 同一次落下只數一次（離開行程模式、這排重新出現時不要再從 0 數）
+            guard dropKey != nil, !reduce, pins.countedKey != dropKey else { return }
+            pins.countedKey = dropKey
+            let total = near.places.count
+            guard total > 1 else { return }
+            let steps = min(total, 20)
+            for i in 0...steps {
+                withAnimation(.snappy) { counted = total * i / steps }
+                try? await Task.sleep(for: .milliseconds(40))
+                if Task.isCancelled { break }
+            }
+            counted = nil
+        }
+        // 底下留位置給浮著的分頁列，底色一路鋪到螢幕最下面
+        .padding(.bottom, 82)
+        .background(UnevenRoundedRectangle(topLeadingRadius: 26, topTrailingRadius: 26).fill(Color.bg).shadow(color: .black.opacity(0.12), radius: 12, y: -2).ignoresSafeArea(edges: .bottom))
+        // 行程、定位兩顆：底邊貼著面板上緣再上去 10pt，跟著面板動（不佔面板的高度）
+        .overlay(alignment: .top) {
+            if let top {
+                top
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in probe.foot = y; report() }
+                    .opacity(fade)
+                    .allowsHitTesting(fade > 0.5)
+                    .accessibilityHidden(fade < 0.5)
+                    .alignmentGuide(.top) { $0[.bottom] + 10 }
+            }
+        }
+        // 訊息條貼著停好的面板上緣（Root 讀這個值）
+        .onChange(of: target(mp.stage), initial: true) { _, v in
+            if abs(store.panelTop - (v + 82)) > 0.5 { store.panelTop = v + 82 }
+        }
+    }
+
+    // 中間段：選到的大卡片、新帳號的第一張卡，或標題＋一排卡片（最低段只露出最上面那行）
+    private func mid(_ picked: Place?, _ drawn: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
             if let p = picked {
-                PickedCard(place: p, saver: group == nil ? nil : p.owner, drawn: drawn, draw: draw, panel: panel, pickHistory: choose) {
+                PickedCard(place: p, saver: group == nil ? nil : p.owner, drawn: drawn, draw: draw, panel: panel, pickHistory: choose, grip: grip) {
                     // 關掉大卡：下面的卡片列捲到這間
                     skip = p.id; scrolled = p.id
                     pins.select(nil)
@@ -761,20 +902,10 @@ struct NearbySheet: View {
                     .transition(.asymmetric(insertion: .offset(y: 44).combined(with: .opacity), removal: .opacity))
             } else if group == nil && store.mine.isEmpty && !store.loading {
                 // 新帳號還沒有收藏：一張「收藏第一間店」大卡
-                FirstPlaceCard().transition(.opacity)
+                FirstPlaceCard().modifier(grip).transition(.opacity)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        // 標題（群組名稱可能很長）先拿位置，小字不夠放就先截掉小字
-                        title.font(.system(size: 19, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1).minimumScaleFactor(0.8)
-                            .layoutPriority(1)
-                        Text(near.subtitle).font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.45)).lineLimit(1)
-                        Spacer(minLength: 0)
-                        if let draw, !list.isEmpty {
-                            DiceChip(draw: draw, panel: panel)
-                        }
-                    }
-                    .padding(.leading, 18).padding(.trailing, 12)
+                    titleRow
                     if !near.places.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: 12) {
@@ -800,26 +931,92 @@ struct NearbySheet: View {
                 .transition(.opacity)
             }
         }
-        // 圖釘落下時，「附近 N 間」跟著從 0 往上數
-        .task(id: dropKey) {
-            // 同一次落下只數一次（離開行程模式、這排重新出現時不要再從 0 數）
-            guard dropKey != nil, !reduce, pins.countedKey != dropKey else { return }
-            pins.countedKey = dropKey
-            let total = near.places.count
-            guard total > 1 else { return }
-            let steps = min(total, 20)
-            for i in 0...steps {
-                withAnimation(.snappy) { counted = total * i / steps }
-                try? await Task.sleep(for: .milliseconds(40))
-                if Task.isCancelled { break }
-            }
-            counted = nil
-        }
         // 換成大卡片時從下面彈上來（有一點點回彈）
         .animation(reduce ? .easeOut(duration: 0.25) : .spring(response: 0.45, dampingFraction: 0.68), value: picked?.id)
-        // 底下留位置給浮著的分頁列，底色一路鋪到螢幕最下面
-        .padding(.bottom, 82)
-        .background(UnevenRoundedRectangle(topLeadingRadius: 26, topTrailingRadius: 26).fill(Color.bg).shadow(color: .black.opacity(0.12), radius: 12, y: -2).ignoresSafeArea(edges: .bottom))
+    }
+
+    // 最高段：標題＋直的附近清單，捲到頂再往下拉就把面板拉低
+    private var high: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            titleRow
+            if near.places.isEmpty {
+                Text(near.subtitle).font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
+                    .padding(.horizontal, 18)
+                Spacer(minLength: 0)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(near.places) { p in
+                            NavigationLink(value: p) { NearRow(place: p, saver: group == nil ? nil : p.owner) }.buttonStyle(PressStyle { ReelCache.warm(p) })
+                        }
+                    }
+                    .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 16)
+                }
+                // 捲到頂再往下拉超過 56：放開時面板降到中間段（跟行程面板同一套；只在跨過那條線時通知，捲動時不會每幀重畫）
+                .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < -56 } action: { _, past in
+                    guard past, !lowering else { return }
+                    lowering = true
+                    Haptic.light()
+                }
+                .onScrollPhaseChange { _, ph in
+                    guard lowering, ph != .interacting else { return }
+                    lowering = false
+                    mp.go(.mid)
+                }
+                .swipeBackBlocked()
+            }
+        }
+    }
+
+    // 「附近 51 間 由近到遠 ……… 🎲 抽一間」：整行都能拉
+    private var titleRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            // 標題（群組名稱可能很長）先拿位置，小字不夠放就先截掉小字
+            title.font(.system(size: 19, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1).minimumScaleFactor(0.8)
+                .layoutPriority(1)
+            Text(near.subtitle).font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.45)).lineLimit(1)
+            Spacer(minLength: 0)
+            if let draw, !list.isEmpty {
+                DiceChip(draw: draw, panel: panel)
+            }
+        }
+        .padding(.leading, 18).padding(.trailing, 12)
+        .modifier(grip)
+    }
+
+    private var grip: PanelDrag {
+        PanelDrag(changed: { up in drag(up) }, ended: { up in settle(target(mp.stage) + up * 0.6) }, released: released)
+    }
+
+    private func drag(_ up: CGFloat) {
+        if !mp.dragging { mp.dragging = true }
+        pull = up
+    }
+
+    // 放開：停在最近的一段（甩得快就往甩的方向），換段輕震
+    private func settle(_ now: CGFloat) {
+        guard mp.dragging else { return }
+        let pick = [MapStage.low, .mid, .high].min { abs(target($0) - now) < abs(target($1) - now) }!
+        mp.dragging = false
+        mp.calmUntil = CACurrentMediaTime() + 0.8
+        if pick != mp.stage { Haptic.light() }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { mp.stage = pick; pull = 0 }
+        // 停好之後量一次地圖邊距（拉的過程中都沒量）
+        Task { try? await Task.sleep(for: .milliseconds(80)); report() }
+    }
+
+    // 手勢被系統中斷（沒有 onEnded）：停在現在最近的那段
+    private func released() {
+        Task {
+            await Task.yield()
+            if mp.dragging { settle(target(mp.stage) + pull) }
+        }
+    }
+
+    private func report() {
+        guard !mp.dragging, !TripMode.shared.on else { return }
+        if probe.foot > 0 { foot(probe.foot) }
+        if mp.stage != .high, probe.top > 0, abs(mp.top - probe.top) > 0.5 { mp.top = probe.top }
     }
 }
 
@@ -834,6 +1031,61 @@ extension NearbySheet {
     }
 }
 
+// 量到的位置：每幀都會變，放在不會觸發重畫的物件裡
+private final class PanelProbe {
+    var top: CGFloat = 0
+    var foot: CGFloat = 0
+}
+
+// 面板頂部（橫條、標題那行、大卡片最上面那行）的拖曳：往上拉為正；手勢被中斷時 released 收尾
+struct PanelDrag: ViewModifier {
+    var on = true
+    var changed: (CGFloat) -> Void = { _ in }
+    var ended: (CGFloat) -> Void = { _ in }       // 放開：預測會停的位移（往上為正）
+    var released: () -> Void = {}
+    @GestureState private var holding = false
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(.rect)
+            .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .global)
+                .updating($holding) { _, s, _ in s = true }
+                .onChanged { changed(-$0.translation.height) }
+                .onEnded { ended(-$0.predictedEndTranslation.height) }, including: on ? .all : .subviews)
+            .onChange(of: holding) { _, h in if !h { released() } }
+            .swipeBackBlocked(on)
+    }
+}
+
+// 最高段清單的一列：64pt 照片、店名、分類・地區・想去/去過，右邊距離
+private struct NearRow: View {
+    @Environment(Store.self) private var store
+    let place: Place
+    var saver: String? = nil
+    var body: some View {
+        HStack(spacing: 12) {
+            PhotoView(place: place, px: 200).frame(width: 64, height: 64).clipShape(.rect(cornerRadius: 14))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(place.name).font(.system(size: 16, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1)
+                Text(meta).font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.55)).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if let d = store.distance(place) {
+                Text(fmtDistance(d)).font(.subheadline.weight(.heavy)).foregroundStyle(Color.accent).monospacedDigit()
+            }
+        }
+        .padding(10)
+        .candy(18)
+    }
+
+    private var meta: String {
+        var s = place.cuisine?.isEmpty == false ? place.cuisine! : place.cat.name
+        if !place.area.isEmpty { s += "・" + place.area }
+        if let saver { s += "・\(store.name(saver)) 收" } else { s += place.been ? "・✓ 去過" : "・♥ 想去" }
+        return s
+    }
+}
+
 // 選到一間時下面那張大卡：照片、店名、分類地區，導航和店家頁；抽中的還能再抽一次
 struct PickedCard: View {
     @Environment(Store.self) private var store
@@ -844,6 +1096,7 @@ struct PickedCard: View {
     var draw: (() -> Void)? = nil
     var panel: () -> Void = {}
     var pickHistory: (Place) -> Void = { _ in }
+    var grip = PanelDrag(on: false)           // 地圖首頁：最上面那行也能拉面板
     let close: () -> Void
     @State private var askNav = false
 
@@ -865,6 +1118,7 @@ struct PickedCard: View {
                 .accessibilityLabel("回到附近的店")
             }
             .padding(.leading, 18).padding(.trailing, 10)
+            .modifier(grip)
             HStack(alignment: .top, spacing: 12) {
                 // 點照片也進店家頁（照片飛過去）
                 NavigationLink(value: place) {
@@ -1383,9 +1637,11 @@ struct PinCluster: Identifiable, Equatable {
     let ids: [String]
     let lat: Double, lng: Double
     let colors: [Color]
+    var emoji = ""                 // 最多那一類的食物圖示（跟行程的站號長得不一樣）
 }
 
-// 泡泡：分類顏色的漸層加家數，出現時彈一下；點了放大到框住這幾家
+// 泡泡：分類顏色的漸層、最多那類的食物圖示加家數，出現時彈一下；點了放大到框住這幾家。
+// 行程模式：小灰「+N」（不搶站號的鋒頭）。樣式從 PinState 讀，地圖標註不會跟著 MapTab 重畫
 private struct ClusterBubble: View {
     let c: PinCluster
     var reduce = false
@@ -1393,18 +1649,32 @@ private struct ClusterBubble: View {
     let tap: () -> Void
     @State private var on = false
     var body: some View {
+        let small = pins?.dimAll == true
         Button(action: tap) {
-            Text("\(c.ids.count)").font(.system(size: 17, weight: .black)).foregroundStyle(.white)
-                .frame(width: 46, height: 46)
-                .background(LinearGradient(colors: c.colors, startPoint: .topLeading, endPoint: .bottomTrailing), in: .circle)
-                .overlay(Circle().strokeBorder(.white, lineWidth: 3))
+            if small {
+                Text("+\(c.ids.count)").font(.system(size: 12, weight: .black)).foregroundStyle(Color(hex: 0x8f8170))
+                    .frame(width: 30, height: 30)
+                    .background(Color.white.opacity(0.85), in: .circle)
+                    .overlay(Circle().strokeBorder(Color(hex: 0xd8c6ad), lineWidth: 2))
+                    .frame(width: 44, height: 44)
+                    .contentShape(.circle)
+            } else {
+                HStack(spacing: 2) {
+                    if !c.emoji.isEmpty { Text(c.emoji).font(.system(size: 15)) }
+                    Text("\(c.ids.count)").font(.system(size: 17, weight: .black)).foregroundStyle(.white)
+                }
+                .padding(.horizontal, 9)
+                .frame(minWidth: 46, minHeight: 46)
+                .background(LinearGradient(colors: c.colors, startPoint: .topLeading, endPoint: .bottomTrailing), in: .capsule)
+                .overlay(Capsule().strokeBorder(.white, lineWidth: 3))
                 .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
-                .contentShape(.circle)
+                .contentShape(.capsule)
+            }
         }
         .buttonStyle(PinPress(reduce: reduce))
         .scaleEffect(on || reduce ? 1 : 0.6)
-        .opacity(on ? (pins?.dimAll == true ? 0.6 : 1) : 0)
-        .animation(.easeInOut(duration: 0.3), value: pins?.dimAll)
+        .opacity(on ? 1 : 0)
+        .animation(.easeInOut(duration: 0.25), value: small)
         .onAppear { withAnimation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.6)) { on = true } }
         .accessibilityLabel("\(c.ids.count) 間店，點了放大")
     }

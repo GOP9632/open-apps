@@ -38,12 +38,14 @@ struct TripCand: Equatable {
     var expand: String?              // 打開時展開哪一站（店家頁「在行程裡」進來）
     var scrollTo: String?
     var overDay: Int?                // 拖一站到上面「第 N 天」
+    var moving = false               // 正在拖一站：標題列下面露出「第 N 天」可以放
     var cand: TripCand?
     var preview: TripSeg?            // 加站卡：前一站 → 這間 → 後一站 的虛線
     var previewN: Int?               // 「新的第 3 站」
     // 搜尋（在同一張地圖上）
     var q = ""
     var filter: AddFilter?
+    var finding = false              // 按了 🔍：標題列下面展開搜尋框＋分類（✕ 或點地圖收回）
     var typing = false
     var slot: AddSlot?               // 空檔推薦、選住宿當起點：加的位置固定
     var seg: [String]?               // 空檔推薦：順路只看那兩站中間
@@ -59,7 +61,7 @@ struct TripCand: Equatable {
     let search = TripSearch()
 
     var on: Bool { tid != nil }
-    var searchOn: Bool { typing || !q.isEmpty || filter != nil }
+    var searchOn: Bool { finding || typing || !q.isEmpty || filter != nil }
 
     // 進行程模式：切到地圖分頁、回到地圖最上層，同一張地圖變成這個行程
     func open(_ id: String, focus f: String? = nil, store: Store) {
@@ -70,7 +72,7 @@ struct TripCand: Equatable {
         if store.tab != 0 { store.tab = 0 }
         let s = f.flatMap { x in trips.stops.first { $0.id == x } }
         clearSearch()
-        cand = nil; hot = f; expand = f; scrollTo = f
+        cand = nil; hot = f; expand = f; scrollTo = f; moving = false
         withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
             if let s { day = s.day } else if tid != id { day = 1 }
             if tid != id { going = false }
@@ -86,7 +88,7 @@ struct TripCand: Equatable {
         Haptic.light()
         Perf.shared.mark("離開行程")
         clearSearch()
-        cand = nil; hot = nil; expand = nil; preview = nil; previewN = nil
+        cand = nil; hot = nil; expand = nil; preview = nil; previewN = nil; moving = false
         withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
             tid = nil; going = false; segs = []; marks = []
         }
@@ -97,7 +99,7 @@ struct TripCand: Equatable {
         Haptic.light()
         cand = nil
         slot = s; seg = g
-        withAnimation(.snappy) { filter = f; level = .low }
+        withAnimation(.snappy) { finding = true; filter = f; level = .low }
     }
 
     // 收鍵盤（不靠 @FocusState，見 TripTop）
@@ -108,7 +110,7 @@ struct TripCand: Equatable {
 
     func clearSearch() {
         if typing { endTyping() }
-        q = ""; filter = nil; slot = nil; seg = nil
+        q = ""; filter = nil; slot = nil; seg = nil; finding = false
         search.clear()
     }
 

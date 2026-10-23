@@ -2,8 +2,10 @@ import SwiftUI
 import MapKit
 
 // 行程面板：蓋在首頁地圖下面（行程模式時），可以拉成三段高度
-// 一半、全開：每站一列（號碼、照片、名字、停留、時間），兩站之間一行交通；長按拖曳換順序，拖到上面「第 N 天」就換天
-// 最低：只剩一排橫向站卡，地圖全開；長按站卡左右拖換順序
+// 一半、全開：最上面一列是起點（目前位置／住宿）；每站一列（號碼、照片、名字、停留、時間），兩站之間一行交通；
+// 長按拖曳換順序，拖到標題列下面露出的「第 N 天」就換天；清單捲到頂再往下拉＝面板降一段
+// 最低：一排橫向站卡＋排順序／出發（地圖約占 65%）；長按站卡左右拖換順序
+// 行程模式時分頁列藏起來（Store.barHidden），面板一路到底
 // 點地圖上的收藏：面板換成「加站卡」，自動找最順的位置
 struct TripPanel: View {
     let tid: String
@@ -29,6 +31,8 @@ struct TripPanel: View {
     @State private var checked = false          // 行程找不到時，已經重新跟伺服器確認過
     // 拖曳手勢被系統取消時 onEnded 不會來（站卡那排會卡在拖到一半）：手勢一結束（含取消）就放下
     @GestureState private var holding = false
+    @GestureState private var pulling = false   // 拉面板的手勢還在（被系統取消時把面板放回一段）
+    @State private var lowering = false         // 清單捲到頂又往下拉過頭：放開就降一段
     // 出發
     @State private var me: CLLocation?          // 出發時的目前位置（只在 App 開著時更新）
     @State private var pinged: String?          // 已經為「快到了」震過的那站
@@ -36,9 +40,6 @@ struct TripPanel: View {
     @State private var finished = false
     @State private var party = 0
     @State private var navAsk: TripStop?
-
-    // 下面浮著的分頁列要留的位置
-    private var barRoom: CGFloat { mode.going ? 0 : 82 }
 
     var body: some View {
         Group {
@@ -71,7 +72,7 @@ struct TripPanel: View {
                 ProgressView()
             }
         }
-        .frame(maxWidth: .infinity).padding(.vertical, 24).padding(.bottom, barRoom)
+        .frame(maxWidth: .infinity).padding(.vertical, 24)
         .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg).ignoresSafeArea(edges: .bottom))
         .frame(maxHeight: .infinity, alignment: .bottom)
         // 再跟伺服器確認一次（萬一是讀到舊資料）；真的不見才留著這個畫面
@@ -106,10 +107,18 @@ struct TripPanel: View {
             if mode.going, let next {
                 goCard(t, order: order, next: next, plan: plan).padding(.horizontal, 14).padding(.top, 6)
                     .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { goTop = $0 }
-            } else if mode.searchOn && mode.cand == nil && !mode.going {
-                TripResults().transition(.opacity.combined(with: .offset(y: -8)))
+            } else if mode.searchOn && !mode.going {
+                // 🔍 展開的搜尋框＋分類，下面是結果（正在看加站卡時先收起結果）
+                VStack(spacing: 0) {
+                    TripFind()
+                    if mode.cand == nil {
+                        TripResults().transition(.opacity.combined(with: .offset(y: -8)))
+                    }
+                }
+                .transition(.opacity.combined(with: .offset(y: -8)))
             }
         }
+        .animation(.snappy(duration: 0.22), value: mode.searchOn)
         .animation(.snappy(duration: 0.22), value: mode.searchOn && mode.cand == nil)
         return goMods(core, t, order: order, next: next)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
@@ -150,6 +159,8 @@ struct TripPanel: View {
         .onChange(of: candKey(order), initial: true) { placeCand(t, order) }
         .onChange(of: mode.sharing) { share(t) }
         .onChange(of: holding) { _, h in if !h && drag.id != nil { drop(t) } }
+        // 拖一站時標題列下面露出「第 N 天」
+        .onChange(of: drag.id != nil) { _, on in if mode.moving != on { mode.moving = on } }
         // 搜尋結果：地圖框住結果和這天的站
         .onChange(of: resultKey) { fit(base, origin: origin, animated: true) }
         .task(id: needKey(t, base, origin: origin)) { router.need(TripMath.needs(t, base, origin: origin)) }
@@ -167,8 +178,9 @@ struct TripPanel: View {
     // ----- 下面的面板 -----
 
     private func heights() -> (low: CGFloat, mid: CGFloat, high: CGFloat) {
+        // 最低：把手 20＋站卡 74＋排順序／出發 56
         let h = max(size.height, 500)
-        return (168 + barRoom, h * 0.5, h - 8)
+        return (150, h * 0.5, h - 8)
     }
 
     private func panelHeight() -> CGFloat {
@@ -180,10 +192,7 @@ struct TripPanel: View {
     private func panel(_ t: Trip, d: Int, base: [TripStop], order: [TripStop], legs: [Leg?], plan: DayPlan) -> some View {
         let strip = mode.level == .low && pull >= -20
         return VStack(spacing: 0) {
-            Capsule().fill(Color.ink.opacity(0.18)).frame(width: 40, height: 5)
-                .frame(maxWidth: .infinity).frame(height: 22)
-                .contentShape(.rect)
-                .gesture(sheetDrag)
+            head(t, base: base, d: d, strip: strip)
             if strip {
                 cards(t, base: base, order: order, plan: plan)
                     .transition(.opacity)
@@ -194,6 +203,21 @@ struct TripPanel: View {
                             .padding(.horizontal, 14).padding(.top, 2).padding(.bottom, 16)
                     }
                     .scrollDisabled(drag.id != nil)
+                    // 捲到頂再往下拉超過 56：放開時面板降一段（只在跨過那條線時通知，捲動時不會每幀重畫）
+                    .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < -56 } action: { _, past in
+                        guard past, !lowering, drag.id == nil else { return }
+                        lowering = true
+                        Haptic.light()
+                    }
+                    .onScrollPhaseChange { _, ph in
+                        guard lowering, ph != .interacting else { return }
+                        lowering = false
+                        guard drag.id == nil else { return }
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                            mode.level = mode.level == .high ? .mid : .low
+                            pull = 0
+                        }
+                    }
                     .onChange(of: mode.scrollTo, initial: true) { _, id in
                         guard let id else { return }
                         mode.scrollTo = nil
@@ -205,7 +229,6 @@ struct TripPanel: View {
             // 這天還沒有站：不放「排順序／出發」，空白提示不會被蓋住
             if !base.isEmpty { actions(t, base: base) }
         }
-        .padding(.bottom, barRoom)
         .frame(maxWidth: .infinity)
         .frame(height: panelHeight(), alignment: .top)
         .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg)
@@ -232,16 +255,94 @@ struct TripPanel: View {
             .disabled(base.isEmpty)
             .opacity(base.isEmpty ? 0.5 : 1)
         }
-        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 6)
+        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
         .opacity(drag.id == nil ? 1 : 0)
         .animation(.snappy(duration: 0.2), value: drag.id == nil)
+    }
+
+    // 面板最上面：把手＋起點那列（一半、全開時），整塊都能拉；拖站卡換順序時不能拉
+    private func head(_ t: Trip, base: [TripStop], d: Int, strip: Bool) -> some View {
+        VStack(spacing: 0) {
+            Capsule().fill(Color.ink.opacity(0.18)).frame(width: 40, height: 5)
+                .frame(maxWidth: .infinity).frame(height: strip ? 20 : 16)
+            if !strip {
+                HStack(spacing: 0) {
+                    startChip(t, d: d, base: base)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 14).padding(.bottom, 4)
+                .transition(.opacity)
+            }
+        }
+        .contentShape(.rect)
+        .gesture(sheetDrag, including: drag.id == nil ? .all : .subviews)
+        .swipeBackBlocked()
+        // 拉面板被系統取消（onEnded 不會來）：放回目前那段
+        .onChange(of: pulling) { _, p in
+            guard !p, pull != 0 else { return }
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { pull = 0 }
+        }
+    }
+
+    // ----- 起點：目前位置或住宿 -----
+
+    private func startChip(_ t: Trip, d: Int, base: [TripStop]) -> some View {
+        let label: String
+        if let first = base.first, first.kind == "stay" { label = "🏨 從" + first.name + "出發" }
+        else if TripMath.origin(base, here: store.here) != nil { label = "🏠 從目前位置出發" }
+        else { label = "📍 從第 1 站出發" }
+        var names: Set<String> = []
+        let stays = trips.stops(t.id).filter { $0.kind == "stay" && names.insert($0.name).inserted }
+        return Menu {
+            Button("🏠 從目前位置出發") { startHere(base) }
+            ForEach(stays) { st in
+                Button("🏨 " + st.name) { startAt(st, t, d: d, base: base) }
+            }
+            Button("🔍 搜尋飯店…") { mode.startSearch(.stay, slot: .first) }
+        } label: {
+            HStack(spacing: 4) {
+                Text(label).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .heavy)).foregroundStyle(Color.ink.opacity(0.4))
+            }
+            .font(.subheadline.weight(.heavy)).foregroundStyle(Color.ink.opacity(0.75))
+            .padding(.horizontal, 12).frame(height: 34)
+            .background(Color.ink.opacity(0.06), in: .capsule)
+            .frame(minHeight: 40).contentShape(.rect)
+        }
+        .accessibilityLabel("起點：" + label)
+    }
+
+    // 改從目前位置出發：第一站的住宿移到最後（晚上回飯店）
+    private func startHere(_ base: [TripStop]) {
+        Haptic.light()
+        guard var f = base.first, f.kind == "stay", base.count > 1 else { return }
+        f.pos = (base.last?.pos ?? 0) + 1
+        withAnimation(.snappy) { trips.update(f, store: store) }
+    }
+
+    // 從某間住宿出發：這天有就移到最前面，沒有就複製一份放在最前面
+    private func startAt(_ st: TripStop, _ t: Trip, d: Int, base: [TripStop]) {
+        Haptic.light()
+        let top = (base.first?.pos ?? 1) - 1
+        if var x = base.first(where: { $0.id == st.id }) {
+            guard base.first?.id != st.id else { return }
+            x.pos = top
+            withAnimation(.snappy) { trips.update(x, store: store) }
+            return
+        }
+        let c = TripStop(id: UUID().uuidString.lowercased(), trip_id: t.id, day: d, pos: top, kind: "stay", place_id: nil, name: st.name,
+                         address: st.address, lat: st.lat, lng: st.lng, poi: st.poi, stay_min: 0, mode: nil, fixed_time: nil, done_at: nil,
+                         added_by: Supa.session?.user.id, created_at: nil, updated_at: nil)
+        trips.insert(c, store: store)
     }
 
     // 拉面板：放開時停在最近的一段（甩得快就往甩的方向）
     private var sheetDrag: some Gesture {
         DragGesture(minimumDistance: 4)
-            .onChanged { v in pull = -v.translation.height }
+            .updating($pulling) { _, st, _ in st = true }
+            .onChanged { v in if drag.id == nil { pull = -v.translation.height } }
             .onEnded { v in
+                guard drag.id == nil else { pull = 0; return }
                 let hs = heights()
                 let now: CGFloat = (mode.level == .low ? hs.low : mode.level == .mid ? hs.mid : hs.high) - v.predictedEndTranslation.height * 0.6
                 let pick: TripLevel = [(TripLevel.low, hs.low), (TripLevel.mid, hs.mid), (TripLevel.high, hs.high)].min { abs($0.1 - now) < abs($1.1 - now) }!.0
@@ -352,6 +453,8 @@ struct TripPanel: View {
     private func begin(_ s: TripStop, k: Int, size h: CGFloat) {
         Haptic.medium()
         Perf.shared.mark("拿起一站")
+        // 「第 N 天」的位置等標題列下面那排出來再量（舊的可能是別的天數）
+        mode.geo.chips = [:]
         withAnimation(.snappy(duration: 0.2)) { drag = RowDrag(id: s.id, from: k, to: k, h: h) }
     }
 
@@ -411,7 +514,7 @@ struct TripPanel: View {
         }
         .scrollDisabled(drag.id != nil)
         .swipeBackBlocked()
-        .frame(height: 82)
+        .frame(height: 74)
     }
 
     // 站卡長按拿起來左右拖：地圖上的號碼和路線跟著換
@@ -541,7 +644,7 @@ struct TripPanel: View {
                 }
             }
         }
-        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 12 + barRoom)
+        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 12)
         .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg)
             .shadow(color: .black.opacity(0.14), radius: 14, y: -2).ignoresSafeArea(edges: .bottom))
         .offset(y: cardPull)
@@ -676,15 +779,17 @@ struct TripPanel: View {
         let lats = cs.map(\.latitude), lngs = cs.map(\.longitude)
         let latR = max(minSpan, lats.max()! - lats.min()!)
         let lngR = max(minSpan, lngs.max()! - lngs.min()!)
-        let cover: CGFloat = card ? 300 : panelHeight()
-        let window = max(120, size.height - cover - top)
+        // 加站卡約 224 高；上面展開著搜尋框時也要避開
+        let cover: CGFloat = card ? 224 : panelHeight()
+        let pad = top + (mode.searchOn ? TripFind.height : 0)
+        let window = max(120, size.height - cover - pad)
         let k = Double(window * 0.72) / latR                         // 每一度緯度幾點
         // 地圖框鏡頭的那塊（螢幕座標）；還沒量到就當成面板這塊
         let ft = Double(mode.mapBottom > mode.mapTop ? mode.mapTop : top0)
         let fb = Double(mode.mapBottom > mode.mapTop ? mode.mapBottom : top0 + size.height)
         let full = (fb - ft) / k                                    // 那塊的緯度範圍
         let mid = (lats.max()! + lats.min()!) / 2
-        let winCenter = Double(top0 + top + window / 2)             // 看得到那塊的中心（螢幕座標）
+        let winCenter = Double(top0 + pad + window / 2)             // 看得到那塊的中心（螢幕座標）
         let center = mid + (winCenter - (ft + fb) / 2) / k
         let r = MKCoordinateRegion(center: .init(latitude: center, longitude: (lngs.max()! + lngs.min()!) / 2),
                                    span: .init(latitudeDelta: full, longitudeDelta: lngR * 1.4))

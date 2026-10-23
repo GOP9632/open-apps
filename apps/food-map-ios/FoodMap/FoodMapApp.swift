@@ -111,6 +111,8 @@ struct Root: View {
         .overlay(alignment: .bottom) {
             if let t = store.toast {
                 let act = store.toastAction
+                // 地圖首頁（不在行程、沒點進店家頁）：貼著下面那塊的上緣，右邊讓開行程、定位兩顆；其他分頁照舊
+                let onMap = store.tab == 0 && store.mapPath.isEmpty && store.panelTop > 0 && !TripMode.shared.on
                 HStack(spacing: 10) {
                     if let p = store.toastPlace {
                         PhotoView(place: p, px: 120).frame(width: 30, height: 30).clipShape(.rect(cornerRadius: 8))
@@ -130,7 +132,7 @@ struct Root: View {
                 }
                 .padding(.horizontal, 16).padding(.vertical, 11)
                 .background(Color.ink.opacity(0.92), in: .capsule)
-                .padding(.bottom, 96).padding(.horizontal, 24)
+                .padding(.bottom, onMap ? store.panelTop + 8 : 96).padding(.horizontal, 24).padding(.trailing, onMap ? 52 : 0)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .accessibilityAddTraits(.isButton)
                 .onAppear { AccessibilityNotification.Announcement(t).post() }
