@@ -609,16 +609,31 @@ struct MapTab: View {
             cells["\(Int((p.lng! / cell).rounded(.down))),\(Int((y / cell).rounded(.down)))", default: []].append(p)
         }
         let groups = cells.values.filter { $0.count >= 2 }
+        // 行程模式：泡泡落在某站號碼上就往外推開（號碼要看得到）
+        let marks = trip.on ? trip.marks.compactMap { proxy.convert($0.coord, to: .local) } : []
+        func aside(_ lat: Double, _ lng: Double) -> (Double, Double) {
+            guard !marks.isEmpty, let b = proxy.convert(CLLocationCoordinate2D(latitude: lat, longitude: lng), to: .local) else { return (lat, lng) }
+            guard let m = marks.min(by: { hypot($0.x - b.x, $0.y - b.y) < hypot($1.x - b.x, $1.y - b.y) }) else { return (lat, lng) }
+            let d = hypot(b.x - m.x, b.y - m.y)
+            guard d < 46 else { return (lat, lng) }
+            let ux = d > 1 ? (b.x - m.x) / d : 0.7, uy = d > 1 ? (b.y - m.y) / d : -0.7
+            let to = CGPoint(x: m.x + ux * 50, y: m.y + uy * 50)
+            guard let c = proxy.convert(to, from: .local) else { return (lat, lng) }
+            return (c.latitude, c.longitude)
+        }
         let next = groups.map { g -> PinCluster in
             let top = Dictionary(grouping: g, by: \.cat.key).sorted { $0.value.count > $1.value.count }.prefix(2)
             let cats = top.map { $0.value[0].cat.color }
+            let (la, ln) = aside(g.map { $0.lat! }.reduce(0, +) / Double(g.count), g.map { $0.lng! }.reduce(0, +) / Double(g.count))
             return PinCluster(id: g.map(\.id).sorted().joined(separator: ","), ids: g.map(\.id),
-                              lat: g.map { $0.lat! }.reduce(0, +) / Double(g.count), lng: g.map { $0.lng! }.reduce(0, +) / Double(g.count),
+                              lat: la, lng: ln,
                               colors: cats.count > 1 ? cats : [cats[0], cats[0].opacity(0.75)],
                               emoji: top.first?.value[0].cat.emoji ?? "")
         }.sorted { $0.id < $1.id }
         let nextHidden = Set(groups.flatMap { $0.map(\.id) })
-        guard nextHidden != hidden || next.map(\.id) != clusters.map(\.id) else { return }
+        // 推開的泡泡位置變了也要換（站換了、縮放了）；平移時的小誤差不算
+        let moved = zip(next, clusters).contains { abs($0.lat - $1.lat) > 1e-5 || abs($0.lng - $1.lng) > 1e-5 }
+        guard nextHidden != hidden || next.map(\.id) != clusters.map(\.id) || moved else { return }
         func at(_ c: PinCluster) -> CGPoint? { proxy.convert(CLLocationCoordinate2D(latitude: c.lat, longitude: c.lng), to: .local) }
         var from: [String: CGSize] = [:], to: [String: CGSize] = [:]
         for c in clusters {

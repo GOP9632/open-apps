@@ -381,6 +381,7 @@ enum TripInsert {
 
     // 這天還沒有站、也沒有定位：用地圖現在看的地方當搜尋中心（不然會搜到全台灣）
     @ObservationIgnored private var viewCenter: CLLocationCoordinate2D?
+    @ObservationIgnored private var poiCache: [String: [MKMapItem]] = [:]   // 長路線分段找過的類別
 
     // Apple 地圖：打字就搜（停 0.35 秒才問），沒打字但選了景點／住宿／咖啡／甜點就列路線附近的
     func run(_ q: String, _ filter: AddFilter?, here: CLLocation?, view: MKCoordinateRegion?) async {
@@ -399,10 +400,18 @@ enum TripInsert {
         var items: [MKMapItem] = []
         do {
             if text.isEmpty, let cats = filter?.poi, near.radius > 8000 {
-                // 長路線（雲林到台北）：只找中間點 8 公里內常常是空的；沿路平均取幾個點分頭找
-                let n = min(8, max(2, Int(near.length / 12_000) + 1))
-                let spacing = near.length / Double(n - 1)
-                items = await Self.pois(cats, at: near.samples(n), radius: min(8000, max(4000, spacing / 2 + 1000)))
+                // 長路線（雲林到台北）：只找中間點 8 公里內常常是空的；沿路平均取幾個點分頭找。
+                // Apple 每分鐘只讓 app 查 50 次：最多 5 個點，同一條路線同一類找過就直接用上次的
+                let ck = "\(filter?.rawValue ?? "")|\(near.center?.latitude ?? 0),\(near.center?.longitude ?? 0)|\(Int(near.length))"
+                if let hit = poiCache[ck] { items = hit } else {
+                    let n = min(5, max(2, Int(near.length / 15_000) + 1))
+                    let spacing = near.length / Double(n - 1)
+                    items = await Self.pois(cats, at: near.samples(n), radius: min(10_000, max(4000, spacing / 2 + 1000)))
+                    if !items.isEmpty {
+                        if poiCache.count > 12 { poiCache.removeAll() }
+                        poiCache[ck] = items
+                    }
+                }
             } else if text.isEmpty, let cats = filter?.poi, let c = center {
                 let r = MKLocalPointsOfInterestRequest(center: c, radius: min(max(near.radius, 1200), 8000))
                 r.pointOfInterestFilter = MKPointOfInterestFilter(including: cats)

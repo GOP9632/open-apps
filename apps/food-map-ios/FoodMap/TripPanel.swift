@@ -777,7 +777,18 @@ struct TripPanel: View {
             let found = ps.compactMap { p in p.lat.flatMap { la in p.lng.map { CLLocationCoordinate2D(latitude: la, longitude: $0) } } }
             let hits = mode.search.mapHits(mode.search.found).map(\.coord)
             guard !(found + hits).isEmpty else { return }
-            fitCoords(found + hits + base.compactMap(\.coord), card: false, animated: animated, top: TripResults.height(mode) + 8)
+            // 長路線（雲林到台北）：全部框進來會縮到看見對岸。超過 40 公里就不框這天的站；
+            // 結果本身也拉得很長，就只框現在看得到的那些（都不在畫面裡就框離畫面中心最近的 5 個）
+            let res = found + hits
+            let top = TripResults.height(mode) + 8
+            let withStops = res + base.compactMap(\.coord)
+            if Self.km(withStops) <= 40 { fitCoords(withStops, card: false, animated: animated, top: top); return }
+            if Self.km(res) <= 40 { fitCoords(res, card: false, animated: animated, top: top); return }
+            guard let r = store.mapRegion else { return }
+            let inView = res.filter { abs($0.latitude - r.center.latitude) < r.span.latitudeDelta / 2 && abs($0.longitude - r.center.longitude) < r.span.longitudeDelta / 2 }
+            let c = CLLocation(latitude: r.center.latitude, longitude: r.center.longitude)
+            let pick = inView.isEmpty ? Array(res.sorted { c.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude)) < c.distance(from: CLLocation(latitude: $1.latitude, longitude: $1.longitude)) }.prefix(5)) : inView
+            fitCoords(pick, card: false, animated: animated, minSpan: 0.02, top: top)
             return
         }
         var cs = base.compactMap(\.coord)
@@ -790,6 +801,13 @@ struct TripPanel: View {
             return
         }
         fitCoords(cs, card: false, animated: animated)
+    }
+
+    // 這些點的範圍（南北、東西取大的，公里）
+    private static func km(_ cs: [CLLocationCoordinate2D]) -> Double {
+        guard let f = cs.first else { return 0 }
+        let lats = cs.map(\.latitude), lngs = cs.map(\.longitude)
+        return max((lats.max()! - lats.min()!) * 111, (lngs.max()! - lngs.min()!) * 111 * cos(f.latitude * .pi / 180))
     }
 
     private func fitCoords(_ cs: [CLLocationCoordinate2D], card: Bool, animated: Bool, minSpan: Double = 0.004, top: CGFloat = 12) {
