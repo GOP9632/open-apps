@@ -787,7 +787,12 @@ struct TripPanel: View {
         pinged = nil
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { mode.going = true; mode.cand = nil }
         mode.clearSearch()
-        withAnimation(.easeInOut(duration: 0.6)) { pos = .userLocation(fallback: pos) }
+        if let h = here {
+            let span = store.mapRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
+            withAnimation(.easeInOut(duration: 0.6)) { pos = .region(MKCoordinateRegion(center: h.coordinate, span: span)) }
+        } else {
+            withAnimation(.easeInOut(duration: 0.6)) { pos = .userLocation(fallback: pos) }
+        }
     }
 
     private func endGo() {
@@ -797,12 +802,20 @@ struct TripPanel: View {
     }
 
     // 出發時才開定位（App 在前景時更新；不用背景定位）
+    // 地圖不一直跟著你動畫（那樣整張地圖每幀重畫，走路時手機會燙）：走出 40 公尺才移一次；自己拖過地圖就不搶回來
     private func follow() async {
         guard mode.going else { return }
+        var centered = here          // 出發時已經移到這裡
         do {
             for try await u in CLLocationUpdate.liveUpdates() {
                 if Task.isCancelled || !mode.going { break }
-                if let l = u.location { me = l }
+                guard let l = u.location else { continue }
+                // 走 10 公尺以上才更新（每次更新面板都要重算）
+                if me.map({ $0.distance(from: l) >= 10 }) ?? true { me = l }
+                guard !pos.positionedByUser, centered.map({ $0.distance(from: l) >= 40 }) ?? true else { continue }
+                centered = l
+                let span = store.mapRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
+                withAnimation(.easeInOut(duration: 0.6)) { pos = .region(MKCoordinateRegion(center: l.coordinate, span: span)) }
             }
         } catch {}
     }

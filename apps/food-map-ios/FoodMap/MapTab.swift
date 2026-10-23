@@ -246,7 +246,13 @@ struct MapTab: View {
                                     .accessibilityLabel("我的行程")
                                     Button {
                                         Haptic.light()
-                                        withAnimation(.smooth(duration: 0.5)) { pos = .userLocation(fallback: pos) }
+                                        // 移到目前位置一次就好。不用 .userLocation：那會一直跟著走，位置一動整張地圖就每幀重畫，手機會燙
+                                        if let l = loc.location ?? store.here {
+                                            let span = store.mapRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+                                            withAnimation(.smooth(duration: 0.5)) { pos = .region(MKCoordinateRegion(center: l.coordinate, span: span)) }
+                                        } else {
+                                            withAnimation(.smooth(duration: 0.5)) { pos = .userLocation(fallback: pos) }
+                                        }
                                     } label: { CircleIcon(icon: "location.fill") }
                                     .buttonStyle(PressStyle())
                                     .accessibilityLabel("我的位置")
