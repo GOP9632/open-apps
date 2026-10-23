@@ -21,9 +21,9 @@ import os
     @ObservationIgnored private var last: CFTimeInterval = 0
     @ObservationIgnored private var drops: [CFTimeInterval] = []
 
-    // 只在開發版和 TestFlight 出現，App Store 版不會有
+    // 只在開發版、模擬器和 TestFlight 出現，App Store 版不會有
     static var allowed: Bool {
-        #if DEBUG
+        #if DEBUG || targetEnvironment(simulator)
         return true
         #else
         return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
