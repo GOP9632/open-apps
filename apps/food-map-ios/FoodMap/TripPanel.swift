@@ -21,6 +21,7 @@ struct TripPanel: View {
     @State private var drag = RowDrag()
     @State private var size: CGSize = .zero
     @State private var top0: CGFloat = 0            // 面板頂端在螢幕上的位置
+    @State private var cardH: CGFloat = 224         // 加站卡量到的高度
     // 出發中：上面「下一站」卡片的下緣、下面那塊的上緣（螢幕座標），藍點要放在中間看得到的地方
     @State private var goTop: CGFloat = 0
     @State private var goBot: CGFloat = 0
@@ -139,6 +140,8 @@ struct TripPanel: View {
         }
         // 第一次量到大小（剛進行程模式）：0.5 秒縮放到這天的站（從店家頁進來的就飛到那站）
         .onChange(of: size) {
+            // 大小變了（鍵盤收起來之類）：開著加站卡就重新框加站卡那段
+            if placed, mode.cand != nil { placeCand(t, order); return }
             if placed { fit(base, origin: origin, animated: false); return }
             placed = true
             if mode.hot != nil { flyTo(mode.hot) } else { fit(base, origin: origin, animated: true) }
@@ -665,6 +668,12 @@ struct TripPanel: View {
         .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 12)
         .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg)
             .shadow(color: .black.opacity(0.14), radius: 14, y: -2).ignoresSafeArea(edges: .bottom))
+        // 卡片實際多高（店名兩行、有營業時間時會比較高）：框地圖時讓開，量到不一樣就重框一次
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+            guard abs(h - cardH) > 8 else { return }
+            cardH = h
+            placeCand(t, order)
+        }
         .offset(y: cardPull)
         .gesture(DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { v in cardPull = max(0, v.translation.height) }
@@ -779,10 +788,17 @@ struct TripPanel: View {
             guard !(found + hits).isEmpty else { return }
             // 長路線（雲林到台北）：全部框進來會縮到看見對岸。超過 40 公里就不框這天的站；
             // 結果本身也拉得很長，就只框現在看得到的那些（都不在畫面裡就框離畫面中心最近的 5 個）
-            let res = found + hits
+            var res = found + hits
             let top = TripResults.height(mode) + 8
             let withStops = res + base.compactMap(\.coord)
             if Self.km(withStops) <= 40 { fitCoords(withStops, card: false, animated: animated, top: top); return }
+            // 打字搜（台北101）：框排第一的那個和它 40 公里內的結果（其他同名的可能遠在對岸）
+            if !mode.q.trimmingCharacters(in: .whitespaces).isEmpty, let a = (found.first ?? hits.first) {
+                let ca = CLLocation(latitude: a.latitude, longitude: a.longitude)
+                res = res.filter { ca.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude)) <= 40_000 }
+                fitCoords(res, card: false, animated: animated, minSpan: 0.02, top: top)
+                return
+            }
             if Self.km(res) <= 40 { fitCoords(res, card: false, animated: animated, top: top); return }
             guard let r = store.mapRegion else { return }
             let inView = res.filter { abs($0.latitude - r.center.latitude) < r.span.latitudeDelta / 2 && abs($0.longitude - r.center.longitude) < r.span.longitudeDelta / 2 }
@@ -816,7 +832,7 @@ struct TripPanel: View {
         let latR = max(minSpan, lats.max()! - lats.min()!)
         let lngR = max(minSpan, lngs.max()! - lngs.min()!)
         // 加站卡約 224 高；上面展開著搜尋框時也要避開；上緣不高過膠囊、🔍 那排
-        let cover: CGFloat = card ? 224 : panelHeight()
+        let cover: CGFloat = card ? cardH : panelHeight()
         let pad = top + (mode.searchOn ? TripFind.height : 0)
         let winTop = max(top0, mode.barBottom) + pad
         let window = max(120, top0 + size.height - cover - winTop)
