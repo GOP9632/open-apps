@@ -19,6 +19,10 @@ struct TripPanel: View {
     @State private var drag = RowDrag()
     @State private var size: CGSize = .zero
     @State private var top0: CGFloat = 0            // 面板頂端在螢幕上的位置
+    // 出發中：上面「下一站」卡片的下緣、下面那塊的上緣（螢幕座標），藍點要放在中間看得到的地方
+    @State private var goTop: CGFloat = 0
+    @State private var goBot: CGFloat = 0
+    @State private var goSpan = 900.0 / 111_000     // 出發時鏡頭的緯度範圍（框鏡頭那塊），之後跟著走不再改
     @State private var cardPull: CGFloat = 0
     @State private var loving = false
     @State private var placed = false
@@ -88,6 +92,7 @@ struct TripPanel: View {
             Color.clear.allowsHitTesting(false)
             if mode.going {
                 goBottom(order)
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { goBot = $0 }
             } else if let c = mode.cand {
                 addCard(t, c, order: order)
                     .id(c.id)
@@ -100,6 +105,7 @@ struct TripPanel: View {
         .overlay(alignment: .top) {
             if mode.going, let next {
                 goCard(t, order: order, next: next, plan: plan).padding(.horizontal, 14).padding(.top, 6)
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { goTop = $0 }
             } else if mode.searchOn && mode.cand == nil && !mode.going {
                 TripResults().transition(.opacity.combined(with: .offset(y: -8)))
             }
@@ -794,9 +800,12 @@ struct TripPanel: View {
         mode.clearSearch()
         if let h = here {
             // 拉近到街道（已經比這更近就不動縮放）
-            let near = MKCoordinateRegion(center: h.coordinate, latitudinalMeters: 900, longitudinalMeters: 900)
-            let span = store.mapRegion.map { $0.span.latitudeDelta < near.span.latitudeDelta ? $0.span : near.span } ?? near.span
-            withAnimation(.easeInOut(duration: 0.6)) { pos = .region(MKCoordinateRegion(center: h.coordinate, span: span)) }
+            goSpan = min(900.0 / 111_000, store.mapRegion?.span.latitudeDelta ?? 1)
+            // 卡片還沒量到：等它出來再移
+            Task {
+                try? await Task.sleep(for: .seconds(0.05))
+                withAnimation(.easeInOut(duration: 0.6)) { pos = .region(goRegion(h.coordinate)) }
+            }
         } else {
             withAnimation(.easeInOut(duration: 0.6)) { pos = .userLocation(fallback: pos) }
         }
@@ -821,10 +830,21 @@ struct TripPanel: View {
                 if me.map({ $0.distance(from: l) >= 10 }) ?? true { me = l }
                 guard !pos.positionedByUser, centered.map({ $0.distance(from: l) >= 40 }) ?? true else { continue }
                 centered = l
-                let span = store.mapRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
-                withAnimation(.easeInOut(duration: 0.6)) { pos = .region(MKCoordinateRegion(center: l.coordinate, span: span)) }
+                withAnimation(.easeInOut(duration: 0.6)) { pos = .region(goRegion(l.coordinate)) }
             }
         } catch {}
+    }
+
+    // 出發中的鏡頭：你的位置放在「下一站」卡片和下面那塊中間；緯度決定縮放（經度範圍給小一點）
+    private func goRegion(_ c: CLLocationCoordinate2D) -> MKCoordinateRegion {
+        let span = MKCoordinateSpan(latitudeDelta: goSpan, longitudeDelta: goSpan * 0.3)
+        let ft = Double(mode.mapBottom > mode.mapTop ? mode.mapTop : top0)
+        let fb = Double(mode.mapBottom > mode.mapTop ? mode.mapBottom : top0 + size.height)
+        guard goBot > goTop, fb > ft else { return MKCoordinateRegion(center: c, span: span) }
+        let k = (fb - ft) / goSpan                                   // 每一度緯度幾點
+        let y = Double(goTop + goBot) / 2
+        let lat = c.latitude + (y - (ft + fb) / 2) / k
+        return MKCoordinateRegion(center: .init(latitude: lat, longitude: c.longitude), span: span)
     }
 
     private var here: CLLocation? { me ?? store.here }

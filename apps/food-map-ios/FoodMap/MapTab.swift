@@ -137,11 +137,6 @@ struct MapTab: View {
                             .annotationTitles(.hidden)
                         }
                     }
-                    // 自己的位置（放最後，畫在圖釘上面）
-                    if let me = dot.coord {
-                        Annotation("", coordinate: me, anchor: .center) { MyDotView() }
-                            .annotationTitles(.hidden)
-                    }
                 }
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
                 .mapControls { MapCompass() }
@@ -150,6 +145,7 @@ struct MapTab: View {
                 // 行程模式點地圖空白處：收掉加站卡、搜尋（點到圖釘不算）
                 .simultaneousGesture(TapGesture().onEnded { blankTap() }, including: trip.on ? .all : .subviews)
                 .onMapCameraChange(frequency: .continuous) { _ in
+                    dot.refresh()
                     pinFrame(proxy)
                     if let c = spot.coord, Date() < spot.until { spot.at = proxy.convert(c, to: .global) }
                 }
@@ -178,7 +174,11 @@ struct MapTab: View {
                 .background { SelWatcher(pins: pins) { id in picked(id, list, proxy) } }
                 .overlay { PinBurst(spot: spot) }
                 // 長按圖釘的選單要知道圖釘在螢幕哪裡
-                .task { pins.locate = { c in proxy.convert(c, to: .global) } }
+                .task {
+                    pins.locate = { c in proxy.convert(c, to: .global) }
+                    dot.locate = { c in proxy.convert(c, to: .global) }
+                    dot.refresh()
+                }
                 // 行程模式：其他收藏縮小變淡（搜到的、正在看要不要加的那間照常）。
                 // 地圖上的圖釘不會跟著 MapTab 重畫，所以交給 PinState，每根自己看
                 .onChange(of: "\(trip.on)|\(foundIds.sorted().joined(separator: ","))", initial: true) {
@@ -192,6 +192,8 @@ struct MapTab: View {
             }
             .ignoresSafeArea()
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { mapRect = $0; trip.mapBottom = footY > 0 ? footY : $0.maxY }
+            // 自己的位置：畫在地圖上面一層（地圖的標註會被南邊的圖釘蓋住）
+            MyDotLayer(dot: dot)
             // 搜尋列、卡片列、行程面板放在地圖上面另一層：它們的高度變了不會動到地圖
             Color.clear
             .allowsHitTesting(false)
@@ -1428,7 +1430,14 @@ private struct GonePin: View {
 @MainActor @Observable final class MyDot {
     static let shared = MyDot()
     var coord: CLLocationCoordinate2D?
+    var at: CGPoint?                     // 在螢幕上的位置（地圖移動時跟著更新，只有藍點那層會重畫）
+    @ObservationIgnored var locate: ((CLLocationCoordinate2D) -> CGPoint?)?
     @ObservationIgnored private var last: CLLocation?
+
+    func refresh() {
+        let p = coord.flatMap { locate?($0) }
+        if p != at { at = p }
+    }
 
     func track() async {
         do {
@@ -1438,8 +1447,23 @@ private struct GonePin: View {
                 if let p = last, p.distance(from: l) < 10 { continue }
                 last = l
                 coord = l.coordinate
+                refresh()
             }
         } catch {}
+    }
+}
+
+private struct MyDotLayer: View {
+    let dot: MyDot
+    var body: some View {
+        GeometryReader { g in
+            if let p = dot.at {
+                let o = g.frame(in: .global).origin
+                MyDotView().position(x: p.x - o.x, y: p.y - o.y)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 }
 
