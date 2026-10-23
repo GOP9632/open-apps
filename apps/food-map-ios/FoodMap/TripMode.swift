@@ -398,7 +398,12 @@ enum TripInsert {
         async let wideItems = wide(text, filter: filter, near: center)
         var items: [MKMapItem] = []
         do {
-            if text.isEmpty, let cats = filter?.poi, let c = center {
+            if text.isEmpty, let cats = filter?.poi, near.radius > 8000 {
+                // 長路線（雲林到台北）：只找中間點 8 公里內常常是空的；沿路平均取幾個點分頭找
+                let n = min(8, max(2, Int(near.length / 12_000) + 1))
+                let spacing = near.length / Double(n - 1)
+                items = await Self.pois(cats, at: near.samples(n), radius: min(8000, max(4000, spacing / 2 + 1000)))
+            } else if text.isEmpty, let cats = filter?.poi, let c = center {
                 let r = MKLocalPointsOfInterestRequest(center: c, radius: min(max(near.radius, 1200), 8000))
                 r.pointOfInterestFilter = MKPointOfInterestFilter(including: cats)
                 items = try await MKLocalSearch(request: r).start().mapItems
@@ -465,6 +470,22 @@ enum TripInsert {
         }
         let pms = await geo
         return pms.filter { $0.location != nil }.map { MKMapItem(placemark: MKPlacemark(placemark: $0)) } + found
+    }
+
+    // 好幾個點同時找某幾類地點，合在一起（找不到的點就算了）
+    private nonisolated static func pois(_ cats: [MKPointOfInterestCategory], at cs: [CLLocationCoordinate2D], radius: Double) async -> [MKMapItem] {
+        await withTaskGroup(of: [MKMapItem].self) { g in
+            for c in cs {
+                g.addTask {
+                    let r = MKLocalPointsOfInterestRequest(center: c, radius: radius)
+                    r.pointOfInterestFilter = MKPointOfInterestFilter(including: cats)
+                    return (try? await MKLocalSearch(request: r).start().mapItems) ?? []
+                }
+            }
+            var all: [MKMapItem] = []
+            for await l in g { all += l }
+            return all
+        }
     }
 
     private nonisolated static func geocode(_ text: String, near c: CLLocationCoordinate2D?) async -> [CLPlacemark] {

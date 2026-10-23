@@ -27,7 +27,8 @@ enum AddFilter: String, CaseIterable, Identifiable {
     // Apple 地圖的類別
     var poi: [MKPointOfInterestCategory]? {
         switch self {
-        case .sight: return [.museum, .park, .amusementPark, .aquarium, .zoo, .theater, .nationalPark, .beach, .stadium, .movieTheater, .marina, .library]
+        case .sight: return [.museum, .park, .amusementPark, .aquarium, .zoo, .theater, .nationalPark, .beach, .stadium, .movieTheater, .marina, .library,
+                             .landmark, .nationalMonument, .castle, .fortress, .planetarium]
         case .stay: return [.hotel]
         case .cafe: return [.cafe]
         case .dessert: return [.bakery]
@@ -117,6 +118,33 @@ struct RouteNear {
             for i in 1..<l.count { best = min(best, Self.seg(p, l[i - 1], l[i])) }
         }
         return best
+    }
+
+    // 沿著路線平均取 n 個點（含頭尾）：長路線分段找附近的景點用
+    func samples(_ n: Int) -> [CLLocationCoordinate2D] {
+        let pts = lines.flatMap { $0 }
+        guard let f = pts.first, n > 0 else { return [] }
+        var acc: [Double] = [0]
+        for i in pts.indices.dropFirst() { acc.append(acc[i - 1] + hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)) }
+        let total = acc.last ?? 0
+        let coord = { (p: P) in CLLocationCoordinate2D(latitude: p.y / 110_540 + lat0, longitude: p.x / kx + lng0) }
+        guard total > 0, n > 1 else { return [coord(f)] }
+        var out: [CLLocationCoordinate2D] = []
+        var j = 0
+        for k in 0..<n {
+            let want = total * Double(k) / Double(n - 1)
+            while j < pts.count - 1 && acc[j + 1] < want { j += 1 }
+            let a = pts[j], b = pts[min(j + 1, pts.count - 1)]
+            let span = (j + 1 < acc.count ? acc[j + 1] : acc[j]) - acc[j]
+            let t = span > 0 ? (want - acc[j]) / span : 0
+            out.append(coord(P(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)))
+        }
+        return out
+    }
+
+    // 路線全長（公尺）
+    var length: Double {
+        lines.reduce(0) { s, l in s + zip(l, l.dropFirst()).reduce(0) { $0 + hypot($1.1.x - $1.0.x, $1.1.y - $1.0.y) } }
     }
 
     private static func seg(_ p: P, _ a: P, _ b: P) -> Double {

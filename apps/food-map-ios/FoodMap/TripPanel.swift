@@ -802,9 +802,10 @@ struct TripPanel: View {
         let pad = top + (mode.searchOn ? TripFind.height : 0)
         let winTop = max(top0, mode.barBottom) + pad
         let window = max(120, top0 + size.height - cover - winTop)
-        // 圖釘畫在座標上面：最北那點上面要留圖釘的高度（加站卡還有「新的第 N 站」牌子），下面留一點
+        // 圖釘畫在座標上面：最北那點上面要留圖釘的高度（加站卡還有「新的第 N 站」牌子）；
+        // 號碼圓圈畫在座標正中間，最南那站下面也要留半顆再多一點
         let head: CGFloat = card ? 100 : 64
-        let band = max(60, window - head - 18)
+        let band = max(60, window - head - 36)
         let k = Double(band) / latR                                 // 每一度緯度幾點
         // 地圖框鏡頭的那塊（螢幕座標）；還沒量到就當成面板這塊
         let ft = Double(mode.mapBottom > mode.mapTop ? mode.mapTop : top0)
