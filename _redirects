@@ -1,3 +1,6 @@
 # Netlify：/apps/* 代理到 GitHub Pages，讓入口網站和 app 在同一個網域。
 # 這樣從 iPhone 主畫面的入口點進 app 會留在同一個全螢幕 app 裡，不會跳成 Safari 視窗。
 /apps/*  https://gop9632.github.io/open-apps/apps/:splat  200
+
+# 美食收藏群組邀請：有裝 Bitemap 的 iPhone 會直接開 App（.well-known/apple-app-site-association），沒裝就到網頁版加入
+/join  code=:code  /apps/food-map/?join=:code  302
