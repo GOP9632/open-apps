@@ -139,6 +139,10 @@ struct Root: View {
         .task {
             Haptic.prepare()
             TouchClock.install()
+            #if targetEnvironment(simulator)
+            // 模擬器測試工具連點不到 5 下：啟動參數 -perfOverlay 直接打開浮層
+            if ProcessInfo.processInfo.arguments.contains("-perfOverlay") { Perf.shared.on = true }
+            #endif
             try? await Task.sleep(for: .seconds(1))
             TouchClock.install()
         }
