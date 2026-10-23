@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import Combine
+import Network
 
 // 店家頁上面那張大圖：IG Reel 就直接在這裡播（靜音、重複播放），右下角喇叭開聲音；不是影片就是照片
 struct PlaceMedia: View {
@@ -161,6 +162,8 @@ struct PlaceMedia: View {
     }
 
     static func warm(_ p: Place) {
+        // 用行動網路（或省流量模式）不先載：IG 影片常常整支下載（一支十幾 MB），連點幾間手機就燙、也吃流量；點進店家頁才載
+        guard !NetPath.shared.costly else { return }
         guard maybeVideo(p), let src = p.source_url, !ready.contains(where: { $0.src == src }) else { return }
         Task {
             guard let u = await url(src), !ready.contains(where: { $0.src == src }) else { return }
@@ -236,5 +239,20 @@ enum ReelFinder {
             .replacing(#/\\+u([0-9a-fA-F]{4})/#) { m in
                 UInt32(m.1, radix: 16).flatMap { Unicode.Scalar($0) }.map { String(Character($0)) } ?? ""
             }
+    }
+}
+
+// 現在的網路是不是行動網路或省流量模式
+@MainActor final class NetPath {
+    static let shared = NetPath()
+    private(set) var costly = false
+    private let monitor = NWPathMonitor()
+
+    private init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            let c = path.isExpensive || path.isConstrained
+            MainActor.assumeIsolated { self?.costly = c }
+        }
+        monitor.start(queue: .main)
     }
 }

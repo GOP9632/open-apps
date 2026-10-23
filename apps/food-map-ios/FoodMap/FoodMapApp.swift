@@ -161,6 +161,7 @@ struct Root: View {
         // 畫面上任何地方往右滑都能回上一頁（換分頁、推頁時把每個導覽都裝上）
         .task {
             Haptic.prepare()
+            _ = NetPath.shared      // 先開始看網路（行動網路時不先載影片）
             TouchClock.install()
             #if targetEnvironment(simulator)
             // 模擬器測試工具連點不到 5 下：啟動參數 -perfOverlay 直接打開浮層

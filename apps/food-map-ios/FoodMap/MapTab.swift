@@ -30,6 +30,7 @@ struct MapTab: View {
     // 地圖鋪滿整個畫面，鏡頭框的那塊（上面搜尋列下緣、下面卡片列上緣，螢幕座標）只在一般地圖時跟著量；
     // 進出行程時地圖大小、邊距都不變，不然整張地圖要重排（每次 0.5 秒左右的卡頓）
     @State private var mapRect: CGRect = .zero
+    @State private var dot = MyDot.shared
     @State private var headY: CGFloat = 0
     @State private var footY: CGFloat = 0
     // 長按圖釘選「導航」但還沒選過用哪個地圖
@@ -72,7 +73,6 @@ struct MapTab: View {
           ZStack {
             MapReader { proxy in
                 Map(position: $pos, selection: Binding(get: { pins.sel }, set: { pins.select($0) })) {
-                    UserAnnotation()
                     ForEach(list.filter { !hidden.contains($0.id) }) { p in
                         Annotation(p.name, coordinate: .init(latitude: p.lat!, longitude: p.lng!), anchor: .bottom) {
                             FoodPin(place: p, pins: pins, reduce: reduce, saver: gname == nil ? nil : p.owner.map { ($0, store.name($0)) })
@@ -136,6 +136,11 @@ struct MapTab: View {
                             }
                             .annotationTitles(.hidden)
                         }
+                    }
+                    // 自己的位置（放最後，畫在圖釘上面）
+                    if let me = dot.coord {
+                        Annotation("", coordinate: me, anchor: .center) { MyDotView() }
+                            .annotationTitles(.hidden)
                     }
                 }
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
@@ -340,6 +345,11 @@ struct MapTab: View {
         // 拿到一次目前位置就好（剛允許定位也會馬上更新「附近」），不一直開著 GPS
         .task {
             do { for try await u in CLLocationUpdate.liveUpdates() { if let l = u.location { store.here = l; break } } } catch {}
+        }
+        // 藍點只在看地圖（或出發中）時更新
+        .task(id: store.tab == 0 || trip.going) {
+            guard store.tab == 0 || trip.going else { return }
+            await dot.track()
         }
     }
 
@@ -1410,5 +1420,38 @@ private struct GonePin: View {
             .allowsHitTesting(false)
             .accessibilityHidden(true)
             .onAppear { withAnimation(.easeIn(duration: 0.2)) { on = false } }
+    }
+}
+
+// 地圖上自己的藍點。不用 MapKit 的 UserAnnotation：拉近到街道時，它的藍點一動整張地圖就每幀重畫
+// （模擬器走路 CPU 30% 以上，手機會燙）。自己畫、走 10 公尺才移一次
+@MainActor @Observable final class MyDot {
+    static let shared = MyDot()
+    var coord: CLLocationCoordinate2D?
+    @ObservationIgnored private var last: CLLocation?
+
+    func track() async {
+        do {
+            for try await u in CLLocationUpdate.liveUpdates() {
+                if Task.isCancelled { break }
+                guard let l = u.location, l.horizontalAccuracy >= 0, l.horizontalAccuracy < 300 else { continue }
+                if let p = last, p.distance(from: l) < 10 { continue }
+                last = l
+                coord = l.coordinate
+            }
+        } catch {}
+    }
+}
+
+private struct MyDotView: View {
+    private let blue = Color(red: 0.0, green: 0.48, blue: 1.0)
+    var body: some View {
+        Circle().fill(blue)
+            .frame(width: 16, height: 16)
+            .overlay(Circle().strokeBorder(.white, lineWidth: 3))
+            .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+            .background(Circle().fill(blue.opacity(0.16)).frame(width: 44, height: 44))
+            .allowsHitTesting(false)
+            .accessibilityLabel("你的位置")
     }
 }
