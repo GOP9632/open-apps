@@ -32,6 +32,7 @@ struct TripCand: Equatable {
     var segs: [TripSeg] = []
     var marks: [TripMark] = []
     var summary = ""                 // 「4 站・16:40 回」
+    var panelH: CGFloat = 0          // 下面面板停好時的高度（訊息條貼在它上面）
     var hot: String?                 // 地圖上放大的那站（清單點了一下）
     var fly = 0                      // 要地圖飛到 hot 那站
     var fitTick = 0                  // 要地圖重新框住這天的站

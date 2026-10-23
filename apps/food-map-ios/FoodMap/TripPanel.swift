@@ -33,6 +33,7 @@ struct TripPanel: View {
     @GestureState private var holding = false
     @GestureState private var pulling = false   // 拉面板的手勢還在（被系統取消時把面板放回一段）
     @State private var lowering = false         // 清單捲到頂又往下拉過頭：放開就降一段
+    @State private var listTouch = false        // 手指正在拉清單（甩過頭的回彈不算）
     // 出發
     @State private var me: CLLocation?          // 出發時的目前位置（只在 App 開著時更新）
     @State private var pinged: String?          // 已經為「快到了」震過的那站
@@ -183,6 +184,11 @@ struct TripPanel: View {
         return (150, h * 0.5, h - 8)
     }
 
+    private func settledHeight() -> CGFloat {
+        let hs = heights()
+        return mode.level == .low ? hs.low : mode.level == .mid ? hs.mid : hs.high
+    }
+
     private func panelHeight() -> CGFloat {
         let hs = heights()
         let base: CGFloat = mode.level == .low ? hs.low : mode.level == .mid ? hs.mid : hs.high
@@ -203,13 +209,15 @@ struct TripPanel: View {
                             .padding(.horizontal, 14).padding(.top, 2).padding(.bottom, 16)
                     }
                     .scrollDisabled(drag.id != nil)
-                    // 捲到頂再往下拉超過 56：放開時面板降一段（只在跨過那條線時通知，捲動時不會每幀重畫）
-                    .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < -56 } action: { _, past in
-                        guard past, !lowering, drag.id == nil else { return }
+                    // 捲到頂再往下拉約 56pt：放開時面板降一段（只在跨過那條線時通知，捲動時不會每幀重畫）
+                    // 清單拉過頭有阻力，手指拉 56pt 畫面只動約 28pt，所以線畫在 28；甩過頭的回彈不算
+                    .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < -28 } action: { _, past in
+                        guard past, listTouch, !lowering, drag.id == nil else { return }
                         lowering = true
                         Haptic.light()
                     }
                     .onScrollPhaseChange { _, ph in
+                        listTouch = ph == .interacting
                         guard lowering, ph != .interacting else { return }
                         lowering = false
                         guard drag.id == nil else { return }
@@ -234,6 +242,8 @@ struct TripPanel: View {
         .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg)
             .shadow(color: .black.opacity(0.14), radius: 14, y: -2).ignoresSafeArea(edges: .bottom))
         .animation(.snappy(duration: 0.25), value: strip)
+        // 停好的面板高度：訊息條貼在面板上面，不蓋住站卡（拉的過程中不更新）
+        .onChange(of: settledHeight(), initial: true) { _, v in if abs(mode.panelH - v) > 0.5 { mode.panelH = v } }
     }
 
     // 面板最下面一排：✨ 幫我排順序、出發
@@ -337,8 +347,9 @@ struct TripPanel: View {
     }
 
     // 拉面板：放開時停在最近的一段（甩得快就往甩的方向）
+    // 用螢幕座標量：面板跟著手指動，用自己的座標量會抵銷掉，往下拉沒反應、甩的方向也會算反
     private var sheetDrag: some Gesture {
-        DragGesture(minimumDistance: 4)
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
             .updating($pulling) { _, st, _ in st = true }
             .onChanged { v in if drag.id == nil { pull = -v.translation.height } }
             .onEnded { v in
@@ -648,7 +659,7 @@ struct TripPanel: View {
         .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg)
             .shadow(color: .black.opacity(0.14), radius: 14, y: -2).ignoresSafeArea(edges: .bottom))
         .offset(y: cardPull)
-        .gesture(DragGesture(minimumDistance: 8)
+        .gesture(DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { v in cardPull = max(0, v.translation.height) }
             .onEnded { v in
                 if cardPull > 80 || v.predictedEndTranslation.height > 200 { cancelCand() }

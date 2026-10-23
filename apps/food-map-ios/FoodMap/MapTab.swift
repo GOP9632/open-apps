@@ -797,6 +797,8 @@ struct NearbySheet: View {
     @State private var midH: CGFloat = 0        // 中間段的自然高度（卡片列或大卡片）
     @State private var bottomY: CGFloat = 0     // 面板內容下緣（螢幕座標）
     @State private var lowering = false         // 最高段清單捲到頂再往下拉過頭：放開時降一段
+    @State private var listTouch = false        // 手指正在拉最高段的清單（甩過頭的回彈不算）
+    @State private var topH: CGFloat = 0        // 浮在上緣那排（行程、定位）的高度
     @State private var highUsed = false         // 整份清單出現過就留著（不要拿掉再建）
     @State private var probe = PanelProbe()
     @Environment(\.accessibilityReduceMotion) private var reduce
@@ -873,14 +875,17 @@ struct NearbySheet: View {
         .padding(.bottom, 82)
         .background(UnevenRoundedRectangle(topLeadingRadius: 26, topTrailingRadius: 26).fill(Color.bg).shadow(color: .black.opacity(0.12), radius: 12, y: -2).ignoresSafeArea(edges: .bottom))
         // 行程、定位兩顆：底邊貼著面板上緣再上去 10pt，跟著面板動（不佔面板的高度）
+        // 先量出那排的高度，再整排往上推「高度＋10」（alignmentGuide 在這裡沒作用，按鈕會蓋在面板上）
         .overlay(alignment: .top) {
             if let top {
                 top
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { v in if abs(v - topH) > 0.5 { topH = v } }
+                    .offset(y: -(topH + 10))
                     .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in probe.foot = y; report() }
-                    .opacity(fade)
-                    .allowsHitTesting(fade > 0.5)
+                    .opacity(topH > 0 ? fade : 0)
+                    .allowsHitTesting(topH > 0 && fade > 0.5)
                     .accessibilityHidden(fade < 0.5)
-                    .alignmentGuide(.top) { $0[.bottom] + 10 }
             }
         }
         // 訊息條貼著停好的面板上緣（Root 讀這個值）
@@ -952,13 +957,15 @@ struct NearbySheet: View {
                     }
                     .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 16)
                 }
-                // 捲到頂再往下拉超過 56：放開時面板降到中間段（跟行程面板同一套；只在跨過那條線時通知，捲動時不會每幀重畫）
-                .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < -56 } action: { _, past in
-                    guard past, !lowering else { return }
+                // 捲到頂再往下拉約 56pt：放開時面板降到中間段（只在跨過那條線時通知，捲動時不會每幀重畫）
+                // 清單拉過頭有阻力，手指拉 56pt 畫面只動約 28pt，所以線畫在 28
+                .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < -28 } action: { _, past in
+                    guard past, listTouch, !lowering else { return }
                     lowering = true
                     Haptic.light()
                 }
                 .onScrollPhaseChange { _, ph in
+                    listTouch = ph == .interacting
                     guard lowering, ph != .interacting else { return }
                     lowering = false
                     mp.go(.mid)

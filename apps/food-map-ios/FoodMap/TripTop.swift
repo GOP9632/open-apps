@@ -108,20 +108,22 @@ struct TripTop: View {
                     .frame(maxWidth: .infinity).frame(height: 50).contentShape(.capsule)
             }
             .accessibilityLabel("\(t.title)，\(mode.summary)，行程選單")
+            // 名字一行、摘要在下面一行（擠在同一行時名字只剩「TE…」），「第 N 天 ▾」靠右
             HStack(spacing: 6) {
-                Text(t.title).font(.system(size: 16, weight: .heavy)).foregroundStyle(.white).lineLimit(1)
-                    .allowsHitTesting(false).accessibilityHidden(true)
-                if !mode.going { dayMenu(t) }
-                // 摘要先排（名字太長就截名字）
-                Text(mode.summary).font(.system(size: 11, weight: .bold)).foregroundStyle(.white.opacity(0.6))
-                    .lineLimit(1).minimumScaleFactor(0.75)
-                    .contentTransition(.numericText())
-                    .animation(.snappy, value: mode.summary)
-                    .layoutPriority(1)
-                    .allowsHitTesting(false).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(t.title).font(.system(size: 15, weight: .heavy)).foregroundStyle(.white).lineLimit(1)
+                    if !mode.summary.isEmpty {
+                        Text(mode.summary).font(.system(size: 11, weight: .bold)).foregroundStyle(.white.opacity(0.6))
+                            .lineLimit(1).minimumScaleFactor(0.75)
+                            .contentTransition(.numericText())
+                            .animation(.snappy, value: mode.summary)
+                    }
+                }
+                .allowsHitTesting(false).accessibilityHidden(true)
                 Spacer(minLength: 0).allowsHitTesting(false)
+                if !mode.going { dayMenu(t) }
             }
-            .padding(.horizontal, 14)
+            .padding(.leading, 16).padding(.trailing, 8)
         }
         .frame(maxWidth: .infinity)
     }
