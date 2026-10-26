@@ -560,7 +560,7 @@ export class SkinFx {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
   // 照片換了才重算三張模糊圖
-  prepare(img, data) {
+  prepare(img, data, scale) {
     const gl = this.gl, W = img.width, H = img.height;
     this.canvas.width = W; this.canvas.height = H;
     gl.bindTexture(gl.TEXTURE_2D, this.img);
@@ -571,7 +571,7 @@ export class SkinFx {
     if (!this.blurs || this.blurs.w !== w || this.blurs.h !== h) {
       this.blurs = { w, h, tmp: this.target(w, h), out: [0, 1, 2].map(() => this.target(w, h)) };
     }
-    const fw = data.W;
+    const fw = data.W * scale;
     // 細、中、粗三種：細紋寬度、皺紋寬度、法令紋陰影寬度（照臉寬算，全尺寸像素）
     [fw * 0.006, fw * 0.02, fw * 0.06].forEach((sig, i) => {
       const s = Math.max(0.6, sig * k);           // 模糊後的解析度上的 sigma
@@ -592,14 +592,15 @@ export class SkinFx {
     }
   }
   // 回傳改好膚質的 canvas；imgKey 變了代表輸入的照片內容變了（例如頭髮改過），要重算模糊
-  apply(img, data, p, imgKey) {
+  // scale：img 是原尺寸照片縮小幾倍的預覽（臉寬、毛孔這些照原尺寸算的大小要跟著縮）
+  apply(img, data, p, imgKey, scale = 1) {
     const gl = this.gl;
     if (!gl) return img;
-    if (this.src !== img || this.data !== data || this.key !== imgKey) { this.src = img; this.key = imgKey; this.prepare(img, data); }
+    if (this.src !== img || this.data !== data || this.key !== imgKey) { this.src = img; this.key = imgKey; this.prepare(img, data, scale); }
     const b = this.blurs, W = img.width, H = img.height;
     this.pass(this.pMain, null, W, H, [['uImg', this.img], ['uA', b.out[0].t], ['uB', b.out[1].t], ['uC', b.out[2].t], ['uT1', this.T[0]], ['uT2', this.T[1]], ['uT3', this.T[2]]], u => {
       const f = k => (p[k] || 0) / 100;
-      gl.uniform2f(u('uPx'), 1 / W, 1 / H);
+      gl.uniform2f(u('uPx'), scale / W, scale / H);
       gl.uniform3fv(u('uMean'), data.mean);
       const map = { uNative: 'skNative', uGirl: 'skGirl', uCream: 'skCream', uBaby: 'skBaby', uFrost: 'skFrost', uTex: 'skTex', uOil: 'skOil', uBare: 'skBare', uBody: 'skBody', uDewy: 'skDewy', uMatte: 'skMatte', uBlush: 'skBlush', uTan: 'skTan', uUnify: 'skUnify', uRosy: 'skRosy', uCool: 'skCool', uSun: 'skSun', uHead: 'wkHead', uFold: 'wkFold', uNeck: 'wkNeck', uEye: 'wkEye', uLip: 'wkLip' };
       for (const [n, k] of Object.entries({ ...map, ...FILL, ...SCCOL })) gl.uniform1f(u(n), f(k));

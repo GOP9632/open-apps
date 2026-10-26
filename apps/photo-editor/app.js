@@ -363,7 +363,7 @@ function render() {
 // 存檔、合併、摳圖要原尺寸；其他時候畫預覽大小
 let holdFull = false;
 function draw(full) {
-  syncTex(); syncHair(); syncShape();
+  syncTex(); syncHair(full || holdFull); syncShape();
   if (bodyOn(P) && !base.body) getBody(base);
   // 身體的變形要排在最前面（長腿會改到整張照片的上下位置）
   // 手動增高也會改整張照片的上下位置，排第一個
@@ -389,22 +389,37 @@ function getBody(b) {
   return b.bodyP;
 }
 // 頭髮：先把頭髮改好的照片交給主管線，參數沒變就不重算
-let hairFx = null, hairKey = '', hairFor = null;
-function syncHair() {
+let hairFx = null, hairKey = '', hairFor = null, hairSrc = null;
+function syncHair(full) {
   const want = hairColorOn(P) && base.hair;
   const key = want ? HAIR_P0_KEYS.map(k => P[k]).join('|') : '';
   const sWant = skinOn(P) && base.skin;
   const sKey = sWant ? skinKey(P) : '';
   if (hairNeedsSeg(P) && !base.hair) getHair(base);
   if (skinOn(P) && !base.skin) getSkin(base);
-  if (hairFor === base && key === hairKey && sKey === skinKeyNow) return;
+  // 預覽時用螢幕大小的照片算，存檔才用原尺寸
+  const src = (want || sWant) && !full ? previewOf(base.canvas) : base.canvas;
+  if (hairFor === base && hairSrc === src && key === hairKey && sKey === skinKeyNow) return;
   const first = hairFor !== base;
-  hairFor = base; hairKey = key; skinKeyNow = sKey;
+  hairFor = base; hairSrc = src; hairKey = key; skinKeyNow = sKey;
   // 先改頭髮，再改膚質，最後交給主管線
-  let img = base.canvas;
-  if (want) { hairFx ||= new HairFx(); img = hairFx.apply(base.canvas, base.hair, P); }
-  if (sWant) { skinFx ||= new SkinFx(); img = skinFx.apply(img, base.skin, P, key); }
-  if (want || sWant || !first) R.setImage(img);
+  let img = src;
+  if (want) { hairFx ||= new HairFx(); img = hairFx.apply(src, base.hair, P); }
+  if (sWant) { skinFx ||= new SkinFx(); img = skinFx.apply(img, base.skin, P, key + '|' + src.width, src.width / base.canvas.width); }
+  if (want || sWant || !first) R.setImage(img, base.canvas.width, base.canvas.height);
+}
+// 照片縮成預覽大小（跟著 R.view），每張照片、每種大小只縮一次
+const pvCache = new WeakMap();
+function previewOf(c) {
+  const s = R.view;
+  if (s >= 1) return c;
+  let v = pvCache.get(c);
+  if (v?.s !== s) {
+    const p = newCanvas(Math.max(1, Math.round(c.width * s)), Math.max(1, Math.round(c.height * s)));
+    const x = p.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(c, 0, 0, p.width, p.height);
+    pvCache.set(c, v = { s, p });
+  }
+  return v.p;
 }
 // 膚質、祛皺：要皮膚分割和臉，同一張照片只準備一次
 let skinFx = null, skinKeyNow = '';
