@@ -797,6 +797,7 @@ export class Renderer {
     this.fbS = [this.fbo(), this.fbo()]; this.fbM = [this.fbo(), this.fbo()]; this.fbL = [this.fbo(), this.fbo()];
     this.tMakeup = this.tex(); this.setMakeup(null);
     this.hasLut = false;
+    this.view = 1;  // 預覽的解析度（相對原圖），見 render
   }
   tex() {
     const gl = this.gl, t = gl.createTexture();
@@ -838,7 +839,6 @@ export class Renderer {
   }
   setImage(src) {
     this.w = src.width; this.h = src.height;
-    this.canvas.width = this.w; this.canvas.height = this.h;
     this.upload(this.tImg, src); this.bkKey = '';
     // 磨皮用的低解析度保邊模糊圖
     const k = SMOOTH_SHORT / Math.min(this.w, this.h);
@@ -952,13 +952,16 @@ export class Renderer {
   setLut(src, skin, hair) { this.hasLut = !!src; this.lutSkin = !!skin; this.lutHair = !!hair; if (src) this.upload(this.tLut, src); }
 
   // fx：{ lit: { lights: [{ pos, col, par }], ambS, ambB, bgDepth, haze, hazeCol }, flash: { amt, retro } }
-  render(p, warps, fx = {}) {
+  // full：畫原尺寸（存檔用）；平常只畫到螢幕看得到的解析度（this.view），手機才不會每動一下就算整張千萬像素
+  render(p, warps, fx = {}, full = false) {
     const gl = this.gl, u = this.pMain.u;
+    const s = full ? 1 : this.view, ow = Math.max(1, Math.round(this.w * s)), oh = Math.max(1, Math.round(this.h * s));
+    if (this.canvas.width !== ow || this.canvas.height !== oh) { this.canvas.width = ow; this.canvas.height = oh; }
     if (fx.bokeh) this.bokeh(fx.bokeh);
     // 有臉型變形時先畫到暫存，最後再變形一次畫到畫面
     const post = this.disp?.step > 0;
-    if (post) this.sizeFbo(this.fbPost, this.w, this.h);
-    this.pass(this.pMain, post ? this.fbPost : null, this.w, this.h);
+    if (post) this.sizeFbo(this.fbPost, ow, oh);
+    this.pass(this.pMain, post ? this.fbPost : null, ow, oh);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     const texs = [[this.tImg, 'uImg'], [this.tSmooth, 'uSmooth'], [this.tMask, 'uMask'], [this.tSeg, 'uSeg'], [this.tLut, 'uLut'], [this.tMask2, 'uMask2'], [this.tSegB, 'uSegB'],
       [this.fbS[0].t, 'uBlurS'], [this.fbM[0].t, 'uBgA'], [fx.bokeh ? this.fbK.t : this.fbL[0].t, 'uBgB'], [this.tOver, 'uOver'], [this.tEx, 'uEx'], [this.tBgImg, 'uBgImg'],
@@ -1024,7 +1027,7 @@ export class Renderer {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     if (post) {
       const d = this.pDisp;
-      this.pass(d, null, this.w, this.h, this.fbPost.t);
+      this.pass(d, null, ow, oh, this.fbPost.t);
       gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.disp.tex); gl.uniform1i(d.u.uDisp, 1);
       gl.uniform2f(d.u.uSize, this.w, this.h); gl.uniform1f(d.u.uStep, this.disp.step);
       gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.tSegB); gl.uniform1i(d.u.uSegB, 2);
