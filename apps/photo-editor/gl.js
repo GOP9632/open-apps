@@ -837,8 +837,9 @@ export class Renderer {
     gl.uniform1f(prog.u.uFbo, target ? 1 : 0);
     if (tex) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex); gl.uniform1i(prog.u.uTex, 0); }
   }
-  setImage(src) {
-    this.w = src.width; this.h = src.height;
+  // w、h：照片的原尺寸（src 可能是縮小的預覽，座標一律照原尺寸算）
+  setImage(src, w = src.width, h = src.height) {
+    this.w = w; this.h = h;
     this.upload(this.tImg, src); this.bkKey = '';
     // 磨皮用的低解析度保邊模糊圖
     const k = SMOOTH_SHORT / Math.min(this.w, this.h);
