@@ -316,7 +316,7 @@ function layout() {
   const fb = $('#fbox');
   fb.style.width = Math.round(g.W * k) + 'px'; fb.style.height = Math.round(g.H * k) + 'px';
   Object.assign($('#wrap').style, { left: Math.round(g.x * k) + 'px', top: Math.round(g.y * k) + 'px', width: Math.round(w * k) + 'px', height: Math.round(h * k) + 'px' });
-  frameK = k; paintFrame();
+  frameK = k; syncView(); paintFrame();
   drawTexts(); drawStickers(); if (cropState) drawCrop();
   view.apply();
 }
@@ -338,7 +338,7 @@ const view = canvasZoom({
   canPan: (e, touch) => !!base && !e.target.closest('.st,.tx') && (!touch || !(tab === 'erase' || tab === 'crop' || tab === 'reshape' || tab === 'doodle' || tab === 'bbrush' || (tab === 'light' && P.light))),
   // 手機上平常不顯示縮放按鈕，放大了才出現（點百分比回到全覽）
   unit: () => frameK,
-  onChange: z => { $('#zPct').textContent = Math.round(frameK * z * 100) + '%'; $('#zoom').classList.toggle('zoomed', z !== 1); },
+  onChange: z => { zoomZ = z; syncView(); $('#zPct').textContent = Math.round(frameK * z * 100) + '%'; $('#zoom').classList.toggle('zoomed', z !== 1); },
 });
 $('#zIn').onclick = () => view.zoomStep(1);
 $('#zOut').onclick = () => view.zoomStep(-1);
@@ -360,13 +360,23 @@ function render() {
     if (curFrame()?.live) paintFrame();
   });
 }
-function draw() {
+// 存檔、合併、摳圖要原尺寸；其他時候畫預覽大小
+let holdFull = false;
+function draw(full) {
   syncTex(); syncHair(); syncShape();
   if (bodyOn(P) && !base.body) getBody(base);
   // 身體的變形要排在最前面（長腿會改到整張照片的上下位置）
   // 手動增高也會改整張照片的上下位置，排第一個
   const warps = [...manualWarps(base.body, P, base.canvas.width, base.canvas.height), ...(base.body ? bodyWarps(base.body, base.faces, P) : []), ...(base.faces ? [...faceWarps(base.faces, P), ...hairWarps(base.faces, P, base.hair)] : [])];
-  R.render(gradeOn(P) ? { ...P, filterAmt: 100 } : P, warps, effects());
+  R.render(gradeOn(P) ? { ...P, filterAmt: 100 } : P, warps, effects(), full || holdFull);
+}
+// 預覽解析度：螢幕上實際有幾個像素就畫幾個（放大時跟著變細），一次跳 √2 倍，縮放時不會每一格都重畫
+let zoomZ = 1;
+function syncView() {
+  if (!R || !base) return;
+  const s = frameK * zoomZ * Math.min(3, devicePixelRatio || 1);
+  const q = Math.min(1, 2 ** (Math.ceil(Math.log2(Math.max(s, 1e-3)) * 2) / 2));
+  if (q !== R.view) { R.view = q; render(); }
 }
 // 身體塑形：找人體關節，再用人像分割量身體寬度
 function getBody(b) {
@@ -842,7 +852,7 @@ async function mergeFilter() {
     let out;
     try {
       R.setLut(lut?.c, lut?.skin, lut?.hair);
-      draw();
+      draw(true);
       out = newCanvas(base.canvas.width, base.canvas.height);
       out.getContext('2d').drawImage($('#gl'), 0, 0);
     } finally { P = now; }
@@ -1570,8 +1580,9 @@ async function cutPerson() {
     const m = await getMatte(base);
     if (!m) return;
     base.matteA ||= alphaFromMatte(m);
-    draw();
+    draw(true);
     const r = cutLayer($('#gl'), base.matteA);
+    render();
     if (!r) return toast('照片裡找不到人像');
     const W = base.canvas.width, H = base.canvas.height;
     newCut(r.id, (r.box.x + r.box.w / 2) / W, (r.box.y + r.box.h / 2) / H, r.box.w / W);
@@ -2301,7 +2312,12 @@ $('#stage').addEventListener('pointerdown', e => {
 // ---------- 儲存 ----------
 // 把目前的成品（含邊框、貼紙、文字）畫成一張 canvas，存檔和「拼貼／範本」共用
 async function compose() {
-  draw();
+  holdFull = true;
+  try { return await composeFull(); } finally { holdFull = false; render(); }
+}
+async function composeFull() {
+  if (P.pop && !base.matte) await getMatte(base);
+  draw(true);
   const W = base.canvas.width, H = base.canvas.height, gl = $('#gl'), f = P.frame ? frameById(P.frame) : null;
   const g = f ? f.geom(W, H) : { W, H, x: 0, y: 0 };
   // iPhone 的 canvas 最大約 1600 萬像素，邊框加大後超過就整張等比縮小
@@ -2310,7 +2326,7 @@ async function compose() {
   ctx.scale(sc, sc);
   // 出框要用原尺寸重畫一次（畫面上的是螢幕大小）
   let photo = gl;
-  if (P.pop) { if (!base.matte) await getMatte(base); photo = newCanvas(W, H); popDraw(photo.getContext('2d'), W, H); }
+  if (P.pop) { photo = newCanvas(W, H); popDraw(photo.getContext('2d'), W, H); }
   if (f) drawFrame(ctx, f, W, H, gl, (c, gg) => c.drawImage(photo, gg.x, gg.y, W, H));
   else ctx.drawImage(photo, 0, 0);
   ctx.save(); ctx.beginPath(); ctx.rect(g.x, g.y, W, H); ctx.clip(); ctx.translate(g.x, g.y);
