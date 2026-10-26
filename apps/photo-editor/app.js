@@ -98,6 +98,7 @@ const I = {
   backlit: '<svg viewBox="0 0 24 24"><circle cx="17" cy="6" r="3"/><circle cx="9" cy="10" r="3"/><path d="M3 21c1-4 3-6 6-6s5 2 6 6"/></svg>',
   off: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>',
   flashA: '<svg viewBox="0 0 24 24"><path d="M13 2L5 14h6l-1 8 8-12h-6z"/></svg>',
+  merge: '<svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/><path d="M3 17.5l9 5 9-5" opacity=".6"/></svg>',
 };
 
 const ADJUST = [
@@ -197,9 +198,47 @@ async function loadFile(file) {
   } finally { busy(); }
 }
 
+const BASE0 = { faces: null, geoms: [], seg: null, segB: null, mask: null, mask2: null, thumbs: null, facesP: null };
 function setBase(canvas, keep) {
-  base = { canvas, faces: null, geoms: [], seg: null, segB: null, mask: null, mask2: null, thumbs: null, facesP: null, ...keep };
+  const old = base;
+  base = { canvas, ...BASE0, ...keep };
   applyBase();
+  if (old) shelve(old);
+}
+// 復原紀錄裡的舊照片：一張原尺寸照片在 iPhone 要 50MB 左右，塗鴉、消除、美顏筆每畫一筆就多一張，
+// 存太多 Safari 會把整頁重新載入（修到一半跳回選照片）。不在畫面上的舊照片壓成檔案，復原時再解開
+const shelving = new WeakSet();
+function shelve(b) {
+  const c = b.canvas;
+  if (!c || shelving.has(b) || !hist.some(h => h.base === b)) return;
+  shelving.add(b);
+  c.toBlob(blob => {
+    shelving.delete(b);
+    if (!blob || b === base || b.canvas !== c) return;
+    Object.assign(b, { canvas: null, blob, w: c.width, h: c.height });
+    new Set(hist.map(h => h.base)).forEach(strip);
+  }, hasAlpha(c) ? 'image/png' : 'image/jpeg', 0.95);
+}
+// 壓起來的舊照片：跟現在這張共用的偵測結果（臉、人像）留著；不共用的放掉，復原時再重算
+function strip(b) {
+  if (!b.blob || !('facesP' in b) || b.facesP === base.facesP) return;
+  const { blob, w, h } = b;
+  for (const k of Object.keys(b)) delete b[k];
+  Object.assign(b, { canvas: null, blob, w, h });
+}
+async function unshelve(b) {
+  if (b.canvas) return;
+  const bmp = await createImageBitmap(b.blob), c = newCanvas(b.w, b.h);
+  c.getContext('2d').drawImage(bmp, 0, 0); bmp.close?.();
+  if (!('facesP' in b)) Object.assign(b, BASE0);
+  b.canvas = c; b.blob = null;
+}
+function hasAlpha(c) {
+  const t = newCanvas(32, 32), x = t.getContext('2d', { willReadFrequently: true });
+  x.drawImage(c, 0, 0, 32, 32);
+  const d = x.getImageData(0, 0, 32, 32).data;
+  for (let i = 3; i < d.length; i += 4) if (d[i] < 255) return true;
+  return false;
 }
 function applyBase() {
   R.setImage(base.canvas);
@@ -503,17 +542,23 @@ function commit() {
   hist = hist.slice(0, hi + 1);
   hist.push({ base, P: clone(P), texts: clone(texts), stickers: clone(stickers) });
   if (hist.length > 50) hist.shift();  // 醒圖：最多復原 50 步
-  // 塗鴉、消除每一步都是一張新的整張照片，手機記憶體有限：最多留 8 張不同的照片
-  while (new Set(hist.map(h => h.base)).size > 8) hist.shift();
+  // 塗鴉、消除每一步都是一張新的整張照片：舊的會壓成檔案（見 shelve），最多留 15 張不同的照片
+  while (new Set(hist.map(h => h.base)).size > 15) hist.shift();
   hi = hist.length - 1;
   syncHist();
 }
-function restore(i) {
-  hi = i;
+let restoring = false;
+async function restore(i) {
+  if (restoring) return;
   const s = hist[i];
   const changed = s.base !== base;
+  if (changed && !s.base.canvas) {
+    restoring = true; busy('復原中…');
+    try { await unshelve(s.base); } catch (e) { console.error(e); toast('這一步復原不了'); return; } finally { restoring = false; busy(); }
+  }
+  hi = i;
   P = clone(s.P); texts = clone(s.texts); stickers = clone(s.stickers); selText = -1; selSt = -1;
-  if (changed) { base = s.base; applyBase(); } else render();
+  if (changed) { const old = base; base = s.base; applyBase(); shelve(old); } else render();
   showTab(tab); drawTexts(); drawStickers(); syncHist();
 }
 function syncHist() { $('#bUndo').disabled = hi <= 0; $('#bRedo').disabled = hi >= hist.length - 1; }
@@ -755,6 +800,8 @@ function tabFilter(box) {
   })));
   base.thumbs ||= {};
   const list = fCat === -1 || !xd ? FILTERS.map(f => ({ ...f, def: P0.filterAmt })) : [{ ...FILTERS[0], def: P0.filterAmt }, ...xd.items.filter(x => x.cat === fCat && (!x.hide || x.id === P.filter))];
+  // 合併：把目前的濾鏡畫進照片，就能再疊下一個濾鏡（醒圖、美圖秀秀的「合併」）
+  if (P.filter !== 'none') box.append(item({ label: '合併', icon: I.merge, cls: 'ft merge', onclick: mergeFilter }));
   const els = list.map(f => {
     const el = item({
       label: f.name, cls: 'ft', on: P.filter === f.id, style: base.thumbs[f.id] ? `background-image:url(${base.thumbs[f.id]})` : '',
@@ -781,6 +828,32 @@ function tabFilter(box) {
   step();
   if (P.filter === 'none') hideSlider();
   else setSlider('強度', 0, 100, P.filterAmt, v => { P.filterAmt = v; render(); });
+}
+
+// 只套濾鏡、其他調整先不算，畫成原尺寸的新照片；其他調整、美顏照舊留著可以再改
+async function mergeFilter() {
+  if (P.filter === 'none') return;
+  busy('合併中…');
+  try {
+    // 濾鏡裡皮膚、頭髮另外一套顏色要等臉找完
+    await findFaces();
+    const now = P, f = liveFilter(), lut = getLut(f);
+    P = { ...clone(P0), filter: now.filter, filterAmt: now.filterAmt };
+    let out;
+    try {
+      R.setLut(lut?.c, lut?.skin, lut?.hair);
+      draw();
+      out = newCanvas(base.canvas.width, base.canvas.height);
+      out.getContext('2d').drawImage($('#gl'), 0, 0);
+    } finally { P = now; }
+    P = { ...now, filter: 'none', filterAmt: P0.filterAmt };
+    // 臉、人像這些偵測結果還是同一張照片，留著不用重算；濾鏡縮圖要照新照片重算
+    const keep = { ...base };
+    for (const k of ['canvas', 'thumbs', 'thumbSrc', 'harm', 'small', 'lookThumbs', 'autoSet']) delete keep[k];
+    setBase(out, keep); commit(); showTab('filter');
+    toast('已合併，可以再選一個濾鏡疊上去');
+  } catch (e) { console.error(e); toast('合併失敗，再試一次'); }
+  finally { busy(); }
 }
 
 function tabBeauty(box) {
