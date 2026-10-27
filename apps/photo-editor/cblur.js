@@ -44,11 +44,12 @@ function boxRGBA(d, w, h, r) {
 
 // 單通道三次方框模糊（就地），邊緣用最邊上的值。
 // 橫向一列一列滑動加總；直向整列一起加（記憶體連續，比一行一行往下跳快一倍）
-export function boxBlur(a, w, h, r, passes = 3) {
+// tmp：可以傳一個至少 a.length 長的暫存陣列重用，不用每次重配
+export function boxBlur(a, w, h, r, passes = 3, tmp) {
   r = Math.round(r);
   if (r < 1) return a;
   const inv = 1 / (2 * r + 1), row = new Float32Array(w), s = new Float32Array(w);
-  const src = a, dst = new Float32Array(a.length);
+  const src = a, dst = tmp && tmp.length >= a.length ? tmp : new Float32Array(a.length);
   for (let p = 0; p < passes; p++) {
     for (let y = 0; y < h; y++) {
       const o = y * w, L = src[o], Rv = src[o + w - 1];
