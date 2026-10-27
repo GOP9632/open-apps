@@ -1257,7 +1257,7 @@ function tabReshape(box) {
   box.append(protectItem());
   const v = rsVal[rsTool], def = RESHAPE.find(t => t.id === rsTool)[rsParam];
   setSlider(rsParam === 'size' ? '大小' : '強度', 1, 100, v[rsParam], x => { v[rsParam] = x; rsRing(); }, def);
-  $('#note').textContent = rsTool === 'push' ? '用手指在照片上推，被推的地方會跟著走。兩指可以縮放照片。' : rsTool === 'restore' ? '塗抹改過的地方，慢慢變回原樣。' : '在要改的地方按住或來回塗抹。';
+  $('#note').textContent = rsTool === 'push' ? '用手指在照片上推，被推的地方會跟著走。兩指可以縮放照片。' : rsTool === 'restore' ? '塗抹推壞的地方，每畫一筆就變回原樣一點，只有塗到的地方會變。' : '在要改的地方按住或來回塗抹。';
   rsRing();
 }
 // 筆刷大小的圓圈（調大小時顯示在照片中間，畫的時候跟著手指）
@@ -1283,15 +1283,15 @@ function rsRing(p) {
     if (tab !== 'reshape' || !base || e.target.closest('.st,.tx') || e.button > 0 || pinch.on) return;
     e.preventDefault(); $('#wrap').setPointerCapture(e.pointerId);
     last = at(e); liq0 = P.liq; rsRing(last);
-    // 旋轉、脹大、縮小、還原：按住不動也會一直作用
-    if (rsTool !== 'push') { dab(last, last); timer = setInterval(() => last && dab(last, last), 90); }
+    // 旋轉、脹大、縮小：按住不動也會一直作用；還原是畫一筆還原一點，按住不會一直還原
+    if (rsTool !== 'push') { dab(last, last); if (rsTool !== 'restore') timer = setInterval(() => last && dab(last, last), 90); }
   });
   $('#wrap').addEventListener('pointermove', e => {
     if (!last) return;
     const p = at(e), r = liqRadius(rsVal[rsTool].size, base.canvas.width, base.canvas.height);
     rsRing(p);
     if (Math.hypot(p.x - last.x, p.y - last.y) < r * 0.12) return;
-    if (rsTool === 'push') dab(last, p); else dab(p, p);
+    if (rsTool === 'push' || rsTool === 'restore') dab(last, p); else dab(p, p);
     last = p;
   });
   const up = () => { if (!last) return; last = null; clearInterval(timer); rsRing(); commit(); };

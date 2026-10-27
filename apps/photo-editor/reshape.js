@@ -36,7 +36,12 @@ export function liqDab(liq, tool, a, b, size, str, W, H) {
   } else if (tool === 'bloat' || tool === 'pucker') {
     add(1, b.x, b.y, (tool === 'bloat' ? 1 : -1) * 0.1 * k);
   } else if (tool === 'restore') {
-    add(3, b.x, b.y, 0.5 * k);
+    // 畫一筆還原一點：沿著手指每走 0.12 個半徑點一下（點的量照走的距離），按住不動不會一直還原。
+    // 一筆劃過的地方大約還原「強度 × 50%」：直線劃過時每點的權重加起來約 8.9（(1−t²)² 積分 ÷ 0.12）
+    const step = r * 0.12, A = -Math.log(1 - 0.5 * k) / 8.9;
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+    if (!d) add(3, b.x, b.y, A);
+    else { const n = Math.ceil(d / step); for (let i = 1; i <= n; i++) add(3, a.x + dx * i / n, a.y + dy * i / n, A * d / n / step); }
   }
   return out;
 }
