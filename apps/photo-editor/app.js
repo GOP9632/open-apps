@@ -368,6 +368,8 @@ function draw(full) {
   // 身體的變形要排在最前面（長腿會改到整張照片的上下位置）
   // 手動增高也會改整張照片的上下位置，排第一個
   const warps = [...manualWarps(base.body, P, base.canvas.width, base.canvas.height), ...(base.body ? bodyWarps(base.body, base.faces, P) : []), ...(base.faces ? [...faceWarps(base.faces, P), ...hairWarps(base.faces, P, base.hair)] : [])];
+  // 背景保護要知道人在哪；有臉的照片開圖時就算好了，沒有臉的照片推的時候才算
+  if (P.bgProtect && (warps.length || P.liq.length) && !base.segP) getSeg(base);
   R.render(gradeOn(P) ? { ...P, filterAmt: 100 } : P, warps, effects(), full || holdFull);
 }
 // 預覽解析度：螢幕上實際有幾個像素就畫幾個（放大時跟著變細），一次跳 √2 倍，縮放時不會每一格都重畫
