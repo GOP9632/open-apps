@@ -21,7 +21,7 @@ import { FONTS, T0, TEXT_COLORS, TEXT_FX, TEMPLATES, applyTemplate, upgradeText,
 import { initCollage, openCollage } from './collage.js';
 import { CATS as TPL_CATS } from './templates.js';
 import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightPosOf, lightGrad, flashStats } from './relight.js';
-import { enhanceRanges, paintRange, setGrad, nudge, canvasZoom } from './ui.js';
+import { enhanceRanges, paintRange, setGrad, nudge, canvasZoom, pinch } from './ui.js';
 import { tabLooks } from './looks.js';
 import { STROKES, STROKE_COLORS, STROKE0, strokeLayer, alphaFromMatte, alphaBox } from './outline.js';
 import { SHAPES, MASK0, LAYER_LIMIT, shapePath, photoLayer, cutLayer, layerInfo, cloneAlpha, compose as composeLayer, brush } from './layers.js';
@@ -98,7 +98,6 @@ const I = {
   backlit: '<svg viewBox="0 0 24 24"><circle cx="17" cy="6" r="3"/><circle cx="9" cy="10" r="3"/><path d="M3 21c1-4 3-6 6-6s5 2 6 6"/></svg>',
   off: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>',
   flashA: '<svg viewBox="0 0 24 24"><path d="M13 2L5 14h6l-1 8 8-12h-6z"/></svg>',
-  merge: '<svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/><path d="M3 17.5l9 5 9-5" opacity=".6"/></svg>',
 };
 
 const ADJUST = [
@@ -188,7 +187,7 @@ async function loadFile(file) {
     setBase(c);
     $('#empty').style.display = 'none';
     $('#wrap').classList.add('on'); $('#panel').classList.remove('off');
-    ['#bSave', '#bCmp', '#bResetAll'].forEach(s => $(s).disabled = false);
+    ['#bSave', '#bCmp', '#bResetAll', '#bMerge'].forEach(s => $(s).disabled = false);
     view.reset(); $('#zoom').classList.add('on');
     commit();
     // 照 Hypic：人像照進來先停在「人像」；找不到臉就改停在濾鏡
@@ -335,7 +334,8 @@ function paintFrame() {
 // 會在照片上拖曳的工具（消除、裁切、移動燈）不接手機雙指，免得跟筆刷打架
 const view = canvasZoom({
   stage: $('#stage'), box: $('#fbox'),
-  canPan: (e, touch) => !!base && !e.target.closest('.st,.tx') && (!touch || !(tab === 'erase' || tab === 'crop' || tab === 'reshape' || tab === 'doodle' || tab === 'bbrush' || (tab === 'light' && P.light))),
+  // 手機上一指是筆刷，兩指捏合縮放（筆刷工具看到 pinchstart 會取消這一筆）；裁切和移動燈的時候不接兩指
+  canPan: (e, touch) => !!base && !e.target.closest('.st,.tx') && (!touch || !(tab === 'crop' || (tab === 'light' && P.light))),
   // 手機上平常不顯示縮放按鈕，放大了才出現（點百分比回到全覽）
   unit: () => frameK,
   onChange: z => { zoomZ = z; syncView(); $('#zPct').textContent = Math.round(frameK * z * 100) + '%'; $('#zoom').classList.toggle('zoomed', z !== 1); },
@@ -347,6 +347,8 @@ new ResizeObserver(layout).observe($('#stage'));
 
 let raf = 0;
 function render() {
+  // 上排的「合併」：有選濾鏡才亮
+  $('#bMerge').classList.toggle('dim', P.filter === 'none');
   if (!base || raf) return;
   if (needMatte() && !base.matteP) getMatte(base);
   raf = requestAnimationFrame(() => {
@@ -827,8 +829,6 @@ function tabFilter(box) {
   })));
   base.thumbs ||= {};
   const list = fCat === -1 || !xd ? FILTERS.map(f => ({ ...f, def: P0.filterAmt })) : [{ ...FILTERS[0], def: P0.filterAmt }, ...xd.items.filter(x => x.cat === fCat && (!x.hide || x.id === P.filter))];
-  // 合併：把目前的濾鏡畫進照片，就能再疊下一個濾鏡（醒圖、美圖秀秀的「合併」）
-  if (P.filter !== 'none') box.append(item({ label: '合併', icon: I.merge, cls: 'ft merge', onclick: mergeFilter }));
   const els = list.map(f => {
     const el = item({
       label: f.name, cls: 'ft', on: P.filter === f.id, style: base.thumbs[f.id] ? `background-image:url(${base.thumbs[f.id]})` : '',
@@ -857,6 +857,8 @@ function tabFilter(box) {
   else setSlider('強度', 0, 100, P.filterAmt, v => { P.filterAmt = v; render(); });
 }
 
+// 上排的「合併」：把目前的濾鏡畫進照片，就能再疊下一個濾鏡（醒圖、美圖秀秀的「合併」）
+$('#bMerge').onclick = () => P.filter === 'none' ? toast('先在「濾鏡」選一個濾鏡，再按合併') : mergeFilter();
 // 只套濾鏡、其他調整先不算，畫成原尺寸的新照片；其他調整、美顏照舊留著可以再改
 async function mergeFilter() {
   if (P.filter === 'none') return;
@@ -877,7 +879,7 @@ async function mergeFilter() {
     // 臉、人像這些偵測結果還是同一張照片，留著不用重算；濾鏡縮圖要照新照片重算
     const keep = { ...base };
     for (const k of ['canvas', 'thumbs', 'thumbSrc', 'harm', 'small', 'lookThumbs', 'autoSet']) delete keep[k];
-    setBase(out, keep); commit(); showTab('filter');
+    setBase(out, keep); commit(); showTab(tab);
     toast('已合併，可以再選一個濾鏡疊上去');
   } catch (e) { console.error(e); toast('合併失敗，再試一次'); }
   finally { busy(); }
@@ -1075,13 +1077,13 @@ function rsRing(p) {
   d.classList.toggle('idle', !p);
 }
 (() => {
-  let last = null, timer = 0;
+  let last = null, timer = 0, liq0 = null;
   const at = e => { const r = $('#wrap').getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * base.canvas.width, y: (e.clientY - r.top) / r.height * base.canvas.height }; };
   const dab = (a, b) => { const v = rsVal[rsTool]; P.liq = liqDab(P.liq, rsTool, a, b, v.size, v.str, base.canvas.width, base.canvas.height); render(); };
   $('#wrap').addEventListener('pointerdown', e => {
-    if (tab !== 'reshape' || !base || e.target.closest('.st,.tx') || e.button > 0) return;
+    if (tab !== 'reshape' || !base || e.target.closest('.st,.tx') || e.button > 0 || pinch.on) return;
     e.preventDefault(); $('#wrap').setPointerCapture(e.pointerId);
-    last = at(e); rsRing(last);
+    last = at(e); liq0 = P.liq; rsRing(last);
     // 旋轉、脹大、縮小、還原：按住不動也會一直作用
     if (rsTool !== 'push') { dab(last, last); timer = setInterval(() => last && dab(last, last), 90); }
   });
@@ -1095,6 +1097,8 @@ function rsRing(p) {
   });
   const up = () => { if (!last) return; last = null; clearInterval(timer); rsRing(); commit(); };
   $('#wrap').addEventListener('pointerup', up); $('#wrap').addEventListener('pointercancel', up);
+  // 第二指放下是要縮放：這一筆不算
+  addEventListener('pinchstart', () => { if (!last) return; last = null; clearInterval(timer); P.liq = liq0; rsRing(); render(); });
 })();
 
 // 背景保護開關：蓬鬆感、臉型、身體這些變形都會用到

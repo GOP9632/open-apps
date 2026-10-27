@@ -2,6 +2,7 @@
 // 每畫完一筆就畫進照片（跟消除一樣），可以用上一步復原
 
 export const DD_COLORS = ['ffffff', '000000', 'ff3b30', 'ff9500', 'ffcc00', '34c759', '30b0c7', '007aff', 'af52de', 'ff2d92'];
+import { pinch } from './ui.js';
 import { blurred } from './cblur.js';
 
 const st = { tool: 'pen', color: 'ff3b30', size: 20, op: 100, feather: 0, param: 'size', mosaic: 'square' };
@@ -86,7 +87,7 @@ export function doodleInput(wrap, app) {
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'destination-in'; ctx.drawImage(m, 0, 0); ctx.globalCompositeOperation = 'source-over';
   };
   wrap.addEventListener('pointerdown', e => {
-    if (app.tab() !== 'doodle' || !app.base || e.target.closest('.st,.tx') || e.button > 0) return;
+    if (app.tab() !== 'doodle' || !app.base || e.target.closest('.st,.tx') || e.button > 0 || pinch.on) return;
     e.preventDefault(); wrap.setPointerCapture(e.pointerId);
     pts = [at(e)]; preview();
   });
@@ -105,4 +106,6 @@ export function doodleInput(wrap, app) {
     app.setBase(out, keep); app.commit();
   };
   wrap.addEventListener('pointerup', up); wrap.addEventListener('pointercancel', up);
+  // 第二指放下是要縮放：這一筆不算
+  addEventListener('pinchstart', () => { pts = null; ov?.remove(); ov = null; });
 }

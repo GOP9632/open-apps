@@ -5,6 +5,7 @@
 //   去黑眼圈：跟周圍亮的皮膚比，差值上限 0.2、係數 1.5；去法令紋：上限 0.3、係數 1.4 × 0.8
 //   眼部亮白：細節 × 2 × 0.5，再提亮
 // 每畫完一筆就畫進照片（跟塗鴉一樣），可以用上一步復原。只算筆刷附近那一塊，大照片也快。
+import { pinch } from './ui.js';
 import { boxBlur } from './cblur.js';
 
 export const BRUSHES = [
@@ -174,7 +175,7 @@ export function beautyBrushInput(wrap, app) {
     ctx.stroke();
   };
   wrap.addEventListener('pointerdown', e => {
-    if (app.tab() !== 'bbrush' || !app.base || e.target.closest('.st,.tx') || e.button > 0) return;
+    if (app.tab() !== 'bbrush' || !app.base || e.target.closest('.st,.tx') || e.button > 0 || pinch.on) return;
     e.preventDefault(); wrap.setPointerCapture(e.pointerId);
     pts = [at(e)]; preview();
   });
@@ -192,4 +193,6 @@ export function beautyBrushInput(wrap, app) {
     app.setBase(out, keep); app.commit();
   };
   wrap.addEventListener('pointerup', up); wrap.addEventListener('pointercancel', up);
+  // 第二指放下是要縮放：這一筆不算
+  addEventListener('pinchstart', () => { pts = null; ov?.remove(); ov = null; });
 }
