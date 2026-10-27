@@ -263,7 +263,12 @@ function shelveLater(b) {
 function ensureSurf() {
   if (!base.surf) {
     // 消除這類從別處來的照片可能是 GPU canvas：開始畫之前先換成記憶體裡的（內容一樣）
-    if (!cpuCanvas.has(base.canvas)) { const c = photoCanvas(base.canvas.width, base.canvas.height); c.getContext('2d').drawImage(base.canvas, 0, 0); base.canvas = c; }
+    if (!cpuCanvas.has(base.canvas)) {
+      const o = base.canvas, c = photoCanvas(o.width, o.height); c.getContext('2d').drawImage(o, 0, 0); base.canvas = c;
+      // 內容一樣：草稿當成同一張，不用重壓
+      if (draft.pc === o) draft.pc = c;
+      if (draft.ph?.c === o) draft.ph.c = c;
+    }
     base.surf = { canvas: base.canvas, ver: 0, edits: [] }; base.ver = 0;
   }
   return base.surf;
@@ -847,7 +852,7 @@ function commit() {
   hi = hist.length - 1;
   syncHist();
   if (hi > 0) draft.on = true;
-  draftSoon();
+  draftSoon(!!draft.pc && base.canvas !== draft.pc);
 }
 let restoring = false;
 async function restore(i) {
@@ -863,6 +868,7 @@ async function restore(i) {
   if (changed && s.base.surf && s.base.surf === base.surf) { seekSurf(s.base.surf, s.base.ver); base = s.base; render(); }
   else if (changed) { if (s.base.surf) seekSurf(s.base.surf, s.base.ver); const old = base; base = s.base; applyBase(); shelveLater(old); } else render();
   showTab(tab); drawTexts(); drawStickers(); syncHist();
+  draftSoon();  // 復原、重做也要進草稿（不然被收掉，重開會回到復原前）
 }
 function syncHist() { $('#bUndo').disabled = hi <= 0; $('#bRedo').disabled = hi >= hist.length - 1; }
 $('#bUndo').onclick = () => hi > 0 && restore(hi - 1);
@@ -2850,7 +2856,8 @@ addEventListener('pointerdown', e => { downs.add(e.pointerId); downAt = performa
 ['pointerup', 'pointercancel'].forEach(t => addEventListener(t, e => downs.delete(e.pointerId), true));
 function newDraft(c, m) {
   const p = m?.ptr || { i0: 0, pv: 0 };
-  draft = { id: m?.id || Date.now(), on: !!m, thumb: m?.thumb || '', pend: { c, m: new Map() }, ptr: m ? p : null,
+  // pc：草稿裡的照片（加上那幾筆）是哪一張 canvas 的樣子
+  draft = { id: m?.id || Date.now(), on: !!m, thumb: m?.thumb || '', pend: { c, m: new Map() }, ptr: m ? p : null, pc: m ? c : null,
     ph: m ? { c, i0: p.i0, n: p.pv - p.i0, ib: p.pv, vb: 0, bytes: (m.patches || []).reduce((s, q) => s + q.img.data.length, 0) } : null };
 }
 // 美顏筆、塗鴉畫了第 k 筆：先記在記憶體，下一次存草稿時寫進去
@@ -2868,10 +2875,12 @@ function draftPatch(c, k, x, y, img) {
     else ph.n = Math.min(ph.n, ph.ib + k - ph.vb - ph.i0);  // 草稿裡這一筆以後是復原前的另一條路，作廢
   }
 }
-function draftSoon() {
+// now：照片整張換掉了（合併、消除、裁切、旋轉）：馬上開始壓整張，趁「合併中…」還在畫面上，不等停手 0.5 秒才頓那一下
+function draftSoon(now) {
   if (!draft.on) return;
   clearTimeout(draftT); clearTimeout(draftT2);
-  draftT = setTimeout(saveDraft, 500); draftT2 = setTimeout(() => saveDraft('idle'), 6000);
+  if (now) saveDraft(); else draftT = setTimeout(saveDraft, 500);
+  draftT2 = setTimeout(() => saveDraft('idle'), 6000);
 }
 // 現在這張照片能不能只補寫幾筆就跟草稿對上：回傳 { ph, base, puts }，不行回傳 null（要重壓整張）
 function photoPlan(c, ver) {
@@ -2890,7 +2899,7 @@ function photoPlan(c, ver) {
   return { ph, base, puts, ptr: { i0: ph.i0, pv: top } };
 }
 // 狀態在呼叫的當下記下來（照片也是當下的樣子），寫入照順序排隊，最新的最後寫。
-// mode：沒給 = 停手 0.5 秒（只存參數和這幾筆）；'idle' = 停手 6 秒（需要的話壓整張、更新縮圖）；true = 切走、換照片，馬上全部存
+// mode：沒給 = 停手 0.5 秒（只存參數和這幾筆，照片整張換過才壓整張）；'idle' = 停手 6 秒（更新縮圖）；true = 切走、換照片，馬上全部存
 function saveDraft(mode) {
   if (mode !== 'idle') clearTimeout(draftT);
   if (!draft.on || !base?.canvas) return draftQ;
@@ -2901,16 +2910,18 @@ function saveDraft(mode) {
   }
   const d = draft, c = base.canvas, ver = base.ver || 0, slow = mode !== undefined;
   let plan = photoPlan(c, ver), photo = null;
-  if (!plan && slow) {
-    // 整張重壓：從現在這一筆重新開始算
+  // 整張重壓，從現在這一筆重新開始算。照片整張換掉了（合併、裁切、旋轉、消除…）就不能等停手 6 秒：
+  // 只存參數的話，草稿會是新參數配舊照片，這幾秒被收掉，重開時剛合併的濾鏡不見、推臉錯位（評審 2026-10-27）。
+  // 同一張照片只是一筆一筆的太多：參數照存（配草稿裡稍舊的照片也對得上），停手 6 秒再壓
+  if (!plan && (slow || d.pc !== c)) {
     photo = encode(c, hasAlpha(c) ? 'image/png' : 'image/jpeg');
     plan = { ph: { c, i0: 0, n: 0, ib: 0, vb: ver, bytes: 0 }, base: null, puts: [], ptr: { i0: 0, pv: 0 } };
   }
   if (!plan && !d.ptr) { clearTimeout(draftT2); draftT2 = setTimeout(() => saveDraft('idle'), 6000); return draftQ; }  // 草稿裡還沒有照片：等停手再壓
-  if (slow || !d.thumb) d.thumb = draftThumb();
+  if (slow || photo || !d.thumb) d.thumb = draftThumb();
   const meta = { id: d.id, t: Date.now(), P: clone(P), texts: clone(texts), stickers: clone(stickers), tab, thumb: d.thumb, ptr: plan ? plan.ptr : d.ptr };
   const assets = draftAssets(meta.stickers, meta.P);
-  if (plan) { d.ph = plan.ph; d.ptr = plan.ptr; }
+  if (plan) { d.ph = plan.ph; d.ptr = plan.ptr; d.pc = c; }
   const puts = plan?.puts || [], blob = photo || (plan?.base ? Promise.resolve(plan.base) : null);
   return draftQ = draftQ.then(async () => {
     const b = blob && await blob;
@@ -2920,7 +2931,7 @@ function saveDraft(mode) {
     // 寫進去了：記憶體裡那幾筆可以放掉
     for (const [i, q] of puts) { const k = plan.ph.vb + i - plan.ph.ib; if (d.pend.m.get(k) === q) d.pend.m.delete(k); }
     if (photo) for (const k of d.pend.m.keys()) if (k < ver) d.pend.m.delete(k);
-  }).catch(e => { console.warn('草稿存不了', e); if (d === draft && plan && d.ph === plan.ph) { d.ph = null; d.ptr = null; } });
+  }).catch(e => { console.warn('草稿存不了', e); if (d === draft && plan && d.ph === plan.ph) { d.ph = null; d.ptr = null; d.pc = null; } });
 }
 function draftThumb() {
   try {
