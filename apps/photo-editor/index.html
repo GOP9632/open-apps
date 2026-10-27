@@ -255,6 +255,21 @@ input[type=range].grad::-moz-range-progress{background:transparent}
 }
 /* 拼貼、範本（collage.js） */
 #empty .two{display:flex;gap:10px}
+/* 草稿（照醒圖首頁）；修圖中按「換照片」時首頁蓋在上面 */
+#empty.over{position:fixed;inset:0;z-index:7;max-width:none;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:calc(var(--safe-t, 0px) + 56px) 16px 24px;overflow-y:auto}
+#empty.over>*{width:100%;max-width:340px}
+#empty.over>.two{display:flex}
+#bHome{display:none}
+#empty.over>#bHome{display:grid;position:absolute;top:calc(var(--safe-t, 0px) + 8px);left:8px;width:40px}
+#drafts{margin:-8px 0 20px;text-align:left}
+#drafts .dh{font-size:14px;font-weight:600;margin-bottom:8px}
+#drafts .dh span{font-weight:400;font-size:12px;color:var(--muted);margin-left:8px}
+#draftList{display:flex;gap:10px;overflow-x:auto;padding:8px 10px 2px 2px}
+.dr{position:relative;flex:0 0 60px;text-align:center}
+.dr .dt{display:block;width:60px;height:60px;border-radius:12px;overflow:hidden;background:var(--panel2);padding:0}
+.dr img{width:100%;height:100%;object-fit:cover;display:block}
+#empty .dr small{margin-top:4px;font-size:11px;line-height:1.2}
+.dr .dx{position:absolute;top:-8px;right:-8px;width:26px;height:26px;border-radius:13px;background:var(--panel);border:1px solid var(--line);color:var(--muted);font-size:15px;line-height:1;display:grid;place-items:center}
 #empty .two .big{flex:1}
 #cg{position:fixed;inset:0;z-index:7;background:var(--bg);display:none;flex-direction:column}
 #cg.on{display:flex}
@@ -308,8 +323,10 @@ input[type=range].grad::-moz-range-progress{background:transparent}
     <div id="hist"><span class="hg"><button class="fb" id="bUndo" title="復原（⌘Z）" aria-label="復原" disabled><svg viewBox="0 0 24 24"><path d="M9 7H4V2"/><path d="M4 7a9 9 0 1 1-1 7"/></svg></button><button class="fb" id="bRedo" title="重做（⇧⌘Z）" aria-label="重做" disabled><svg viewBox="0 0 24 24"><path d="M15 7h5V2"/><path d="M20 7a9 9 0 1 0 1 7"/></svg></button></span><span class="hg"><button class="fb" id="bCmp" title="按住看原圖（空白鍵）" aria-label="按住看原圖" disabled><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M12 4v16"/></svg></button></span></div>
     <div id="zoom"><button id="zOut" title="縮小（⌘−）">−</button><button id="zPct" title="回到全覽（⌘0）">100%</button><button id="zIn" title="放大（⌘＋）">+</button></div>
     <div id="empty">
+      <button class="ib" id="bHome" title="回到修圖" aria-label="回到修圖"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
       <h1>隨手修</h1>
       <p>修圖、濾鏡、美顏、去背、消除，全部免費。<br>照片只在你的裝置上處理，不會上傳。</p>
+      <div id="drafts" hidden><div class="dh">草稿<span>自動存在這台裝置，點一下接著修</span></div><div id="draftList"></div></div>
       <button class="big" id="bPick">選一張照片</button>
       <button class="big alt" id="bCam">拍照</button>
       <div class="two"><button class="big alt" id="bCollage">拼貼</button><button class="big alt" id="bTpl">範本</button></div>

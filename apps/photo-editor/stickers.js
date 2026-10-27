@@ -169,6 +169,8 @@ export function putCanvas(c, kind) {
   return id;
 }
 export const getCanvas = id => store.get(id)?.c;
+// 草稿接著修：把存起來的圖放回原本的 id，之後新的 id 不會撞到
+export function restoreCanvas(id, c) { store.set(id, { c, url: null }); seq = Math.max(seq, +id.replace(/^\D+/, '') || 0); }
 export function canvasURL(id) {
   const e = store.get(id);
   if (!e) return '';

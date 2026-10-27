@@ -3,7 +3,7 @@ import { FILTERS, bakeLUT, thumb, filterFn, skinFilterFn, hairFilterFn } from '.
 import { loadXT, xtData, xtItem } from './xt.js';
 import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor } from './ai.js';
 import { COVERS, COVER_CATS, coverPixels } from './coverface.js';
-import { STICKERS, STICKER_CATS, EMOJIS, EMOJI_FONT, BLENDS, blendById, stickerAR, stickerURL, svgURL, renderSticker, putCanvas, getCanvas, canvasURL, touchCanvas, ownImages, NET_PACKS, netURL, loadNetSticker } from './stickers.js';
+import { STICKERS, STICKER_CATS, EMOJIS, EMOJI_FONT, BLENDS, blendById, stickerAR, stickerURL, svgURL, renderSticker, putCanvas, getCanvas, canvasURL, touchCanvas, ownImages, NET_PACKS, netURL, loadNetSticker, restoreCanvas } from './stickers.js';
 import { FX, OVERLAYS, BG_PHOTOS, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
 import { matte, LOW_MEM } from './matte.js';
 import { GRADE_P0, gradeOn, gradeFn, gradeKey, tabGrade, gradeHide } from './grade.js';
@@ -25,7 +25,8 @@ import { enhanceRanges, paintRange, setGrad, nudge, canvasZoom, pinch } from './
 import { tabLooks } from './looks.js';
 import { perfReq, perfDrawn, perfBase, perfSkip } from './perf.js';
 import { STROKES, STROKE_COLORS, STROKE0, strokeLayer, alphaFromMatte, alphaBox } from './outline.js';
-import { SHAPES, MASK0, LAYER_LIMIT, shapePath, photoLayer, cutLayer, layerInfo, cloneAlpha, compose as composeLayer, brush } from './layers.js';
+import { SHAPES, MASK0, LAYER_LIMIT, shapePath, photoLayer, cutLayer, layerInfo, restoreLayer, cloneAlpha, compose as composeLayer, brush } from './layers.js';
+import { listDrafts, readDraft, writeDraft, deleteDraft, encode } from './draft.js';
 import { POPS, POP_BGS, POP_P0, drawPop } from './popout.js';
 
 const $ = s => document.querySelector(s);
@@ -153,7 +154,7 @@ const BOKEH = [
 const BOKEH_GL = { classic: 0, heart: 1, cateye: 2, swirl: 3, motion: 4, galaxy: 5 };
 let blurK = 'blur';
 let cSec = 'pop';         // 創意分頁目前在哪一區：出框、景深、特效、光效
-let exOwn = null, exN = 0; // 雙重曝光自己選的第二張照片
+let exOwn = null, exN = 0, exOwnFile = null; // 雙重曝光自己選的第二張照片
 let frameK = 1;
 const lutCache = new Map();
 
@@ -198,9 +199,11 @@ function busy(msg) { $('#busyText').textContent = msg || '處理中…'; $('#bus
 const clone = o => JSON.parse(JSON.stringify(o));
 
 // ---------- 載入照片 ----------
-async function loadFile(file) {
+// m：草稿（接著修上次的照片）
+async function loadFile(file, m) {
   if (!file || !R) return;
-  busy('讀取照片…');
+  if (base) saveDraft(true);  // 換照片前，修到一半的這張先存成草稿
+  busy(m ? '打開上次的照片…' : '讀取照片…');
   try {
     const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(async () => {
       const img = new Image(); img.src = URL.createObjectURL(file); await img.decode(); return img;
@@ -210,16 +213,21 @@ async function loadFile(file) {
     w = Math.round(w * k); h = Math.round(h * k);
     const c = photoCanvas(w, h);
     c.getContext('2d').drawImage(bmp, 0, 0, w, h);
-    P = { ...P0 }; texts = []; selText = -1; stickers = []; selSt = -1;
+    P = { ...P0, ...m?.P }; texts = m?.texts || []; selText = -1; stickers = m?.stickers || []; selSt = -1;
     hist = []; hi = -1;
-    perfSkip(); setBase(c);
-    $('#empty').style.display = 'none';
+    perfSkip(); setBase(c); srcFile.set(c, file);
+    draft = { id: m?.id || Date.now(), on: !!m, tag: m ? photoTag() : '' };
+    $('#empty').style.display = 'none'; $('#empty').classList.remove('over');
     $('#wrap').classList.add('on'); $('#panel').classList.remove('off');
     ['#bSave', '#bCmp', '#bResetAll', '#bMerge'].forEach(s => $(s).disabled = false);
     view.reset(); $('#zoom').classList.add('on'); $('#hist').classList.add('on');
     commit();
-    // 照 Hypic：人像照進來先停在「人像」；找不到臉就改停在濾鏡
-    landing = true; tab = ''; showTab('beauty');
+    if (m) {
+      hist[0].resumed = true; tab = ''; showTab(TABS_OK(m.tab) ? m.tab : 'beauty'); drawTexts(); drawStickers();
+    } else {
+      // 照 Hypic：人像照進來先停在「人像」；找不到臉就改停在濾鏡
+      landing = true; tab = ''; showTab('beauty');
+    }
   } catch (e) {
     console.error(e); toast('這張照片打不開');
   } finally { busy(); }
@@ -635,7 +643,7 @@ function syncShape() {
 }
 // 光效、背景、雙重曝光的圖：要用的時候才畫，照片比例變了就重畫
 const texKey = {};
-let bgStat = null, bgOwn = null, bgN = 0;
+let bgStat = null, bgOwn = null, bgN = 0, bgOwnFile = null;
 const imgCache = new Map();
 function loadImg(src) {
   if (!imgCache.has(src)) imgCache.set(src, new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = src; }));
@@ -760,6 +768,8 @@ function commit() {
   pruneEdits();
   hi = hist.length - 1;
   syncHist();
+  if (hi > 0) draft.on = true;
+  draftSoon();
 }
 let restoring = false;
 async function restore(i) {
@@ -2242,7 +2252,7 @@ $('#file3').onchange = async e => {
   const file = e.target.files[0]; e.target.value = '';
   if (!file) return;
   try {
-    bgOwn = await createImageBitmap(file, { imageOrientation: 'from-image' }); bgN++;
+    bgOwn = await createImageBitmap(file, { imageOrientation: 'from-image' }); bgN++; bgOwnFile = file;
     P.bg = 'img'; P.bgImg = 'own'; render(); commit(); showTab('cutout');
   } catch (err) { console.error(err); toast('這張照片打不開'); }
 };
@@ -2250,12 +2260,15 @@ $('#file2').onchange = async e => {
   const file = e.target.files[0]; e.target.value = '';
   if (!file) return;
   try {
-    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
-    const [w, h] = fitSize(bmp.width, bmp.height, 1600);
-    exOwn = newCanvas(w, h); exOwn.getContext('2d').drawImage(bmp, 0, 0, w, h); exN++;
+    await setExOwn(file);
     P.ex = 'own'; render(); commit(); showTab('fun');
   } catch (err) { console.error(err); toast('這張照片打不開'); }
 };
+async function setExOwn(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const [w, h] = fitSize(bmp.width, bmp.height, 1600);
+  exOwn = newCanvas(w, h); exOwn.getContext('2d').drawImage(bmp, 0, 0, w, h); exN++; exOwnFile = file;
+}
 
 // ---------- 邊框 ----------
 function frameThumb(f) {
@@ -2697,7 +2710,6 @@ async function save() {
       setTimeout(() => URL.revokeObjectURL(a.href), 4000);
       toast('已下載');
     }
-    savedAt = hist[hi];
   } catch (e) { console.error(e); toast('儲存失敗'); }
   finally { busy(); render(); }
 }
@@ -2715,17 +2727,112 @@ function tabTpl(box) {
 
 // ---------- 開啟照片 ----------
 $('#bPick').onclick = () => $('#file').click();
-// 換照片會清掉復原紀錄：還有沒存的修改就先問（以前直接開相簿，誤按再選一張，修到一半的整個不見，評審 2026-10-27）
-let savedAt = null;
-$('#bOpen').onclick = () => {
-  if (base && hi > 0 && hist[hi] !== savedAt && !confirm('換一張照片的話，這張還沒存的修改會不見。確定要換嗎？')) return;
-  $('#file').click();
-};
+// 換照片：回到首頁（草稿、選照片、拍照、拼貼）。修到一半的這張已經存成草稿，不會不見
+$('#bOpen').onclick = () => { saveDraft(true); showHome(true); };
+$('#bHome').onclick = () => showHome(false);
 $('#bCam').onclick = () => $('#cam').click();
 // 拼貼、範本：一次選多張照片
 let multiFor = 'grid';
-$('#bCollage').onclick = () => { multiFor = 'grid'; $('#fileMulti').click(); };
-$('#bTpl').onclick = () => { multiFor = 'tpl'; $('#fileMulti').click(); };
+$('#bCollage').onclick = () => { multiFor = 'grid'; showHome(false); $('#fileMulti').click(); };
+$('#bTpl').onclick = () => { multiFor = 'tpl'; showHome(false); $('#fileMulti').click(); };
+
+// ---------- 草稿：修到一半的自動存在這台裝置（照醒圖首頁的草稿） ----------
+// 評審 2026-10-27：Safari 重開、重新整理，修到一半的整個不見。每一步改完、手指放開 2 秒後存一次，
+// 切到別的 app 時馬上存。照片像素沒變（只調了參數）就只存參數；剛打開還沒畫過就直接存原檔，不用重壓
+let draft = { id: 0, on: false, tag: '' }, draftT = 0, draftQ = Promise.resolve(), downAt = 0, cvN = 0;
+const downs = new Set(), srcFile = new WeakMap(), cvId = new WeakMap(), blobOf = new WeakMap();
+const photoTag = () => { const c = base.canvas; if (!cvId.has(c)) cvId.set(c, ++cvN); return cvId.get(c) + ':' + (base.ver || 0); };
+const TABS_OK = t => t && t !== 'crop' && t !== 'tpl' && GROUPS.some(g => g[3].includes(t));
+addEventListener('pointerdown', e => { downs.add(e.pointerId); downAt = performance.now(); }, true);
+['pointerup', 'pointercancel'].forEach(t => addEventListener(t, e => downs.delete(e.pointerId), true));
+function draftSoon(ms = 2000) { if (!draft.on) return; clearTimeout(draftT); draftT = setTimeout(saveDraft, ms); }
+// 狀態在呼叫的當下記下來（照片也是當下的樣子），寫入照順序排隊，最新的最後寫
+function saveDraft(now) {
+  clearTimeout(draftT);
+  if (!draft.on || !base?.canvas) return draftQ;
+  // 手指還按著（正在畫、正在拖）就晚點再存，壓照片不跟正在畫的搶時間
+  if (now !== true && (restoring || (downs.size && performance.now() - downAt < 15000))) { draftSoon(1000); return draftQ; }
+  const d = draft, c = base.canvas, tag = photoTag(), file = srcFile.get(c);
+  const meta = { id: d.id, t: Date.now(), P: clone(P), texts: clone(texts), stickers: clone(stickers), tab, thumb: draftThumb() };
+  const assets = draftAssets(meta.stickers, meta.P);
+  const photo = tag === d.tag ? null : file && !(base.ver > 0) ? Promise.resolve(file) : encode(c, hasAlpha(c) ? 'image/png' : 'image/jpeg');
+  d.tag = tag;
+  return draftQ = draftQ.then(async () => {
+    const blob = photo && await photo;
+    if (photo && !blob) throw new Error('照片壓不起來');
+    meta.assets = await assets;
+    await writeDraft(meta, blob ? { blob } : null);
+  }).catch(e => { console.warn('草稿存不了', e); if (d.tag === tag) d.tag = ''; });
+}
+function draftThumb() {
+  try {
+    const g = cmpOn ? base.canvas : $('#gl'), k = 160 / Math.max(g.width, g.height);
+    const t = newCanvas(Math.max(1, Math.round(g.width * k)), Math.max(1, Math.round(g.height * k)));
+    t.getContext('2d').drawImage(g, 0, 0, t.width, t.height);
+    return t.toDataURL('image/jpeg', 0.8);
+  } catch { return ''; }
+}
+// 貼紙用到的圖（自己匯入的圖、擦除遮罩、摳圖圖層）、自己選的背景和雙重曝光照片
+const canvasBlob = (c, type) => { let p = blobOf.get(c); if (!p) { p = encode(c, type); blobOf.set(c, p); } return p; };
+async function draftAssets(sts, p) {
+  const a = {}, jobs = [];
+  for (const s of sts) {
+    if (s.kind === 'img' && getCanvas(s.v)) a[s.v] = canvasURL(s.v);
+    if (s.mask && getCanvas(s.mask)) a[s.mask] = canvasURL(s.mask);
+    const L = s.kind === 'cut' && !a[s.v] && layerInfo(s.v);
+    if (L) {
+      const o = a[s.v] = { cut: L.cut };
+      jobs.push(Promise.all([canvasBlob(L.rgb, 'image/jpeg'), canvasBlob(L.alpha, 'image/png')]).then(([rgb, alpha]) => Object.assign(o, { rgb, alpha })));
+    }
+  }
+  if (p.bg === 'img' && p.bgImg === 'own' && bgOwnFile) a.$bg = bgOwnFile;
+  if (p.ex === 'own' && exOwnFile) a.$ex = exOwnFile;
+  await Promise.all(jobs);
+  return a;
+}
+async function resumeDraft(id) {
+  busy('打開上次的照片…');
+  try {
+    const d = await readDraft(id);
+    if (!d) throw new Error('找不到草稿');
+    const a = d.meta.assets || {};
+    const toCanvas = async src => {
+      const bmp = await createImageBitmap(typeof src === 'string' ? await (await fetch(src)).blob() : src);
+      const c = newCanvas(bmp.width, bmp.height); c.getContext('2d').drawImage(bmp, 0, 0); bmp.close?.(); return c;
+    };
+    for (const [k, v] of Object.entries(a)) {
+      if (k === '$bg') { bgOwn = await createImageBitmap(v, { imageOrientation: 'from-image' }); bgN++; bgOwnFile = v; }
+      else if (k === '$ex') await setExOwn(v);
+      else if (typeof v === 'string') restoreCanvas(k, await toCanvas(v));
+      else if (v.rgb && v.alpha) restoreLayer(k, { rgb: await toCanvas(v.rgb), alpha: await toCanvas(v.alpha), cut: v.cut });
+    }
+    busy();
+    await loadFile(d.photo.blob, d.meta);
+  } catch (e) { console.error(e); busy(); toast('這份草稿打不開'); }
+}
+// 首頁的草稿列（修圖中按「換照片」也會回到首頁，現在這張不列）
+const when = t => { const d = new Date(t), n = new Date(), p = x => String(x).padStart(2, '0'); return d.toDateString() === n.toDateString() ? `${p(d.getHours())}:${p(d.getMinutes())}` : `${d.getMonth() + 1}/${d.getDate()}`; };
+async function showDrafts() {
+  const list = (await listDrafts()).filter(m => !base || m.id !== draft.id), box = $('#draftList');
+  box.innerHTML = '';
+  for (const m of list) {
+    const e = document.createElement('div'); e.className = 'dr';
+    e.innerHTML = `<button class="dt" aria-label="接著修 ${when(m.t)} 的草稿">${m.thumb ? `<img alt="" src="${m.thumb}">` : ''}</button><small>${when(m.t)}</small><button class="dx" aria-label="刪除這份草稿">×</button>`;
+    e.querySelector('.dt').onclick = () => resumeDraft(m.id);
+    e.querySelector('.dx').onclick = async () => { if (!confirm('刪除這份草稿？刪了就找不回來。')) return; await deleteDraft(m.id).catch(() => {}); showDrafts(); };
+    box.append(e);
+  }
+  $('#drafts').hidden = !list.length;
+}
+function showHome(on) {
+  const e = $('#empty');
+  e.classList.toggle('over', on && !!base);
+  e.style.display = on || !base ? '' : 'none';
+  if (on) showDrafts();
+}
+addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveDraft(true); });
+addEventListener('pagehide', () => saveDraft(true));
+if (R) showDrafts();
 $('#fileMulti').onchange = e => { const f = [...e.target.files]; e.target.value = ''; if (f.length) openCollage(multiFor, f); };
 initCollage({ loadFile, toast, busy });
 // 醒圖風格濾鏡的參數先在背景載入；載入前選到的（例如復原回來的）載好後重畫
@@ -2753,10 +2860,10 @@ let spaceCmp = false;
 addEventListener('keydown', e => {
   if (typing(e)) return;
   const mod = e.metaKey || e.ctrlKey, k = e.key;
-  if (k === 'Escape') { keysPanel(false); return; }
+  if (k === 'Escape') { keysPanel(false); if ($('#empty').classList.contains('over')) showHome(false); return; }
   if (k === '?' && !mod) { keysPanel(!$('#keys').classList.contains('on')); e.preventDefault(); return; }
   if (mod && (k === 's' || k === 'S')) { e.preventDefault(); save(); return; }
-  if (mod && (k === 'o' || k === 'O')) { e.preventDefault(); $('#file').click(); return; }
+  if (mod && (k === 'o' || k === 'O')) { e.preventDefault(); saveDraft(true); $('#file').click(); return; }
   if (!base) return;
   if (mod && (k === 'z' || k === 'Z')) { e.preventDefault(); e.shiftKey ? $('#bRedo').click() : $('#bUndo').click(); return; }
   if (mod && (k === 'y' || k === 'Y')) { e.preventDefault(); $('#bRedo').click(); return; }
