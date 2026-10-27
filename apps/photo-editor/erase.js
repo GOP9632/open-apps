@@ -1,6 +1,6 @@
 // 消除筆：塗抹、框選、橡皮擦選出要消除的地方，或自動圈出路人，再用 MI-GAN 修補模型補上背景
 // MI-GAN（Picsart，MIT 授權）在瀏覽器裡跑，照片不會上傳。模型第一次用時下載約 28MB，之後瀏覽器會快取
-import { pinch } from './ui.js';
+import { pinch, stageZoom } from './ui.js';
 import { segment } from './ai.js';
 import { blurred } from './cblur.js';
 import { LOW_MEM } from './matte.js';
@@ -166,7 +166,8 @@ function overlay() {
   ov.style.cssText = `position:absolute;inset:0;width:100%;height:100%;z-index:3;touch-action:none;cursor:none;opacity:.55;display:none`;
   ring = document.createElement('div');
   ring.style.cssText = 'position:absolute;z-index:4;border:2px solid #fff;border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.4);pointer-events:none;display:none;transform:translate(-50%,-50%)';
-  document.querySelector('#wrap').append(ov, ring);
+  // 圓圈放在不跟著照片縮放的那層，用螢幕座標畫（放大時才不會糊）
+  document.querySelector('#wrap').append(ov); document.querySelector('#stage').append(ring);
   bindDraw();
   return ov;
 }
@@ -186,17 +187,17 @@ function paintOverlay(rect) {
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h); ctx.setLineDash([]);
   }
 }
-// 畫筆直徑：照片短邊的 2%～20%
-const brushPx = () => Math.min(st.mask.width, st.mask.height) * (0.02 + 0.18 * st.size / 100);
+// 畫筆直徑：照片沒放大時是短邊的 0.6%～20%；照片放大幾倍筆刷就細幾倍
+const brushPx = () => Math.min(st.mask.width, st.mask.height) * (0.006 + 0.194 * st.size / 100) / stageZoom.z;
 
 function bindDraw() {
   let drag = null;
-  // cx、cy、k 是照片放大前的座標（畫布縮放時圓圈才會跟著手指）
-  const pos = e => { const r = ov.getBoundingClientRect(), u = r.width / ov.offsetWidth; return { x: (e.clientX - r.left) / r.width * ov.width, y: (e.clientY - r.top) / r.height * ov.height, cx: (e.clientX - r.left) / u, cy: (e.clientY - r.top) / u, k: ov.offsetWidth / ov.width }; };
+  // sx、sy 是在 #stage 裡的螢幕座標，k 是螢幕上一個照片像素多大（放大了也對）
+  const pos = e => { const r = ov.getBoundingClientRect(), s = ring.parentNode.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * ov.width, y: (e.clientY - r.top) / r.height * ov.height, sx: e.clientX - s.left, sy: e.clientY - s.top, k: r.width / ov.width }; };
   const showRing = p => {
     if (!st || st.tool === 'box') { ring.style.display = 'none'; return; }
     const d = brushPx() * p.k;
-    Object.assign(ring.style, { display: 'block', left: p.cx + 'px', top: p.cy + 'px', width: d + 'px', height: d + 'px' });
+    Object.assign(ring.style, { display: 'block', left: p.sx + 'px', top: p.sy + 'px', width: d + 'px', height: d + 'px' });
   };
   const stroke = (a, b) => {
     const ctx = st.mask.getContext('2d');
@@ -306,8 +307,10 @@ export function tabErase(box, app) {
     const paint = () => { inp.style.setProperty('--fill-a', '0%'); inp.style.setProperty('--fill-b', (inp.value - 1) / 99 * 100 + '%'); };
     inp.oninput = () => {
       s.size = +inp.value; outp.textContent = inp.value; paint();
-      const w = ov.offsetWidth, h = ov.offsetHeight, d = brushPx() * w / ov.width;
-      Object.assign(ring.style, { display: 'block', left: w / 2 + 'px', top: h / 2 + 'px', width: d + 'px', height: d + 'px' });
+      // 放在看得到的那塊照片中間
+      const r = ov.getBoundingClientRect(), s = ring.parentNode.getBoundingClientRect(), d = brushPx() * r.width / ov.width;
+      const x = (Math.max(r.left, s.left) + Math.min(r.right, s.right)) / 2 - s.left, y = (Math.max(r.top, s.top) + Math.min(r.bottom, s.bottom)) / 2 - s.top;
+      Object.assign(ring.style, { display: 'block', left: x + 'px', top: y + 'px', width: d + 'px', height: d + 'px' });
     };
     inp.onchange = () => { ring.style.display = 'none'; };
     paint();
