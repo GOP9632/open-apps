@@ -117,6 +117,9 @@ uniform vec3 uFlashT;
 uniform vec3 uFCs, uFCast;
 uniform float uSmoothAmt, uWhite, uLutAmt, uHasLut, uLutSkin, uLutHair;
 uniform float uDark, uFold, uEyeB, uTeeth;
+// 多張臉分開修：每張臉的中心和臉寬（uFC：x, y, 臉寬，照片像素）、磨皮美白黑眼圈法令紋（uFA）、亮眼白牙（uFB）
+// uNF = 0 表示每張臉都一樣，用上面那組
+uniform int uNF; uniform vec4 uFC[5], uFA[5]; uniform vec2 uFB[5];
 // 打光、閃光燈：最多 8 盞燈（閃光燈也算一盞）
 //   uLPos：位置 xy（照片 0~1）、高度 z（深度圖像素，負的是在人後面）、燈到臉中間的距離 w
 //   uLCol：顏色 × 強度；uLPar：包覆（光繞到暗面）、反光、影子柔和度、衰減次方
@@ -294,21 +297,32 @@ void main(){
     col = clamp(col, 0.0, 1.0);
   }
 
+  // 這個像素屬於哪張臉：離哪張臉的中心最近（用臉寬算），就用那張臉的數字
+  float aSm = uSmoothAmt, aWh = uWhite, aDk = uDark, aFd = uFold, aEb = uEyeB, aTt = uTeeth;
+  if (uNF > 0) {
+    vec2 px = uv * uSize; float best = 1e9; int bi = 0;
+    for (int i = 0; i < 5; i++) {
+      if (i >= uNF) break;
+      float dd = length(px - uFC[i].xy) / uFC[i].z;
+      if (dd < best) { best = dd; bi = i; }
+    }
+    aSm = uFA[bi].x; aWh = uFA[bi].y; aDk = uFA[bi].z; aFd = uFA[bi].w; aEb = uFB[bi].x; aTt = uFB[bi].y;
+  }
   vec2 mk = texture(uMask, uv).rg;
-  if (uSmoothAmt > 0.0 && mk.r > 0.0) {
+  if (aSm > 0.0 && mk.r > 0.0) {
     vec3 s = texture(uSmooth, uv).rgb;
     // 跟醒圖一樣，暗部不磨，避免陰影和輪廓被抹平
     float dark = smoothstep(0.2, 0.45, col.r);
-    col = mix(col, s, mk.r * dark * uSmoothAmt * 0.9);
+    col = mix(col, s, mk.r * dark * aSm * 0.9);
   }
-  if (uWhite > 0.0 && mk.g > 0.0) {
-    float k = mk.g * uWhite;
+  if (aWh > 0.0 && mk.g > 0.0) {
+    float k = mk.g * aWh;
     col = mix(col, 1.0 - (1.0 - col) * (1.0 - col * 0.55), k * 0.6);
     col = mix(col, vec3(luma(col)), k * 0.12);
   }
 
   vec3 mk2 = texture(uMask2, uv).rgb;
-  if ((uDark > 0.0 && mk2.r > 0.0) || (uFold > 0.0 && mk2.g > 0.0)) {
+  if ((aDk > 0.0 && mk2.r > 0.0) || (aFd > 0.0 && mk2.g > 0.0)) {
     // 黑眼圈、法令紋：跟周圍皮膚比，比周圍暗的地方提亮，顏色往周圍拉
     vec2 R = vec2(0.018) * vec2(uSize.y / uSize.x, 1.0);
     vec3 a = vec3(0.0);
@@ -317,22 +331,22 @@ void main(){
       a += texture(uSmooth, uv + vec2(cos(t), sin(t)) * R).rgb;
     }
     a /= 8.0;
-    float m = clamp(mk2.r * uDark + mk2.g * uFold, 0.0, 1.0);
+    float m = clamp(mk2.r * aDk + mk2.g * aFd, 0.0, 1.0);
     float la = luma(a), lc = luma(col);
     col += max(la - lc, 0.0) * m * 1.1;
     col = mix(col, luma(col) * a / max(la, 0.01), m * 0.45);
-    if (mk2.g > 0.0) col = mix(col, texture(uSmooth, uv).rgb + (col - texture(uSmooth, uv).rgb) * 0.4, mk2.g * uFold * 0.6);
+    if (mk2.g > 0.0) col = mix(col, texture(uSmooth, uv).rgb + (col - texture(uSmooth, uv).rgb) * 0.4, mk2.g * aFd * 0.6);
   }
-  if (uEyeB > 0.0 && mk2.b > 0.0) {
+  if (aEb > 0.0 && mk2.b > 0.0) {
     // 亮眼：眼睛裡面加一點亮度和細節
     vec3 s = texture(uSmooth, uv).rgb;
-    float m = mk2.b * uEyeB;
+    float m = mk2.b * aEb;
     col += (col - s) * m * 0.8;
     col = 1.0 - (1.0 - col) * (1.0 - m * 0.12);
   }
-  if (uTeeth > 0.0 && mk.g >= 0.0) {
+  if (aTt > 0.0 && mk.g >= 0.0) {
     // 白牙：只動嘴巴裡比較亮的地方，去黃再提亮
-    float m = texture(uMask, uv).b * uTeeth * smoothstep(0.28, 0.55, luma(col));
+    float m = texture(uMask, uv).b * aTt * smoothstep(0.28, 0.55, luma(col));
     col = mix(col, vec3(luma(col)), m * 0.65);
     col.b += 0.03 * m;
     col = 1.0 - (1.0 - col) * (1.0 - m * 0.3);
@@ -1013,6 +1027,14 @@ export class Renderer {
     gl.uniform1f(u.uWhite, f(p.white));
     gl.uniform1f(u.uDark, f(p.dark)); gl.uniform1f(u.uFold, f(p.fold));
     gl.uniform1f(u.uEyeB, f(p.eyeb)); gl.uniform1f(u.uTeeth, f(p.teeth));
+    // 多張臉分開修（app.js 的 faceAmts）：[{ cx, cy, W, smooth, white, dark, fold, eyeb, teeth }]
+    const fa = (p.faceAmts || []).slice(0, 5);
+    gl.uniform1i(u.uNF, fa.length);
+    if (fa.length) {
+      const c = new Float32Array(20), a = new Float32Array(20), b = new Float32Array(10);
+      fa.forEach((x, i) => { c.set([x.cx, x.cy, x.W, 0], i * 4); a.set([f(x.smooth), f(x.white), f(x.dark), f(x.fold)], i * 4); b.set([f(x.eyeb), f(x.teeth)], i * 2); });
+      gl.uniform4fv(u.uFC, c); gl.uniform4fv(u.uFA, a); gl.uniform2fv(u.uFB, b);
+    }
     gl.uniform1f(u.uHasLut, this.hasLut ? 1 : 0); gl.uniform1f(u.uLutSkin, this.lutSkin ? 1 : 0); gl.uniform1f(u.uLutHair, this.lutHair && this.hasCls ? 1 : 0);
     gl.uniform1f(u.uLutAmt, f(p.filterAmt));
     gl.uniform1i(u.uFx, fx.fxMode || 0); gl.uniform1f(u.uFxAmt, fx.fxAmt || 0);
