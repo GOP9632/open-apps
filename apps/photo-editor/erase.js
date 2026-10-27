@@ -1,5 +1,6 @@
 // 消除筆：塗抹、框選、橡皮擦選出要消除的地方，或自動圈出路人，再用 MI-GAN 修補模型補上背景
 // MI-GAN（Picsart，MIT 授權）在瀏覽器裡跑，照片不會上傳。模型第一次用時下載約 28MB，之後瀏覽器會快取
+import { pinch } from './ui.js';
 import { segment } from './ai.js';
 import { blurred } from './cblur.js';
 import { LOW_MEM } from './matte.js';
@@ -205,9 +206,11 @@ function bindDraw() {
     ctx.globalCompositeOperation = 'source-over';
   };
   ov.addEventListener('pointerdown', e => {
-    if (!st) return;
+    if (!st || pinch.on) return;
     e.preventDefault(); try { ov.setPointerCapture(e.pointerId); } catch {}
-    const p = pos(e); drag = { a: p, last: p };
+    const p = pos(e), snap = newCanvas(st.mask.width, st.mask.height);
+    snap.getContext('2d').drawImage(st.mask, 0, 0);
+    drag = { a: p, last: p, snap };
     if (st.tool !== 'box') { stroke(p, p); paintOverlay(); }
     showRing(p);
   });
@@ -232,6 +235,12 @@ function bindDraw() {
   };
   ov.addEventListener('pointerup', up); ov.addEventListener('pointercancel', up);
   ov.addEventListener('pointerleave', () => { if (!drag) ring.style.display = 'none'; });
+  // 第二指放下是要縮放：這一筆不算，遮罩回到下筆之前
+  addEventListener('pinchstart', () => {
+    if (!drag) return;
+    const ctx = st.mask.getContext('2d'); ctx.clearRect(0, 0, st.mask.width, st.mask.height); ctx.drawImage(drag.snap, 0, 0);
+    drag = null; ring.style.display = 'none'; paintOverlay();
+  });
 }
 
 // 離開消除分頁：收起選區畫布（選區留著，回來還在）

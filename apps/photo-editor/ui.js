@@ -98,6 +98,8 @@ export function nudge(dir, big) {
 // unit()：z=1 時照片實際顯示的倍率（照片一個像素佔幾個螢幕像素），
 // 照醒圖：實際倍率 5%～1200%，按鈕一格一格跳 STEPS
 const STEPS = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.2, 1.4, 1.6, 1.8, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 12];
+// 手機兩指捏合中：塗抹、推臉這些工具看到就先停筆（第二指放下時會發 pinchstart）
+export const pinch = { on: false };
 export function canvasZoom({ stage, box, onChange, canPan, unit = () => 1 }) {
   let z = 1, x = 0, y = 0;
   const lim = nz => { const k = unit() || 1; return Math.max(Math.min(1, STEPS[0] / k), Math.min(Math.max(1, STEPS.at(-1) / k), nz)); };
@@ -143,7 +145,7 @@ export function canvasZoom({ stage, box, onChange, canPan, unit = () => 1 }) {
     if (touch) {
       if (!canPan?.(e, true)) return;
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (pts.size === 2) start();
+      if (pts.size === 2) { start(); pinch.on = true; window.dispatchEvent(new Event('pinchstart')); }
       return;
     }
     const outside = !e.target.closest('#wrap,#zoom,#crop');
@@ -172,6 +174,7 @@ export function canvasZoom({ stage, box, onChange, canPan, unit = () => 1 }) {
   });
   const up = e => {
     if (!pts.delete(e.pointerId)) return;
+    if (!pts.size) pinch.on = false;
     stage.classList.remove('panning');
     g = pts.size === 2 ? (start(), g) : null;
   };
