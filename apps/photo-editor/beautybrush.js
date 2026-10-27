@@ -5,7 +5,7 @@
 //   去黑眼圈：跟周圍亮的皮膚比，差值上限 0.2、係數 1.5；去法令紋：上限 0.3、係數 1.4 × 0.8
 //   眼部亮白：細節 × 2 × 0.5，再提亮
 // 每畫完一筆就畫進照片（跟塗鴉一樣），可以用上一步復原。只算筆刷附近那一塊，大照片也快。
-import { pinch } from './ui.js';
+import { pinch, stageZoom } from './ui.js';
 import { boxBlur } from './cblur.js';
 
 export const BRUSHES = [
@@ -21,8 +21,8 @@ export const BRUSHES = [
 const st = { tool: 'smooth', size: 30, str: Object.fromEntries(BRUSHES.map(b => [b.id, b.str])), param: 'size' };
 
 const newCanvas = (w, h) => Object.assign(document.createElement('canvas'), { width: Math.max(1, Math.round(w)), height: Math.max(1, Math.round(h)) });
-// 筆刷半徑（照片像素）：大小 1~100 → 短邊的 1%~12%
-export const bbRadius = (size, W, H) => Math.min(W, H) * (0.01 + 0.11 * size / 100);
+// 筆刷半徑（照片像素）：大小 1~100 → 照片沒放大時是短邊的 0.4%~12%；照片放大幾倍筆刷就細幾倍
+export const bbRadius = (size, W, H) => Math.min(W, H) * (0.003 + 0.117 * size / 100) / stageZoom.z;
 
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const blur = (a, w, h, r) => boxBlur(Float32Array.from(a), w, h, Math.max(1, r));
@@ -120,15 +120,16 @@ export function effect(tool, c, w, h, R, k, S = 1000, m = null) {
 }
 
 // 一筆畫進照片：只處理筆刷附近，回傳新的照片 canvas
+// 一筆畫進照片：只算筆跡附近那一塊，回傳 { x, y, before, after }（那一塊畫之前、之後的像素），
+// app 直接改在同一張照片上，復原只存這一塊，不用每筆複製一整張原尺寸照片
 export function bakeBrush(src, pts, tool, size, str) {
   const W = src.width, H = src.height, R = bbRadius(size, W, H), pad = R * 2.2;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
   x0 = Math.max(0, Math.floor(x0 - pad)); y0 = Math.max(0, Math.floor(y0 - pad));
   x1 = Math.min(W, Math.ceil(x1 + pad)); y1 = Math.min(H, Math.ceil(y1 + pad));
-  const w = x1 - x0, h = y1 - y0, out = newCanvas(W, H), o = out.getContext('2d');
-  o.drawImage(src, 0, 0);
-  if (w < 2 || h < 2) return out;
+  const w = x1 - x0, h = y1 - y0;
+  if (w < 2 || h < 2) return null;
   // 筆刷遮罩：線寬 2R、邊緣羽化
   const mc = newCanvas(w, h), mx = mc.getContext('2d', { willReadFrequently: true }), feather = R * 0.25;
   mx.strokeStyle = '#fff'; mx.lineWidth = Math.max(1, 2 * R - feather * 2); mx.lineCap = mx.lineJoin = 'round';
@@ -139,12 +140,19 @@ export function bakeBrush(src, pts, tool, size, str) {
   const md = mx.getImageData(0, 0, w, h).data, m = new Float32Array(w * h);
   for (let i = 0; i < m.length; i++) m[i] = md[i * 4 + 3] / 255;
   boxBlur(m, w, h, Math.max(1, feather / 1.7));
-  const img = o.getImageData(x0, y0, w, h), d = img.data, n = w * h;
+  const img = src.getContext('2d').getImageData(x0, y0, w, h), d = img.data, n = w * h, before = new ImageData(new Uint8ClampedArray(d), w, h);
   const c = [0, 1, 2].map(j => { const a = new Float32Array(n); for (let i = 0; i < n; i++) a[i] = d[i * 4 + j] / 255; return a; });
   const e = effect(tool, c, w, h, R, str / 100, Math.min(W, H), m);
-  for (let i = 0; i < n; i++) if (m[i] > 0.002) for (let j = 0; j < 3; j++) d[i * 4 + j] = Math.round((c[j][i] + (e[j][i] - c[j][i]) * m[i]) * 255);
-  o.putImageData(img, x0, y0);
-  return out;
+  let bx0 = w, by0 = h, bx1 = -1, by1 = -1;
+  for (let i = 0; i < n; i++) if (m[i] > 0.002) {
+    for (let j = 0; j < 3; j++) d[i * 4 + j] = Math.round((c[j][i] + (e[j][i] - c[j][i]) * m[i]) * 255);
+    const x = i % w, y = (i - x) / w;
+    if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
+  }
+  if (bx1 < 0) return null;
+  // 復原要存的只有真的改到的那塊（算效果時多拿的邊不用存）
+  const crop = im => { if (bx0 === 0 && by0 === 0 && bx1 === w - 1 && by1 === h - 1) return im; const cw = bx1 - bx0 + 1, ch = by1 - by0 + 1, o = new ImageData(cw, ch); for (let y = 0; y < ch; y++) o.data.set(im.data.subarray(((by0 + y) * w + bx0) * 4, ((by0 + y) * w + bx1 + 1) * 4), y * cw * 4); return o; };
+  return { x: x0 + bx0, y: y0 + by0, before: crop(before), after: crop(img) };
 }
 
 export function tabBeautyBrush(box, app) {
@@ -190,10 +198,9 @@ export function beautyBrushInput(wrap, app) {
   });
   const up = () => {
     if (!pts) return;
-    const b = app.base, out = bakeBrush(b.canvas, pts, st.tool, st.size, st.str[st.tool]);
+    const patch = bakeBrush(app.base.canvas, pts, st.tool, st.size, st.str[st.tool]);
     pts = null; ov?.remove(); ov = null;
-    const keep = { ...b }; delete keep.canvas; delete keep.thumbs;
-    app.setBase(out, keep); app.commit();
+    if (patch) { app.paint(patch); app.commit(); }
   };
   wrap.addEventListener('pointerup', up); wrap.addEventListener('pointercancel', up);
   // 第二指放下是要縮放：這一筆不算

@@ -14,7 +14,7 @@ import { SKIN, TONE, WRINKLE, AI_FACE, AI_BODY, SKIN_P0, skinOn, skinKey, prepSk
 import { BODY, BODY_P0, BODY_MAN, REG_OF, bodyOn, detectBody, measureBody, bodyWarps, manualWarps, manualRegion, bodyNote } from './body.js';
 import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } from './faceshape.js';
 import { WarpField } from './warpfield.js';
-import { RESHAPE, liqDab, liqMoves, liqRadius } from './reshape.js';
+import { RESHAPE, liqDab, liqRadius } from './reshape.js';
 import { tabDoodle, doodleInput } from './doodle.js';
 import { tabBeautyBrush, beautyBrushInput } from './beautybrush.js';
 import { FONTS, T0, TEXT_COLORS, TEXT_FX, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
@@ -23,7 +23,7 @@ import { CATS as TPL_CATS } from './templates.js';
 import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightPosOf, lightGrad, flashStats } from './relight.js';
 import { enhanceRanges, paintRange, setGrad, nudge, canvasZoom, pinch } from './ui.js';
 import { tabLooks } from './looks.js';
-import { perfReq, perfDrawn, perfBase } from './perf.js';
+import { perfReq, perfDrawn, perfBase, perfSkip } from './perf.js';
 import { STROKES, STROKE_COLORS, STROKE0, strokeLayer, alphaFromMatte, alphaBox } from './outline.js';
 import { SHAPES, MASK0, LAYER_LIMIT, shapePath, photoLayer, cutLayer, layerInfo, cloneAlpha, compose as composeLayer, brush } from './layers.js';
 import { POPS, POP_BGS, POP_P0, drawPop } from './popout.js';
@@ -185,7 +185,7 @@ async function loadFile(file) {
     c.getContext('2d').drawImage(bmp, 0, 0, w, h);
     P = { ...P0 }; texts = []; selText = -1; stickers = []; selSt = -1;
     hist = []; hi = -1;
-    setBase(c);
+    perfSkip(); setBase(c);
     $('#empty').style.display = 'none';
     $('#wrap').classList.add('on'); $('#panel').classList.remove('off');
     ['#bSave', '#bCmp', '#bResetAll', '#bMerge'].forEach(s => $(s).disabled = false);
@@ -202,15 +202,76 @@ const BASE0 = { faces: null, geoms: [], seg: null, segB: null, mask: null, mask2
 function setBase(canvas, keep) {
   const old = base;
   base = { canvas, ...BASE0, ...keep };
+  // 換成另一張 canvas（消除、合併…）就不是同一串美顏筆、塗鴉了
+  if (base.surf && base.surf.canvas !== canvas) { delete base.surf; delete base.ver; }
   applyBase(); perfBase();
-  // 壓縮舊照片要讀整張圖，放到畫完這一筆、畫面更新以後再做，手指放開才不會卡
-  if (old) later(() => shelve(old));
+  if (old) shelveLater(old);
 }
 const later = f => setTimeout(f, 1200);
+// 壓縮舊照片要讀整張圖，放到畫完、畫面更新以後再做，手指放開才不會卡。
+// 但最多只等一張：連續換照片時前一張馬上壓，不然好幾張原尺寸照片同時留著，iPhone 記憶體不夠會整頁重開
+let shelveT = 0, shelveB = null;
+function shelveLater(b) {
+  if (shelveB) { clearTimeout(shelveT); shelve(shelveB); }
+  shelveB = b; shelveT = later(() => { shelveB = null; shelve(b); });
+}
+
+// ---------- 美顏筆、塗鴉：直接改在同一張照片上，復原只存改到的那一塊 ----------
+// 以前每畫一筆就複製一整張原尺寸照片（iPhone 一張約 50MB），同一處連畫幾十筆 Safari 會把整頁重開
+// （Anthony 女友 2026-10-27 用美顏筆磨皮時回報）。現在跟一般修圖 app 一樣，每一筆只存改到的那一塊。
+// 同一張 canvas 畫出來的每一步各是一個 base，共用 surf = { canvas, ver, edits }：
+// ver 是 canvas 現在畫到第幾筆；edits[k] 是第 k 筆改到的那一塊「另一邊」的像素
+// （canvas 在第 k 筆之後時存畫之前的，在之前時存畫之後的），復原、重做就是把那一塊對調
+function paintPatch({ x, y, before, after }) {
+  const old = base;
+  if (!old.surf) { old.surf = { canvas: old.canvas, ver: 0, edits: [] }; old.ver = 0; }
+  const S = old.surf;
+  S.edits.length = S.ver;  // 復原後再畫：後面那些重做不到了
+  S.edits.push({ x, y, img: before });
+  S.canvas.getContext('2d').putImageData(after, x, y); S.ver++;
+  // 臉、人像這些偵測結果還是同一張照片，留著不用重算；照片的貼圖只傳改到的那一塊
+  const keep = { ...old }; delete keep.canvas; delete keep.thumbs;
+  base = { canvas: S.canvas, ...BASE0, ...keep, ver: S.ver };
+  pixelsChanged(S.canvas, [{ x, y, img: after }]);
+  render(); perfBase();
+}
+// 把 canvas 換到第 v 筆（復原、重做同一串裡的一步）
+function seekSurf(S, v) {
+  if (S.ver === v) return;
+  const ctx = S.canvas.getContext('2d'), done = [];
+  const swap = e => { const cur = ctx.getImageData(e.x, e.y, e.img.width, e.img.height); ctx.putImageData(e.img, e.x, e.y); done.push({ x: e.x, y: e.y, img: e.img }); e.img = cur; };
+  while (S.ver > v) swap(S.edits[--S.ver]);
+  while (S.ver < v) swap(S.edits[S.ver++]);
+  pixelsChanged(S.canvas, S === base.surf ? done : null);
+}
+// 同一張 canvas 的內容變了：照 canvas 記住的預覽、皮膚、頭髮圖要重算。
+// rects：改到的那幾塊，照片的貼圖只傳這幾塊（整張重傳又慢又吃記憶體）
+function pixelsChanged(c, rects) {
+  pvCache.delete(c); if (hairFx) hairFx.src = null; if (skinFx) skinFx.src = null;
+  if (!rects) return;
+  if (rects.every(r => R.patchImage(r.img, r.x, r.y))) R.derive(); else R.setImage(c);
+}
+// 每一筆存的那一塊加起來的上限，超過就丟掉最舊的復原步驟
+const EDIT_BUDGET = LOW_MEM ? 96e6 : 400e6;
+function pruneEdits() {
+  for (;;) {
+    let bytes = 0;
+    for (const S of new Set(hist.map(h => h.base.surf).filter(Boolean))) {
+      // 復原紀錄用得到的範圍：最舊、最新的那一步，還有 canvas（或壓起來的檔案）現在在第幾筆
+      const vs = hist.filter(h => h.base.surf === S).map(h => h.base.ver);
+      if (S.canvas) vs.push(S.ver); else vs.push(S.blobVer);
+      const lo = Math.min(...vs), hi = Math.max(...vs);
+      S.edits.forEach((e, k) => { if (!e) return; if (k < lo || k >= hi) S.edits[k] = null; else bytes += e.img.data.length; });
+    }
+    if (bytes <= EDIT_BUDGET || hist.length <= 2) return;
+    hist.shift();
+  }
+}
 // 復原紀錄裡的舊照片：一張原尺寸照片在 iPhone 要 50MB 左右，塗鴉、消除、美顏筆每畫一筆就多一張，
 // 存太多 Safari 會把整頁重新載入（修到一半跳回選照片）。不在畫面上的舊照片壓成檔案，復原時再解開
 const shelving = new WeakSet();
 function shelve(b) {
+  if (b.surf) { shelveSurf(b.surf); return; }
   const c = b.canvas;
   if (!c || shelving.has(b) || !hist.some(h => h.base === b)) return;
   shelving.add(b);
@@ -219,6 +280,18 @@ function shelve(b) {
     if (!blob || b === base || b.canvas !== c) return;
     Object.assign(b, { canvas: null, blob, w: c.width, h: c.height });
     new Set(hist.map(h => h.base)).forEach(strip);
+  }, hasAlpha(c) ? 'image/png' : 'image/jpeg', 0.95);
+}
+// 美顏筆、塗鴉那串：整串共用一張 canvas，一起壓成一個檔案（記住壓的時候在第幾筆）
+function shelveSurf(S) {
+  const c = S.canvas;
+  if (!c || S === base.surf || shelving.has(S) || !hist.some(h => h.base.surf === S)) return;
+  shelving.add(S);
+  c.toBlob(blob => {
+    shelving.delete(S);
+    if (!blob || S === base.surf || S.canvas !== c) return;
+    Object.assign(S, { canvas: null, blob, blobVer: S.ver, w: c.width, h: c.height });
+    hist.forEach(h => { if (h.base.surf === S) h.base.canvas = null; });
   }, hasAlpha(c) ? 'image/png' : 'image/jpeg', 0.95);
 }
 // 壓起來的舊照片：跟現在這張共用的偵測結果（臉、人像）留著；不共用的放掉，復原時再重算
@@ -230,6 +303,17 @@ function strip(b) {
 }
 async function unshelve(b) {
   if (b.canvas) return;
+  const S = b.surf;
+  if (S) {
+    if (!S.canvas) {
+      const bmp = await createImageBitmap(S.blob), c = newCanvas(S.w, S.h);
+      c.getContext('2d').drawImage(bmp, 0, 0); bmp.close?.();
+      Object.assign(S, { canvas: c, ver: S.blobVer, blob: null });
+    }
+    hist.forEach(h => { if (h.base.surf === S) h.base.canvas = S.canvas; });
+    b.canvas = S.canvas;
+    return;
+  }
   const bmp = await createImageBitmap(b.blob), c = newCanvas(b.w, b.h);
   c.getContext('2d').drawImage(bmp, 0, 0); bmp.close?.();
   if (!('facesP' in b)) Object.assign(b, BASE0);
@@ -246,8 +330,6 @@ function applyBase() {
   R.setImage(base.canvas);
   R.setMask(base.mask); R.setMask2(base.mask2);
   R.setSeg(base.matte || base.seg?.person); R.setSegB(base.segB);
-  const o = $('#orig'); o.width = base.canvas.width; o.height = base.canvas.height;
-  o.getContext('2d').drawImage(base.canvas, 0, 0);
   layout(); render();
   if (!base.faces) findFaces();
   if (needSeg() && !base.seg) findPerson(P.bg === 'keep');
@@ -341,7 +423,7 @@ const view = canvasZoom({
   canPan: (e, touch) => !!base && !e.target.closest('.st,.tx') && (!touch || !(tab === 'crop' || (tab === 'light' && P.light))),
   // 手機上平常不顯示縮放按鈕，放大了才出現（點百分比回到全覽）
   unit: () => frameK,
-  onChange: z => { zoomZ = z; syncView(); if (z > 1.15) pickCenterFace(); $('#zPct').textContent = Math.round(frameK * z * 100) + '%'; $('#zoom').classList.toggle('zoomed', z !== 1); },
+  onChange: z => { zoomZ = z; syncView(); if (tab === 'reshape') rsRing(); if (z > 1.15) pickCenterFace(); $('#zPct').textContent = Math.round(frameK * z * 100) + '%'; $('#zoom').classList.toggle('zoomed', z !== 1); },
 });
 $('#zIn').onclick = () => view.zoomStep(1);
 $('#zOut').onclick = () => view.zoomStep(-1);
@@ -358,6 +440,7 @@ function render() {
   if (needMatte() && !base.matteP) getMatte(base);
   raf = requestAnimationFrame(() => {
     raf = 0;
+    if (cmpOn) { R.drawOrig(base.canvas); perfDrawn(); return; }
     const f = liveFilter(), lut = gradeOn(P) ? getGradeLut() : f === 'none' ? null : getLut(f);
     // 皮膚、頭髮另外一套顏色要用皮膚遮罩和分類圖，還沒找過臉就先找
     if ((lut?.skin || lut?.hair) && !base.facesP) findFaces();
@@ -386,13 +469,25 @@ function draw(full) {
   R.render(p, warps, effects(), full || holdFull);
 }
 // 預覽解析度：螢幕上實際有幾個像素就畫幾個（放大時跟著變細），一次跳 √2 倍，縮放時不會每一格都重畫
-let zoomZ = 1;
+let zoomZ = 1, dragging = false;
+const FAST_PX = 1.5e6;
 function syncView() {
   if (!R || !base) return;
   const s = frameK * zoomZ * Math.min(3, devicePixelRatio || 1);
-  const q = Math.min(1, 2 ** (Math.ceil(Math.log2(Math.max(s, 1e-3)) * 2) / 2));
+  let q = Math.min(1, 2 ** (Math.ceil(Math.log2(Math.max(s, 1e-3)) * 2) / 2));
+  // 拖滑桿、推臉、拖燈的時候先畫小一點（最多約 150 萬像素），放開再畫回清楚的。
+  // iPhone 螢幕 3 倍密度，放大看時預覽就是整張 900 萬像素，每秒只畫得出 2～8 格（Anthony 2026-10-27 實測）
+  if (dragging) q = Math.min(q, Math.sqrt(FAST_PX / (base.canvas.width * base.canvas.height)));
   if (q !== R.view) { R.view = q; render(); }
 }
+function setDragging(on) { if (dragging !== on) { dragging = on; syncView(); } }
+// 開始拖：任何滑桿；推臉、打光（拖燈）時在照片上按下。放開手指就畫回清楚的
+addEventListener('pointerdown', e => {
+  if (e.target.matches?.('input[type=range]') || (e.target.closest?.('#wrap') && !pinch.on && (tab === 'reshape' || (tab === 'light' && P.light)))) setDragging(true);
+}, true);
+addEventListener('pointerup', () => setDragging(false), true);
+addEventListener('pointercancel', () => setDragging(false), true);
+addEventListener('pinchstart', () => setDragging(false));
 // 身體塑形：找人體關節，再用人像分割量身體寬度
 function getBody(b) {
   b.bodyP ||= Promise.all([detectBody(b.canvas), getSeg(b), findFaces()]).then(([body, s]) => {
@@ -462,8 +557,9 @@ function syncShape() {
   let sm = { moves: [], pins: [] };
   if (perFace()) base.faces.forEach((f, i) => { const m = shapeMoves([f], PF(i)); sm.moves.push(...m.moves); sm.pins.push(...m.pins); });
   else if (base.faces?.length) sm = shapeMoves(base.faces, P);
-  const lq = liqMoves(P.liq, base.canvas.width, base.canvas.height);
-  R.setDisp(WF.update(base.canvas.width, base.canvas.height, base.faces || [], [...sm.moves, ...lq.moves], sm.pins, lq.boxes));
+  R.setDisp(WF.update(base.canvas.width, base.canvas.height, base.faces || [], sm.moves, sm.pins));
+  // 推臉（重新塑形）另外一張位移場，GPU 上一下一下畫（gl.js liqSync）
+  R.liqSync(P.liq, base.canvas.width, base.canvas.height);
 }
 // 光效、背景、雙重曝光的圖：要用的時候才畫，照片比例變了就重畫
 const texKey = {};
@@ -584,8 +680,10 @@ function commit() {
   hist = hist.slice(0, hi + 1);
   hist.push({ base, P: clone(P), texts: clone(texts), stickers: clone(stickers) });
   if (hist.length > 50) hist.shift();  // 醒圖：最多復原 50 步
-  // 塗鴉、消除每一步都是一張新的整張照片：舊的會壓成檔案（見 shelve），最多留 15 張不同的照片
-  while (new Set(hist.map(h => h.base)).size > 15) hist.shift();
+  // 消除、合併每一步都是一張新的整張照片：舊的會壓成檔案（見 shelve），最多留 15 張不同的照片
+  // （美顏筆、塗鴉畫在同一張上，整串算一張）
+  while (new Set(hist.map(h => h.base.surf || h.base)).size > 15) hist.shift();
+  pruneEdits();
   hi = hist.length - 1;
   syncHist();
 }
@@ -600,7 +698,8 @@ async function restore(i) {
   }
   hi = i;
   P = clone(s.P); texts = clone(s.texts); stickers = clone(s.stickers); selText = -1; selSt = -1;
-  if (changed) { const old = base; base = s.base; applyBase(); later(() => shelve(old)); } else render();
+  if (changed && s.base.surf && s.base.surf === base.surf) { seekSurf(s.base.surf, s.base.ver); base = s.base; render(); }
+  else if (changed) { if (s.base.surf) seekSurf(s.base.surf, s.base.ver); const old = base; base = s.base; applyBase(); shelveLater(old); } else render();
   showTab(tab); drawTexts(); drawStickers(); syncHist();
 }
 function syncHist() { $('#bUndo').disabled = hi <= 0; $('#bRedo').disabled = hi >= hist.length - 1; }
@@ -608,7 +707,9 @@ $('#bUndo').onclick = () => hi > 0 && restore(hi - 1);
 $('#bRedo').onclick = () => hi < hist.length - 1 && restore(hi + 1);
 
 // 按住看原圖
-const cmp = on => { $('#wrap').classList.toggle('cmp', on); };
+// 看原圖：畫在同一張 WebGL 畫布上（以前疊一張 2D 畫布，iPhone 放大時會糊、位置也會跳）
+let cmpOn = false;
+const cmp = on => { if (cmpOn === on) return; cmpOn = on; $('#wrap').classList.toggle('cmp', on); if (!on) R?.dropOrig(); render(); };
 $('#bCmp').addEventListener('pointerdown', e => { e.preventDefault(); cmp(true); });
 ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => $('#bCmp').addEventListener(ev, () => cmp(false)));
 
@@ -827,8 +928,8 @@ function paramRows(box, list) {
 
 // 消除筆在 erase.js，這裡把它要用的東西傳過去
 const eraseApp = { get base() { return base; }, setBase, commit, item, hideSlider, showTab, toast, busy };
-doodleInput($('#wrap'), { get base() { return base; }, tab: () => tab, setBase, commit });
-beautyBrushInput($('#wrap'), { get base() { return base; }, tab: () => tab, setBase, commit });
+doodleInput($('#wrap'), { get base() { return base; }, tab: () => tab, paint: paintPatch, commit });
+beautyBrushInput($('#wrap'), { get base() { return base; }, tab: () => tab, paint: paintPatch, commit });
 function tabEraseHere(box) { tabErase(box, eraseApp); }
 
 function tabAdjust(box) { paramItems(box, ADJUST, 'brightness'); }
@@ -1160,13 +1261,18 @@ function tabReshape(box) {
   rsRing();
 }
 // 筆刷大小的圓圈（調大小時顯示在照片中間，畫的時候跟著手指）
+// 圓圈放在不跟著照片縮放的那層（#stage），用螢幕座標畫：放在照片那層的話，放大時是把圓圈的圖跟著放大，會變糊
 function rsRing(p) {
   let d = $('#rsring');
-  if (!d) { d = document.createElement('div'); d.id = 'rsring'; $('#wrap').append(d); }
+  if (!d) { d = document.createElement('div'); d.id = 'rsring'; $('#stage').append(d); }
   d.hidden = !(base && tab === 'reshape');
   if (d.hidden) return;
-  const W = base.canvas.width, H = base.canvas.height, r = liqRadius(rsVal[rsTool].size, W, H);
-  Object.assign(d.style, { width: r * 2 / W * 100 + '%', height: r * 2 / H * 100 + '%', left: (p ? p.x / W : 0.5) * 100 + '%', top: (p ? p.y / H : 0.5) * 100 + '%' });
+  const W = base.canvas.width, H = base.canvas.height, s = $('#stage').getBoundingClientRect(), w = $('#wrap').getBoundingClientRect();
+  const k = w.width / W, rr = liqRadius(rsVal[rsTool].size, W, H) * k;
+  // 沒在畫的時候放在看得到的那塊照片中間
+  const x = p ? w.left + p.x * k : (Math.max(w.left, s.left) + Math.min(w.right, s.right)) / 2;
+  const y = p ? w.top + p.y * k : (Math.max(w.top, s.top) + Math.min(w.bottom, s.bottom)) / 2;
+  Object.assign(d.style, { width: rr * 2 + 'px', height: rr * 2 + 'px', left: x - s.left + 'px', top: y - s.top + 'px' });
   d.classList.toggle('idle', !p);
 }
 (() => {

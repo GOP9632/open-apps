@@ -15,6 +15,8 @@ export function perfDrawn() {
   requestAnimationFrame(() => { const n = performance.now(); lat.push([n, n - t]); frames.push(n); show(); });
 }
 if (perfOn) addEventListener('pointerup', () => { tUp = performance.now(); }, true);
+// 開新照片不算（那是讀檔，不是放開手指）
+export function perfSkip() { tUp = 0; }
 // 換了一張新照片（筆刷畫進照片、消除…）
 export function perfBase() {
   if (!perfOn || !tUp) return;

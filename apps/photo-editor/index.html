@@ -47,7 +47,9 @@ button{background:none;border:0;padding:0;cursor:pointer}
 #stage.panning{cursor:grabbing}
 #zoom{position:absolute;left:12px;bottom:12px;display:none;align-items:center;gap:2px;background:rgba(23,23,26,.85);border:1px solid var(--line2);border-radius:10px;padding:2px;z-index:6}
 #zoom.on{display:flex}
-@media (max-width:899px){#zoom.on:not(.zoomed){display:none}}
+@media (max-width:899px){#zoom.on:not(.zoomed){display:none}
+  /* iPhone Safari 會留下可橫向捲動那兩排的舊畫面（選過的分頁、選項看起來還亮著）：給它們自己的圖層，每次都重畫 */
+  .tabs,.items{transform:translateZ(0)}}
 #zoom button{height:30px;min-width:30px;padding:0 6px;border-radius:8px;color:var(--text2);font-size:13px;font-variant-numeric:tabular-nums}
 #zoom button:hover{background:var(--line2);color:var(--text)}
 #zoom #zPct{min-width:52px}
@@ -59,8 +61,6 @@ button{background:none;border:0;padding:0;cursor:pointer}
 #pop{position:absolute;inset:0;width:100%;height:100%;display:none}
 #wrap.popon #pop{display:block}
 .st canvas{width:100%;height:100%;display:block}
-#orig{position:absolute;inset:0;width:100%;height:100%;display:none}
-#wrap.cmp #orig{display:block}
 .badge{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:rgba(0,0,0,.55);padding:4px 10px;border-radius:10px;font-size:13px;display:none}
 #wrap.cmp .badge{display:block}
 
@@ -285,7 +285,6 @@ input[type=range].grad::-moz-range-progress{background:transparent}
     <div id="wrap">
       <canvas id="gl"></canvas>
       <canvas id="pop"></canvas>
-      <canvas id="orig"></canvas>
       <div class="badge">原圖</div>
       <div id="stickers"></div>
       <div id="texts"></div>

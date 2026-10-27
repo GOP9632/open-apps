@@ -18,15 +18,50 @@ void main(){
 
 // 臉型：主 shader 畫完後再照位移圖取樣一次（warpfield.js）。
 // 位移圖 x、y 各用高低兩個通道存 16 位元，uStep 是一格代表幾個像素
+// 推臉的位移場自己做雙線性內插（texelFetch 四個點、解碼後再混）：手機 GPU 內插 8 位元貼圖的精度不夠，
+// 高位通道一內插就會差好幾格，推過的地方會有細小的鋸齒
+const LIQ_GLSL = `
+vec2 liqAt(sampler2D t, ivec2 c, ivec2 n, float s){ vec4 e = floor(texelFetch(t, clamp(c, ivec2(0), n - 1), 0) * 255.0 + 0.5); return (vec2(e.r * 256.0 + e.b, e.g * 256.0 + e.a) - 32768.0) * s; }
+vec2 liq(sampler2D t, vec2 uv, float s){
+  ivec2 n = textureSize(t, 0); vec2 g = uv * vec2(n) - 0.5, f = fract(g); ivec2 c = ivec2(floor(g));
+  return mix(mix(liqAt(t, c, n, s), liqAt(t, c + ivec2(1, 0), n, s), f.x), mix(liqAt(t, c + ivec2(0, 1), n, s), liqAt(t, c + ivec2(1, 1), n, s), f.x), f.y);
+}`;
 const FS_DISP = `#version 300 es
-precision highp float;
-in vec2 vUV; uniform sampler2D uTex, uDisp, uSegB; uniform vec2 uSize; uniform float uStep, uProtect; out vec4 o;
+precision highp float; precision highp int;
+in vec2 vUV; uniform sampler2D uTex, uDisp, uSegB, uLiq; uniform vec2 uSize; uniform float uStep, uProtect, uLiqStep; out vec4 o;
+vec2 dec(vec4 e, float s){ e *= 255.0; return (vec2(e.r * 256.0 + e.b, e.g * 256.0 + e.a) - 32768.0) * s; }${LIQ_GLSL}
 void main(){
-  vec4 e = texture(uDisp, vUV) * 255.0;
-  vec2 d = (vec2(e.r * 256.0 + e.b, e.g * 256.0 + e.a) - 32768.0) * uStep;
+  // 推臉（重新塑形）在最上層：先照推臉的位移找到「臉型變形後的圖」上的哪一點，再照臉型的位移回原圖
+  vec2 q = vUV;
+  if (uLiqStep > 0.0) q += liq(uLiq, vUV, uLiqStep) / uSize;
+  vec2 d = (q - vUV) * uSize;
+  if (uStep > 0.0) d += dec(texture(uDisp, q), uStep);
   // 背景保護（同主 shader）：位移乘上擴張羽化過的人像遮罩
   if (uProtect > 0.5) d *= smoothstep(0.02, 0.3, texture(uSegB, vUV).r);
   o = texture(uTex, vUV + d / uSize);
+}`;
+
+// 推臉的位移場：每個像素記「要回（臉型變形後的）圖上哪裡取」，跟 warpfield 一樣用 RGBA8 存 16 位元。
+// 每推一下就改一次位移場：新位移(p) = 舊位移(q) + q − p，q 是這一下之前 p 的內容在哪。
+// 所以每一下都是照「現在畫面上看到的樣子」推（跟醒圖、Photoshop 液化一樣），推多少次都不會疊出坑或摺起來
+//   uT：0 推（uV = 位移）、1 脹大／縮小（uV.x = 比例）、2 旋轉（uV.x = 角度）、3 還原（uV.x = 還原多少）
+const FS_LIQ = `#version 300 es
+precision highp float; precision highp int;
+in vec2 vUV; uniform sampler2D uTex; uniform vec2 uImg, uV; uniform vec3 uM; uniform float uStep; uniform int uT; out vec4 o;${LIQ_GLSL}
+vec4 enc(vec2 d){ vec2 c = clamp(floor(d / uStep + 0.5) + 32768.0, 0.0, 65535.0), hi = floor(c / 256.0), lo = c - hi * 256.0; return vec4(hi.x, hi.y, lo.x, lo.y) / 255.0; }
+void main(){
+  ivec2 px = ivec2(gl_FragCoord.xy);
+  vec4 cur = texelFetch(uTex, px, 0);
+  vec2 p = vUV * uImg, rel = p - uM.xy;
+  float t2 = dot(rel, rel) / (uM.z * uM.z);
+  if (t2 >= 1.0) { o = cur; return; }
+  float f = (1.0 - t2) * (1.0 - t2);
+  if (uT == 3) { o = enc(liqAt(uTex, px, textureSize(uTex, 0), uStep) * (1.0 - uV.x * f)); return; }
+  vec2 q;
+  if (uT == 0) q = p - uV * f;
+  else if (uT == 1) q = uM.xy + rel * (1.0 - uV.x * f);
+  else { float th = -uV.x * f, c = cos(th), s = sin(th); q = uM.xy + vec2(c * rel.x - s * rel.y, s * rel.x + c * rel.y); }
+  o = enc(liq(uTex, q / uImg, uStep) + q - p);
 }`;
 
 const FS_COPY = `#version 300 es
@@ -796,7 +831,7 @@ export class Renderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    this.pCopy = program(gl, FS_COPY); this.pDisp = program(gl, FS_DISP); this.fbPost = this.fbo();
+    this.pCopy = program(gl, FS_COPY); this.pDisp = program(gl, FS_DISP); this.fbPost = this.fbo(); this.pLiq = program(gl, FS_LIQ); this.lq = null;
     this.pBil = program(gl, FS_BILATERAL);
     this.pMain = program(gl, FS_MAIN);
     this.pGauss = program(gl, FS_GAUSS); this.pW = program(gl, FS_WCOPY); this.pBokeh = program(gl, FS_BOKEH); this.fbK = this.fbo(); this.bkKey = '';
@@ -854,7 +889,21 @@ export class Renderer {
   // w、h：照片的原尺寸（src 可能是縮小的預覽，座標一律照原尺寸算）
   setImage(src, w = src.width, h = src.height) {
     this.w = w; this.h = h;
-    this.upload(this.tImg, src); this.bkKey = '';
+    this.upload(this.tImg, src); this.imgW = src.width; this.imgH = src.height;
+    this.derive();
+  }
+  // 照片只改了一塊（美顏筆、塗鴉一筆、復原一筆）：只傳那一塊，不用整張重傳。貼圖現在不是原尺寸的照片（開著膚質、頭髮效果）就回傳 false
+  patchImage(img, x, y) {
+    if (this.imgW !== this.w || this.imgH !== this.h) return false;
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.tImg);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    return true;
+  }
+  // 照片換了以後要重算的：磨皮用的模糊圖、背景模糊
+  derive() {
+    this.bkKey = '';
     // 磨皮用的低解析度保邊模糊圖
     const k = SMOOTH_SHORT / Math.min(this.w, this.h);
     const sw = Math.max(1, Math.round(this.w * Math.min(1, k))), sh = Math.max(1, Math.round(this.h * Math.min(1, k)));
@@ -975,7 +1024,7 @@ export class Renderer {
     if (this.canvas.width !== ow || this.canvas.height !== oh) { this.canvas.width = ow; this.canvas.height = oh; }
     if (fx.bokeh) this.bokeh(fx.bokeh);
     // 有臉型變形時先畫到暫存，最後再變形一次畫到畫面
-    const post = this.disp?.step > 0;
+    const lq = this.lq?.n ? this.lq : null, post = this.disp?.step > 0 || !!lq;
     if (post) this.sizeFbo(this.fbPost, ow, oh);
     this.pass(this.pMain, post ? this.fbPost : null, ow, oh);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
@@ -1052,8 +1101,10 @@ export class Renderer {
     if (post) {
       const d = this.pDisp;
       this.pass(d, null, ow, oh, this.fbPost.t);
-      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.disp.tex); gl.uniform1i(d.u.uDisp, 1);
-      gl.uniform2f(d.u.uSize, this.w, this.h); gl.uniform1f(d.u.uStep, this.disp.step);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.disp?.step > 0 ? this.disp.tex : null); gl.uniform1i(d.u.uDisp, 1);
+      gl.uniform2f(d.u.uSize, this.w, this.h); gl.uniform1f(d.u.uStep, this.disp?.step > 0 ? this.disp.step : 0);
+      gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, lq ? lq.A.t : null); gl.uniform1i(d.u.uLiq, 3);
+      gl.uniform1f(d.u.uLiqStep, lq ? lq.step : 0);
       gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.tSegB); gl.uniform1i(d.u.uSegB, 2);
       gl.uniform1f(d.u.uProtect, p.bgProtect === 0 ? 0 : 1);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -1061,4 +1112,51 @@ export class Renderer {
   }
   // 臉型位移圖：{ tex, step }，step = 0 表示沒有
   setDisp(d) { this.disp = d; }
+  // 推臉的位移場：list 是 P.liq（每一下，座標除以照片長邊）。只在後面加的時候只算新加的；
+  // 復原、換照片時從頭重算（每一下只畫筆刷附近那一塊，幾百下也很快）
+  liqSync(list, W, H) {
+    const gl = this.gl, M = Math.max(W, H);
+    if (!list?.length) { if (this.lq) this.lq.n = 0; return; }
+    const k = Math.min(1, 1536 / M), fw = Math.max(1, Math.round(W * k)), fh = Math.max(1, Math.round(H * k));
+    let L = this.lq;
+    if (!L) L = this.lq = { A: this.fbo(), B: this.fbo(), n: 0, last: null };
+    const fresh = L.W !== W || L.H !== H || list.length < L.n || (L.n && list[L.n - 1] !== L.last);
+    if (fresh || !L.n) {
+      this.sizeFbo(L.A, fw, fh); this.sizeFbo(L.B, fw, fh);
+      Object.assign(L, { W, H, fw, fh, n: 0, step: M / 60000 });
+      gl.bindFramebuffer(gl.FRAMEBUFFER, L.A.f); gl.viewport(0, 0, fw, fh);
+      gl.clearColor(128 / 255, 128 / 255, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+    if (L.n === list.length) return;
+    const u = this.pLiq.u, s = fw / W;
+    gl.enable(gl.SCISSOR_TEST);
+    for (let i = L.n; i < list.length; i++) {
+      const m = list[i], cx = m.cx * M, cy = m.cy * M, r = m.r * M;
+      const x0 = Math.max(0, Math.floor((cx - r) * s) - 1), y0 = Math.max(0, Math.floor((cy - r) * s) - 1);
+      const x1 = Math.min(fw, Math.ceil((cx + r) * s) + 1), y1 = Math.min(fh, Math.ceil((cy + r) * s) + 1);
+      if (x1 <= x0 || y1 <= y0) continue;
+      this.pass(this.pLiq, L.B, fw, fh, L.A.t);
+      gl.scissor(x0, y0, x1 - x0, y1 - y0);
+      gl.uniform2f(u.uImg, W, H); gl.uniform1f(u.uStep, L.step); gl.uniform3f(u.uM, cx, cy, r); gl.uniform1i(u.uT, m.t);
+      gl.uniform2f(u.uV, m.t === 0 ? m.a * M : m.a, m.t === 0 ? m.b * M : 0);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      // 改好的那一塊抄回 A
+      gl.bindTexture(gl.TEXTURE_2D, L.A.t);
+      gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, x0, y0, x0, y0, x1 - x0, y1 - y0);
+    }
+    gl.disable(gl.SCISSOR_TEST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    L.n = list.length; L.last = list[list.length - 1];
+  }
+  // 看原圖：在同一張畫布上直接畫原圖（跟修好的圖一樣大小、一樣位置，放大時一樣清楚）。原圖貼圖放開就丟掉，不多佔記憶體
+  drawOrig(src) {
+    const gl = this.gl, ow = Math.max(1, Math.round(this.w * this.view)), oh = Math.max(1, Math.round(this.h * this.view));
+    if (this.canvas.width !== ow || this.canvas.height !== oh) { this.canvas.width = ow; this.canvas.height = oh; }
+    if (!this.tOrig) this.tOrig = this.tex();
+    if (this.origSrc !== src) { this.upload(this.tOrig, src); this.origSrc = src; }
+    this.pass(this.pCopy, null, ow, oh, this.tOrig);
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  dropOrig() { if (this.tOrig) { this.gl.deleteTexture(this.tOrig); this.tOrig = null; this.origSrc = null; } }
 }

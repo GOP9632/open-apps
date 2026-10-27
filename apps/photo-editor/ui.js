@@ -100,6 +100,8 @@ export function nudge(dir, big) {
 const STEPS = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.2, 1.4, 1.6, 1.8, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 12];
 // 手機兩指捏合中：塗抹、推臉這些工具看到就先停筆（第二指放下時會發 pinchstart）
 export const pinch = { on: false };
+// 照片現在放大幾倍：筆刷大小是照「螢幕上看起來多大」算的，放大照片筆刷就跟著變細，才能修細的地方
+export const stageZoom = { z: 1 };
 export function canvasZoom({ stage, box, onChange, canPan, unit = () => 1 }) {
   let z = 1, x = 0, y = 0;
   const lim = nz => { const k = unit() || 1; return Math.max(Math.min(1, STEPS[0] / k), Math.min(Math.max(1, STEPS.at(-1) / k), nz)); };
@@ -110,6 +112,7 @@ export function canvasZoom({ stage, box, onChange, canPan, unit = () => 1 }) {
     if (z <= 1) { x = 0; y = 0; }
     x = Math.max(-lx, Math.min(lx, x)); y = Math.max(-ly, Math.min(ly, y));
     box.style.transform = z === 1 && !x && !y ? '' : `translate(${x}px,${y}px) scale(${z})`;
+    stageZoom.z = z;
     stage.classList.toggle('pan', z > 1);
     onChange?.(z);
   };
