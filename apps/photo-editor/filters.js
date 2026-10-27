@@ -69,17 +69,46 @@ export const filterFn = id => !id || id === 'none' ? null : FILTERS.find(f => f.
 export const skinFilterFn = id => xtFn(id, 'skin');
 export const hairFilterFn = id => xtFn(id, 'hair');
 
-export function bakeLUT(fn) {
+// n < 64：只在 n³ 個格點算顏色函式，其他用三線性內插補滿（拖滑桿時用，64³ 要算 26 萬次太慢）
+export function bakeLUT(fn, n = 64) {
   const c = document.createElement('canvas');
   c.width = c.height = 512;
   const ctx = c.getContext('2d');
   const img = ctx.createImageData(512, 512), d = img.data;
-  for (let bi = 0; bi < 64; bi++) {
-    const tx = (bi % 8) * 64, ty = Math.floor(bi / 8) * 64;
-    for (let gi = 0; gi < 64; gi++) for (let ri = 0; ri < 64; ri++) {
-      const o = ((ty + gi) * 512 + tx + ri) * 4;
-      const out = fn ? fn(ri / 63, gi / 63, bi / 63) : [ri / 63, gi / 63, bi / 63];
-      d[o] = out[0] * 255 + 0.5; d[o + 1] = out[1] * 255 + 0.5; d[o + 2] = out[2] * 255 + 0.5; d[o + 3] = 255;
+  if (fn && n < 64) {
+    const g = new Float32Array(n * n * n * 3);
+    for (let b = 0, q = 0; b < n; b++) for (let gg = 0; gg < n; gg++) for (let r = 0; r < n; r++, q += 3) {
+      const o = fn(r / (n - 1), gg / (n - 1), b / (n - 1)); g[q] = o[0]; g[q + 1] = o[1]; g[q + 2] = o[2];
+    }
+    // 每一軸 64 格落在哪兩個格點之間、權重多少
+    const i0 = new Int32Array(64), w1 = new Float32Array(64);
+    for (let i = 0; i < 64; i++) { const u = i / 63 * (n - 1), a = Math.min(n - 2, Math.floor(u)); i0[i] = a; w1[i] = u - a; }
+    const sr = 3, sg = n * 3, sb = n * n * 3;
+    for (let bi = 0; bi < 64; bi++) {
+      const tx = (bi % 8) * 64, ty = Math.floor(bi / 8) * 64, ob = i0[bi] * sb, fb = w1[bi];
+      for (let gi = 0; gi < 64; gi++) {
+        const og = ob + i0[gi] * sg, fg = w1[gi];
+        for (let ri = 0; ri < 64; ri++) {
+          const q = og + i0[ri] * sr, fr = w1[ri], o = ((ty + gi) * 512 + tx + ri) * 4;
+          for (let k = 0; k < 3; k++) {
+            const p = q + k;
+            const c0 = g[p] + (g[p + sr] - g[p]) * fr, c1 = g[p + sg] + (g[p + sg + sr] - g[p + sg]) * fr;
+            const c2 = g[p + sb] + (g[p + sb + sr] - g[p + sb]) * fr, c3 = g[p + sb + sg] + (g[p + sb + sg + sr] - g[p + sb + sg]) * fr;
+            const e0 = c0 + (c1 - c0) * fg, e1 = c2 + (c3 - c2) * fg;
+            d[o + k] = (e0 + (e1 - e0) * fb) * 255 + 0.5;
+          }
+          d[o + 3] = 255;
+        }
+      }
+    }
+  } else {
+    for (let bi = 0; bi < 64; bi++) {
+      const tx = (bi % 8) * 64, ty = Math.floor(bi / 8) * 64;
+      for (let gi = 0; gi < 64; gi++) for (let ri = 0; ri < 64; ri++) {
+        const o = ((ty + gi) * 512 + tx + ri) * 4;
+        const out = fn ? fn(ri / 63, gi / 63, bi / 63) : [ri / 63, gi / 63, bi / 63];
+        d[o] = out[0] * 255 + 0.5; d[o + 1] = out[1] * 255 + 0.5; d[o + 2] = out[2] * 255 + 0.5; d[o + 3] = 255;
+      }
     }
   }
   ctx.putImageData(img, 0, 0);
