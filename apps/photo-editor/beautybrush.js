@@ -26,13 +26,16 @@ export const bbRadius = (size, W, H) => Math.min(W, H) * (0.01 + 0.11 * size / 1
 
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const blur = (a, w, h, r) => boxBlur(Float32Array.from(a), w, h, Math.max(1, r));
-// 加權模糊：sum(a·wt) / sum(wt)
-function wblur(a, wt, w, h, r) {
-  const n = a.length, aw = new Float32Array(n), ww = Float32Array.from(wt);
-  for (let i = 0; i < n; i++) aw[i] = a[i] * wt[i];
-  boxBlur(aw, w, h, r); boxBlur(ww, w, h, r);
-  for (let i = 0; i < n; i++) aw[i] = ww[i] > 1e-6 ? aw[i] / ww[i] : a[i];
-  return aw;
+// 加權模糊：sum(a·wt) / sum(wt)；三個顏色共用一次權重的模糊
+function wblur3(c, wt, w, h, r) {
+  const n = wt.length, ww = blur(wt, w, h, r);
+  return c.map(a => {
+    const aw = new Float32Array(n);
+    for (let i = 0; i < n; i++) aw[i] = a[i] * wt[i];
+    const b = blur(aw, w, h, r);
+    for (let i = 0; i < n; i++) b[i] = ww[i] > 1e-6 ? b[i] / ww[i] : a[i];
+    return b;
+  });
 }
 
 // 效果：c = [R, G, B]（0~1，Float32Array），回傳修好的 [R, G, B]；R 是筆刷半徑，S 是照片短邊
@@ -60,14 +63,14 @@ export function effect(tool, c, w, h, R, k, S = 1000, m = null) {
       ok[i] = sstep(-0.06, -0.02, L[i] - Lb[i]) * (1 - sstep(0.03, 0.07, red[i] - redB[i]));
       wt[i] = (1 - m[i]) + 0.03 * ok[i] + 1e-5;
     }
-    const fill = c.map(a => wblur(a, wt, w, h, Math.max(3, R * 0.9)));
+    const fill = wblur3(c, wt, w, h, Math.max(3, R * 0.9));
     // 紋理也不算斑點的像素，斑點邊緣才不會留一圈亮邊
-    const okw = Float32Array.from(ok, x => x + 1e-3), fine = c.map(a => wblur(a, okw, w, h, 1.5));
+    const okw = Float32Array.from(ok, x => x + 1e-3), fine = wblur3(c, okw, w, h, 1.5);
     for (let i = 0; i < n; i++) for (let j = 0; j < 3; j++) out[j][i] += (fill[j][i] + (c[j][i] - fine[j][i]) * ok[i] - c[j][i]) * k;
   } else if (tool === 'circle' || tool === 'fold') {
     // 跟周圍亮的皮膚比，暗多少補多少（只補低頻，紋理留著）
     const fold = tool === 'fold', r = Math.max(3, R * (fold ? 0.7 : 0.6));
-    const wt = Float32Array.from(L, x => x ** 4 + 1e-4), ref = c.map(a => wblur(a, wt, w, h, r));
+    const wt = Float32Array.from(L, x => x ** 4 + 1e-4), ref = wblur3(c, wt, w, h, r);
     const low = c.map(a => blur(a, w, h, Math.max(1.5, R * 0.08)));
     const cap = fold ? 0.3 : 0.2, g = Math.min(1, (fold ? 1.4 * 0.8 : 1.5) * k);
     // 差太多的是眼珠、眉毛、嘴縫這種本來就黑的地方，不補
@@ -92,7 +95,7 @@ export function effect(tool, c, w, h, R, k, S = 1000, m = null) {
     // 比周圍亮很多的亮點是油光：換成周圍不反光的皮膚，留一半紋理
     const r = Math.max(3, R * 0.4), Lb = blur(L, w, h, r), sh = new Float32Array(n);
     for (let i = 0; i < n; i++) sh[i] = sstep(0.02, 0.1, L[i] - Lb[i]) * sstep(0.5, 0.8, L[i]);
-    const wt = Float32Array.from(sh, x => 1 - x + 1e-4), ref = c.map(a => wblur(a, wt, w, h, r)), fine = c.map(a => blur(a, w, h, 1.5));
+    const wt = Float32Array.from(sh, x => 1 - x + 1e-4), ref = wblur3(c, wt, w, h, r), fine = c.map(a => blur(a, w, h, 1.5));
     boxBlur(sh, w, h, Math.max(1, R * 0.05));
     for (let i = 0; i < n; i++) {
       const f = Math.min(1, sh[i] * 1.3) * k;

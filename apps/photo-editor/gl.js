@@ -907,7 +907,8 @@ export class Renderer {
     const c = src?.cls || null;
     if (c !== this.cls) { this.cls = c; if (this.segSrc) this.upSeg(); }
   }
-  setSeg(src) { this.segSrc = src || null; this.upSeg(); this.blurs(); this.bkKey = ''; }
+  // 換照片但人像遮罩沒變（塗鴉、美顏筆每畫一筆都會換一張照片）就不用重傳：原尺寸遮罩重組一次要好幾百毫秒
+  setSeg(src) { src ||= null; if (src !== this.segSrc || !this.segUp) { this.segSrc = src; this.upSeg(); this.segUp = true; } this.blurs(); this.bkKey = ''; }
   // uSeg：R = 人像；有分類圖時 G、B、A 放分類圖的 G、B、A（頭髮和五官、皮膚、鬍子，見 ai.js）。
   // 主畫面的貼圖單元已經用滿 16 個（iPhone 的上限），所以分類圖不另外佔一個
   upSeg() {

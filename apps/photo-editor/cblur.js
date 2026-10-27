@@ -42,23 +42,30 @@ function boxRGBA(d, w, h, r) {
   }
 }
 
-// 單通道三次方框模糊（就地），邊緣用最邊上的值
+// 單通道三次方框模糊（就地），邊緣用最邊上的值。
+// 橫向一列一列滑動加總；直向整列一起加（記憶體連續，比一行一行往下跳快一倍）
 export function boxBlur(a, w, h, r, passes = 3) {
   r = Math.round(r);
   if (r < 1) return a;
-  const b = new Float32Array(Math.max(w, h)), inv = 1 / (2 * r + 1);
+  const inv = 1 / (2 * r + 1), row = new Float32Array(w), s = new Float32Array(w);
+  const src = a, dst = new Float32Array(a.length);
   for (let p = 0; p < passes; p++) {
     for (let y = 0; y < h; y++) {
-      const o = y * w; let s = 0;
-      for (let x = -r; x <= r; x++) s += a[o + Math.min(w - 1, Math.max(0, x))];
-      for (let x = 0; x < w; x++) { b[x] = s * inv; s += a[o + Math.min(w - 1, x + r + 1)] - a[o + Math.max(0, x - r)]; }
-      for (let x = 0; x < w; x++) a[o + x] = b[x];
+      const o = y * w, L = src[o], Rv = src[o + w - 1];
+      let acc = 0;
+      for (let x = -r; x <= r; x++) acc += x < 0 ? L : x >= w ? Rv : src[o + x];
+      for (let x = 0; x < w; x++) {
+        row[x] = acc * inv;
+        const ai = x + r + 1, si = x - r;
+        acc += (ai < w ? src[o + ai] : Rv) - (si >= 0 ? src[o + si] : L);
+      }
+      dst.set(row, o);
     }
-    for (let x = 0; x < w; x++) {
-      let s = 0;
-      for (let y = -r; y <= r; y++) s += a[Math.min(h - 1, Math.max(0, y)) * w + x];
-      for (let y = 0; y < h; y++) { b[y] = s * inv; s += a[Math.min(h - 1, y + r + 1) * w + x] - a[Math.max(0, y - r) * w + x]; }
-      for (let y = 0; y < h; y++) a[y * w + x] = b[y];
+    s.fill(0);
+    for (let y = -r; y <= r; y++) { const o = Math.min(h - 1, Math.max(0, y)) * w; for (let x = 0; x < w; x++) s[x] += dst[o + x]; }
+    for (let y = 0; y < h; y++) {
+      const o = y * w, ao = Math.min(h - 1, y + r + 1) * w, so = Math.max(0, y - r) * w;
+      for (let x = 0; x < w; x++) { src[o + x] = s[x] * inv; s[x] += dst[ao + x] - dst[so + x]; }
     }
   }
   return a;
