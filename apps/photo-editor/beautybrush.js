@@ -14,6 +14,7 @@
 // 算好的結果寫進照片（app 的 paintPatch），復原只存改到的那一塊；遮罩、原圖的改動跟著那一步一起對調。
 import { pinch, stageZoom } from './ui.js';
 import { boxBlur } from './cblur.js';
+import { gpuMix, gpuBlem, gpuWarm, gpuFree } from './bbgpu.js';
 
 export const BRUSHES = [
   { id: 'smooth', name: '磨皮', str: 60 },
@@ -101,7 +102,7 @@ function session(canvas, v0) {
     canvas, ctx: canvas.getContext('2d'), W, H, S, R0, v0,
     mw: Math.max(1, Math.round(W * ms)), mh: Math.max(1, Math.round(H * ms)),
     hw: Math.max(1, Math.round(W * hs)), hh: Math.max(1, Math.round(H * hs)),
-    ntx: Math.ceil(W / TS), A: {}, box: {}, O: new Map(), hel: {}, dirty: [],
+    ntx: Math.ceil(W / TS), A: {}, box: {}, O: new Map(), hel: {}, hp: [], dirty: [],
     re: loc[0], rt: loc[1], ro: loc[2], mg: 3 * Math.max(...loc, 2) + 2,
   };
   ses.Oh = shrink(canvas, ses.hw, ses.hh);
@@ -156,7 +157,7 @@ function writeO(ses, x0, y0, x1, y1, d) {
   });
   ses.dirty.push([x0, y0, x1, y1]);
 }
-// 除斑改過「開始之前的照片」：小圖那幾格重算，各筆的模糊下次用到時重算
+// 除斑改過「開始之前的照片」：小圖那幾格重算，記下來（ses.hp），各筆的效果下次用到時只重算那一圈
 function fresh(ses) {
   if (!ses.dirty.length) return;
   const { W, H, hw, hh, Oh } = ses, sx = hw / W, sy = hh / H;
@@ -174,13 +175,20 @@ function fresh(ses) {
       const r = acc[o] / c, g = acc[o + 1] / c, b = acc[o + 2] / c;
       Oh[0][q] = r; Oh[1][q] = g; Oh[2][q] = b; Oh[3][q] = 0.299 * r + 0.587 * g + 0.114 * b;
     }
+    ses.hp.push([i0, j0, i1, j1]);
   }
-  ses.dirty = []; ses.hel = {};
+  ses.dirty = [];
 }
-// 各筆在小圖上只算一次的部分
+// 各筆在小圖上只算一次的部分；之後除斑改到的那幾塊（seen 之後的 ses.hp）用到時才補算
 function hel(ses, t) {
-  if (ses.hel[t]) return ses.hel[t];
-  const { hw: w, hh: h, Oh: O, R0, S } = ses, k = w / ses.W, n = w * h, c = O.slice(0, 3), L = O[3];
+  let o = ses.hel[t];
+  if (!o) { o = ses.hel[t] = helCalc(t, ses.Oh, ses.hw, ses.hh, ses.R0, ses.S, ses.hw / ses.W); o.seen = ses.hp.length; }
+  while (o.seen < ses.hp.length) helPatch(ses, t, o, ...ses.hp[o.seen++]);
+  return o;
+}
+// O：小圖（R G B L）、w × h；k：小圖對原圖的比例
+function helCalc(t, O, w, h, R0, S, k) {
+  const n = w * h, c = O.slice(0, 3), L = O[3];
   let o = {};
   if (t === 'smooth') {
     // 醒圖：短邊 324px 縮圖上 9 點方框、間距 1.5px，約短邊的 1.5%
@@ -206,7 +214,30 @@ function hel(ses, t) {
   } else if (t === 'texture') {
     o = { b2: c.map(a => blur(a, w, h, R0 * 0.25 * k)) };
   }
-  return ses.hel[t] = o;
+  return o;
+}
+// 小圖上一個像素改了，各筆的效果最遠會影響到幾格（三次方框模糊一次影響 3r 格，模糊完再模糊就加起來）
+function helReach(t, R0, S, k) {
+  const r = x => 3 * Math.round(Math.max(1, x));
+  if (t === 'smooth') return 2 * r(S * 0.015 * k) + 2;
+  if (t === 'circle' || t === 'fold') return Math.max(r(R0 * (t === 'fold' ? 0.7 : 0.6) * k), r(R0 * 0.08 * k)) + 2;
+  if (t === 'oil') return 2 * r(R0 * 0.4 * k) + 2;
+  if (t === 'texture') return r(R0 * 0.25 * k) + 2;
+  return 0;
+}
+// 除斑改了小圖的 [i0,i1)×[j0,j1)：這支筆的效果只重算受影響的那圈（以前每點一下痘痘，用過的每支筆都整張重算，
+// 七支筆都用過時一筆要多花 0.4 秒）。外面再多讀一圈一樣寬的，裡面算出來就跟整張重算一樣
+function helPatch(ses, t, o, i0, j0, i1, j1) {
+  const { hw, hh, Oh, R0, S } = ses, k = hw / ses.W, M = helReach(t, R0, S, k);
+  if (!M) return;
+  const a0 = Math.max(0, i0 - M), b0 = Math.max(0, j0 - M), a1 = Math.min(hw, i1 + M), b1 = Math.min(hh, j1 + M);
+  const x0 = Math.max(0, a0 - M), y0 = Math.max(0, b0 - M), x1 = Math.min(hw, a1 + M), y1 = Math.min(hh, b1 + M), w = x1 - x0, h = y1 - y0;
+  const win = Oh.map(a => { const d = new Float32Array(w * h); for (let y = 0; y < h; y++) d.set(a.subarray((y0 + y) * hw + x0, (y0 + y) * hw + x1), y * w); return d; });
+  const p = helCalc(t, win, w, h, R0, S, k);
+  const put = (g, l) => { for (let y = b0; y < b1; y++) g.set(l.subarray((y - y0) * w + a0 - x0, (y - y0) * w + a1 - x0), y * hw + a0); };
+  for (const key in p) Array.isArray(p[key]) ? o[key].forEach((g, j) => put(g, p[key][j])) : put(o[key], p[key]);
+  // GPU 上那張只要重傳改到的這塊（下次用到之前改了好幾塊就合起來）
+  o.v = (o.v || 0) + 1; o.pr = o.pr ? [Math.min(o.pr[0], a0), Math.min(o.pr[1], b0), Math.max(o.pr[2], a1), Math.max(o.pr[3], b1)] : [a0, b0, a1, b1];
 }
 
 // 重算照片的 [x0,x1)×[y0,y1)。效果都從開始之前的照片算、各筆互相不疊，所以：
@@ -215,8 +246,14 @@ function hel(ses, t) {
 // m：這一筆改到的那塊遮罩（裡面存的是舊值）；沒有就是全部重算
 function compose(ses, x0, y0, x1, y1, m) {
   fresh(ses);
-  const w = x1 - x0, h = y1 - y0, before = ses.ctx.getImageData(x0, y0, w, h), after = new ImageData(m ? Uint8ClampedArray.from(before.data) : readO(ses, x0, y0, x1, y1), w, h);
-  for (let by = y0; by < y1; by += BS) for (let bx = x0; bx < x1; bx += BS) block(ses, bx, by, Math.min(x1, bx + BS), Math.min(y1, by + BS), after.data, x0, y0, w, m);
+  const w = x1 - x0, h = y1 - y0, before = ses.ctx.getImageData(x0, y0, w, h);
+  // 先交給 GPU（bbgpu.js，同樣的公式）；不支援才在這裡逐塊算
+  let d = gpu(ses, m, x0, y0, x1, y1, m ? before.data : null);
+  if (!d) {
+    d = m ? new Uint8ClampedArray(before.data) : readO(ses, x0, y0, x1, y1);
+    for (let by = y0; by < y1; by += BS) for (let bx = x0; bx < x1; bx += BS) block(ses, bx, by, Math.min(x1, bx + BS), Math.min(y1, by + BS), d, x0, y0, w, m);
+  }
+  const after = new ImageData(d, w, h);
   // 只留真的有變的那塊
   const a = before.data, b = after.data;
   let cx0 = w, cy0 = h, cx1 = -1, cy1 = -1;
@@ -284,6 +321,26 @@ function pix(t, a, r, g, b, l, e) {
   }
 }
 const HELD = { smooth: hp => [hp.V, ...hp.B], circle: hp => hp.D, fold: hp => hp.D, oil: hp => hp.ref, texture: hp => hp.b2, eye: () => [], teeth: () => [] };
+// GPU 用：小圖上的效果打包成一張 RGBA 浮點貼圖（去油光多放周圍亮度 Lb），小模糊每個通道的半徑
+const PACK = { ...HELD, oil: hp => [...hp.ref, hp.Lb] }, RAD = { eye: s => [s.re, s.re, s.re, 0], texture: s => [s.rt, s.rt, s.rt, 0], oil: s => [2, 2, 2, s.ro] };
+function gpu(ses, m, x0, y0, x1, y1, before) {
+  const job = t => {
+    const hp = hel(ses, t);
+    // r：只打包小圖的 [r0,r2)×[r1,r3)
+    const pack = (r = [0, 0, ses.hw, ses.hh]) => {
+      const a = PACK[t](hp);
+      if (!a.length) return null;
+      const w = r[2] - r[0], d = new Float32Array(w * (r[3] - r[1]) * 4);
+      for (let k = 0; k < a.length; k++) { const c = a[k]; for (let y = r[1], o = k; y < r[3]; y++) for (let i = y * ses.hw + r[0], e = i + w; i < e; i++, o += 4) d[o] = c[i]; }
+      return d;
+    };
+    return { t, A: ses.A[t], m: m || null, box: ses.box[t], hel: hp, pack, rad: RAD[t]?.(ses) || null };
+  };
+  // 全部重算：只算遮罩塗過這一塊的筆（同 block()），其他筆的效果不用補算
+  const mx = ses.mw / ses.W, my = ses.mh / ses.H, hit = b => b && b[0] <= x1 * mx + 1 && b[2] >= x0 * mx - 1 && b[1] <= y1 * my + 1 && b[3] >= y0 * my - 1;
+  const jobs = m ? [job(m.tool)] : MASKED.filter(t => ses.A[t] && hit(ses.box[t])).map(job);
+  return jobs.length ? gpuMix(ses, jobs, ses.mg, (a, b, c, e) => readO(ses, a, b, c, e), x0, y0, x1, y1, before) : null;
+}
 function block(ses, x0, y0, x1, y1, out, ox, oy, ow, m) {
   const { W, H, mw, mh, hw, hh } = ses, mx = mw / W, my = mh / H;
   const tools = m ? [m.tool] : MASKED.filter(t => {
@@ -446,9 +503,16 @@ function blemishStroke(ses, pts, R, k) {
   }
   const fill = wblur3(c, wt, gw, gh, Math.max(3, R * 0.9) / n);
   // 原尺寸：補上去，再把「不算斑點」的細紋理加回來（斑點邊緣才不會留一圈亮邊）
-  const before = readO(ses, F[0], F[1], F[2], F[3]), after = Uint8ClampedArray.from(before), fw = F[2] - F[0];
+  const before = readO(ses, F[0], F[1], F[2], F[3]), fw = F[2] - F[0];
   let cx0 = Infinity, cy0 = Infinity, cx1 = -1, cy1 = -1;
-  for (let by = F[1]; by < F[3]; by += BS) for (let bx = F[0]; bx < F[2]; bx += BS) {
+  // 先交給 GPU（bbgpu.js，同樣的公式）；不支援才在這裡逐塊算
+  const g = gpuBlem(W, H, F, G, n, gw, gh, [...fill, m], [Lb, redB], k, (a, b, c, e) => readO(ses, a, b, c, e)), after = g || new Uint8ClampedArray(before);
+  if (g) {
+    for (let y = F[1]; y < F[3]; y++) for (let x = F[0], q = (y - F[1]) * fw * 4; x < F[2]; x++, q += 4) {
+      if (after[q] === before[q] && after[q + 1] === before[q + 1] && after[q + 2] === before[q + 2]) continue;
+      if (x < cx0) cx0 = x; if (x > cx1) cx1 = x; if (y < cy0) cy0 = y; if (y > cy1) cy1 = y;
+    }
+  } else for (let by = F[1]; by < F[3]; by += BS) for (let bx = F[0]; bx < F[2]; bx += BS) {
     const x1 = Math.min(F[2], bx + BS), y1 = Math.min(F[3], by + BS), bw = x1 - bx, bh = y1 - by;
     const gx = grid(bx - G[0], bw, 1 / n, gw, 'bx'), gy = grid(by - G[1], bh, 1 / n, gh, 'by');
     let any = false;
@@ -501,7 +565,7 @@ function valid(ses, S) {
   return true;
 }
 // 照片收起來（壓成檔案）時，這串存的原圖、遮罩一起放掉
-export function bbRelease(S) { if (S.bbSes) { kill(S.bbSes); S.bbSes = null; } }
+export function bbRelease(S) { if (S.bbSes) { kill(S.bbSes); S.bbSes = null; gpuFree(); } }
 
 export function tabBeautyBrush(box, app) {
   const { item, sliderRow, showTab } = app;
@@ -517,10 +581,11 @@ export function tabBeautyBrush(box, app) {
   // 點開美顏筆、換筆時先在背景把縮圖和這支筆要用的資料算好，第一筆放開才不會頓一下
   clearTimeout(warmT);
   warmT = setTimeout(() => {
-    if (app.tab() !== 'bbrush' || !MASKED.includes(st.tool)) return;
+    if (app.tab() !== 'bbrush') return;
     const S = app.surf();
     if (!valid(S.bbSes, S)) { bbRelease(S); S.bbSes = session(S.canvas, S.ver); }
-    hel(S.bbSes, st.tool);
+    if (MASKED.includes(st.tool)) hel(S.bbSes, st.tool);
+    gpuWarm(st.tool, !!RAD[st.tool]);
   }, 250);
 }
 let warmT = 0;
