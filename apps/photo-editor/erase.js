@@ -28,14 +28,110 @@ function session() {
 
 const newCanvas = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; };
 
-// 選區的外框（用 alpha 判斷），沒有選區回傳 null
-function maskBox(mask) {
-  const w = mask.width, h = mask.height, d = mask.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
-  let x0 = w, y0 = h, x1 = -1, y1 = -1;
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    if (d[(y * w + x) * 4 + 3] > 20) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+// 選區的外框（用 alpha 判斷），沒有選區回傳 null。r：[x0, y0, x1, y1] 只看這一塊（選區畫布的像素）。
+// 整張 2048 像素的遮罩從 GPU 讀回來要幾十毫秒，塗完一筆放開時會頓一下，所以盡量只讀畫過的那一塊
+function maskBox(mask, r) {
+  const w = mask.width, h = mask.height, rx = r ? Math.max(0, Math.floor(r[0])) : 0, ry = r ? Math.max(0, Math.floor(r[1])) : 0;
+  const rw = (r ? Math.min(w, Math.ceil(r[2])) : w) - rx, rh = (r ? Math.min(h, Math.ceil(r[3])) : h) - ry;
+  if (rw <= 0 || rh <= 0) return null;
+  const d = new Uint32Array(mask.getContext('2d', { willReadFrequently: true }).getImageData(rx, ry, rw, rh).data.buffer);
+  let x0 = rw, y0 = rh, x1 = -1, y1 = -1;
+  for (let y = 0; y < rh; y++) for (let x = 0, o = y * rw; x < rw; x++) {
+    if ((d[o + x] >>> 24) > 20) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; y1 = y; }
   }
-  return x1 < 0 ? null : { x: x0 / w, y: y0 / h, w: (x1 - x0 + 1) / w, h: (y1 - y0 + 1) / h };
+  return x1 < 0 ? null : { x: (rx + x0) / w, y: (ry + y0) / h, w: (x1 - x0 + 1) / w, h: (y1 - y0 + 1) / h };
+}
+
+// 瘦臉、臉型、推臉、身體這些變形開著時，畫面上的點不在原圖同一個位置（評審 2026-10-27）。
+// 選區照畫面塗，消除前換回原圖座標；路人遮罩反過來從原圖換到畫面。
+// 畫面切成 8 像素的小格，只有格點用 map（app.js srcMapper：畫面 → 原圖）換算，格子裡面照格點內插
+const CELL = 8;
+// 格點換到原圖後的位置（選區畫布的像素）。x0..x1、y0..y1 是要算的格子範圍（第幾格），cell 是一格幾像素
+function meshOf(map, w, h, k, x0, y0, x1, y1, cell = CELL) {
+  const nx = x1 - x0 + 1, ny = y1 - y0 + 1, g = new Float32Array(nx * ny * 2);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const p = map({ x: Math.min(w, (x0 + i) * cell) / k, y: Math.min(h, (y0 + j) * cell) / k }), o = (j * nx + i) * 2;
+    g[o] = p.x * k; g[o + 1] = p.y * k;
+  }
+  return { x0, y0, nx, ny, g };
+}
+// 畫面座標的選區 → 原圖座標：每一格拆兩個三角形，在原圖那邊一點一點填，回頭看畫面上那一點有沒有選。
+// 只讀、只寫選區附近那一塊（整張 2048 像素的遮罩讀寫一次就要幾十毫秒）。回傳 [新選區, 有選的範圍]
+function maskToSrc(mask, map, W, r) {
+  const box = maskBox(mask, r);
+  if (!box) return [mask, r];
+  const w = mask.width, h = mask.height, k = w / W;
+  const m = meshOf(map, w, h, k, Math.floor(box.x * w / CELL), Math.floor(box.y * h / CELL), Math.ceil((box.x + box.w) * w / CELL), Math.ceil((box.y + box.h) * h / CELL));
+  // 畫面這邊要讀的範圍（格子範圍）、原圖那邊要寫的範圍（格點換過去之後的外框）
+  const rx = m.x0 * CELL, ry = m.y0 * CELL, rw = Math.min(w, (m.x0 + m.nx - 1) * CELL) - rx, rh = Math.min(h, (m.y0 + m.ny - 1) * CELL) - ry;
+  const d = mask.getContext('2d', { willReadFrequently: true }).getImageData(rx, ry, rw, rh).data;
+  let ox0 = w, oy0 = h, ox1 = 0, oy1 = 0;
+  for (let i = 0; i < m.g.length; i += 2) { ox0 = Math.min(ox0, m.g[i]); ox1 = Math.max(ox1, m.g[i]); oy0 = Math.min(oy0, m.g[i + 1]); oy1 = Math.max(oy1, m.g[i + 1]); }
+  ox0 = Math.max(0, Math.floor(ox0)); oy0 = Math.max(0, Math.floor(oy0)); ox1 = Math.min(w, Math.ceil(ox1) + 1); oy1 = Math.min(h, Math.ceil(oy1) + 1);
+  const c = newCanvas(w, h);
+  if (ox1 <= ox0 || oy1 <= oy0) return [c, null];
+  const ow = ox1 - ox0, oh = oy1 - oy0, od = new ImageData(ow, oh), o = od.data;
+  const tri = (ax, ay, bx, by, cx, cy, pa, pb, pc) => {
+    // a、b、c 是原圖上的三個角，pa、pb、pc 是同一個角在畫面上的位置
+    const det = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+    if (Math.abs(det) < 1e-6) return;
+    const X0 = Math.max(ox0, Math.floor(Math.min(ax, bx, cx))), X1 = Math.min(ox1 - 1, Math.ceil(Math.max(ax, bx, cx)));
+    const Y0 = Math.max(oy0, Math.floor(Math.min(ay, by, cy))), Y1 = Math.min(oy1 - 1, Math.ceil(Math.max(ay, by, cy)));
+    for (let y = Y0; y <= Y1; y++) for (let x = X0; x <= X1; x++) {
+      const px = x + 0.5 - ax, py = y + 0.5 - ay, u = (px * (cy - ay) - py * (cx - ax)) / det, v = ((bx - ax) * py - (by - ay) * px) / det;
+      if (u < -1e-3 || v < -1e-3 || u + v > 1.001) continue;
+      const sx = Math.min(rw - 1, Math.max(0, Math.floor(pa[0] + (pb[0] - pa[0]) * u + (pc[0] - pa[0]) * v - rx)));
+      const sy = Math.min(rh - 1, Math.max(0, Math.floor(pa[1] + (pb[1] - pa[1]) * u + (pc[1] - pa[1]) * v - ry)));
+      const a = d[(sy * rw + sx) * 4 + 3], i = ((y - oy0) * ow + x - ox0) * 4;
+      if (a > o[i + 3]) { o[i] = o[i + 1] = o[i + 2] = 255; o[i + 3] = a; }
+    }
+  };
+  for (let j = 0; j < m.ny - 1; j++) for (let i = 0; i < m.nx - 1; i++) {
+    const v = (a, b) => [m.g[((j + b) * m.nx + i + a) * 2], m.g[((j + b) * m.nx + i + a) * 2 + 1]];
+    const X = (m.x0 + i) * CELL, Y = (m.y0 + j) * CELL, s = (a, b) => [Math.min(w, X + a * CELL), Math.min(h, Y + b * CELL)];
+    const A = v(0, 0), B = v(1, 0), C = v(0, 1), D = v(1, 1);
+    tri(A[0], A[1], B[0], B[1], C[0], C[1], s(0, 0), s(1, 0), s(0, 1));
+    tri(B[0], B[1], D[0], D[1], C[0], C[1], s(1, 0), s(1, 1), s(0, 1));
+  }
+  c.getContext('2d', { willReadFrequently: true }).putImageData(od, ox0, oy0);
+  return [c, [ox0, oy0, ox1, oy1]];
+}
+// 原圖座標的遮罩（跟選區畫布一樣大、只有全有全無，r 是它的範圍）→ 畫面座標。回傳 [新遮罩, 有選的範圍]。
+// 畫面上每一點照格點內插出原圖的點去讀。整張都算要 50000 個格點，太慢（點一下要頓 0.2 秒）：
+// 先用粗格子量變形最多推多遠，只算遮罩附近那一塊；格子放大成 16 像素，格子裡一列一列直線走
+function maskToView(src, r, map, W) {
+  const w = src.width, h = src.height, k = w / W, C4 = CELL * 8, cg = meshOf(map, w, h, k, 0, 0, Math.ceil(w / C4), Math.ceil(h / C4), C4);
+  let D = 0;
+  for (let j = 0; j < cg.ny; j++) for (let i = 0; i < cg.nx; i++) { const o = (j * cg.nx + i) * 2; D = Math.max(D, Math.abs(cg.g[o] - Math.min(w, i * C4)), Math.abs(cg.g[o + 1] - Math.min(h, j * C4))); }
+  D += 2 * C4;  // 粗格子中間可能推得更遠，多留一點
+  const VC = CELL * 2, [sx0, sy0] = r, sw = r[2] - sx0, sh = r[3] - sy0;
+  const sd = new Uint32Array(src.getContext('2d', { willReadFrequently: true }).getImageData(sx0, sy0, sw, sh).data.buffer);
+  const m = meshOf(map, w, h, k, Math.max(0, Math.floor((sx0 - D) / VC)), Math.max(0, Math.floor((sy0 - D) / VC)), Math.min(Math.ceil(w / VC), Math.ceil((sx0 + sw + D) / VC)), Math.min(Math.ceil(h / VC), Math.ceil((sy0 + sh + D) / VC)), VC);
+  const X0 = m.x0 * VC, Y0 = m.y0 * VC, ow = Math.min(w, (m.x0 + m.nx - 1) * VC) - X0, oh = Math.min(h, (m.y0 + m.ny - 1) * VC) - Y0;
+  const od = new ImageData(ow, oh), o = new Uint32Array(od.data.buffer), g = m.g, nx = m.nx;
+  let bx0 = ow, by0 = oh, bx1 = -1, by1 = -1;
+  for (let j = 0; j < m.ny - 1; j++) {
+    const cy = j * VC, ch = Math.min(oh, cy + VC) - cy;
+    for (let yy = 0; yy < ch; yy++) {
+      const fy = (yy + 0.5) / ch, f1 = 1 - fy, row = (cy + yy) * ow;
+      for (let i = 0; i < nx - 1; i++) {
+        const cx = i * VC, cw = Math.min(ow, cx + VC) - cx, p = (j * nx + i) * 2, q = p + nx * 2;
+        // 這一列在這一格的左右兩端換到原圖哪裡，中間照直線走
+        const lx = g[p] * f1 + g[q] * fy - sx0, ly = g[p + 1] * f1 + g[q + 1] * fy - sy0;
+        const dx = (g[p + 2] * f1 + g[q + 2] * fy - sx0 - lx) / cw, dy = (g[p + 3] * f1 + g[q + 3] * fy - sy0 - ly) / cw;
+        let px = lx + dx * 0.5, py = ly + dy * 0.5;
+        for (let xx = 0; xx < cw; xx++, px += dx, py += dy) {
+          if (px < 0 || py < 0 || px >= sw || py >= sh || (sd[(py | 0) * sw + (px | 0)] >>> 24) <= 127) continue;
+          const x = cx + xx, y = cy + yy;
+          o[row + x] = 0xffffffff;
+          if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
+        }
+      }
+    }
+  }
+  const c = newCanvas(w, h);
+  c.getContext('2d', { willReadFrequently: true }).putImageData(od, X0, Y0);
+  return [c, bx1 < 0 ? null : [X0 + bx0, Y0 + by0, X0 + bx1 + 1, Y0 + by1 + 1]];
 }
 
 // 把選區描邊變粗再暈開：補的範圍稍微蓋過物體邊緣，接縫也看不出來
@@ -50,10 +146,10 @@ function grow(mask, w, h, px, blur) {
   return blur ? blurred(c, blur) : c;
 }
 
-// src：照片 canvas；mask：任意大小、跟照片同比例的選區（alpha > 0 的地方要消除）
+// src：照片 canvas；mask：任意大小、跟照片同比例的選區（alpha > 0 的地方要消除）；r：選區大概在哪（見 maskBox）
 // 回傳一張新的 canvas，只有選區附近被換掉
-export async function inpaint(src, mask) {
-  const box = maskBox(mask);
+export async function inpaint(src, mask, r) {
+  const box = maskBox(mask, r);
   if (!box) return null;
   const W = src.width, H = src.height;
   // 取選區周圍一圈當參考，模型才知道背景長什麼樣
@@ -148,15 +244,27 @@ const ICON = {
   clear: '<svg viewBox="0 0 24 24"><path d="M5 7h14"/><path d="M9 7V4h6v3"/><path d="M7 7l1 13h8l1-13"/></svg>',
 };
 
-let st = null; // { b: 對應的照片, mask, ppl, pplOn, tool, size, ui }
+let st = null; // { b: 對應的照片, mask, bb: 畫過的範圍, ppl, pplS: 路人（選區大小、原圖座標）, pplSB: 它的範圍, pplV: 疊上去的路人（畫面座標）, pplOn, tool, size, ui }
 function state(b) {
   if (st?.b === b) return st;
   const W = b.canvas.width, H = b.canvas.height, k = Math.min(1, MASK_SIDE / Math.max(W, H));
   // 換照片或消除完，工具和畫筆大小沿用
-  st = { b, mask: newCanvas(W * k, H * k), ppl: null, pplOn: false, pplP: null, tool: st?.tool || 'brush', size: st?.size ?? 20 };
+  st = { b, mask: newCanvas(W * k, H * k), bb: null, ppl: null, pplOn: false, pplP: null, tool: st?.tool || 'brush', size: st?.size ?? 20 };
   return st;
 }
-const hasMask = () => !!(st && maskBox(st.mask));
+// 畫過的範圍（選區畫布的像素）：塗抹、框選、路人加進來，橡皮擦不縮（按「立即消除」時才在這一塊裡面算真正的外框）
+const addBB = (x0, y0, x1, y1) => { const b = st.bb; st.bb = b ? [Math.min(b[0], x0), Math.min(b[1], y0), Math.max(b[2], x1), Math.max(b[3], y1)] : [x0, y0, x1, y1]; };
+const hasMask = () => !!st?.bb;
+// 路人遮罩只留全有、全無：邊緣半透明的話，關掉時扣不乾淨，會剩一圈淡淡的選區被拿去消除。回傳有選的範圍
+function binarize(c) {
+  const w = c.width, h = c.height, ctx = c.getContext('2d', { willReadFrequently: true }), id = ctx.getImageData(0, 0, w, h), d = new Uint32Array(id.data.buffer);
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0, o = y * w; x < w; x++) {
+    if ((d[o + x] >>> 24) > 127) { d[o + x] = 0xffffffff; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; y1 = y; } else d[o + x] = 0;
+  }
+  ctx.putImageData(id, 0, 0);
+  return x1 < 0 ? null : [x0, y0, x1 + 1, y1 + 1];
+}
 
 let ov = null, ring = null;
 function overlay() {
@@ -205,13 +313,14 @@ function bindDraw() {
     ctx.strokeStyle = '#fff'; ctx.lineCap = ctx.lineJoin = 'round'; ctx.lineWidth = brushPx();
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x + 0.01, b.y); ctx.stroke();
     ctx.globalCompositeOperation = 'source-over';
+    if (st.tool !== 'eraser') { const r = ctx.lineWidth / 2 + 2; addBB(Math.min(a.x, b.x) - r, Math.min(a.y, b.y) - r, Math.max(a.x, b.x) + r, Math.max(a.y, b.y) + r); }
   };
   ov.addEventListener('pointerdown', e => {
     if (!st || pinch.on) return;
     e.preventDefault(); try { ov.setPointerCapture(e.pointerId); } catch {}
     const p = pos(e), snap = newCanvas(st.mask.width, st.mask.height);
     snap.getContext('2d').drawImage(st.mask, 0, 0);
-    drag = { a: p, last: p, snap };
+    drag = { a: p, last: p, snap, bb: st.bb };
     if (st.tool !== 'box') { stroke(p, p); paintOverlay(); }
     showRing(p);
   });
@@ -230,8 +339,11 @@ function bindDraw() {
     if (st.tool === 'box') {
       const a = drag.a, p = pos(e), ctx = st.mask.getContext('2d');
       ctx.fillStyle = '#fff'; ctx.fillRect(Math.min(a.x, p.x), Math.min(a.y, p.y), Math.abs(p.x - a.x), Math.abs(p.y - a.y));
+      if (p.x !== a.x && p.y !== a.y) addBB(Math.min(a.x, p.x) - 1, Math.min(a.y, p.y) - 1, Math.max(a.x, p.x) + 1, Math.max(a.y, p.y) + 1);
     }
     drag = null; paintOverlay(); st.ui?.();
+    // 橡皮擦可能把選區擦光了：畫面先更新，下一格再讀畫過的那一塊看還有沒有（「立即消除」要變灰）
+    if (st.tool === 'eraser' && st.bb) { const s = st; requestAnimationFrame(() => setTimeout(() => { if (st === s && s.bb && !maskBox(s.mask, s.bb)) { s.bb = null; s.ui?.(); } })); }
     if (e.pointerType === 'touch') ring.style.display = 'none';
   };
   ov.addEventListener('pointerup', up); ov.addEventListener('pointercancel', up);
@@ -240,7 +352,7 @@ function bindDraw() {
   addEventListener('pinchstart', () => {
     if (!drag) return;
     const ctx = st.mask.getContext('2d'); ctx.clearRect(0, 0, st.mask.width, st.mask.height); ctx.drawImage(drag.snap, 0, 0);
-    drag = null; ring.style.display = 'none'; paintOverlay();
+    st.bb = drag.bb; drag = null; ring.style.display = 'none'; paintOverlay();
   });
 }
 
@@ -251,7 +363,7 @@ export function eraseLeave() {
   document.querySelector('#srow').style.display = '';
 }
 
-// app：{ base, setBase(canvas), commit(), item(opts), hideSlider(), showTab(t), toast(msg), busy(msg) }
+// app：{ base, setBase(canvas), commit(), item(opts), hideSlider(), showTab(t), toast(msg), busy(msg), toSrc() }
 export function tabErase(box, app) {
   app.hideSlider();
   const s = state(app.base);
@@ -268,9 +380,22 @@ export function tabErase(box, app) {
       try { s.ppl = await (s.pplP ||= passersby(s.b.canvas)); } catch (e) { console.warn(e); err = true; } finally { app.busy(); }
       if (!s.ppl) { s.pplP = null; return app.toast(err ? '人像模型載入失敗，檢查一下網路' : '沒有找到路人'); }
     }
+    // 路人遮罩是原圖座標，變形開著時換成畫面座標再疊上去（關掉時用同一張扣掉）
+    // 原圖座標那張只做一次（從 GPU 讀回來很慢），之後每次打開只重算換到畫面的那一步
+    if (!s.pplOn) {
+      if (!s.pplS) {
+        s.pplS = newCanvas(s.mask.width, s.mask.height);
+        s.pplS.getContext('2d', { willReadFrequently: true }).drawImage(s.ppl, 0, 0, s.mask.width, s.mask.height);
+        s.pplSB = binarize(s.pplS);
+      }
+      const map = s.pplSB && app.toSrc?.();
+      let b = s.pplSB;
+      if (map) [s.pplV, b] = maskToView(s.pplS, s.pplSB, map, s.b.canvas.width); else s.pplV = s.pplS;
+      if (b) addBB(...b);
+    }
     const ctx = s.mask.getContext('2d');
     ctx.globalCompositeOperation = s.pplOn ? 'destination-out' : 'source-over';
-    ctx.drawImage(s.ppl, 0, 0, s.mask.width, s.mask.height);
+    ctx.drawImage(s.pplV, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
     s.pplOn = !s.pplOn; paintOverlay(); redraw();
   } }));
@@ -278,15 +403,16 @@ export function tabErase(box, app) {
     label, icon, on: s.tool === k, onclick: () => { s.tool = k; ov.style.cursor = k === 'box' ? 'crosshair' : 'none'; redraw(); },
   })));
   box.append(app.item({ label: '清除選區', icon: ICON.clear, onclick: () => {
-    s.mask.getContext('2d').clearRect(0, 0, s.mask.width, s.mask.height); s.pplOn = false; paintOverlay(); redraw();
+    s.mask.getContext('2d').clearRect(0, 0, s.mask.width, s.mask.height); s.bb = null; s.pplOn = false; paintOverlay(); redraw();
   } }));
   // 醒圖把「立即消除」做成面板上最顯眼的按鈕，手機上放第一個，不用往右滑才找得到
   const go = app.item({ label: '立即消除', icon: '立即消除', cls: 'wide', style: 'background:var(--accent);color:#fff;font-weight:600', onclick: async () => {
-    if (!hasMask()) return app.toast('先塗抹或框選要消除的地方');
+    // 橡皮擦可能把選區整個擦掉了：在畫過的範圍裡算一次真正有沒有
+    if (!hasMask() || !maskBox(s.mask, s.bb)) { s.bb = null; s.ui(); return app.toast('先塗抹或框選要消除的地方'); }
     app.busy(sessP || ERASE_LITE ? '消除中…' : '下載消除模型（約 28MB，只有第一次）…');
     try {
       const t = setTimeout(() => app.busy('消除中…'), 4000);
-      const out = await inpaint(s.b.canvas, s.mask);
+      const map = app.toSrc?.(), out = await inpaint(s.b.canvas, ...(map ? maskToSrc(s.mask, map, s.b.canvas.width, s.bb) : [s.mask, s.bb]));
       clearTimeout(t);
       if (!out) return;
       app.setBase(out); app.commit();
