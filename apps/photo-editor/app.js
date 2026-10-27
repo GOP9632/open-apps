@@ -208,7 +208,7 @@ async function loadFile(file) {
     let w = bmp.width, h = bmp.height;
     const k = Math.min(1, MAX_SIDE / Math.max(w, h), Math.sqrt(MAX_AREA / (w * h)));
     w = Math.round(w * k); h = Math.round(h * k);
-    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const c = photoCanvas(w, h);
     c.getContext('2d').drawImage(bmp, 0, 0, w, h);
     P = { ...P0 }; texts = []; selText = -1; stickers = []; selSt = -1;
     hist = []; hi = -1;
@@ -251,7 +251,11 @@ function shelveLater(b) {
 // （canvas 在第 k 筆之後時存畫之前的，在之前時存畫之後的），復原、重做就是把那一塊對調。
 // aux：美顏筆那一步另外改到的遮罩、原圖，復原、重做時跟著對調（aux.swap）
 function ensureSurf() {
-  if (!base.surf) { base.surf = { canvas: base.canvas, ver: 0, edits: [] }; base.ver = 0; }
+  if (!base.surf) {
+    // 消除這類從別處來的照片可能是 GPU canvas：開始畫之前先換成記憶體裡的（內容一樣）
+    if (!cpuCanvas.has(base.canvas)) { const c = photoCanvas(base.canvas.width, base.canvas.height); c.getContext('2d').drawImage(base.canvas, 0, 0); base.canvas = c; }
+    base.surf = { canvas: base.canvas, ver: 0, edits: [] }; base.ver = 0;
+  }
   return base.surf;
 }
 function paintPatch({ x, y, before, after, aux }) {
@@ -338,7 +342,7 @@ async function unshelve(b) {
   const S = b.surf;
   if (S) {
     if (!S.canvas) {
-      const bmp = await createImageBitmap(S.blob), c = newCanvas(S.w, S.h);
+      const bmp = await createImageBitmap(S.blob), c = photoCanvas(S.w, S.h);
       c.getContext('2d').drawImage(bmp, 0, 0); bmp.close?.();
       Object.assign(S, { canvas: c, ver: S.blobVer, blob: null });
     }
@@ -346,7 +350,7 @@ async function unshelve(b) {
     b.canvas = S.canvas;
     return;
   }
-  const bmp = await createImageBitmap(b.blob), c = newCanvas(b.w, b.h);
+  const bmp = await createImageBitmap(b.blob), c = photoCanvas(b.w, b.h);
   c.getContext('2d').drawImage(bmp, 0, 0); bmp.close?.();
   if (!('facesP' in b)) Object.assign(b, BASE0);
   b.canvas = c; b.blob = null;
@@ -1044,7 +1048,7 @@ async function mergeFilter() {
     try {
       R.setLut(lut?.c, lut?.skin, lut?.hair);
       draw(true);
-      out = newCanvas(base.canvas.width, base.canvas.height);
+      out = photoCanvas(base.canvas.width, base.canvas.height);
       out.getContext('2d').drawImage($('#gl'), 0, 0);
     } finally { P = now; }
     P = { ...now, filter: 'none', filterAmt: P0.filterAmt };
@@ -1359,6 +1363,13 @@ function rsRing(p) {
   // 第二指放下是要縮放：這一筆不算
   addEventListener('pinchstart', () => { if (!last) return; last = null; clearInterval(timer); P.liq = liq0; rsRing(); render(); });
 })();
+
+// 塗抹的時候先把復原、看原圖按鈕藏起來，不擋到照片角落（評審 2026-10-27）
+{
+  const PAINT = ['bbrush', 'reshape', 'doodle', 'erase'];
+  $('#wrap').addEventListener('pointerdown', e => { if (PAINT.includes(tab) && e.button <= 0) $('#hist').classList.add('painting'); }, true);
+  ['pointerup', 'pointercancel'].forEach(t => addEventListener(t, () => $('#hist').classList.remove('painting'), true));
+}
 
 // 背景保護開關：蓬鬆感、臉型、身體這些變形都會用到
 function protectItem() {
@@ -2320,11 +2331,15 @@ function drawCrop() {
 })();
 
 function newCanvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+// 照片本身的 canvas：放在記憶體（不是 GPU）。美顏筆、塗鴉每筆都要讀寫一小塊，電腦版 Chrome 的 GPU canvas
+// 每讀一次都要等 GPU，大筆刷放開要 1～2 秒（評審 2026-10-27）；放記憶體的讀寫是直接的
+const cpuCanvas = new WeakSet();
+function photoCanvas(w, h) { const c = newCanvas(w, h); c.getContext('2d', { willReadFrequently: true }); cpuCanvas.add(c); return c; }
 function applyCrop() {
   const c = cropState, W = base.canvas.width, H = base.canvas.height;
   if (c.x < 0.001 && c.y < 0.001 && c.w > 0.999 && c.h > 0.999) return toast('先拖曳框框選範圍');
   const sx = Math.round(c.x * W), sy = Math.round(c.y * H), sw = Math.max(1, Math.round(c.w * W)), sh = Math.max(1, Math.round(c.h * H));
-  const out = newCanvas(sw, sh);
+  const out = photoCanvas(sw, sh);
   out.getContext('2d').drawImage(base.canvas, sx, sy, sw, sh, 0, 0, sw, sh);
   // 文字跟著新的範圍移動
   [...texts, ...stickers].forEach(t => { t.x = (t.x - c.x) / c.w; t.y = (t.y - c.y) / c.h; t.size = t.size / c.w; });
@@ -2334,7 +2349,7 @@ function applyCrop() {
 }
 function transform(kind) {
   const W = base.canvas.width, H = base.canvas.height;
-  const out = kind === 'rot' ? newCanvas(H, W) : newCanvas(W, H), ctx = out.getContext('2d');
+  const out = kind === 'rot' ? photoCanvas(H, W) : photoCanvas(W, H), ctx = out.getContext('2d');
   if (kind === 'rot') { ctx.translate(H, 0); ctx.rotate(Math.PI / 2); }
   if (kind === 'flipH') { ctx.translate(W, 0); ctx.scale(-1, 1); }
   if (kind === 'flipV') { ctx.translate(0, H); ctx.scale(1, -1); }
