@@ -578,21 +578,20 @@ export function makeupLayer(base, mk, P = {}) {
 
 // ---------- 面板 ----------
 let cat = 'look';
+// 每排捲到哪裡（點一下整個面板會重建，以前三排都跳回最左邊，點了眉毛、酒紅看不到選了哪個，評審 H4）
+const scrolled = {};
 const CSS = `
 .mk{flex:1 0 100%;min-width:0;display:flex;flex-direction:column;gap:8px}
 .mk .row{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding:2px 0}
 .mk .row::-webkit-scrollbar{display:none}
 .mk .row.sw2{gap:10px;padding:2px 4px 4px;align-items:center}
 .mk .it.wide .ic{height:36px;font-size:14px}
-.mk .lk .ic{font-size:12px;line-height:1.15;text-align:center;padding:2px}
-.mk .sty .ic{font-size:12px}
 @media (min-width:900px){.mk .row{flex-wrap:wrap;overflow:visible}}
 `;
 function injectCss() {
   if (document.getElementById('mk-css')) return;
   const s = document.createElement('style'); s.id = 'mk-css'; s.textContent = CSS; document.head.append(s);
 }
-const OFF = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>';
 
 // api：{ P(), setP(p), base(), item, setSlider, hideSlider, render, commit, refresh, note, findFaces }
 export function makeupTab(box, api) {
@@ -604,23 +603,29 @@ export function makeupTab(box, api) {
   else api.note(`找到 ${faces.length} 張臉，每張臉都會上妝`);
   const mk = P.mk || {};
   const wrap = document.createElement('div'); wrap.className = 'mk';
-  const row = cls => { const r = document.createElement('div'); r.className = 'row ' + (cls || ''); wrap.append(r); return r; };
+  const rows = [];
+  const row = (key, cls) => {
+    const r = document.createElement('div'); r.className = 'row ' + (cls || ''); wrap.append(r);
+    r.addEventListener('scroll', () => { scrolled[key] = r.scrollLeft; }, { passive: true });
+    rows.push([r, key]); return r;
+  };
 
   // 第一排：分類
-  const r1 = row();
+  const r1 = row('cats');
   const setOf = id => id === 'look' ? P.mkLook >= 0 : !!(mk[id] && mk[id].a > 0);
   [{ id: 'look', name: '套裝' }, ...MAKEUP].forEach(m => r1.append(api.item({
     label: m.name, icon: m.name, cls: 'wide', on: cat === m.id, set: setOf(m.id), onclick: () => { cat = m.id; api.refresh(); },
   })));
 
   const put = (id, val) => { const p = api.P(); p.mk = { ...(p.mk || {}), [id]: val }; p.mkLook = -1; };
+  // 款式、套裝跟分類一樣用一行字的膠囊（以前是方塊加底下的名字，名字印兩次，三排疊起來比面板高，色票被切到）
   if (cat === 'look') {
-    const r2 = row();
-    r2.append(api.item({ label: '卸妝', icon: OFF, on: !hasMakeup(mk), onclick: () => {
+    const r2 = row('look');
+    r2.append(api.item({ label: '卸妝', icon: '卸妝', cls: 'wide', on: !hasMakeup(mk), onclick: () => {
       const p = api.P(); p.mk = {}; p.mkLook = -1; api.render(); api.commit(); api.refresh();
     } }));
     LOOKS.forEach((L, i) => r2.append(api.item({
-      label: L.name, icon: L.name.slice(0, 2), cls: 'lk', on: P.mkLook === i, onclick: () => {
+      label: L.name, icon: L.name, cls: 'wide', on: P.mkLook === i, onclick: () => {
         const p = api.P();
         if (p.mkLook === i) { p.mk = {}; p.mkLook = -1; }
         else { p.mk = Object.fromEntries(Object.entries(L.set).map(([k, [s, c, a]]) => [k, { s, c, a }])); p.mkLook = i; p.mkLookAmt = 100; }
@@ -637,18 +642,18 @@ export function makeupTab(box, api) {
     } else api.hideSlider();
   } else {
     const def = BY_ID[cat], cur = mk[cat];
-    const r2 = row();
-    r2.append(api.item({ label: '無', icon: OFF, on: !cur || !(cur.a > 0), onclick: () => {
+    const r2 = row('s:' + cat);
+    r2.append(api.item({ label: '無', icon: '無', cls: 'wide', on: !cur || !(cur.a > 0), onclick: () => {
       const p = api.P(); const m = { ...(p.mk || {}) }; delete m[cat]; p.mk = m; p.mkLook = -1; api.render(); api.commit(); api.refresh();
     } }));
     def.s.forEach((name, i) => r2.append(api.item({
-      label: name, icon: name.length > 3 ? name.slice(0, 2) : name, cls: 'sty', on: cur && cur.a > 0 && cur.s === i, onclick: () => {
+      label: name, icon: name, cls: 'wide', on: cur && cur.a > 0 && cur.s === i, onclick: () => {
         put(cat, { s: i, c: cur?.c ?? 0, a: cur && cur.a > 0 ? cur.a : def.a });
         api.render(); api.commit(); api.refresh();
       },
     })));
     if (def.c) {
-      const r3 = row('sw2');
+      const r3 = row('c:' + cat, 'sw2');
       def.c.forEach(([name, hex], i) => {
         const b = document.createElement('button');
         b.className = 'sw' + (cur && cur.a > 0 && (cur.c ?? 0) === i ? ' on' : '');
@@ -661,4 +666,13 @@ export function makeupTab(box, api) {
     else api.hideSlider();
   }
   box.append(wrap);
+  // 回到上次捲到的地方；第一次看到這排、或選中的那顆在畫面外，就把它捲到中間
+  for (const [r, key] of rows) {
+    if (scrolled[key] != null) r.scrollLeft = scrolled[key];
+    const on = r.querySelector('.on');
+    if (!on) continue;
+    const l = on.offsetLeft - r.offsetLeft;
+    if (scrolled[key] == null ? l + on.offsetWidth > r.clientWidth * 0.8 : l < r.scrollLeft || l + on.offsetWidth > r.scrollLeft + r.clientWidth) r.scrollLeft = l - (r.clientWidth - on.offsetWidth) / 2;
+    scrolled[key] = r.scrollLeft;
+  }
 }
