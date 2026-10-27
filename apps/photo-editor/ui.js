@@ -51,30 +51,62 @@ function showBubble(r) {
 }
 const hideBubble = () => bubble()?.classList.remove('on');
 
+// 照醒圖、Hypic 的滑桿：整條（上下各多 8px）按哪裡都能拖，手指移多少圓點就移多少，不會跳到按的位置。
+// iPhone Safari 的原生滑桿要剛好按在 22px 的圓點上才拖得動，按到軌道沒反應
+// （Anthony 2026-10-27：「有時會突然拖不動，有時候又突然可以拖動」）。
+// 所以滑桿本身不接手指（CSS pointer-events:none），這裡找手指底下最近的那一條自己拖
+function hitRange(x, y) {
+  let best = null, bd = Infinity;
+  for (const r of document.querySelectorAll('input[type=range]')) {
+    if (r.disabled || !r.offsetParent || r.closest('.hide')) continue;
+    const b = r.getBoundingClientRect(), cy = b.top + b.height / 2, dy = Math.abs(y - cy);
+    if (x < b.left - 12 || x > b.right + 12 || dy > Math.max(22, b.height / 2 + 8) || dy >= bd) continue;
+    best = r; bd = dy;
+  }
+  return best;
+}
+let drag = null;
 export function enhanceRanges() {
   document.addEventListener('pointerdown', e => {
-    const r = e.target.closest?.('input[type=range]');
+    if (e.button > 0 || drag) return;
+    const r = e.target.closest?.('input[type=range]') || (!e.target.closest?.('button,a,select,textarea,input,#wrap') && hitRange(e.clientX, e.clientY));
     if (!r) return;
+    e.preventDefault();
     active = r;
     // 連點兩下（300ms 內）歸零，照醒圖的滑桿
     const now = performance.now();
     if (lastTap.r === r && now - lastTap.t < 300 && defOf(r) !== null) {
       lastTap = { r: null, t: 0 };
-      e.preventDefault();
-      setTimeout(() => { setRange(r, defOf(r), true); hideBubble(); }, 0);
+      setRange(r, defOf(r), true); hideBubble();
       return;
     }
     lastTap = { r, t: now };
-    dragging = r;
-    requestAnimationFrame(() => dragging === r && showBubble(r));
+    const w = r.getBoundingClientRect().width - 22;
+    drag = { r, id: e.pointerId, x: e.clientX, v: +r.value, k: (+r.max - +r.min) / Math.max(1, w), moved: false, el: e.target };
+    try { e.target.setPointerCapture(e.pointerId); } catch {}
+    dragging = r; showBubble(r);
   }, true);
-  document.addEventListener('input', e => {
-    const r = e.target;
-    if (r.matches?.('input[type=range]')) { active = r; if (dragging === r) showBubble(r); }
+  document.addEventListener('pointermove', e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    e.preventDefault();
+    const dx = e.clientX - drag.x, r = drag.r;
+    if (!drag.moved) { if (Math.abs(dx) < 3) return; drag.moved = true; dispatchEvent(new Event('rangestart')); }
+    const st = +r.step || 1, v = Math.min(+r.max, Math.max(+r.min, Math.round((drag.v + dx * drag.k) / st) * st));
+    if (v !== +r.value) setRange(r, v, false);
+    showBubble(r);
   }, true);
-  const end = () => { dragging = null; hideBubble(); };
+  const end = e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const { r, v } = drag;
+    drag = null; dragging = null; hideBubble();
+    if (+r.value !== v) r.dispatchEvent(new Event('change', { bubbles: true }));
+  };
   document.addEventListener('pointerup', end, true);
   document.addEventListener('pointercancel', end, true);
+  document.addEventListener('input', e => {
+    const r = e.target;
+    if (r.matches?.('input[type=range]')) active = r;
+  }, true);
   document.addEventListener('focusin', e => { if (e.target.matches?.('input[type=range]')) active = e.target; });
 }
 

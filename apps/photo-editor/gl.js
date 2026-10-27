@@ -823,7 +823,8 @@ function program(gl, fs) {
 
 export class Renderer {
   constructor(canvas) {
-    const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true, premultipliedAlpha: true, alpha: true });
+    // 不要反鋸齒、深度、模板：只畫一張全螢幕三角形用不到，iPhone 上光反鋸齒就要多好幾倍的畫布記憶體
+    const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true, premultipliedAlpha: true, alpha: true, antialias: false, depth: false, stencil: false });
     if (!gl) throw new Error('這個瀏覽器不支援 WebGL2');
     this.gl = gl; this.canvas = canvas;
     const buf = gl.createBuffer();
@@ -847,6 +848,8 @@ export class Renderer {
     this.tMakeup = this.tex(); this.setMakeup(null);
     this.hasLut = false;
     this.view = 1;  // 預覽的解析度（相對原圖），見 render
+    this.fast = 1;  // 拖的時候先畫小一點：小圖的解析度（相對預覽），畫完再放大到畫布
+    this.fbFast = this.fbo();
   }
   tex() {
     const gl = this.gl, t = gl.createTexture();
@@ -1024,9 +1027,10 @@ export class Renderer {
     if (this.canvas.width !== ow || this.canvas.height !== oh) { this.canvas.width = ow; this.canvas.height = oh; }
     if (fx.bokeh) this.bokeh(fx.bokeh);
     // 有臉型變形時先畫到暫存，最後再變形一次畫到畫面
-    const lq = this.lq?.n ? this.lq : null, post = this.disp?.step > 0 || !!lq;
-    if (post) this.sizeFbo(this.fbPost, ow, oh);
-    this.pass(this.pMain, post ? this.fbPost : null, ow, oh);
+    const lq = this.lq?.n ? this.lq : null, fast = !full && this.fast < 1, post = this.disp?.step > 0 || !!lq || fast;
+    const iw = fast ? Math.max(1, Math.round(ow * this.fast)) : ow, ih = fast ? Math.max(1, Math.round(oh * this.fast)) : oh, fb = fast ? this.fbFast : this.fbPost;
+    if (post) this.sizeFbo(fb, iw, ih);
+    this.pass(this.pMain, post ? fb : null, iw, ih);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     const texs = [[this.tImg, 'uImg'], [this.tSmooth, 'uSmooth'], [this.tMask, 'uMask'], [this.tSeg, 'uSeg'], [this.tLut, 'uLut'], [this.tMask2, 'uMask2'], [this.tSegB, 'uSegB'],
       [this.fbS[0].t, 'uBlurS'], [this.fbM[0].t, 'uBgA'], [fx.bokeh ? this.fbK.t : this.fbL[0].t, 'uBgB'], [this.tOver, 'uOver'], [this.tEx, 'uEx'], [this.tBgImg, 'uBgImg'],
@@ -1100,7 +1104,7 @@ export class Renderer {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     if (post) {
       const d = this.pDisp;
-      this.pass(d, null, ow, oh, this.fbPost.t);
+      this.pass(d, null, ow, oh, fb.t);
       gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.disp?.step > 0 ? this.disp.tex : null); gl.uniform1i(d.u.uDisp, 1);
       gl.uniform2f(d.u.uSize, this.w, this.h); gl.uniform1f(d.u.uStep, this.disp?.step > 0 ? this.disp.step : 0);
       gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, lq ? lq.A.t : null); gl.uniform1i(d.u.uLiq, 3);

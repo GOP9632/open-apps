@@ -308,8 +308,8 @@ export function tabErase(box, app) {
     inp.oninput = () => {
       s.size = +inp.value; outp.textContent = inp.value; paint();
       // 放在看得到的那塊照片中間
-      const r = ov.getBoundingClientRect(), s = ring.parentNode.getBoundingClientRect(), d = brushPx() * r.width / ov.width;
-      const x = (Math.max(r.left, s.left) + Math.min(r.right, s.right)) / 2 - s.left, y = (Math.max(r.top, s.top) + Math.min(r.bottom, s.bottom)) / 2 - s.top;
+      const r = ov.getBoundingClientRect(), sb = ring.parentNode.getBoundingClientRect(), d = brushPx() * r.width / ov.width;
+      const x = (Math.max(r.left, sb.left) + Math.min(r.right, sb.right)) / 2 - sb.left, y = (Math.max(r.top, sb.top) + Math.min(r.bottom, sb.bottom)) / 2 - sb.top;
       Object.assign(ring.style, { display: 'block', left: x + 'px', top: y + 'px', width: d + 'px', height: d + 'px' });
     };
     inp.onchange = () => { ring.style.display = 'none'; };
