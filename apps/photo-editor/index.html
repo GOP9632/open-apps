@@ -48,8 +48,10 @@ button{background:none;border:0;padding:0;cursor:pointer}
 #zoom{position:absolute;left:12px;bottom:12px;display:none;align-items:center;gap:2px;background:rgba(23,23,26,.85);border:1px solid var(--line2);border-radius:10px;padding:2px;z-index:6}
 #zoom.on{display:flex}
 @media (max-width:899px){#zoom.on:not(.zoomed){display:none}
-  /* iPhone Safari 會留下可橫向捲動那兩排的舊畫面（選過的分頁、選項看起來還亮著）：給它們自己的圖層，每次都重畫 */
-  .tabs,.items{transform:translateZ(0)}}
+  /* 面板固定高度（照醒圖）：換分頁時照片不縮放、選項列不跳。以前高度跟著分頁變，iPhone Safari 只搬舊圖層、
+     只重畫一部分，選過的分頁看起來還亮著（殘影，評審 2026-10-27 在 iOS 模擬器重現）。內容貼著下面的分頁列 */
+  #pbody{height:227px;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden}
+  #pbody::before{content:'';flex:1 0 0}}
 #zoom button{height:30px;min-width:30px;padding:0 6px;border-radius:8px;color:var(--text2);font-size:13px;font-variant-numeric:tabular-nums}
 #zoom button:hover{background:var(--line2);color:var(--text)}
 #zoom #zPct{min-width:52px}
@@ -123,7 +125,10 @@ button{background:none;border:0;padding:0;cursor:pointer}
 .srow.hide{visibility:hidden}
 .srow label{width:44px;color:var(--muted);font-size:13px;flex:none}
 .srow output{width:40px;text-align:right;font-variant-numeric:tabular-nums;flex:none;font-size:14px}
-input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:28px;background:transparent;margin:0}
+input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:28px;background:transparent;margin:0;pointer-events:none}
+/* 滑桿的手指交給 ui.js 的 enhanceRanges（整條都能拖）；只能上下捲的清單裡，左右拖給滑桿、上下拖照樣捲 */
+.srow{touch-action:none}
+.row:has(input[type=range]){touch-action:pan-y}
 input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:linear-gradient(90deg,#4a4a52 var(--fill-a,0%),#fff var(--fill-a,0%),#fff var(--fill-b,0%),#4a4a52 var(--fill-b,0%))}
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#fff;margin-top:-9.5px;box-shadow:0 1px 4px rgba(0,0,0,.4)}
 input[type=range]::-moz-range-track{height:3px;background:#4a4a52;border-radius:2px}
@@ -151,7 +156,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 .tabs{display:flex;gap:4px;padding:2px 12px 6px;overflow-x:auto;scrollbar-width:none}
 .tabs::-webkit-scrollbar{display:none}
-.tab{flex:none;height:30px;padding:0 12px;border-radius:15px;color:var(--muted);font-size:13px;white-space:nowrap}
+.tab{flex:none;height:38px;padding:0 13px;border-radius:19px;color:var(--muted);font-size:14px;white-space:nowrap}
 .tab.on{color:var(--text);font-weight:600;background:var(--panel2)}
 
 .phead{display:flex;align-items:flex-start;gap:8px;padding-right:12px}
@@ -316,15 +321,15 @@ input[type=range].grad::-moz-range-progress{background:transparent}
     <nav class="tabs" id="tabs">
       <button class="tab on" data-tab="beauty">美顏</button>
       <button class="tab" data-tab="shape">臉型</button>
-      <button class="tab" data-tab="sculpt">塑臉</button>
+      <button class="tab" data-tab="reshape">推臉</button>
+      <button class="tab" data-tab="bbrush">美顏筆</button>
       <button class="tab" data-tab="makeup">美妝</button>
       <button class="tab" data-tab="skin">膚質</button>
+      <button class="tab" data-tab="sculpt">塑臉</button>
       <button class="tab" data-tab="aiskin">AI美肌</button>
-      <button class="tab" data-tab="bbrush">美顏筆</button>
       <button class="tab" data-tab="light">光影</button>
       <button class="tab" data-tab="hair">頭髮</button>
       <button class="tab" data-tab="body">身體</button>
-      <button class="tab" data-tab="reshape">重新塑形</button>
       <button class="tab" data-tab="cover">遮臉</button>
       <button class="tab" data-tab="looks">一鍵出片</button>
       <button class="tab" data-tab="filter">濾鏡</button>

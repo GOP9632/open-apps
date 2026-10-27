@@ -160,6 +160,33 @@ const lutCache = new Map();
 let WF;              // 臉型位移場
 try { R = new Renderer($('#gl')); WF = new WarpField(R.gl); }
 catch (e) { $('#empty p').textContent = '這個瀏覽器不支援 WebGL2，請改用新版 Safari、Chrome 或 Edge。'; }
+// iPhone 記憶體吃緊、切到別的 app 太久回來，Safari 會把 WebGL 收回：畫布整個變透明，只剩黑底，而且不會自己回來
+// （Anthony 2026-10-27：修一修照片直接不見，整個畫面黑的）。照 WebGL 規範：擋下預設，還回來就整套重建、照片重新上傳；
+// 等一下還是沒還回來，就換一張新的畫布重開。照片本身在另一張 2D 畫布上，不會掉
+let glLost = false;
+function watchGl(c) {
+  c.addEventListener('webglcontextlost', e => { e.preventDefault(); lostGl(); });
+  c.addEventListener('webglcontextrestored', () => { if (glLost) rebuildGl(); });
+}
+function lostGl() {
+  if (glLost) return;
+  glLost = true; cancelAnimationFrame(raf); raf = 0;
+  if (base) toast('畫面重新整理中…', 1500);
+  setTimeout(() => {
+    if (!glLost) return;
+    const old = $('#gl'), c = old.cloneNode(false);
+    old.replaceWith(c); watchGl(c); rebuildGl();
+  }, 1500);
+}
+function rebuildGl() {
+  glLost = false;
+  try { R = new Renderer($('#gl')); WF = new WarpField(R.gl); if (R.gl.isContextLost()) throw 0; }
+  catch { lostGl(); return; }  // 還拿不到：再等一下
+  for (const k of Object.keys(texKey)) delete texKey[k];
+  hairFor = null; hairFx = skinFx = null;
+  if (base?.canvas) { applyBase(); syncView(); }
+}
+if (R) watchGl($('#gl'));
 
 // ---------- 小工具 ----------
 let toastT;
@@ -192,7 +219,7 @@ async function loadFile(file) {
     view.reset(); $('#zoom').classList.add('on');
     commit();
     // 照 Hypic：人像照進來先停在「人像」；找不到臉就改停在濾鏡
-    landing = true; showTab('beauty');
+    landing = true; tab = ''; showTab('beauty');
   } catch (e) {
     console.error(e); toast('這張照片打不開');
   } finally { busy(); }
@@ -475,20 +502,24 @@ function draw(full) {
 }
 // 預覽解析度：螢幕上實際有幾個像素就畫幾個（放大時跟著變細），一次跳 √2 倍，縮放時不會每一格都重畫
 let zoomZ = 1, dragging = false;
-const FAST_PX = 1.5e6;
+// 預覽最多幾像素：iPhone 放大兩倍以上時，預覽原本會變成整張 1200 萬像素，光畫布就吃掉幾百 MB，
+// Safari 記憶體不夠就把 WebGL 收回、照片整個變黑（Anthony 2026-10-27）
+const FAST_PX = 1.5e6, VIEW_PX = LOW_MEM ? 6e6 : 16e6;
 function syncView() {
   if (!R || !base) return;
-  const s = frameK * zoomZ * Math.min(3, devicePixelRatio || 1);
-  let q = Math.min(1, 2 ** (Math.ceil(Math.log2(Math.max(s, 1e-3)) * 2) / 2));
+  const s = frameK * zoomZ * Math.min(3, devicePixelRatio || 1), px = base.canvas.width * base.canvas.height;
+  const q = Math.min(1, 2 ** (Math.ceil(Math.log2(Math.max(s, 1e-3)) * 2) / 2), Math.sqrt(VIEW_PX / px));
   // 拖滑桿、推臉、拖燈的時候先畫小一點（最多約 150 萬像素），放開再畫回清楚的。
-  // iPhone 螢幕 3 倍密度，放大看時預覽就是整張 900 萬像素，每秒只畫得出 2～8 格（Anthony 2026-10-27 實測）
-  if (dragging) q = Math.min(q, Math.sqrt(FAST_PX / (base.canvas.width * base.canvas.height)));
-  if (q !== R.view) { R.view = q; render(); }
+  // iPhone 螢幕 3 倍密度，放大看時每秒只畫得出 2～8 格（Anthony 2026-10-27 實測）。
+  // 畫布大小不變，只是先畫進一張小圖再放大（以前是改畫布大小，按下、放開各頓一次）
+  const f = dragging ? Math.min(1, Math.sqrt(FAST_PX / (px * q * q))) : 1;
+  if (q !== R.view || f !== R.fast) { R.view = q; R.fast = f; render(); }
 }
 function setDragging(on) { if (dragging !== on) { dragging = on; syncView(); } }
 // 開始拖：任何滑桿；推臉、打光（拖燈）時在照片上按下。放開手指就畫回清楚的
+addEventListener('rangestart', () => setDragging(true));
 addEventListener('pointerdown', e => {
-  if (e.target.matches?.('input[type=range]') || (e.target.closest?.('#wrap') && !pinch.on && (tab === 'reshape' || (tab === 'light' && P.light)))) setDragging(true);
+  if (e.target.closest?.('#wrap') && !pinch.on && (tab === 'reshape' || (tab === 'light' && P.light))) setDragging(true);
 }, true);
 addEventListener('pointerup', () => setDragging(false), true);
 addEventListener('pointercancel', () => setDragging(false), true);
@@ -519,6 +550,9 @@ function syncHair(full) {
   hairFor = base; hairSrc = src; hairKey = key; skinKeyNow = sKey;
   // 先改頭髮，再改膚質，最後交給主管線
   let img = src;
+  // 頭髮、膚質各自的 WebGL 也可能被收回：收回了就重開一個，不然交出去的是一張空白圖
+  if (hairFx?.gl?.isContextLost()) hairFx = null;
+  if (skinFx?.gl?.isContextLost()) skinFx = null;
   if (want) { hairFx ||= new HairFx(); img = hairFx.apply(src, base.hair, P); }
   if (sWant) { skinFx ||= new SkinFx(); img = skinFx.apply(img, base.skin, P, key + '|' + src.width, src.width / base.canvas.width); }
   if (want || sWant || !first) R.setImage(img, base.canvas.width, base.canvas.height);
@@ -753,7 +787,8 @@ const GI = {
 // 順序照 Hypic 編輯頁第一層：修飾、濾鏡、調整、清除、特效、貼圖、文字……重新塑形；
 // 人像底下照 Hypic「修飾」第二層：臉部、彩妝、皮膚、打光、頭髮、塑身
 const GROUPS = [
-  ['portrait', '人像', 'P', ['beauty', 'shape', 'sculpt', 'makeup', 'skin', 'aiskin', 'bbrush', 'light', 'hair', 'body', 'reshape', 'cover']],
+  // 推臉、美顏筆往前放：最常用，以前排第 7、第 11，手機上要往右滑才看得到（評審 2026-10-27）。推臉照醒圖的叫法
+  ['portrait', '人像', 'P', ['beauty', 'shape', 'reshape', 'bbrush', 'makeup', 'skin', 'sculpt', 'aiskin', 'light', 'hair', 'body', 'cover']],
   ['filter', '濾鏡', 'F', ['looks', 'filter']],
   ['adjust', '調節', 'A', ['adjust', 'grade']],
   ['erase', '消除', 'E', ['erase', 'doodle', 'cutout']],
@@ -865,6 +900,8 @@ function item({ label, icon, on, set, onclick, cls = '', style = '' }) {
 function showTab(t) {
   if (t !== 'crop' && cropState) endCrop();
   if (t !== 'erase') eraseLeave();
+  // 同一個分頁重畫（點選項）時，兩排選項留在原來捲到的位置
+  const same = t === tab, sl = same ? [$('#items').scrollLeft, $('#cats').scrollLeft] : [0, 0];
   tab = t;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   const box = $('#items'); box.innerHTML = ''; $('#rows').innerHTML = ''; $('#items').hidden = false;
@@ -876,6 +913,13 @@ function showTab(t) {
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
   lightDot(); bmBox(); rsRing(); faceBoxes();
   syncNav();
+  // 換分頁：選中的那個捲到看得到的地方（以前留在上一個分頁捲到的位置，預設選中的磨皮、彎曲會在畫面外）
+  if (same) { box.scrollLeft = sl[0]; $('#cats').scrollLeft = sl[1]; }
+  else for (const [row, on] of [[box, box.querySelector('.it.on')], [$('#cats'), $('#cats .it.on')], [$('#tabs'), $(`#tabs .tab[data-tab="${t}"]`)]]) {
+    if (!row || !on || wide.matches) continue;
+    const l = on.getBoundingClientRect().left - row.getBoundingClientRect().left + row.scrollLeft;
+    row.scrollLeft = l + on.offsetWidth / 2 < row.clientWidth * 0.8 ? 0 : l - (row.clientWidth - on.offsetWidth) / 2;
+  }
 }
 
 const isSet = (k, T = P) => T[k] !== 0 || (SIDED.includes(k) && (T[k + 'L'] !== 0 || T[k + 'R'] !== 0));
@@ -2195,7 +2239,8 @@ function tabCrop(box) {
   box.append(item({ label: '旋轉', icon: I.rotate, onclick: () => transform('rot') }));
   box.append(item({ label: '左右翻轉', icon: I.flip, onclick: () => transform('flipH') }));
   box.append(item({ label: '上下翻轉', icon: I.flipv, onclick: () => transform('flipV') }));
-  box.append(item({ label: '套用裁切', icon: I.check, onclick: applyCrop }));
+  // 跟消除的「立即消除」一樣放第一個、最顯眼（以前排在最後，手機上要捲很遠，評審 2026-10-27）
+  box.prepend(item({ label: '套用裁切', icon: '套用裁切', cls: 'wide', style: 'background:var(--accent);color:#fff;font-weight:600', onclick: applyCrop }));
   $('#note').textContent = '拖曳框框或四個角來裁切，按「套用裁切」完成。';
 }
 function startCrop() {
@@ -2595,6 +2640,7 @@ async function save() {
       setTimeout(() => URL.revokeObjectURL(a.href), 4000);
       toast('已下載');
     }
+    savedAt = hist[hi];
   } catch (e) { console.error(e); toast('儲存失敗'); }
   finally { busy(); render(); }
 }
@@ -2612,7 +2658,12 @@ function tabTpl(box) {
 
 // ---------- 開啟照片 ----------
 $('#bPick').onclick = () => $('#file').click();
-$('#bOpen').onclick = () => $('#file').click();
+// 換照片會清掉復原紀錄：還有沒存的修改就先問（以前直接開相簿，誤按再選一張，修到一半的整個不見，評審 2026-10-27）
+let savedAt = null;
+$('#bOpen').onclick = () => {
+  if (base && hi > 0 && hist[hi] !== savedAt && !confirm('換一張照片的話，這張還沒存的修改會不見。確定要換嗎？')) return;
+  $('#file').click();
+};
 $('#bCam').onclick = () => $('#cam').click();
 // 拼貼、範本：一次選多張照片
 let multiFor = 'grid';
