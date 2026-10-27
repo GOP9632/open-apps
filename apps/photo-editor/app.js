@@ -1101,7 +1101,7 @@ function paramRows(box, list) {
 }
 
 // 消除筆在 erase.js，這裡把它要用的東西傳過去
-const eraseApp = { get base() { return base; }, setBase, commit, item, hideSlider, showTab, toast, busy };
+const eraseApp = { get base() { return base; }, setBase, commit, item, hideSlider, showTab, toast, busy, toSrc: srcMapper };
 doodleInput($('#wrap'), { get base() { return base; }, tab: () => tab, paint: paintPatch, commit, toSrc: srcMapper });
 beautyBrushInput($('#wrap'), { get base() { return base; }, tab: () => tab, surf: ensureSurf, paint: paintPatch, commit, toSrc: srcMapper });
 function tabEraseHere(box) { tabErase(box, eraseApp); }
