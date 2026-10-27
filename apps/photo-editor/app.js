@@ -216,7 +216,7 @@ async function loadFile(file) {
     $('#empty').style.display = 'none';
     $('#wrap').classList.add('on'); $('#panel').classList.remove('off');
     ['#bSave', '#bCmp', '#bResetAll', '#bMerge'].forEach(s => $(s).disabled = false);
-    view.reset(); $('#zoom').classList.add('on');
+    view.reset(); $('#zoom').classList.add('on'); $('#hist').classList.add('on');
     commit();
     // 照 Hypic：人像照進來先停在「人像」；找不到臉就改停在濾鏡
     landing = true; tab = ''; showTab('beauty');
@@ -843,8 +843,9 @@ wide.addEventListener('change', () => { syncNav(); showTab(tab); });
 const keysOf = list => list.flatMap(x => SIDED.includes(x[0]) ? [x[0], x[0] + 'L', x[0] + 'R'] : [x[0]]);
 const toP0 = keys => keys.forEach(k => { P[k] = clone(P0[k]); });
 const keysOn = keys => () => keys.some(k => JSON.stringify(P[k]) !== JSON.stringify(P0[k]));
+// 膚質裡的「磨皮」跟美顏的磨皮是同一個值，算在美顏：改美顏磨皮時膚質分頁不亮點、膚質的重設也不動它
 const tabKeys = {
-  adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...TONE, ...WRINKLE]), aiskin: keysOf([...AI_FACE, ...AI_BODY]), sculpt: Object.keys(SC_P0), reshape: ['liq'],
+  adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...TONE, ...WRINKLE]).filter(k => k !== 'smooth'), aiskin: keysOf([...AI_FACE, ...AI_BODY]), sculpt: Object.keys(SC_P0), reshape: ['liq'],
   body: Object.keys(BODY_P0), hair: Object.keys(HAIR_P0), makeup: ['mk', 'mkLook', 'mkLookAmt'], filter: ['filter', 'filterAmt'],
   light: ['light', 'lightAmt', 'lightBri', 'lightCol', 'lightDist', 'lightSpec', 'lightGloss', 'lightBlur', 'lightFg', 'lightBg', 'lightX', 'lightY', 'lightSeed', 'flash', 'flashAmt'],
   fun: ['blur', 'blurStyle', 'blurSize', 'fx', 'fxAmt', 'ov', 'ovAmt', 'ex', ...Object.keys(POP_P0)], frame: ['frame'], cutout: ['bg', 'bgColor', 'bgImg', 'bgBlur'],
@@ -904,11 +905,12 @@ function showTab(t) {
   const same = t === tab, sl = same ? [$('#items').scrollLeft, $('#cats').scrollLeft] : [0, 0];
   tab = t;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  $('#hist').classList.toggle('crop', t === 'crop');
   const box = $('#items'); box.innerHTML = ''; $('#rows').innerHTML = ''; $('#items').hidden = false;
   $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true;
-  gradeHide();
+  gradeHide(); hideSlider();
   if (!base) return;
-  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, aiskin: tabAiSkin, sculpt: tabSculpt, reshape: tabReshape, doodle: box => tabDoodle(box, { item, setSlider, showTab }), bbrush: box => tabBeautyBrush(box, { item, setSlider, showTab }), light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, tpl: tabTpl, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
+  ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, aiskin: tabAiSkin, sculpt: tabSculpt, reshape: tabReshape, doodle: box => tabDoodle(box, { item, setSlider, showTab }), bbrush: box => tabBeautyBrush(box, { item, sliderRow, showTab, surf: ensureSurf, tab: () => tab }), light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, tpl: tabTpl, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
   lightDot(); bmBox(); rsRing(); faceBoxes();
@@ -1295,17 +1297,16 @@ function tabHair(box) {
 }
 // ---------- 重新塑形（液化，reshape.js） ----------
 // 照 Hypic 修飾 › 重新塑形：彎曲、順時針旋轉、逆時針旋轉、脹大、縮小、還原，每個工具各自記大小、強度
-let rsTool = 'push', rsParam = 'size';
+let rsTool = 'push';
 const rsVal = Object.fromEntries(RESHAPE.map(t => [t.id, { size: t.size, str: t.str }]));
 function tabReshape(box) {
-  const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
-  [['size', '大小'], ['str', '強度']].forEach(([k, lb]) => cats.append(item({
-    label: lb, icon: lb, cls: 'wide', on: rsParam === k, onclick: () => { rsParam = k; showTab('reshape'); },
-  })));
   RESHAPE.forEach(t => box.append(item({ label: t.name, icon: t.icon, on: rsTool === t.id, onclick: () => { rsTool = t.id; showTab('reshape'); } })));
   box.append(protectItem());
-  const v = rsVal[rsTool], def = RESHAPE.find(t => t.id === rsTool)[rsParam];
-  setSlider(rsParam === 'size' ? '大小' : '強度', 1, 100, v[rsParam], x => { v[rsParam] = x; rsRing(); }, def);
+  // 大小、強度兩條一起顯示，不用再點膠囊切換（評審 2026-10-27）
+  const v = rsVal[rsTool], t = RESHAPE.find(t => t.id === rsTool);
+  $('#rows').append(
+    sliderRow({ label: '大小', min: 1, max: 100, val: v.size, def: t.size, onInput: x => { v.size = x; rsRing(); } }),
+    sliderRow({ label: '強度', min: 1, max: 100, val: v.str, def: t.str, onInput: x => { v.str = x; } }));
   $('#note').textContent = rsTool === 'push' ? '用手指在照片上推，被推的地方會跟著走。兩指可以縮放照片。' : rsTool === 'restore' ? '塗抹推壞的地方，每畫一筆就變回原樣一點，只有塗到的地方會變。' : '在要改的地方按住或來回塗抹。';
   rsRing();
 }
@@ -1325,13 +1326,23 @@ function rsRing(p) {
   d.classList.toggle('idle', !p);
 }
 (() => {
-  let last = null, timer = 0, liq0 = null;
+  let last = null, timer = 0, liq0 = null, p0 = null;
+  // 背景保護開著、推的地方是背景：畫面不會動，使用者會以為推臉壞了，說一次（評審 2026-10-27）
+  const protHint = () => {
+    const m = base.matte || base.seg?.person;
+    if (!P.bgProtect || !m || !p0 || base.protHint) return;
+    const x = Math.min(m.width - 1, Math.floor(p0.x / base.canvas.width * m.width)), y = Math.min(m.height - 1, Math.floor(p0.y / base.canvas.height * m.height));
+    const c = m.getContext?.('2d');
+    if (!c || c.getImageData(x, y, 1, 1).data[0] > 40) return;
+    base.protHint = true;
+    toast('這裡是背景，「背景保護」開著所以不會動。要推背景，把選項最後面的「背景保護」關掉');
+  };
   const at = e => { const r = $('#wrap').getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * base.canvas.width, y: (e.clientY - r.top) / r.height * base.canvas.height }; };
   const dab = (a, b) => { const v = rsVal[rsTool]; P.liq = liqDab(P.liq, rsTool, a, b, v.size, v.str, base.canvas.width, base.canvas.height); render(); };
   $('#wrap').addEventListener('pointerdown', e => {
     if (tab !== 'reshape' || !base || e.target.closest('.st,.tx') || e.button > 0 || pinch.on) return;
     e.preventDefault(); $('#wrap').setPointerCapture(e.pointerId);
-    last = at(e); liq0 = P.liq; rsRing(last);
+    last = p0 = at(e); liq0 = P.liq; rsRing(last);
     // 旋轉、脹大、縮小：按住不動也會一直作用；還原是畫一筆還原一點，按住不會一直還原
     if (rsTool !== 'push') { dab(last, last); if (rsTool !== 'restore') timer = setInterval(() => last && dab(last, last), 90); }
   });
@@ -1343,7 +1354,7 @@ function rsRing(p) {
     if (rsTool === 'push' || rsTool === 'restore') dab(last, p); else dab(p, p);
     last = p;
   });
-  const up = () => { if (!last) return; last = null; clearInterval(timer); rsRing(); commit(); };
+  const up = () => { if (!last) return; last = null; clearInterval(timer); rsRing(); commit(); if (rsTool !== 'restore') protHint(); };
   $('#wrap').addEventListener('pointerup', up); $('#wrap').addEventListener('pointercancel', up);
   // 第二指放下是要縮放：這一筆不算
   addEventListener('pinchstart', () => { if (!last) return; last = null; clearInterval(timer); P.liq = liq0; rsRing(); render(); });

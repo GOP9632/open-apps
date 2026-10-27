@@ -25,7 +25,7 @@ export const BRUSHES = [
   { id: 'teeth', name: '牙齒美白', str: 60 },
   { id: 'fold', name: '去法令紋', str: 70 },
 ];
-const st = { tool: 'smooth', size: 30, str: Object.fromEntries(BRUSHES.map(b => [b.id, b.str])), param: 'size' };
+const st = { tool: 'smooth', size: 30, str: Object.fromEntries(BRUSHES.map(b => [b.id, b.str])) };
 const MASKED = ['smooth', 'circle', 'fold', 'eye', 'oil', 'texture', 'teeth'];
 
 const newCanvas = (w, h) => Object.assign(document.createElement('canvas'), { width: Math.max(1, Math.round(w)), height: Math.max(1, Math.round(h)) });
@@ -53,11 +53,24 @@ function buf(key, n) {
   if (!a || a.length < n) { a = new Float32Array(Math.max(n, 1 << 16)); pool.set(key, a); }
   return a.subarray(0, n);
 }
+const u8pool = new Map();
+function u8(key, n) {
+  let a = u8pool.get(key);
+  if (!a || a.length < n) { a = new Uint8Array(Math.max(n, 1 << 14)); u8pool.set(key, a); }
+  return a.subarray(0, n);
+}
 // 小塊方框模糊（結果放 dst），暫存也重用
 const blurTo = (src, dst, w, h, r) => { dst.set(src); return boxBlur(dst, w, h, r, 3, buf('tmp', src.length)); };
 // 雙線性取樣用的格子：第 p0 + k 個像素落在小圖哪兩格之間
-function grid(p0, n, s, size) {
-  const i0 = new Int32Array(n), i1 = new Int32Array(n), f = new Float32Array(n);
+// key：同一個 key 每塊重用同一組陣列（評審量到一筆配 460～590 個小陣列，多半是這裡）
+const ipool = new Map();
+function ibuf(key, n) {
+  let a = ipool.get(key);
+  if (!a || a.length < n) { a = new Int32Array(Math.max(n, 4096)); ipool.set(key, a); }
+  return a.subarray(0, n);
+}
+function grid(p0, n, s, size, key) {
+  const i0 = ibuf(key + '0', n), i1 = ibuf(key + '1', n), f = buf('g' + key, n);
   for (let k = 0; k < n; k++) {
     const u = Math.min(size - 1, Math.max(0, (p0 + k + 0.5) * s - 0.5)), a = Math.floor(u);
     i0[k] = a; i1[k] = Math.min(size - 1, a + 1); f[k] = u - a;
@@ -279,7 +292,7 @@ function block(ses, x0, y0, x1, y1, out, ox, oy, ow, m) {
   });
   if (!tools.length) return;
   const bw = x1 - x0, bh = y1 - y0, nb = bw * bh;
-  const gx = grid(x0, bw, mx, mw), gy = grid(y0, bh, my, mh);
+  const gx = grid(x0, bw, mx, mw, 'mx'), gy = grid(y0, bh, my, mh, 'my');
   // 這一塊每支筆的新、舊強度；都沒變就不用算
   const todo = [];
   for (const t of tools) {
@@ -288,7 +301,7 @@ function block(ses, x0, y0, x1, y1, out, ox, oy, ow, m) {
     let a0 = null;
     if (m) {
       // 舊遮罩：這一塊用到的格子抄一份，m 那塊換回舊值
-      const cx0 = Math.min(...gx.i0), cy0 = Math.min(...gy.i0), cw = Math.max(...gx.i1) - cx0 + 1, ch = Math.max(...gy.i1) - cy0 + 1, A = ses.A[t], o = new Uint8Array(cw * ch);
+      const cx0 = Math.min(...gx.i0), cy0 = Math.min(...gy.i0), cw = Math.max(...gx.i1) - cx0 + 1, ch = Math.max(...gy.i1) - cy0 + 1, A = ses.A[t], o = u8('a0m', cw * ch);
       for (let y = 0; y < ch; y++) o.set(A.subarray((cy0 + y) * mw + cx0, (cy0 + y) * mw + cx0 + cw), y * cw);
       for (let y = Math.max(cy0, m.y); y < Math.min(cy0 + ch, m.y + m.h); y++) for (let x = Math.max(cx0, m.x); x < Math.min(cx0 + cw, m.x + m.w); x++) o[(y - cy0) * cw + x - cx0] = m.d[(y - m.y) * m.w + x - m.x];
       a0 = buf('a0', nb);
@@ -308,7 +321,7 @@ function block(ses, x0, y0, x1, y1, out, ox, oy, ow, m) {
     c[0][i] = r; c[1][i] = g; c[2][i] = b; L[i] = 0.299 * r + 0.587 * g + 0.114 * b;
   }
   const d = [buf('d0', nb).fill(0), buf('d1', nb).fill(0), buf('d2', nb).fill(0)];
-  const hx = grid(x0, bw, hw / W, hw), hy = grid(y0, bh, hh / H, hh);
+  const hx = grid(x0, bw, hw / W, hw, 'hx'), hy = grid(y0, bh, hh / H, hh, 'hy');
   const blur3 = (key, r) => c.map((a, j) => blurTo(a, buf(key + j, n), ew, eh, r));
   for (const { t, a1, a0 } of todo) {
     const hp = hel(ses, t), hs = HELD[t](hp), nh = hs.length;
@@ -317,7 +330,7 @@ function block(ses, x0, y0, x1, y1, out, ox, oy, ow, m) {
     if (t === 'oil') {
       // 比周圍亮很多的亮點是油光（逐點算，小亮點才不會被小圖抹掉）
       K.fine = blur3('lf', 2); const sh = K.sh = buf('sh', n);
-      const qx = grid(ex0, ew, hw / W, hw), qy = grid(ey0, eh, hh / H, hh);
+      const qx = grid(ex0, ew, hw / W, hw, 'qx'), qy = grid(ey0, eh, hh / H, hh, 'qy');
       for (let y = 0; y < eh; y++) for (let x = 0; x < ew; x++) { const i = y * ew + x; sh[i] = sstep(0.02, 0.1, L[i] - bil(hp.Lb, hw, qx, qy, x, y)) * sstep(0.5, 0.8, L[i]); }
       boxBlur(sh, ew, eh, ses.ro, 3, buf('tmp', n));
     }
@@ -437,13 +450,13 @@ function blemishStroke(ses, pts, R, k) {
   let cx0 = Infinity, cy0 = Infinity, cx1 = -1, cy1 = -1;
   for (let by = F[1]; by < F[3]; by += BS) for (let bx = F[0]; bx < F[2]; bx += BS) {
     const x1 = Math.min(F[2], bx + BS), y1 = Math.min(F[3], by + BS), bw = x1 - bx, bh = y1 - by;
-    const gx = grid(bx - G[0], bw, 1 / n, gw), gy = grid(by - G[1], bh, 1 / n, gh);
+    const gx = grid(bx - G[0], bw, 1 / n, gw, 'bx'), gy = grid(by - G[1], bh, 1 / n, gh, 'by');
     let any = false;
     const mb = buf('bm', bw * bh);
     for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) { const v = bil(m, gw, gx, gy, x, y); mb[y * bw + x] = v; if (v > 0.002) any = true; }
     if (!any) continue;
     const ex0 = Math.max(0, bx - 6), ey0 = Math.max(0, by - 6), ex1 = Math.min(W, x1 + 6), ey1 = Math.min(H, y1 + 6), ew = ex1 - ex0, eh = ey1 - ey0, ne = ew * eh;
-    const src = readO(ses, ex0, ey0, ex1, ey1), qx = grid(ex0 - G[0], ew, 1 / n, gw), qy = grid(ey0 - G[1], eh, 1 / n, gh);
+    const src = readO(ses, ex0, ey0, ex1, ey1), qx = grid(ex0 - G[0], ew, 1 / n, gw, 'bqx'), qy = grid(ey0 - G[1], eh, 1 / n, gh, 'bqy');
     const cc = [buf('c0', ne), buf('c1', ne), buf('c2', ne)], okw = buf('ok', ne), cw = [buf('w0', ne), buf('w1', ne), buf('w2', ne)];
     for (let y = 0; y < eh; y++) for (let x = 0; x < ew; x++) {
       const i = y * ew + x, R_ = src[i * 4] / 255, G_ = src[i * 4 + 1] / 255, B_ = src[i * 4 + 2] / 255, l = 0.299 * R_ + 0.587 * G_ + 0.114 * B_;
@@ -491,19 +504,26 @@ function valid(ses, S) {
 export function bbRelease(S) { if (S.bbSes) { kill(S.bbSes); S.bbSes = null; } }
 
 export function tabBeautyBrush(box, app) {
-  const { item, setSlider, showTab } = app;
-  const cats = document.querySelector('#cats'); cats.hidden = false; cats.innerHTML = '';
-  [['size', '大小'], ['str', '強度']].forEach(([k, lb]) => cats.append(item({
-    label: lb, icon: lb, cls: 'wide', on: st.param === k, onclick: () => { st.param = k; showTab('bbrush'); },
-  })));
+  const { item, sliderRow, showTab } = app;
   BRUSHES.forEach(b => box.append(item({
     label: b.name, icon: b.name, cls: 'wide', on: st.tool === b.id, onclick: () => { st.tool = b.id; showTab('bbrush'); },
   })));
   const b = BRUSHES.find(x => x.id === st.tool);
-  if (st.param === 'size') setSlider('大小', 1, 100, st.size, v => { st.size = v; }, 30);
-  else setSlider('強度', 0, 100, st.str[st.tool], v => { st.str[st.tool] = v; }, b.str);
+  // 大小、強度兩條一起顯示，不用再點膠囊切換（評審 2026-10-27）
+  document.querySelector('#rows').append(
+    sliderRow({ label: '大小', min: 1, max: 100, val: st.size, def: 30, onInput: v => { st.size = v; } }),
+    sliderRow({ label: '強度', min: 0, max: 100, val: st.str[st.tool], def: b.str, onInput: v => { st.str[st.tool] = v; } }));
   document.querySelector('#note').textContent = `塗抹要${b.name}的地方。同一處多塗幾次，到上限就停，不會越塗越假。`;
+  // 點開美顏筆、換筆時先在背景把縮圖和這支筆要用的資料算好，第一筆放開才不會頓一下
+  clearTimeout(warmT);
+  warmT = setTimeout(() => {
+    if (app.tab() !== 'bbrush' || !MASKED.includes(st.tool)) return;
+    const S = app.surf();
+    if (!valid(S.bbSes, S)) { bbRelease(S); S.bbSes = session(S.canvas, S.ver); }
+    hel(S.bbSes, st.tool);
+  }, 250);
 }
+let warmT = 0;
 
 // 塗的時候先在照片上面畫半透明的筆跡（Hypic 也是先用紅色顯示塗到哪），放開手指才算進照片
 export function beautyBrushInput(wrap, app) {
