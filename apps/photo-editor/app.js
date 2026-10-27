@@ -281,9 +281,26 @@ function seekSurf(S, v) {
 // 同一張 canvas 的內容變了：照 canvas 記住的預覽、皮膚、頭髮圖要重算。
 // rects：改到的那幾塊，照片的貼圖只傳這幾塊（整張重傳又慢又吃記憶體）
 function pixelsChanged(c, rects) {
-  pvCache.delete(c); if (hairFx) hairFx.src = null; if (skinFx) skinFx.src = null;
-  if (!rects) return;
-  if (rects.every(r => R.patchImage(r.img, r.x, r.y))) R.derive(); else R.setImage(c);
+  if (hairFx) hairFx.src = null; if (skinFx) skinFx.src = null;
+  if (!rects) { pvCache.delete(c); return; }
+  // 預覽縮圖只重畫改到的那幾塊（以前整張 1200 萬像素重縮）
+  const v = pvCache.get(c);
+  if (v) {
+    const x = v.p.getContext('2d'), k = v.p.width / c.width;
+    for (const r of rects) {
+      const x0 = Math.floor(r.x * k), y0 = Math.floor(r.y * k), x1 = Math.min(v.p.width, Math.ceil((r.x + r.img.width) * k)), y1 = Math.min(v.p.height, Math.ceil((r.y + r.img.height) * k));
+      if (x1 <= x0 || y1 <= y0) continue;
+      // 多縮外面一圈再只留裡面：邊上的像素才跟整張縮的一樣，不會有接縫
+      const m = 3, a0 = Math.max(0, x0 - m), b0 = Math.max(0, y0 - m), a1 = Math.min(v.p.width, x1 + m), b1 = Math.min(v.p.height, y1 + m);
+      x.save(); x.beginPath(); x.rect(x0, y0, x1 - x0, y1 - y0); x.clip();
+      x.drawImage(c, a0 / k, b0 / k, (a1 - a0) / k, (b1 - b0) / k, a0, b0, a1 - a0, b1 - b0);
+      x.restore();
+    }
+  }
+  if (rects.every(r => R.patchImage(r.img, r.x, r.y))) R.derive();
+  // 貼圖是膚質、頭髮處理過的預覽：不用整張原尺寸重傳，接著的 render 會用新的預覽重算再傳（評審 2026-10-27）
+  else if (R.imgW === c.width && R.imgH === c.height) R.setImage(c);
+  else hairFor = null;
 }
 // 每一筆存的那一塊加起來的上限，超過就丟掉最舊的復原步驟
 const EDIT_BUDGET = LOW_MEM ? 96e6 : 400e6;
@@ -382,18 +399,29 @@ function getMatte(b) {
     b.matteP = matte(b.canvas).then(m => {
       clearTimeout(t);
       b.matte = m; b.segB = blurCanvas(m); b.harm = null;
-      if (b === base) { R.setSeg(m); R.setSegB(b.segB); render(); if (tab === 'fun' && cSec === 'pop') showTab('fun'); }
+      if (share(b, 'matteP', ['matte', 'segB', 'harm'])) { R.setSeg(m); R.setSegB(b.segB); render(); if (tab === 'fun' && cSec === 'pop') showTab('fun'); }
       return m;
     }).catch(e => { clearTimeout(t); console.warn(e); b.matteP = null; if (b === base) toast('精細摳圖載入失敗，先用一般去背'); return null; });
   }
   return b.matteP;
 }
 
+// 偵測結果寫回每一個共用同一個 promise 的 base：美顏筆、塗鴉每畫一筆就換一個新的 base 物件（帶著 promise），
+// 還在找臉時先畫一筆的話，結果只寫進舊的那個，之後美顏、臉型、美妝都沒作用（評審 2026-10-27）。回傳現在的 base 有沒有拿到
+function share(b, pk, keys) {
+  let live = b === base;
+  for (const o of new Set([base, ...hist.map(h => h.base)])) {
+    if (!o || o === b || !b[pk] || o[pk] !== b[pk]) continue;
+    for (const k of keys) o[k] = b[k];
+    if (o === base) live = true;
+  }
+  return live;
+}
 // 背景先找臉和皮膚，美顏打開時就準備好了
 function getSeg(b) {
   b.segP ||= segment(b.canvas).then(s => {
-    b.seg = s;
-    if (!b.matte) { b.segB = blurCanvas(s.person); if (b === base) { R.setSeg(s.person); R.setSegB(b.segB); render(); } }
+    b.seg = s; share(b, 'segP', ['seg']);
+    if (!b.matte) { b.segB = blurCanvas(s.person); if (share(b, 'segP', ['segB'])) { R.setSeg(s.person); R.setSegB(b.segB); render(); } }
     return s;
   })
     .catch(e => { console.warn(e); b.segP = null; return null; });
@@ -405,14 +433,15 @@ function findFaces() {
   b.facesP = detectFaces(b.canvas).then(async f => {
     b.faces = f; b.geoms = f.map(faceGeom);
     b.mask2 = f.length ? featureMask(f, b.canvas.width, b.canvas.height) : null;
-    if (b === base) { R.setMask2(b.mask2); render(); }
-    if (b === base && !f.length && landing && tab === 'beauty') { landing = false; showTab('filter'); }
+    const live = share(b, 'facesP', ['faces', 'geoms', 'mask2']);
+    if (live) { R.setMask2(b.mask2); render(); }
+    if (live && !f.length && landing && tab === 'beauty') { landing = false; showTab('filter'); }
     const seg = f.length ? await getSeg(b) : null;
     b.mask = f.length ? skinMask(f, b.canvas.width, b.canvas.height, seg, b.canvas) : null;
     b.flashSt = seg && b.mask ? flashStats(b.canvas, seg, b.mask, b.geoms[0]) : null;
-    if (b === base) { R.setMask(b.mask); render(); if (tab === 'beauty' || tab === 'sticker' || tab === 'makeup' || tab === 'looks') showTab(tab); }
+    if (share(b, 'facesP', ['mask', 'flashSt'])) { R.setMask(b.mask); render(); if (tab === 'beauty' || tab === 'sticker' || tab === 'makeup' || tab === 'looks') showTab(tab); }
     return f;
-  }).catch(e => { console.warn(e); b.faces = []; b.faceErr = true; if (b === base && (tab === 'beauty' || tab === 'makeup')) showTab(tab); return []; });
+  }).catch(e => { console.warn(e); b.faces = []; b.faceErr = true; if (share(b, 'facesP', ['faces', 'faceErr']) && (tab === 'beauty' || tab === 'makeup')) showTab(tab); return []; });
   return b.facesP;
 }
 async function findPerson(quiet) {
@@ -519,7 +548,7 @@ function syncView() {
   const f = dragging ? Math.min(1, Math.sqrt(FAST_PX / (px * q * q))) : 1;
   if (q !== R.view || f !== R.fast) { R.view = q; R.fast = f; render(); }
 }
-function setDragging(on) { if (dragging !== on) { dragging = on; syncView(); } }
+function setDragging(on) { if (dragging !== on) { dragging = on; syncView(); if (!on && gradeLutKey.endsWith('|33')) render(); } }
 // 開始拖：任何滑桿；推臉、打光（拖燈）時在照片上按下。放開手指就畫回清楚的
 addEventListener('rangestart', () => setDragging(true));
 addEventListener('pointerdown', e => {
@@ -533,9 +562,9 @@ function getBody(b) {
   b.bodyP ||= Promise.all([detectBody(b.canvas), getSeg(b), findFaces()]).then(([body, s]) => {
     measureBody(body, s);
     b.body = body;
-    if (b === base) { render(); if (tab === 'body') showTab('body'); }
+    if (share(b, 'bodyP', ['body'])) { render(); if (tab === 'body') showTab('body'); }
     return body;
-  }).catch(e => { console.warn(e); b.body = { ok: false }; if (b === base && tab === 'body') showTab('body'); return b.body; });
+  }).catch(e => { console.warn(e); b.body = { ok: false }; if (share(b, 'bodyP', ['body']) && tab === 'body') showTab('body'); return b.body; });
   return b.bodyP;
 }
 // 頭髮：先把頭髮改好的照片交給主管線，參數沒變就不重算
@@ -580,7 +609,7 @@ function getSkin(b) {
   b.skinP ||= Promise.all([getSeg(b), findFaces()]).then(([s, f]) => {
     if (!s) { b.skinP = null; return null; }
     b.skin = prepSkin(b.canvas, s, f || []);
-    if (b === base) { hairFor = null; render(); if (tab === 'skin') showTab('skin'); }
+    if (share(b, 'skinP', ['skin'])) { hairFor = null; render(); if (tab === 'skin') showTab('skin'); }
     return b.skin;
   }).catch(e => { console.warn(e); b.skinP = null; return null; });
   return b.skinP;
@@ -590,7 +619,7 @@ function getHair(b) {
   b.hairP ||= Promise.all([getSeg(b), findFaces()]).then(([s, f]) => {
     if (!s) { b.hairP = null; return null; }
     b.hair = prepHair(b.canvas, s, f || []);
-    if (b === base) { hairFor = null; render(); if (tab === 'hair') showTab('hair'); }
+    if (share(b, 'hairP', ['hair'])) { hairFor = null; render(); if (tab === 'hair') showTab('hair'); }
     return b.hair;
   }).catch(e => { console.warn(e); b.hairP = null; return null; });
   return b.hairP;
@@ -696,10 +725,12 @@ function liveFilter() {
   return x?.name === '富士閃光' && xtData().cats[x.cat] === '📸一鍵出片' && base?.faces && !base.faces.length ? 'none' : P.filter;
 }
 function getGradeLut() {
-  const f = liveFilter(), k = gradeKey(P) + '|' + f + '|' + P.filterAmt;
-  if (k !== gradeLutKey) {
-    gradeLutKey = k; const sk = skinFilterFn(f), hr = hairFilterFn(f);
-    gradeLut = lutPair(bakeLUT(gradeFn(P, filterFn(f))), sk && bakeLUT(gradeFn(P, sk)), hr && bakeLUT(gradeFn(P, hr)));
+  // 拖滑桿時先烘 33³ 格點再內插（評審 2026-10-27：每格 26 萬次太慢），放開再烘完整的。
+  // 顏色沒變就沿用（推臉、拖燈時不用換成粗的）
+  const f = liveFilter(), k0 = gradeKey(P) + '|' + f + '|' + P.filterAmt + '|', n = dragging ? 33 : 64;
+  if (!gradeLutKey.startsWith(k0) || !(dragging || gradeLutKey.endsWith('|64'))) {
+    gradeLutKey = k0 + n; const sk = skinFilterFn(f), hr = hairFilterFn(f);
+    gradeLut = lutPair(bakeLUT(gradeFn(P, filterFn(f)), n), sk && bakeLUT(gradeFn(P, sk), n), hr && bakeLUT(gradeFn(P, hr), n));
   }
   return gradeLut;
 }
