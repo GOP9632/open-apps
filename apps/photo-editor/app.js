@@ -16,7 +16,7 @@ import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape } fr
 import { WarpField } from './warpfield.js';
 import { RESHAPE, liqDab, liqRadius } from './reshape.js';
 import { tabDoodle, doodleInput } from './doodle.js';
-import { tabBeautyBrush, beautyBrushInput } from './beautybrush.js';
+import { tabBeautyBrush, beautyBrushInput, bbRelease } from './beautybrush.js';
 import { FONTS, T0, TEXT_COLORS, TEXT_FX, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
 import { initCollage, openCollage } from './collage.js';
 import { CATS as TPL_CATS } from './templates.js';
@@ -221,13 +221,16 @@ function shelveLater(b) {
 // （Anthony 女友 2026-10-27 用美顏筆磨皮時回報）。現在跟一般修圖 app 一樣，每一筆只存改到的那一塊。
 // 同一張 canvas 畫出來的每一步各是一個 base，共用 surf = { canvas, ver, edits }：
 // ver 是 canvas 現在畫到第幾筆；edits[k] 是第 k 筆改到的那一塊「另一邊」的像素
-// （canvas 在第 k 筆之後時存畫之前的，在之前時存畫之後的），復原、重做就是把那一塊對調
-function paintPatch({ x, y, before, after }) {
-  const old = base;
-  if (!old.surf) { old.surf = { canvas: old.canvas, ver: 0, edits: [] }; old.ver = 0; }
-  const S = old.surf;
+// （canvas 在第 k 筆之後時存畫之前的，在之前時存畫之後的），復原、重做就是把那一塊對調。
+// aux：美顏筆那一步另外改到的遮罩、原圖，復原、重做時跟著對調（aux.swap）
+function ensureSurf() {
+  if (!base.surf) { base.surf = { canvas: base.canvas, ver: 0, edits: [] }; base.ver = 0; }
+  return base.surf;
+}
+function paintPatch({ x, y, before, after, aux }) {
+  const old = base, S = ensureSurf();
   S.edits.length = S.ver;  // 復原後再畫：後面那些重做不到了
-  S.edits.push({ x, y, img: before });
+  S.edits.push({ x, y, img: before, aux, ses: aux?.ses });
   S.canvas.getContext('2d').putImageData(after, x, y); S.ver++;
   // 臉、人像這些偵測結果還是同一張照片，留著不用重算；照片的貼圖只傳改到的那一塊
   const keep = { ...old }; delete keep.canvas; delete keep.thumbs;
@@ -239,7 +242,7 @@ function paintPatch({ x, y, before, after }) {
 function seekSurf(S, v) {
   if (S.ver === v) return;
   const ctx = S.canvas.getContext('2d'), done = [];
-  const swap = e => { const cur = ctx.getImageData(e.x, e.y, e.img.width, e.img.height); ctx.putImageData(e.img, e.x, e.y); done.push({ x: e.x, y: e.y, img: e.img }); e.img = cur; };
+  const swap = e => { const cur = ctx.getImageData(e.x, e.y, e.img.width, e.img.height); ctx.putImageData(e.img, e.x, e.y); done.push({ x: e.x, y: e.y, img: e.img }); e.img = cur; e.aux?.swap(); };
   while (S.ver > v) swap(S.edits[--S.ver]);
   while (S.ver < v) swap(S.edits[S.ver++]);
   pixelsChanged(S.canvas, S === base.surf ? done : null);
@@ -261,7 +264,8 @@ function pruneEdits() {
       const vs = hist.filter(h => h.base.surf === S).map(h => h.base.ver);
       if (S.canvas) vs.push(S.ver); else vs.push(S.blobVer);
       const lo = Math.min(...vs), hi = Math.max(...vs);
-      S.edits.forEach((e, k) => { if (!e) return; if (k < lo || k >= hi) S.edits[k] = null; else bytes += e.img.data.length; });
+      // 丟掉的步驟留個空殼（記得是哪一串美顏筆畫的），美顏筆才知道能不能接著那串塗
+      S.edits.forEach((e, k) => { if (!e?.img) return; if (k < lo || k >= hi) { e.img = null; e.aux = null; } else bytes += e.img.data.length + (e.aux?.bytes || 0); });
     }
     if (bytes <= EDIT_BUDGET || hist.length <= 2) return;
     hist.shift();
@@ -291,6 +295,7 @@ function shelveSurf(S) {
     shelving.delete(S);
     if (!blob || S === base.surf || S.canvas !== c) return;
     Object.assign(S, { canvas: null, blob, blobVer: S.ver, w: c.width, h: c.height });
+    bbRelease(S);
     hist.forEach(h => { if (h.base.surf === S) h.base.canvas = null; });
   }, hasAlpha(c) ? 'image/png' : 'image/jpeg', 0.95);
 }
@@ -929,7 +934,7 @@ function paramRows(box, list) {
 // 消除筆在 erase.js，這裡把它要用的東西傳過去
 const eraseApp = { get base() { return base; }, setBase, commit, item, hideSlider, showTab, toast, busy };
 doodleInput($('#wrap'), { get base() { return base; }, tab: () => tab, paint: paintPatch, commit });
-beautyBrushInput($('#wrap'), { get base() { return base; }, tab: () => tab, paint: paintPatch, commit });
+beautyBrushInput($('#wrap'), { get base() { return base; }, tab: () => tab, surf: ensureSurf, paint: paintPatch, commit });
 function tabEraseHere(box) { tabErase(box, eraseApp); }
 
 function tabAdjust(box) { paramItems(box, ADJUST, 'brightness'); }
