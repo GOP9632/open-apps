@@ -1036,7 +1036,7 @@ function showTab(t) {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   $('#hist').classList.toggle('crop', t === 'crop');
   const box = $('#items'); box.innerHTML = ''; $('#rows').innerHTML = ''; $('#items').hidden = false;
-  $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true;
+  $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true; $('#sideSeg').hidden = true;
   gradeHide(); hideSlider();
   if (!base) return;
   ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, aiskin: tabAiSkin, sculpt: tabSculpt, reshape: tabReshape, doodle: box => tabDoodle(box, { item, setSlider, showTab }), bbrush: box => tabBeautyBrush(box, { item, sliderRow, showTab, surf: ensureSurf, tab: () => tab }), light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, tpl: tabTpl, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
@@ -1054,6 +1054,13 @@ function showTab(t) {
 }
 
 const isSet = (k, T = P) => T[k] !== 0 || (SIDED.includes(k) && (T[k + 'L'] !== 0 || T[k + 'R'] !== 0));
+// 兩邊／左／右：固定放在說明那一列右邊。以前插在項目列最前面，點到瘦臉整排被推走 178px、剛點的那顆跑出畫面（評審 H3）。
+// keep：這個分頁有能分左右的項目，點到不能分的也留著位置（看不到），說明文字才不會一下換行一下不換
+function sideSeg(on, val, set, keep) {
+  const s = $('#sideSeg');
+  s.hidden = !on && !keep; s.classList.toggle('off', !on);
+  s.querySelectorAll('button').forEach(b => { b.classList.toggle('on', b.dataset.sd === val); b.tabIndex = on ? 0 : -1; b.onclick = () => set(b.dataset.sd); });
+}
 function paramItems(box, list, def, itemsOnly) {
   if (!itemsOnly && wide.matches) return paramRows(box, list);
   if (!itemsOnly && !list.some(x => x[0] === cur)) cur = def;
@@ -1072,12 +1079,7 @@ function paramItems(box, list, def, itemsOnly) {
   const it = list.find(x => x[0] === cur);
   // 瘦臉、大眼可以只調一邊
   const sided = list === BEAUTY && SIDED.includes(cur);
-  if (sided) {
-    $('#note').textContent += (($('#note').textContent ? '　' : '') + '可以只調左邊或右邊');
-    box.prepend(...[['both', '兩邊'], ['L', '左'], ['R', '右']].map(([sd, lb]) => item({
-      label: lb, icon: lb, cls: 'wide', on: side === sd, onclick: () => { side = sd; showTab(tab); },
-    })));
-  }
+  if (list === BEAUTY) sideSeg(sided, side, sd => { side = sd; showTab(tab); }, true);
   const key = sided && side !== 'both' ? cur + side : cur;
   setSlider(it[1] + (sided && side !== 'both' ? (side === 'L' ? '左' : '右') : ''), it[3] ?? -100, it[5] ?? 100, T[key], v => {
     T[key] = v; if (list === BEAUTY) T.oneTap = -1; render();
@@ -1090,11 +1092,10 @@ function paramRows(box, list) {
   hideSlider();
   const sided = list === BEAUTY;
   if (sided) {
-    box.append(...[['both', '兩邊'], ['L', '左'], ['R', '右']].map(([sd, lb]) => item({
-      label: lb, icon: lb, cls: 'wide', on: side === sd, onclick: () => { side = sd; showTab(tab); },
-    })));
+    sideSeg(true, side, sd => { side = sd; showTab(tab); });
     $('#note').textContent += (($('#note').textContent ? '　' : '') + '瘦臉、大眼可以只調左邊或右邊');
-  } else $('#items').hidden = !box.children.length;
+  }
+  $('#items').hidden = !box.children.length;
   const rows = $('#rows'), T = list === BEAUTY ? faceP() : P;
   for (const [k, label, , min, d, max] of list) {
     const key = sided && SIDED.includes(k) && side !== 'both' ? k + side : k;
@@ -1544,12 +1545,7 @@ function tabShape(box) {
     onclick: () => { shapeCat = c.id; showTab('shape'); },
   })));
   cats.append(item({ label: '重置', icon: '重置', cls: 'wide', onclick: () => { resetShape(T, shapeCat); render(); commit(); showTab('shape'); } }));
-  if (it.sided) {
-    $('#note').textContent += '　可以只調左邊或右邊';
-    box.append(...[['both', '兩邊'], ['L', '左'], ['R', '右']].map(([sd, lb]) => item({
-      label: lb, icon: lb, cls: 'wide', on: shapeSide === sd, onclick: () => { shapeSide = sd; showTab('shape'); },
-    })));
-  }
+  sideSeg(!!it.sided, shapeSide, sd => { shapeSide = sd; showTab('shape'); }, cat.items.some(x => x.sided));
   const side = it.sided ? shapeSide : 'both';
   const els = {};
   cat.items.forEach(x => box.append(els[x.id] = item({
@@ -2626,14 +2622,15 @@ function tabText(box) {
     fx: !!t.fx, shadow: t.shadow > 0, bg: t.bg > 0, curve: !!t.curve, arrange: t.align !== 'center' || !!t.ls || !!t.lh || t.vert, layer: false,
   };
   cats.append(item({ label: '完成', icon: '完成', cls: 'wide', onclick: () => { selText = -1; drawTexts(); showTab('text'); } }));
-  TX_SECS.forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: txSec === k, set: isSet[k], onclick: () => { txSec = k; showTab('text'); } })));
+  // 編輯文字時面板沒有說明列（擠不下），只在真的需要時跳一行提示
+  TX_SECS.forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: txSec === k, set: isSet[k], onclick: () => { txSec = k; showTab('text'); if (k === 'curve' && t.vert) toast('直書文字不能彎曲，先到「排列」改回橫書。', 3000); } })));
   const sizeSlider = () => setSlider('大小', 2, 40, Math.round(t.size * 100), v => { t.size = v / 100; drawTexts(); });
   hideSlider();
   if (txSec === 'tpl') {
     sizeSlider();
     box.append(item({ label: '無', icon: I.off, on: !t.tpl, onclick: () => { applyTemplate(t, null); redo(); } }));
     TEMPLATES.forEach(tp => box.append(item({
-      label: tp.name, cls: 'ft', on: t.tpl === tp.id, style: `background-image:url(${tplThumb(tp)});background-color:#3a3a42`,
+      label: tp.name, cls: 'ft tt', on: t.tpl === tp.id, style: `background-image:url(${tplThumb(tp)});background-color:#3a3a42`,
       onclick: () => { applyTemplate(t, tp); loadFont(t.font, t.text).then(drawTexts); redo(); },
     })));
   } else if (txSec === 'font') {
@@ -2643,16 +2640,12 @@ function tabText(box) {
       onclick: () => { t.font = i; redo(); if (f.gf) loadFont(i, t.text).then(drawTexts); },
     })));
     FONTS.forEach((f, i) => f.gf && loadFont(i, f.name));
-    $('#note').textContent = '中文字型來自開源字型（SIL OFL），第一次用會下載。';
   } else if (txSec === 'style') {
     box.append(item({ label: '粗體', icon: '<b>B</b>', on: t.bold, onclick: () => { t.bold = !t.bold; redo(); } }));
     box.append(item({ label: '斜體', icon: '<i>I</i>', on: t.italic, onclick: () => { t.italic = !t.italic; redo(); } }));
     box.append(item({ label: '底線', icon: '<u>U</u>', on: t.under, onclick: () => { t.under = !t.under; redo(); } }));
-    box.append(item({ label: '漸層', icon: '漸', on: !!t.color2, onclick: () => { t.color2 = t.color2 ? null : TEXT_COLORS[(TEXT_COLORS.indexOf(t.color) + 3) % TEXT_COLORS.length]; redo(); } }));
-    if (t.color2) {
-      swatches(box, t.color2, c => { t.color2 = c; });
-      $('#note').textContent = '現在選的是漸層下半部的顏色。';
-    } else swatches(box, t.color, c => { t.color = c; });
+    box.append(item({ label: '漸層', icon: '漸', on: !!t.color2, onclick: () => { t.color2 = t.color2 ? null : TEXT_COLORS[(TEXT_COLORS.indexOf(t.color) + 3) % TEXT_COLORS.length]; redo(); if (t.color2) toast('現在選的是漸層下半部的顏色。'); } }));
+    swatches(box, t.color2 || t.color, c => { if (t.color2) t.color2 = c; else t.color = c; });
     setSlider('透明', 0, 100, t.op, v => { t.op = v; drawTexts(); });
   } else if (txSec === 'stroke') {
     const auto = item({ label: '自動', icon: '自動', cls: 'wide', on: !t.strokeColor, onclick: () => { t.strokeColor = null; if (!t.stroke) t.stroke = 30; redo(); } });
@@ -2660,10 +2653,9 @@ function tabText(box) {
     setSlider('寬度', 0, 100, t.stroke, v => { t.stroke = v; drawTexts(); });
   } else if (txSec === 'fx') {
     box.append(item({ label: '無', icon: I.off, on: !t.fx, onclick: () => { t.fx = ''; redo(); } }));
-    TEXT_FX.forEach(([id, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: t.fx === id, onclick: () => { t.fx = id; redo(); } })));
+    TEXT_FX.forEach(([id, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: t.fx === id, onclick: () => { t.fx = id; redo(); if (id === 'hollow') toast('鏤空只留描邊，描邊顏色、寬度到「描邊」調。', 3000); } })));
     if (t.fx && t.fx !== 'hollow' && t.fx !== 'glitch') swatches(box, t.fxColor, c => { t.fxColor = c; });
     if (t.fx && t.fx !== 'hollow') setSlider(t.fx === '3d' ? '厚度' : t.fx === 'glitch' ? '錯開' : '寬度', 0, 100, t.fxAmt, v => { t.fxAmt = v; drawTexts(); });
-    $('#note').textContent = t.fx === 'hollow' ? '鏤空只留描邊，描邊顏色、寬度到「描邊」調。' : '花字效果畫在描邊下面，可以跟描邊、陰影一起用。';
   } else if (txSec === 'shadow') {
     if (!t.shadow) { t.shadow = 60; drawTexts(); }
     subSliders(box, 'shadow', [['shadow', '不透明度', 0, 100], ['shadowBlur', '模糊', 0, 100], ['shadowAngle', '角度', -180, 180], ['shadowDist', '位移', 0, 100]], t);
@@ -2673,7 +2665,6 @@ function tabText(box) {
     setSlider('透明', 0, 100, t.bg, v => { t.bg = v; drawTexts(); });
   } else if (txSec === 'curve') {
     subSliders(box, 'curve', [['curve', '曲線', -100, 100], ['curveOff', '位移', -100, 100]], t);
-    $('#note').textContent = t.vert ? '直書文字不能彎曲，先到「排列」改回橫書。' : '往右拱起、往左彎下，位移讓文字沿著弧線轉。';
   } else if (txSec === 'arrange') {
     box.append(item({ label: t.vert ? '直書' : '橫書', icon: t.vert ? '直書' : '橫書', cls: 'wide', on: t.vert, onclick: () => { t.vert = !t.vert; redo(); } }));
     (t.vert ? [['left', '靠上'], ['center', '置中'], ['right', '靠下']] : [['left', '靠左'], ['center', '置中'], ['right', '靠右']])
