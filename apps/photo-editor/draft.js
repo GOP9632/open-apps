@@ -1,0 +1,81 @@
+// 草稿：修到一半的照片自動存在這台裝置（IndexedDB），Safari 重開、重新整理都能接著修。
+// 照醒圖首頁的「草稿」：最多留 5 份，舊的自動刪掉。每份兩筆：m:<id> 參數和縮圖（小），p:<id> 照片（大，像素有變才重寫）
+const KEEP = 5;
+let dbP = null;
+function db() {
+  dbP ||= new Promise(res => {
+    try {
+      const q = indexedDB.open('photo-editor', 1);
+      q.onupgradeneeded = () => q.result.createObjectStore('draft');
+      q.onsuccess = () => res(q.result);
+      q.onerror = q.onblocked = () => res(null);
+    } catch { res(null); }
+  });
+  return dbP;
+}
+// f(store) 回傳一個或一串 request；交易完成後回傳結果
+async function tx(mode, f) {
+  const d = await db();
+  if (!d) return null;
+  return new Promise((res, rej) => {
+    const t = d.transaction('draft', mode), r = f(t.objectStore('draft'));
+    t.oncomplete = () => res(Array.isArray(r) ? r.map(x => x.result) : r?.result);
+    t.onerror = t.onabort = () => rej(t.error);
+  });
+}
+
+// 草稿清單（新的在前），只有參數和縮圖，不讀照片
+export async function listDrafts() {
+  const all = await tx('readonly', s => s.getAll(IDBKeyRange.bound('m:', 'm:\uffff'))).catch(() => null);
+  return (all || []).filter(m => m?.id).sort((a, b) => b.t - a.t);
+}
+export async function readDraft(id) {
+  const r = await tx('readonly', s => [s.get('m:' + id), s.get('p:' + id)]);
+  return r && r[0] && r[1] ? { meta: r[0], photo: r[1] } : null;
+}
+// photo：null 表示照片沒變，不用重寫
+export async function writeDraft(meta, photo) {
+  const old = (await listDrafts()).filter(m => m.id !== meta.id).slice(KEEP - 1);
+  await tx('readwrite', s => {
+    if (photo) s.put(photo, 'p:' + meta.id);
+    s.put(meta, 'm:' + meta.id);
+    old.forEach(m => { s.delete('m:' + m.id); s.delete('p:' + m.id); });
+  });
+}
+export const deleteDraft = id => tx('readwrite', s => { s.delete('m:' + id); s.delete('p:' + id); });
+
+// 照片壓成檔案：交給背景執行緒壓（1200 萬像素在主執行緒壓會卡一下，剛好碰到下一筆就不跟手）。
+// 不支援的瀏覽器（舊 Safari）退回 canvas.toBlob
+let worker = null, wId = 0;
+const waiting = new Map();
+function encWorker() {
+  if (worker !== null) return worker;
+  try {
+    if (typeof OffscreenCanvas === 'undefined' || !OffscreenCanvas.prototype.convertToBlob) throw 0;
+    const src = `onmessage = async e => {
+      const { id, b, type, q } = e.data;
+      try {
+        const c = new OffscreenCanvas(b.width, b.height), x = c.getContext('bitmaprenderer');
+        if (x) x.transferFromImageBitmap(b); else { c.getContext('2d').drawImage(b, 0, 0); b.close(); }
+        postMessage({ id, blob: await c.convertToBlob({ type, quality: q }) });
+      } catch (err) { postMessage({ id, err: String(err) }); }
+    };`;
+    worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    worker.onmessage = e => { const w = waiting.get(e.data.id); waiting.delete(e.data.id); w?.(e.data); };
+    worker.onerror = () => { worker = false; waiting.forEach(w => w({ err: 'worker' })); waiting.clear(); };
+  } catch { worker = false; }
+  return worker;
+}
+const viaToBlob = (c, type, q) => new Promise(r => c.toBlob(r, type, q));
+export async function encode(c, type, q = 0.95) {
+  const w = encWorker();
+  if (w) {
+    try {
+      const b = await createImageBitmap(c), id = ++wId;
+      const r = await new Promise(res => { waiting.set(id, res); w.postMessage({ id, b, type, q }, [b]); });
+      if (r.blob) return r.blob;
+    } catch {}
+    worker = false;  // 這台不行：之後都用 toBlob
+  }
+  return viaToBlob(c, type, q);
+}

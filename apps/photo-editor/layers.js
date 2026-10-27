@@ -27,6 +27,7 @@ export function addImage(rgb, alpha, cut) {
   return id;
 }
 export const layerInfo = id => store.get(id);
+export const restoreLayer = (id, L) => store.set(id, L);  // 草稿接著修
 export function cloneAlpha(id) {
   const L = store.get(id), a = canvas(L.alpha.width, L.alpha.height);
   a.getContext('2d').drawImage(L.alpha, 0, 0);
