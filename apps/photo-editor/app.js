@@ -23,6 +23,7 @@ import { CATS as TPL_CATS } from './templates.js';
 import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightPosOf, lightGrad, flashStats } from './relight.js';
 import { enhanceRanges, paintRange, setGrad, nudge, canvasZoom, pinch } from './ui.js';
 import { tabLooks } from './looks.js';
+import { perfReq, perfDrawn, perfBase } from './perf.js';
 import { STROKES, STROKE_COLORS, STROKE0, strokeLayer, alphaFromMatte, alphaBox } from './outline.js';
 import { SHAPES, MASK0, LAYER_LIMIT, shapePath, photoLayer, cutLayer, layerInfo, cloneAlpha, compose as composeLayer, brush } from './layers.js';
 import { POPS, POP_BGS, POP_P0, drawPop } from './popout.js';
@@ -201,9 +202,11 @@ const BASE0 = { faces: null, geoms: [], seg: null, segB: null, mask: null, mask2
 function setBase(canvas, keep) {
   const old = base;
   base = { canvas, ...BASE0, ...keep };
-  applyBase();
-  if (old) shelve(old);
+  applyBase(); perfBase();
+  // 壓縮舊照片要讀整張圖，放到畫完這一筆、畫面更新以後再做，手指放開才不會卡
+  if (old) later(() => shelve(old));
 }
+const later = f => setTimeout(f, 1200);
 // 復原紀錄裡的舊照片：一張原尺寸照片在 iPhone 要 50MB 左右，塗鴉、消除、美顏筆每畫一筆就多一張，
 // 存太多 Safari 會把整頁重新載入（修到一半跳回選照片）。不在畫面上的舊照片壓成檔案，復原時再解開
 const shelving = new WeakSet();
@@ -349,7 +352,9 @@ let raf = 0;
 function render() {
   // 上排的「合併」：有選濾鏡才亮
   $('#bMerge').classList.toggle('dim', P.filter === 'none');
-  if (!base || raf) return;
+  if (!base) return;
+  perfReq();
+  if (raf) return;
   if (needMatte() && !base.matteP) getMatte(base);
   raf = requestAnimationFrame(() => {
     raf = 0;
@@ -360,6 +365,7 @@ function render() {
     draw();
     paintPop();
     if (curFrame()?.live) paintFrame();
+    perfDrawn();
   });
 }
 // 存檔、合併、摳圖要原尺寸；其他時候畫預覽大小
@@ -594,7 +600,7 @@ async function restore(i) {
   }
   hi = i;
   P = clone(s.P); texts = clone(s.texts); stickers = clone(s.stickers); selText = -1; selSt = -1;
-  if (changed) { const old = base; base = s.base; applyBase(); shelve(old); } else render();
+  if (changed) { const old = base; base = s.base; applyBase(); later(() => shelve(old)); } else render();
   showTab(tab); drawTexts(); drawStickers(); syncHist();
 }
 function syncHist() { $('#bUndo').disabled = hi <= 0; $('#bRedo').disabled = hi >= hist.length - 1; }

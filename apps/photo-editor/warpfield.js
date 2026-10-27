@@ -32,6 +32,18 @@ function compile(gl, type, src) {
   return s;
 }
 
+// 每個頂點只看蓋得到它的變形點：照片切成 48×48 格，每個變形點登記在它範圍碰到的格子裡。
+// 位移是各點相加（evalField），跳過碰不到的點結果完全一樣；推臉推久了點很多時，每一筆不會越推越慢
+function bucket(moves, w, h) {
+  const cs = Math.max(w, h) / 48, nx = Math.ceil(w / cs) + 1, ny = Math.ceil(h / cs) + 1, cells = new Array(nx * ny), none = [];
+  for (const m of moves) {
+    const i0 = Math.max(0, Math.floor((m.cx - m.r) / cs)), i1 = Math.min(nx - 1, Math.floor((m.cx + m.r) / cs));
+    const j0 = Math.max(0, Math.floor((m.cy - m.r) / cs)), j1 = Math.min(ny - 1, Math.floor((m.cy + m.r) / cs));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) (cells[j * nx + i] ||= []).push(m);
+  }
+  return (x, y) => cells[Math.min(ny - 1, Math.max(0, Math.floor(y / cs))) * nx + Math.min(nx - 1, Math.max(0, Math.floor(x / cs)))] || none;
+}
+
 export class WarpField {
   constructor(gl) {
     this.gl = gl;
@@ -65,13 +77,13 @@ export class WarpField {
     if (key === this.key) return { tex: this.tex, step: this.step };
     this.key = key;
 
-    const pos = [], off = [], idx = [], tmp = [0, 0];
+    const pos = [], off = [], idx = [], tmp = [0, 0], near = bucket(moves, w, h);
     let maxD = 0;
     const grid = (x0, y0, x1, y1, nx, ny) => {
       const base = pos.length / 2;
       for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) {
         const x = x0 + (x1 - x0) * i / nx, y = y0 + (y1 - y0) * j / ny;
-        evalField(moves, pins, x, y, tmp);
+        evalField(near(x, y), pins, x, y, tmp);
         pos.push(x + tmp[0], y + tmp[1]); off.push(-tmp[0], -tmp[1]);
         maxD = Math.max(maxD, Math.abs(tmp[0]), Math.abs(tmp[1]));
       }
