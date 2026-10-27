@@ -338,7 +338,7 @@ const view = canvasZoom({
   canPan: (e, touch) => !!base && !e.target.closest('.st,.tx') && (!touch || !(tab === 'crop' || (tab === 'light' && P.light))),
   // 手機上平常不顯示縮放按鈕，放大了才出現（點百分比回到全覽）
   unit: () => frameK,
-  onChange: z => { zoomZ = z; syncView(); $('#zPct').textContent = Math.round(frameK * z * 100) + '%'; $('#zoom').classList.toggle('zoomed', z !== 1); },
+  onChange: z => { zoomZ = z; syncView(); if (z > 1.15) pickCenterFace(); $('#zPct').textContent = Math.round(frameK * z * 100) + '%'; $('#zoom').classList.toggle('zoomed', z !== 1); },
 });
 $('#zIn').onclick = () => view.zoomStep(1);
 $('#zOut').onclick = () => view.zoomStep(-1);
@@ -369,10 +369,15 @@ function draw(full) {
   if (bodyOn(P) && !base.body) getBody(base);
   // 身體的變形要排在最前面（長腿會改到整張照片的上下位置）
   // 手動增高也會改整張照片的上下位置，排第一個
-  const warps = [...manualWarps(base.body, P, base.canvas.width, base.canvas.height), ...(base.body ? bodyWarps(base.body, base.faces, P) : []), ...(base.faces ? [...faceWarps(base.faces, P), ...hairWarps(base.faces, P, base.hair)] : [])];
+  const pf = perFace();
+  const fw = !base.faces ? [] : pf ? base.faces.flatMap((f, i) => faceWarps([f], PF(i))) : faceWarps(base.faces, P);
+  const warps = [...manualWarps(base.body, P, base.canvas.width, base.canvas.height), ...(base.body ? bodyWarps(base.body, base.faces, P) : []), ...(base.faces ? [...fw, ...hairWarps(base.faces, P, base.hair)] : [])];
   // 背景保護要知道人在哪；有臉的照片開圖時就算好了，沒有臉的照片推的時候才算
   if (P.bgProtect && (warps.length || P.liq.length) && !base.segP) getSeg(base);
-  R.render(gradeOn(P) ? { ...P, filterAmt: 100 } : P, warps, effects(), full || holdFull);
+  let p = gradeOn(P) ? { ...P, filterAmt: 100 } : P;
+  // 多張臉分開修：磨皮、美白這些顏色效果每張臉各一組數字，shader 照像素離哪張臉近決定用哪組
+  if (pf) p = { ...p, faceAmts: base.faces.map((f, i) => { const g = base.geoms[i], q = PF(i); return { cx: g.cx, cy: g.cy, W: g.W, smooth: q.smooth, white: q.white, dark: q.dark, fold: q.fold, eyeb: q.eyeb, teeth: q.teeth }; }) };
+  R.render(p, warps, effects(), full || holdFull);
 }
 // 預覽解析度：螢幕上實際有幾個像素就畫幾個（放大時跟著變細），一次跳 √2 倍，縮放時不會每一格都重畫
 let zoomZ = 1;
@@ -448,7 +453,9 @@ function getHair(b) {
 }
 // 臉型：所有滑桿換成位移圖
 function syncShape() {
-  const sm = base.faces?.length ? shapeMoves(base.faces, P) : { moves: [], pins: [] };
+  let sm = { moves: [], pins: [] };
+  if (perFace()) base.faces.forEach((f, i) => { const m = shapeMoves([f], PF(i)); sm.moves.push(...m.moves); sm.pins.push(...m.pins); });
+  else if (base.faces?.length) sm = shapeMoves(base.faces, P);
   const lq = liqMoves(P.liq, base.canvas.width, base.canvas.height);
   R.setDisp(WF.update(base.canvas.width, base.canvas.height, base.faces || [], [...sm.moves, ...lq.moves], sm.pins, lq.boxes));
 }
@@ -700,7 +707,12 @@ TAB_RESET.grade = {
   on: () => gradeOn(P),
   reset: () => { Object.keys(P).forEach(k => { if (/^(hsl_|cg_)/.test(k)) delete P[k]; }); Object.assign(P, clone(GRADE_P0)); },
 };
-TAB_RESET.shape = { on: () => SHAPE_CATS.some(c => c.items.some(x => shapeIsSet(P, x.id))), reset: () => SHAPE_CATS.forEach(c => resetShape(P, c.id)) };
+TAB_RESET.shape = { on: () => SHAPE_CATS.some(c => c.items.some(x => shapeIsSet(P, x.id))) || pfHas(isShapeKey), reset: () => { SHAPE_CATS.forEach(c => resetShape(P, c.id)); pfClear(isShapeKey); } };
+// 美顏、臉型的重設：每張臉自己改過的也一起清掉
+{
+  const b = TAB_RESET.beauty, keys = tabKeys.beauty;
+  TAB_RESET.beauty = { on: () => b.on() || pfHas(k => keys.includes(k)), reset: () => { b.reset(); pfClear(k => keys.includes(k)); } };
+}
 $('#bTabReset').onclick = () => {
   const r = TAB_RESET[tab]; if (!r) return;
   r.reset(); layout(); render(); commit(); showTab(tab);
@@ -750,20 +762,22 @@ function showTab(t) {
   ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, aiskin: tabAiSkin, sculpt: tabSculpt, reshape: tabReshape, doodle: box => tabDoodle(box, { item, setSlider, showTab }), bbrush: box => tabBeautyBrush(box, { item, setSlider, showTab }), light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, tpl: tabTpl, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
   drawTexts(); drawStickers();
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
-  lightDot(); bmBox(); rsRing();
+  lightDot(); bmBox(); rsRing(); faceBoxes();
   syncNav();
 }
 
-const isSet = k => P[k] !== 0 || (SIDED.includes(k) && (P[k + 'L'] !== 0 || P[k + 'R'] !== 0));
+const isSet = (k, T = P) => T[k] !== 0 || (SIDED.includes(k) && (T[k + 'L'] !== 0 || T[k + 'R'] !== 0));
 function paramItems(box, list, def, itemsOnly) {
   if (!itemsOnly && wide.matches) return paramRows(box, list);
   if (!itemsOnly && !list.some(x => x[0] === cur)) cur = def;
+  // 美顏有多張臉時，改的是選中的那張臉（faceP）
+  const T = list === BEAUTY ? faceP() : P;
   const els = {};
   for (const [k, label, icon] of list) {
-    box.append(els[k] = item({ label, icon, on: k === cur && !itemsOnly, set: isSet(k), onclick: () => {
+    box.append(els[k] = item({ label, icon, on: k === cur && !itemsOnly, set: isSet(k, T), onclick: () => {
       cur = k;
       const d = list === BEAUTY ? BEAUTY_DEF[k] : list.find(x => x[0] === k)[4];
-      if (d && P[k] === 0) { P[k] = d; if (list === BEAUTY) P.oneTap = -1; render(); commit(); }
+      if (d && T[k] === 0) { T[k] = d; if (list === BEAUTY) T.oneTap = -1; render(); commit(); }
       showTab(tab);
     } }));
   }
@@ -778,9 +792,9 @@ function paramItems(box, list, def, itemsOnly) {
     })));
   }
   const key = sided && side !== 'both' ? cur + side : cur;
-  setSlider(it[1] + (sided && side !== 'both' ? (side === 'L' ? '左' : '右') : ''), it[3] ?? -100, it[5] ?? 100, P[key], v => {
-    P[key] = v; if (list === BEAUTY) P.oneTap = -1; render();
-    els[cur].classList.toggle('set', isSet(cur));
+  setSlider(it[1] + (sided && side !== 'both' ? (side === 'L' ? '左' : '右') : ''), it[3] ?? -100, it[5] ?? 100, T[key], v => {
+    T[key] = v; if (list === BEAUTY) T.oneTap = -1; render();
+    els[cur].classList.toggle('set', isSet(cur, T));
   }, it[4]);
 }
 
@@ -794,13 +808,13 @@ function paramRows(box, list) {
     })));
     $('#note').textContent += (($('#note').textContent ? '　' : '') + '瘦臉、大眼可以只調左邊或右邊');
   } else $('#items').hidden = !box.children.length;
-  const rows = $('#rows');
+  const rows = $('#rows'), T = list === BEAUTY ? faceP() : P;
   for (const [k, label, , min, d, max] of list) {
     const key = sided && SIDED.includes(k) && side !== 'both' ? k + side : k;
     const sfx = key !== k ? (side === 'L' ? '（左）' : '（右）') : '';
     rows.append(sliderRow({
-      label: label + sfx, min: min ?? -100, max: max ?? 100, val: P[key], def: d,
-      onInput: v => { P[key] = v; cur = k; if (list === BEAUTY) P.oneTap = -1; render(); bmBox(); },
+      label: label + sfx, min: min ?? -100, max: max ?? 100, val: T[key], def: d,
+      onInput: v => { T[key] = v; cur = k; if (list === BEAUTY) T.oneTap = -1; render(); bmBox(); },
     }));
   }
 }
@@ -885,26 +899,99 @@ async function mergeFilter() {
   finally { busy(); }
 }
 
+// ---------- 多張臉分開修 ----------
+// 照醒圖：照片有兩張以上的臉時，每張臉畫一個框，綠框是選中的那張，美顏、臉型的滑桿只改那張；
+// 點白框換一張，放大照片時自動選畫面中間那張。
+// P.pf：{ 臉的編號: { 這張臉自己改過的值 } }，沒改過的值照 P（一鍵出片這些整體套用的也照 P）
+let selFace = 0, selFor = null, pickT = 0;
+const FACE_TABS = ['beauty', 'shape'];
+const isShapeKey = k => k.startsWith('fs_');
+const multiFace = () => (base?.faces?.length || 0) > 1;
+// 有沒有哪張臉自己改過
+const perFace = () => multiFace() && !!P.pf && Object.values(P.pf).some(o => Object.keys(o).length);
+// 第 i 張臉實際用的值
+const PF = i => P.pf?.[i] ? { ...P, ...P.pf[i] } : P;
+const pfHas = test => !!P.pf && Object.values(P.pf).some(o => Object.keys(o).some(test));
+function pfClear(test) {
+  if (!P.pf) return;
+  for (const o of Object.values(P.pf)) for (const k of Object.keys(o)) if (test(k)) delete o[k];
+}
+// 預設選最大的那張臉；換照片、重新找臉後重選
+function syncSel() {
+  if (selFor === base?.faces) return;
+  selFor = base?.faces;
+  const g = base?.geoms || [];
+  selFace = g.reduce((bi, x, i) => x.W > g[bi].W ? i : bi, 0);
+}
+// 美顏、臉型滑桿要讀寫的對象：一張臉就是 P；多張臉是選中那張臉的值（沒改過的讀 P，改了只記在這張臉）
+function faceP() {
+  if (!multiFace()) return P;
+  syncSel();
+  // 只是看看數字不建立，真的改了才記到 P.pf，復原紀錄才不會多一筆
+  const t = P.pf?.[selFace] || {}, keep = o => { (P.pf ||= {})[selFace] = o; };
+  return new Proxy(t, {
+    get: (o, k) => k in o ? o[k] : P[k],
+    set: (o, k, v) => { o[k] = v; keep(o); return true; },
+    // 臉型的重置是刪掉值；這張臉要變回 0，不是變回 P 的值
+    deleteProperty: (o, k) => { o[k] = 0; keep(o); return true; },
+    has: (o, k) => k in o || k in P,
+    ownKeys: () => [...new Set([...Object.keys(P), ...Object.keys(t)])],
+    getOwnPropertyDescriptor: (o, k) => ({ value: k in o ? o[k] : P[k], enumerable: true, configurable: true, writable: true }),
+  });
+}
+const faceNote = faces => faces.length > 1 ? `找到 ${faces.length} 張臉，綠框是正在修的那張，點白框可以換` : `找到 ${faces.length} 張臉`;
+function faceBoxes() {
+  let el = $('#faceboxes');
+  if (!el) { el = document.createElement('div'); el.id = 'faceboxes'; $('#wrap').append(el); }
+  el.hidden = !(base && multiFace() && FACE_TABS.includes(tab));
+  el.innerHTML = '';
+  if (el.hidden) return;
+  syncSel();
+  const W = base.canvas.width, H = base.canvas.height;
+  base.faces.forEach((pts, i) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    const pad = (x1 - x0) * 0.08, d = document.createElement('div');
+    d.className = 'fbx' + (i === selFace ? ' on' : '');
+    Object.assign(d.style, { left: (x0 - pad) / W * 100 + '%', top: (y0 - pad) / H * 100 + '%', width: (x1 - x0 + pad * 2) / W * 100 + '%', height: (y1 - y0 + pad * 2) / H * 100 + '%' });
+    d.onclick = e => { e.stopPropagation(); if (selFace !== i) { selFace = i; showTab(tab); } };
+    el.append(d);
+  });
+}
+// 放大照片時：畫面中間離哪張臉最近就選哪張
+function pickCenterFace() {
+  if (!base || !multiFace() || !FACE_TABS.includes(tab)) return;
+  syncSel();
+  const s = $('#stage').getBoundingClientRect(), w = $('#wrap').getBoundingClientRect();
+  const x = (s.left + s.width / 2 - w.left) / w.width * base.canvas.width, y = (s.top + s.height / 2 - w.top) / w.height * base.canvas.height;
+  let bi = selFace, bd = Infinity;
+  base.geoms.forEach((g, i) => { const d = Math.hypot(g.cx - x, g.cy - y) / g.W; if (d < bd) { bd = d; bi = i; } });
+  if (bi === selFace) return;
+  selFace = bi; faceBoxes();
+  clearTimeout(pickT); pickT = setTimeout(() => { if (FACE_TABS.includes(tab)) showTab(tab); }, 120);
+}
+
 function tabBeauty(box) {
   const faces = base.faces;
   if (!faces) { $('#note').textContent = '正在找臉…'; findFaces(); }
   else if (!faces.length) $('#note').textContent = base.faceErr ? '臉部偵測模型載入失敗，檢查一下網路再換一次照片。' : '這張照片沒找到臉，美顏只對人臉有效。';
-  else $('#note').textContent = `找到 ${faces.length} 張臉`;
+  else $('#note').textContent = faceNote(faces);
+  const T = faceP();
   ONE_TAPS.forEach((t, i) => box.append(item({
-    label: t.name, icon: I.magic, on: P.oneTap === i, onclick: () => {
-      const off = P.oneTap === i;
-      P.oneTap = off ? -1 : i; P.oneAmt = 100;
-      Object.keys(t.set).forEach(k => P[k] = off ? 0 : t.set[k]);
+    label: t.name, icon: I.magic, on: T.oneTap === i, onclick: () => {
+      const off = T.oneTap === i;
+      T.oneTap = off ? -1 : i; T.oneAmt = 100;
+      Object.keys(t.set).forEach(k => T[k] = off ? 0 : t.set[k]);
       cur = off ? 'smooth' : 'oneTap';
       render(); commit(); showTab('beauty');
     },
   })));
-  if (cur === 'oneTap' && P.oneTap >= 0) {
+  if (cur === 'oneTap' && T.oneTap >= 0) {
     paramItems(box, BEAUTY, 'smooth', true);
-    const t = ONE_TAPS[P.oneTap];
-    setSlider('強度', 0, 100, P.oneAmt, v => {
-      P.oneAmt = v;
-      Object.keys(t.set).forEach(k => P[k] = Math.round(t.set[k] * v / 100));
+    const t = ONE_TAPS[T.oneTap];
+    setSlider('強度', 0, 100, T.oneAmt, v => {
+      T.oneAmt = v;
+      Object.keys(t.set).forEach(k => T[k] = Math.round(t.set[k] * v / 100));
       render();
     });
   } else paramItems(box, BEAUTY, 'smooth');
@@ -1137,17 +1224,18 @@ function tabShape(box) {
   const faces = base.faces;
   if (!faces) { $('#note').textContent = '正在找臉…'; findFaces(); }
   else if (!faces.length) $('#note').textContent = base.faceErr ? '臉部偵測模型載入失敗，檢查一下網路再換一次照片。' : '這張照片沒找到臉，臉型只對人臉有效。';
-  else $('#note').textContent = `找到 ${faces.length} 張臉`;
+  else $('#note').textContent = faceNote(faces);
+  const T = faceP();
   const cat = SHAPE_CATS.find(c => c.id === shapeCat);
   if (!cat.items.some(it => it.id === shapeCur)) shapeCur = cat.items[0].id;
   const it = cat.items.find(x => x.id === shapeCur);
   // 上面一排：分類，最後是重置這一類
   const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
   SHAPE_CATS.forEach(c => cats.append(item({
-    label: c.name, icon: c.name, cls: 'wide', on: c.id === shapeCat, set: c.items.some(x => shapeIsSet(P, x.id)),
+    label: c.name, icon: c.name, cls: 'wide', on: c.id === shapeCat, set: c.items.some(x => shapeIsSet(T, x.id)),
     onclick: () => { shapeCat = c.id; showTab('shape'); },
   })));
-  cats.append(item({ label: '重置', icon: '重置', cls: 'wide', onclick: () => { resetShape(P, shapeCat); render(); commit(); showTab('shape'); } }));
+  cats.append(item({ label: '重置', icon: '重置', cls: 'wide', onclick: () => { resetShape(T, shapeCat); render(); commit(); showTab('shape'); } }));
   if (it.sided) {
     $('#note').textContent += '　可以只調左邊或右邊';
     box.append(...[['both', '兩邊'], ['L', '左'], ['R', '右']].map(([sd, lb]) => item({
@@ -1157,17 +1245,17 @@ function tabShape(box) {
   const side = it.sided ? shapeSide : 'both';
   const els = {};
   cat.items.forEach(x => box.append(els[x.id] = item({
-    label: x.name, icon: SHAPE_IC[cat.id], on: x.id === shapeCur, set: shapeIsSet(P, x.id),
+    label: x.name, icon: SHAPE_IC[cat.id], on: x.id === shapeCur, set: shapeIsSet(T, x.id),
     onclick: () => {
       shapeCur = x.id;
       // 第一次點開時套用醒圖的預設強度（風格類 30~60、臉部對稱 100 等）
-      if (x.def && !shapeIsSet(P, x.id)) { setShape(P, x.id, 'both', x.def); render(); commit(); }
+      if (x.def && !shapeIsSet(T, x.id)) { setShape(T, x.id, 'both', x.def); render(); commit(); }
       showTab('shape');
     },
   })));
-  setSlider(it.name + (side === 'L' ? '左' : side === 'R' ? '右' : ''), it.min, 100, getShape(P, it.id, side), v => {
-    setShape(P, it.id, side, v); render();
-    cat.items.forEach(x => els[x.id].classList.toggle('set', shapeIsSet(P, x.id)));
+  setSlider(it.name + (side === 'L' ? '左' : side === 'R' ? '右' : ''), it.min, 100, getShape(T, it.id, side), v => {
+    setShape(T, it.id, side, v); render();
+    cat.items.forEach(x => els[x.id].classList.toggle('set', shapeIsSet(T, x.id)));
   });
 }
 
