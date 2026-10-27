@@ -1152,6 +1152,17 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     L.n = list.length; L.last = list[list.length - 1];
   }
+  // 推臉位移場讀回 CPU：美顏筆、塗鴉把畫面上的點換回原圖座標用（app.js srcMapper）。同一組推臉只讀一次
+  liqRead() {
+    const L = this.lq;
+    if (!L?.n) return null;
+    if (L.cpu?.n !== L.n || L.cpu.last !== L.last) {
+      const gl = this.gl, d = new Uint8Array(L.fw * L.fh * 4);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, L.A.f); gl.readPixels(0, 0, L.fw, L.fh, gl.RGBA, gl.UNSIGNED_BYTE, d); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      L.cpu = { n: L.n, last: L.last, fw: L.fw, fh: L.fh, W: L.W, H: L.H, step: L.step, d };
+    }
+    return L.cpu;
+  }
   // 看原圖：在同一張畫布上直接畫原圖（跟修好的圖一樣大小、一樣位置，放大時一樣清楚）。原圖貼圖放開就丟掉，不多佔記憶體
   drawOrig(src) {
     const gl = this.gl, ow = Math.max(1, Math.round(this.w * this.view)), oh = Math.max(1, Math.round(this.h * this.view));

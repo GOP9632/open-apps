@@ -113,7 +113,8 @@ export function doodleInput(wrap, app) {
   });
   const up = () => {
     if (!pts) return;
-    const patch = bake(app.base.canvas, pts);
+    // 瘦臉、推臉這些變形開著時，畫面上的點換回原圖上的點，才會畫在手指下面
+    const map = app.toSrc?.(), patch = bake(app.base.canvas, map ? pts.map(map) : pts);
     pts = null; ov?.remove(); ov = null;
     if (patch) { app.paint(patch); app.commit(); }
   };
