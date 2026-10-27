@@ -555,7 +555,9 @@ export function beautyBrushInput(wrap, app) {
     if (!pts) return;
     const S = app.surf(), b = app.base.canvas, R = bbRadius(st.size, b.width, b.height), k = st.str[st.tool] / 100;
     if (!valid(S.bbSes, S)) { bbRelease(S); S.bbSes = session(S.canvas, S.ver); }
-    const ses = S.bbSes, r = st.tool === 'blemish' ? blemishStroke(ses, pts, R, k) : maskStroke(ses, st.tool, pts, R, k);
+    // 瘦臉、推臉這些變形開著時，畫面上的點換回原圖上的點，才會修在手指下面
+    const map = app.toSrc?.(), sp = map ? pts.map(map) : pts;
+    const ses = S.bbSes, r = st.tool === 'blemish' ? blemishStroke(ses, sp, R, k) : maskStroke(ses, st.tool, sp, R, k);
     pts = null; ov?.remove(); ov = null;
     if (r) { app.paint(r); app.commit(); }
   };
