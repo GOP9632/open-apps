@@ -136,7 +136,7 @@ let texts = [];
 let stickers = [];   // { kind: 'svg' | 'emoji' | 'img', v, x, y, size, rot, flip, flipv, op, blend, mask }
 let side = 'both';
 let selSt = -1;
-let hist = [], hi = -1;
+let hist = [], hi = -1, resetFrom = null;  // resetFrom：全部重設前在第幾步
 let tab = 'beauty', cur = 'brightness', selText = -1;
 let cropState = null;
 let landing = false;  // 剛開照片、使用者還沒自己換分頁
@@ -213,17 +213,20 @@ async function loadFile(file, m) {
     w = Math.round(w * k); h = Math.round(h * k);
     const c = photoCanvas(w, h);
     c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    // 看原圖用的最初照片：草稿有存就用存的，沒有就是這張（疊上之後的筆畫之前）
+    const orig = m?.origBlob && m.om ? { blob: m.origBlob, ready: Promise.resolve(m.origBlob) } : makeOrig(bmp, bmp.width, bmp.height);
+    const om = m?.origBlob && m.om ? m.om : [1 / w, 0, 0, 1 / h, 0, 0];
     m?.patches?.forEach(q => c.getContext('2d').putImageData(q.img, q.x, q.y));  // 草稿：照片疊上之後畫的每一筆
     P = { ...P0, ...m?.P }; texts = m?.texts || []; selText = -1; stickers = m?.stickers || []; selSt = -1;
     hist = []; hi = -1;
-    perfSkip(); setBase(c);
+    perfSkip(); setBase(c, { orig, om });
     if (!m) srcFile.set(c, file);
     newDraft(c, m);
     $('#empty').style.display = 'none'; $('#empty').classList.remove('over');
     $('#wrap').classList.add('on'); $('#panel').classList.remove('off');
     ['#bSave', '#bCmp', '#bResetAll', '#bMerge'].forEach(s => $(s).disabled = false);
     view.reset(); $('#zoom').classList.add('on'); $('#hist').classList.add('on');
-    commit();
+    commit(); hist[0].first = !m;
     if (m) {
       hist[0].resumed = true; tab = ''; showTab(TABS_OK(m.tab) ? m.tab : 'beauty'); drawTexts(); drawStickers();
     } else {
@@ -236,13 +239,57 @@ async function loadFile(file, m) {
 }
 
 const BASE0 = { faces: null, geoms: [], seg: null, segB: null, mask: null, mask2: null, thumbs: null, facesP: null };
+// 換成另一張 canvas：最初的照片（orig）和對到它的位置（om）沿用，裁切、旋轉另外給新的 om
 function setBase(canvas, keep) {
   const old = base;
-  base = { canvas, ...BASE0, ...keep };
+  base = { canvas, ...BASE0, orig: old?.orig, om: old?.om, ...keep };
   // 換成另一張 canvas（消除、合併…）就不是同一串美顏筆、塗鴉了
   if (base.surf && base.surf.canvas !== canvas) { delete base.surf; delete base.ver; }
   applyBase(); perfBase();
   if (old) shelveLater(old);
+}
+// 看原圖（評審 H2）：以前畫的是目前的照片，美顏筆、塗鴉、消除、合併、裁切的結果都還在，卻標著「原圖」。
+// 現在開照片時另外留一份縮小的最初照片（長邊 1600，壓成 JPEG），按住比較鈕才解開來畫。
+// base.om：目前照片的像素 (x, y) 在最初照片上的位置（0～1）：u = a·x + c·y + e、v = b·x + d·y + f；
+// 裁切、旋轉、翻轉跟著換，消除、合併、美顏筆不變
+const ORIG_SIDE = 1600;
+function makeOrig(src, w, h) {
+  const k = Math.min(1, ORIG_SIDE / Math.max(w, h)), c = newCanvas(Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k)));
+  const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(src, 0, 0, c.width, c.height);
+  const o = { c, blob: null, bmp: null };
+  o.ready = encode(c, 'image/jpeg', 0.9).then(b => { if (b) { o.blob = b; o.c = null; c.width = 0; } return b; }, () => null);
+  return o;
+}
+// 照目前照片的大小、位置畫一張最初的照片；還在解開就回傳 null（這一格先不畫，解好再畫）
+let origView = null, origT = 0;
+function origFrame() {
+  const o = base.orig, om = base.om;
+  if (!o || !om) return base.canvas;
+  const src = o.c || o.bmp;
+  if (!src) {
+    if (o.blob && !o.dec) o.dec = createImageBitmap(o.blob).then(b => { o.bmp = b; }, () => { o.bad = true; }).finally(() => { o.dec = null; if (cmpOn) render(); });
+    return o.bad || !o.blob && !o.c ? base.canvas : null;
+  }
+  const W = base.canvas.width, H = base.canvas.height, key = [W, H, ...om].join();
+  if (origView?.o === o && origView.key === key) return origView.c;
+  const s = Math.min(1, ORIG_SIDE / Math.max(W, H)), c = newCanvas(Math.max(1, Math.round(W * s)), Math.max(1, Math.round(H * s)));
+  // 這張的 (X, Y) 在最初照片上是 (A·X + C·Y + E, B·X + D·Y + F)；畫的時候反過來，最初照片的像素放到這張的哪裡
+  const [a, b, cc, d, e, f] = om, sw = src.width, sh = src.height;
+  const A = a * sw / s, B = b * sh / s, C = cc * sw / s, D = d * sh / s, E = e * sw, F = f * sh, det = A * D - B * C;
+  const x = c.getContext('2d');
+  x.setTransform(D / det, -B / det, -C / det, A / det, (C * F - D * E) / det, (B * E - A * F) / det);
+  x.imageSmoothingQuality = 'high'; x.drawImage(src, 0, 0);
+  dropOrigView();
+  origView = { o, key, c };
+  return c;
+}
+function dropOrigView() {
+  if (origView) { origView.c.width = 0; origView = null; }
+}
+// 放開比較鈕 10 秒：解開的那張、畫好的那張都放掉
+function origIdle() {
+  clearTimeout(origT);
+  origT = setTimeout(() => { if (cmpOn) return; dropOrigView(); for (const h of [base, ...hist.map(h => h.base)]) { const o = h?.orig; if (o?.bmp) { o.bmp.close?.(); o.bmp = null; } } }, 10000);
 }
 const later = f => setTimeout(f, 1200);
 // 壓縮舊照片要讀整張圖，放到畫完、畫面更新以後再做，手指放開才不會卡。
@@ -365,9 +412,9 @@ function shelveSurf(S) {
 // 壓起來的舊照片：跟現在這張共用的偵測結果（臉、人像）留著；不共用的放掉，復原時再重算
 function strip(b) {
   if (!b.blob || !('facesP' in b) || b.facesP === base.facesP) return;
-  const { blob, w, h } = b;
+  const { blob, w, h, orig, om } = b;
   for (const k of Object.keys(b)) delete b[k];
-  Object.assign(b, { canvas: null, blob, w, h });
+  Object.assign(b, { canvas: null, blob, w, h, orig, om });
 }
 async function unshelve(b) {
   if (b.canvas) return;
@@ -520,7 +567,7 @@ function render() {
   if (needMatte() && !base.matteP) getMatte(base);
   raf = requestAnimationFrame(() => {
     raf = 0;
-    if (cmpOn) { R.drawOrig(base.canvas); perfDrawn(); return; }
+    if (cmpOn) { const o = origFrame(); if (o) R.drawOrig(o); perfDrawn(); return; }
     const f = liveFilter(), lut = gradeOn(P) ? getGradeLut() : f === 'none' ? null : getLut(f);
     // 皮膚、頭髮另外一套顏色要用皮膚遮罩和分類圖，還沒找過臉就先找
     if ((lut?.skin || lut?.hair) && !base.facesP) findFaces();
@@ -842,6 +889,7 @@ function getLut(id) {
 
 // ---------- 復原、重做 ----------
 function commit() {
+  resetFrom = null;
   hist = hist.slice(0, hi + 1);
   hist.push({ base, P: clone(P), texts: clone(texts), stickers: clone(stickers) });
   if (hist.length > 50) hist.shift();  // 醒圖：最多復原 50 步
@@ -857,6 +905,7 @@ function commit() {
 let restoring = false;
 async function restore(i) {
   if (restoring) return;
+  resetFrom = null;
   const s = hist[i];
   const changed = s.base !== base;
   if (changed && !s.base.canvas) {
@@ -870,15 +919,15 @@ async function restore(i) {
   showTab(tab); drawTexts(); drawStickers(); syncHist();
   draftSoon();  // 復原、重做也要進草稿（不然被收掉，重開會回到復原前）
 }
-function syncHist() { $('#bUndo').disabled = hi <= 0; $('#bRedo').disabled = hi >= hist.length - 1; }
+function syncHist() { $('#bUndo').disabled = hi <= 0 && resetFrom == null; $('#bRedo').disabled = hi >= hist.length - 1; }
 // 美顏筆放開的那幾筆還在算：先等它們畫進照片、記進復原，再往回一步（連點兩下就退兩步）
-$('#bUndo').onclick = async () => { await bbWait(); hi > 0 && restore(hi - 1); };
+$('#bUndo').onclick = async () => { await bbWait(); if (resetFrom != null && hi === 0) restore(Math.min(resetFrom, hist.length - 1)); else if (hi > 0) restore(hi - 1); };
 $('#bRedo').onclick = async () => { await bbWait(); hi < hist.length - 1 && restore(hi + 1); };
 
 // 按住看原圖
 // 看原圖：畫在同一張 WebGL 畫布上（以前疊一張 2D 畫布，iPhone 放大時會糊、位置也會跳）
 let cmpOn = false;
-const cmp = on => { if (cmpOn === on) return; cmpOn = on; $('#wrap').classList.toggle('cmp', on); if (!on) R?.dropOrig(); render(); };
+const cmp = on => { if (cmpOn === on) return; cmpOn = on; $('#wrap').classList.toggle('cmp', on); if (!on) { R?.dropOrig(); origIdle(); } render(); };
 $('#bCmp').addEventListener('pointerdown', e => { e.preventDefault(); cmp(true); });
 ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => $('#bCmp').addEventListener(ev, () => cmp(false)));
 
@@ -995,10 +1044,18 @@ $('#bTabReset').onclick = () => {
   const r = TAB_RESET[tab]; if (!r) return;
   r.reset(); layout(); render(); commit(); showTab(tab);
 };
-$('#bResetAll').onclick = () => {
+// 全部重設：回到剛打開的樣子（評審 H2：以前只清參數，美顏筆、塗鴉、消除、裁切、文字、貼紙都還在）。
+// 跟一直按復原到第一步一樣，所以不會弄亂復原紀錄；重設後按一次復原就跳回重設前（resetFrom），重做也能一步步找回來
+$('#bResetAll').onclick = async () => {
   if (!base) return;
-  P = { ...clone(P0) }; layout(); render(); commit(); showTab(tab);
-  toast('效果已全部重設，按復原可以找回來');
+  await bbWait();
+  if (hi <= 0) return toast('還沒有修改');
+  const from = hi;
+  await restore(0);
+  if (hi !== 0) return;
+  resetFrom = from; syncHist();
+  // 復原只記得最近 50 步：更早的步驟丟掉了就回不到剛打開的樣子，照實說
+  toast(hist[0].first ? '已回到剛打開的照片，按復原可以找回來' : hist[0].resumed ? '已回到這次接著修時的樣子，按復原可以找回來' : '已回到最早還記得的那一步，按復原可以找回來');
 };
 
 // ---------- 一個區塊的滑桿全部列出來（電腦版） ----------
@@ -2471,7 +2528,8 @@ function applyCrop() {
   // 文字跟著新的範圍移動
   [...texts, ...stickers].forEach(t => { t.x = (t.x - c.x) / c.w; t.y = (t.y - c.y) / c.h; t.size = t.size / c.w; });
   movePositions(W, H, sw, sh, (x, y) => [x - sx, y - sy], (a, b) => [a, b], false);
-  setBase(out);
+  const om = base.om && (([a, b, cc, d, e, f]) => [a, b, cc, d, a * sx + cc * sy + e, b * sx + d * sy + f])(base.om);
+  setBase(out, { om });
   cropState = { x: 0, y: 0, w: 1, h: 1, ratio: c.ratio };
   drawCrop(); commit();
 }
@@ -2517,7 +2575,10 @@ function transform(kind) {
   if (kind === 'rot') movePositions(W, H, H, W, (x, y) => [H - y, x], (a, b) => [-b, a], false);
   if (kind === 'flipH') movePositions(W, H, W, H, (x, y) => [W - x, y], (a, b) => [-a, b], true);
   if (kind === 'flipV') movePositions(W, H, W, H, (x, y) => [x, H - y], (a, b) => [a, -b], true);
-  setBase(out);
+  // 看原圖對到最初照片的位置：新照片的 (X, Y) 是舊照片的哪一點，代進舊的 om
+  const om = base.om && (([a, b, c, d, e, f]) => kind === 'rot' ? [-c, -d, a, b, c * H + e, d * H + f]
+    : kind === 'flipH' ? [-a, -b, c, d, a * W + e, b * W + f] : [a, b, -c, -d, c * H + e, d * H + f])(base.om);
+  setBase(out, { om });
   if (cropState) { cropState = { x: 0, y: 0, w: 1, h: 1, ratio: cropState.ratio }; if (cropState.ratio !== 'free') setRatio(cropState.ratio); drawCrop(); }
   commit();
 }
@@ -2852,7 +2913,7 @@ addEventListener('pointerdown', e => { downs.add(e.pointerId); downAt = performa
 function newDraft(c, m) {
   const p = m?.ptr || { i0: 0, pv: 0 };
   // pc：草稿裡的照片（加上那幾筆）是哪一張 canvas 的樣子
-  draft = { id: m?.id || Date.now(), on: !!m, thumb: m?.thumb || '', pend: { c, m: new Map() }, ptr: m ? p : null, pc: m ? c : null,
+  draft = { id: m?.id || Date.now(), on: !!m, thumb: m?.thumb || '', pend: { c, m: new Map() }, ptr: m ? p : null, pc: m ? c : null, origSaved: !!m?.origBlob,
     ph: m ? { c, i0: p.i0, n: p.pv - p.i0, ib: p.pv, vb: 0, bytes: (m.patches || []).reduce((s, q) => s + q.img.data.length, 0) } : null };
 }
 // 美顏筆、塗鴉畫了第 k 筆：先記在記憶體，下一次存草稿時寫進去
@@ -2914,15 +2975,17 @@ function saveDraft(mode) {
   }
   if (!plan && !d.ptr) { clearTimeout(draftT2); draftT2 = setTimeout(() => saveDraft('idle'), 6000); return draftQ; }  // 草稿裡還沒有照片：等停手再壓
   if (slow || photo || !d.thumb) d.thumb = draftThumb();
-  const meta = { id: d.id, t: Date.now(), P: clone(P), texts: clone(texts), stickers: clone(stickers), tab, thumb: d.thumb, ptr: plan ? plan.ptr : d.ptr };
-  const assets = draftAssets(meta.stickers, meta.P);
+  const meta = { id: d.id, t: Date.now(), P: clone(P), texts: clone(texts), stickers: clone(stickers), tab, thumb: d.thumb, ptr: plan ? plan.ptr : d.ptr, om: base.om };
+  const assets = draftAssets(meta.stickers, meta.P), orig = !d.origSaved && base.orig;
   if (plan) { d.ph = plan.ph; d.ptr = plan.ptr; d.pc = c; }
   const puts = plan?.puts || [], blob = photo || (plan?.base ? Promise.resolve(plan.base) : null);
   return draftQ = draftQ.then(async () => {
     const b = blob && await blob;
     if (blob && !b) throw new Error('照片壓不起來');
     meta.assets = await assets;
-    await writeDraft(meta, { photo: b, puts });
+    const ob = orig && await orig.ready;
+    await writeDraft(meta, { photo: b, puts, orig: ob });
+    if (ob && d === draft) d.origSaved = true;
     // 寫進去了：記憶體裡那幾筆可以放掉
     for (const [i, q] of puts) { const k = plan.ph.vb + i - plan.ph.ib; if (d.pend.m.get(k) === q) d.pend.m.delete(k); }
     if (photo) for (const k of d.pend.m.keys()) if (k < ver) d.pend.m.delete(k);
@@ -2971,7 +3034,7 @@ async function resumeDraft(id) {
       else if (v.rgb && v.alpha) restoreLayer(k, { rgb: await toCanvas(v.rgb), alpha: await toCanvas(v.alpha), cut: v.cut });
     }
     busy();
-    await loadFile(d.photo.blob, { ...d.meta, patches: d.patches });
+    await loadFile(d.photo.blob, { ...d.meta, patches: d.patches, origBlob: d.orig });
   } catch (e) { console.error(e); busy(); toast('這份草稿打不開'); }
 }
 // 首頁的草稿列（修圖中按「換照片」也會回到首頁，現在這張不列）
