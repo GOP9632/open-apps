@@ -344,25 +344,28 @@ function ensureSurf() {
 function paintPatch({ x, y, before, after, aux }) {
   const old = base, S = ensureSurf();
   S.edits.length = S.ver;  // 復原後再畫：後面那些重做不到了
-  S.edits.push({ x, y, img: before, aux, ses: aux?.ses });
+  const e = { x, y, img: before, aux, ses: aux?.ses };
+  S.edits.push(e);
   S.canvas.getContext('2d').putImageData(after, x, y); draftPatch(S.canvas, S.ver, x, y, after); S.ver++;
   // 臉、人像這些偵測結果還是同一張照片，留著不用重算；照片的貼圖只傳改到的那一塊
   const keep = { ...old }; delete keep.canvas; delete keep.thumbs;
   base = { canvas: S.canvas, ...BASE0, ...keep, ver: S.ver };
-  pixelsChanged(S.canvas, [{ x, y, img: after }]);
+  pixelsChanged(S.canvas, [{ x, y, img: after, e }]);
   render(); perfBase();
 }
 // 把 canvas 換到第 v 筆（復原、重做同一串裡的一步）
 function seekSurf(S, v) {
   if (S.ver === v) return;
   const ctx = S.canvas.getContext('2d'), done = [];
-  const swap = e => { const cur = ctx.getImageData(e.x, e.y, e.img.width, e.img.height); ctx.putImageData(e.img, e.x, e.y); done.push({ x: e.x, y: e.y, img: e.img }); e.img = cur; e.aux?.swap(); };
+  const swap = e => { const cur = ctx.getImageData(e.x, e.y, e.img.width, e.img.height); ctx.putImageData(e.img, e.x, e.y); done.push({ x: e.x, y: e.y, img: e.img, e }); e.img = cur; e.aux?.swap(); };
   while (S.ver > v) swap(S.edits[--S.ver]);
   while (S.ver < v) swap(S.edits[S.ver++]);
   pixelsChanged(S.canvas, S === base.surf ? done : null);
 }
 // 同一張 canvas 的內容變了：照 canvas 記住的預覽、皮膚、頭髮圖要重算。
-// rects：改到的那幾塊，照片的貼圖只傳這幾塊（整張重傳又慢又吃記憶體）
+// rects：改到的那幾塊，照片的貼圖只傳這幾塊（整張重傳又慢又吃記憶體）。
+// 有 e（美顏筆、塗鴉那一筆的復原紀錄）的：預覽那一塊改之前的樣子存在 e.pv，復原、重做直接對調，
+// 不重縮（只縮一塊跟整張縮的取樣不一樣，膚質開著時復原會差到 9 階，評審 L56）
 function pixelsChanged(c, rects) {
   const v = pvCache.get(c);
   // 頭髮、膚質用的那份照片貼圖（R.srcTex）是這張或它的預覽：只補改到的那幾塊，不然下次整張重傳
@@ -376,11 +379,17 @@ function pixelsChanged(c, rects) {
     for (const r of rects) {
       const x0 = Math.floor(r.x * k), y0 = Math.floor(r.y * k), x1 = Math.min(v.p.width, Math.ceil((r.x + r.img.width) * k)), y1 = Math.min(v.p.height, Math.ceil((r.y + r.img.height) * k));
       if (x1 <= x0 || y1 <= y0) continue;
-      // 多縮外面一圈再只留裡面：邊上的像素才跟整張縮的一樣，不會有接縫
-      const m = 3, a0 = Math.max(0, x0 - m), b0 = Math.max(0, y0 - m), a1 = Math.min(v.p.width, x1 + m), b1 = Math.min(v.p.height, y1 + m);
-      x.save(); x.beginPath(); x.rect(x0, y0, x1 - x0, y1 - y0); x.clip();
-      x.drawImage(c, a0 / k, b0 / k, (a1 - a0) / k, (b1 - b0) / k, a0, b0, a1 - a0, b1 - b0);
-      x.restore();
+      const pv = r.e?.pv;
+      if (pv?.p === v.p && pv.x === x0 && pv.y === y0 && pv.img.width === x1 - x0 && pv.img.height === y1 - y0) {
+        const cur = x.getImageData(x0, y0, x1 - x0, y1 - y0); x.putImageData(pv.img, x0, y0); pv.img = cur;
+      } else {
+        if (r.e) r.e.pv = { p: v.p, x: x0, y: y0, img: x.getImageData(x0, y0, x1 - x0, y1 - y0) };
+        // 多縮外面一圈再只留裡面：邊上的像素才跟整張縮的一樣，不會有接縫
+        const m = 3, a0 = Math.max(0, x0 - m), b0 = Math.max(0, y0 - m), a1 = Math.min(v.p.width, x1 + m), b1 = Math.min(v.p.height, y1 + m);
+        x.save(); x.beginPath(); x.rect(x0, y0, x1 - x0, y1 - y0); x.clip();
+        x.drawImage(c, a0 / k, b0 / k, (a1 - a0) / k, (b1 - b0) / k, a0, b0, a1 - a0, b1 - b0);
+        x.restore();
+      }
       if (keep && R.srcOf === v.p) R.patchSrc(x.getImageData(x0, y0, x1 - x0, y1 - y0), x0, y0);
     }
   }
@@ -401,7 +410,7 @@ function pruneEdits() {
       if (S.canvas) vs.push(S.ver); else vs.push(S.blobVer);
       const lo = Math.min(...vs), hi = Math.max(...vs);
       // 丟掉的步驟留個空殼（記得是哪一串美顏筆畫的），美顏筆才知道能不能接著那串塗
-      S.edits.forEach((e, k) => { if (!e?.img) return; if (k < lo || k >= hi) { e.img = null; e.aux = null; } else bytes += e.img.data.length + (e.aux?.bytes || 0); });
+      S.edits.forEach((e, k) => { if (!e?.img) return; if (k < lo || k >= hi) { e.img = null; e.aux = null; e.pv = null; } else bytes += e.img.data.length + (e.aux?.bytes || 0) + (e.pv?.img.data.length || 0); });
     }
     if (bytes <= EDIT_BUDGET || hist.length <= 2) return;
     hist.shift();
@@ -864,7 +873,8 @@ function syncHair(full) {
   hairFor = base; hairSrc = src; hairKey = key; skinKeyNow = sKey;
   // 先改頭髮，再改膚質，最後交給主管線：三個都在主畫面同一個 WebGL 上，中間結果是貼圖，不用複製
   if (want || sWant) R.useTex(fxTex(src, want, sWant, key), src.width, src.height, base.canvas.width, base.canvas.height);
-  else if (!first) R.setImage(src, base.canvas.width, base.canvas.height);
+  // 復原一步同時改了照片、關掉膚質（hairFor 被 pixelsChanged 清掉）：主畫面還接著舊的膚質貼圖，也要換回照片
+  else if (!first || R.tImg !== R.tOwn) R.setImage(src, base.canvas.width, base.canvas.height);
   fxTrim(want, sWant);  // 剛換下來的那張
 }
 function fxTex(src, hair, skin, key) {
