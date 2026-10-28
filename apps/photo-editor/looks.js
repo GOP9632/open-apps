@@ -22,7 +22,7 @@ export const LOOKS = [
   { id: 'fair', name: '清透白皙', cat: 'face', face: true, set: { filter: 'coolwhite', filterAmt: 60, exposure: 8, highlights: -12, shadows: 15, skBaby: 50, white: 45, dark: 40, eyeb: 30 } },
   { id: 'cream', name: '韓系奶油', cat: 'face', face: true, set: { filter: 'cream', filterAmt: 70, contrast: -8, fade: 10, skCream: 60, white: 25 }, mk: ['韓系', 70] },
   { id: 'airy', name: '日系空氣', cat: 'face', face: true, set: { filter: 'japan', filterAmt: 70, exposure: 12, contrast: -15, shadows: 25, saturation: -10, skNative: 40, light: 'soft', lightAmt: 40 } },
-  { id: 'sweet', name: '元氣少女', cat: 'face', face: true, set: { filter: 'pink', filterAmt: 60, saturation: 8, skGirl: 55, eyes: 10 }, mk: ['少女粉', 70] },
+  { id: 'sweet', name: '元氣少女', cat: 'face', face: true, set: { filter: 'pink', filterAmt: 60, saturation: 8, skGirl: 55, fs_eye_size: 11 }, mk: ['少女粉', 70] },
   { id: 'hkfilm', name: '港風', cat: 'face', face: true, set: { filter: 'hk', filterAmt: 80, contrast: 10, grain: 25, vignette: 20, skMatte: 40 }, mk: ['微醺', 60] },
   { id: 'ccd', name: 'CCD 閃光', cat: 'face', face: true, set: { flash: 'ccd', flashAmt: 60, filter: 'film', filterAmt: 45, grain: 20, sharpen: 10 } },
   { id: 'sunset', name: '夕陽氛圍', cat: 'face', face: true, set: { light: 'sunset', lightAmt: 55, filter: 'sunny', filterAmt: 60, ov: 'leakWarm', ovAmt: 40 } },
@@ -85,25 +85,57 @@ function fullSet(L, base) {
   return L.set;
 }
 
-// 套用：先回到套風格前的樣子，再按強度從那裡往風格的值靠。
+// 套用：先拿掉現在這個風格寫的值，再按強度從套用前的樣子往風格的值靠。
 // 以前是先全部歸零：點一個風格（連點「原圖」）會無聲洗掉自己調的美白、妝容、亮度（評審 M15）。
-// 現在第一次套風格時記下這些參數（P.lookBase），換風格、點「原圖」都回到它
+// 第一次套風格時記下這些參數（P.lookBase）；P.lookVals 是這個風格寫進去的值。
+// 評審 #145 中 A：強度 0 要等於套用前（種類、整套妝也不換），濾鏡種類換了，強度從 0 開始混。
+// 評審 #145 中 B：只動這個風格有的鍵；套用後自己又改過的值留著（當成套用前的樣子），同一個風格再拉強度也不再動它
+const KIND_AMT = { filterAmt: 'filter', lightAmt: 'light', flashAmt: 'flash', ovAmt: 'ov' };
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+// 整套妝照強度混：只在一邊有的那一類淡入、淡出，兩邊同款同色的照比例混，不同款的留比較濃的那一邊
+function mixMk(from, to, s) {
+  const o = {};
+  for (const k of new Set([...Object.keys(from || {}), ...Object.keys(to)])) {
+    const a = from?.[k]?.a > 0 ? from[k] : null, t = to[k];
+    const e = !t ? a && { ...a, a: Math.round(a.a * (1 - s)) }
+      : !a ? { ...t, a: Math.round(t.a * s) }
+        : a.s === t.s && a.c === t.c ? { ...t, a: Math.round(a.a * (1 - s) + t.a * s) }
+          : a.a * (1 - s) > t.a * s ? { ...a, a: Math.round(a.a * (1 - s)) } : { ...t, a: Math.round(t.a * s) };
+    if (e && e.a > 0) o[k] = e;
+  }
+  return o;
+}
 export function applyLook(P, P0, L, amt, base) {
   const cp = v => typeof v === 'object' && v !== null ? JSON.parse(JSON.stringify(v)) : v;
   if (L && !P.look && !P.lookBase) P.lookBase = Object.fromEntries(KEYS.map(k => [k, cp(P[k])]));
-  const b = P.lookBase || {};
-  for (const k of KEYS) P[k] = cp(k in b ? b[k] : P0[k]);
+  const b = P.lookBase ||= {}, again = !!L && P.look === L.id, vals = P.lookVals;
+  const skip = new Set(again ? P.lookSkip || [] : []);
+  // 舊的草稿沒有 lookVals：照以前全部回到套用前
+  for (const k of vals ? Object.keys(vals) : KEYS) {
+    if (vals && !same(P[k], vals[k])) { b[k] = cp(P[k]); if (again) skip.add(k); continue; }
+    P[k] = cp(k in b ? b[k] : P0[k]);
+  }
   P.look = L ? L.id : '';
   P.lookAmt = amt;
+  delete P.lookVals; delete P.lookSkip;
   if (!L) { delete P.lookBase; return; }
-  const s = amt / 100;
-  for (const [k, v] of Object.entries(fullSet(L, base))) P[k] = typeof v === 'number' ? Math.round((typeof P[k] === 'number' ? P[k] : 0) * (1 - s) + v * s) : v;
-  if (L.set?.light) Object.assign(P, { lightX: null, lightY: null, lightCol: null, lightSpec: null, lightSeed: 0 });
-  if (L.mk) {
-    const i = mkIdx(L.mk[0]), a = L.mk[1] * s;
-    P.mk = Object.fromEntries(Object.entries(MK_LOOKS[i].set).map(([k, [st, c, v]]) => [k, { s: st, c, a: Math.round(v * a / 100) }]));
-    P.mkLook = i; P.mkLookAmt = Math.round(a);
+  const s = amt / 100, set = fullSet(L, base), pre = { ...P }, out = {};
+  if (s > 0) {
+    for (const [k, v] of Object.entries(set)) {
+      if (skip.has(k)) continue;
+      const kind = KIND_AMT[k], from = kind && kind in set && pre[kind] !== set[kind] ? 0 : typeof pre[k] === 'number' ? pre[k] : 0;
+      P[k] = typeof v === 'number' ? Math.round(from * (1 - s) + v * s) : v;
+      out[k] = cp(P[k]);
+    }
+    if (L.set?.light && !skip.has('light')) Object.assign(P, { lightX: null, lightY: null, lightCol: null, lightSpec: null, lightSeed: 0 });
+    if (L.mk && !skip.has('mk')) {
+      const i = mkIdx(L.mk[0]), to = Object.fromEntries(Object.entries(MK_LOOKS[i].set).map(([k, [st, c, v]]) => [k, { s: st, c, a: Math.round(v * L.mk[1] / 100) }]));
+      P.mk = mixMk(pre.mk, to, s); P.mkLook = i; P.mkLookAmt = Math.round(L.mk[1] * s);
+      Object.assign(out, { mk: cp(P.mk), mkLook: i, mkLookAmt: P.mkLookAmt });
+    }
   }
+  P.lookVals = out;
+  if (skip.size) P.lookSkip = [...skip];
 }
 
 // 縮圖：在小圖上用 CPU 近似調整和濾鏡（美顏、妝、打光不畫），讓人一眼看出色調

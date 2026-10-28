@@ -606,7 +606,8 @@ export function makeupTab(box, api) {
   const rows = [];
   const row = (key, cls) => {
     const r = document.createElement('div'); r.className = 'row ' + (cls || ''); wrap.append(r);
-    r.addEventListener('scroll', () => { scrolled[key] = r.scrollLeft; }, { passive: true });
+    // 還能滑的那一邊淡出，跟分頁列一樣（評審 #145 小 E）
+    r.addEventListener('scroll', () => { scrolled[key] = r.scrollLeft; api.edgeFade?.(r); }, { passive: true });
     rows.push([r, key]); return r;
   };
 
@@ -670,9 +671,9 @@ export function makeupTab(box, api) {
   for (const [r, key] of rows) {
     if (scrolled[key] != null) r.scrollLeft = scrolled[key];
     const on = r.querySelector('.on');
-    if (!on) continue;
+    if (!on) { api.edgeFade?.(r); continue; }
     const l = on.offsetLeft - r.offsetLeft;
     if (scrolled[key] == null ? l + on.offsetWidth > r.clientWidth * 0.8 : l < r.scrollLeft || l + on.offsetWidth > r.scrollLeft + r.clientWidth) r.scrollLeft = l - (r.clientWidth - on.offsetWidth) / 2;
-    scrolled[key] = r.scrollLeft;
+    scrolled[key] = r.scrollLeft; api.edgeFade?.(r);
   }
 }

@@ -40,7 +40,9 @@ button{background:none;border:0;padding:0;cursor:pointer}
 /* 復原、重做、看原圖照醒圖／Hypic 放在照片下緣，上排只留換照片、全部重設、合併、儲存 */
 #hist{position:absolute;left:12px;right:12px;bottom:12px;display:none;justify-content:space-between;pointer-events:none;z-index:6}
 #hist.on{display:flex}
-#hist.crop{display:none}
+/* 裁切時只藏「看原圖」，復原、重做照常（評審 M25：套用裁切、旋轉後找不到復原） */
+#hist.crop .hg:last-child{visibility:hidden}
+#stage.crop{padding-bottom:52px}
 #hist .hg{transition:opacity .15s}#hist.painting .hg{opacity:0}#hist.painting .fb{pointer-events:none}
 #hist .hg{display:flex;gap:8px}
 .fb{pointer-events:auto;width:36px;height:36px;border-radius:18px;display:grid;place-items:center;background:rgba(23,23,26,.72);border:1px solid var(--line2);color:var(--text)}
@@ -144,7 +146,8 @@ button{background:none;border:0;padding:0;cursor:pointer}
 .srow{display:flex;align-items:center;gap:12px;padding:4px 18px 10px;min-height:44px}
 .srow.hide{visibility:hidden}
 #pbody:has(#rows:not(:empty)) .srow.hide{display:none}
-.srow label{width:44px;color:var(--muted);font-size:13px;flex:none}
+/* 四個字以上（髮色統一）不折成兩行：寬度跟著字，最多 6 個字（評審 #145 小 J） */
+.srow label{min-width:44px;max-width:80px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:13px;flex:none}
 .srow output{width:40px;text-align:right;font-variant-numeric:tabular-nums;flex:none;font-size:14px}
 input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:28px;background:transparent;margin:0;pointer-events:none}
 /* 滑桿的手指交給 ui.js 的 enhanceRanges（整條都能拖）；只能上下捲的清單裡，左右拖給滑桿、上下拖照樣捲 */
@@ -178,10 +181,11 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .sw.on{border-color:#fff;box-shadow:0 0 0 2px var(--accent)}
 
 .tabs{display:flex;gap:4px;padding:2px 12px 6px;overflow-x:auto;scrollbar-width:none}
-/* 橫著捲的列還能往左／右滑：那一邊淡出（評審 M13：人像 12 個分頁一半在畫面外，以前看不出來能滑） */
-.fadeR{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 36px),transparent)}
-.fadeL{-webkit-mask-image:linear-gradient(90deg,transparent,#000 36px);mask-image:linear-gradient(90deg,transparent,#000 36px)}
-.fadeL.fadeR{-webkit-mask-image:linear-gradient(90deg,transparent,#000 36px,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(90deg,transparent,#000 36px,#000 calc(100% - 36px),transparent)}
+/* 橫著捲的列還能往左／右滑：那一邊淡出（評審 M13：人像 12 個分頁一半在畫面外，以前看不出來能滑）。
+   邊上留三成不透明，被切到的那一顆還看得到（評審 #145 小 F） */
+.fadeR{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 28px),rgba(0,0,0,.3));mask-image:linear-gradient(90deg,#000 calc(100% - 28px),rgba(0,0,0,.3))}
+.fadeL{-webkit-mask-image:linear-gradient(90deg,rgba(0,0,0,.3),#000 28px);mask-image:linear-gradient(90deg,rgba(0,0,0,.3),#000 28px)}
+.fadeL.fadeR{-webkit-mask-image:linear-gradient(90deg,rgba(0,0,0,.3),#000 28px,#000 calc(100% - 28px),rgba(0,0,0,.3));mask-image:linear-gradient(90deg,rgba(0,0,0,.3),#000 28px,#000 calc(100% - 28px),rgba(0,0,0,.3))}
 .tabs::-webkit-scrollbar{display:none}
 .tab{flex:none;height:38px;padding:0 13px;border-radius:19px;color:var(--muted);font-size:14px;white-space:nowrap}
 .tab.on{color:var(--text);font-weight:600;background:var(--panel2)}

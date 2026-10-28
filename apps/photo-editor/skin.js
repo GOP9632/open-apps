@@ -501,7 +501,8 @@ void main(){
 export class SkinFx {
   constructor() {
     const c = this.canvas = document.createElement('canvas');
-    const gl = this.gl = c.getContext('webgl2', { preserveDrawingBuffer: true, premultipliedAlpha: false });
+    // 不要反鋸齒、深度、模板：只畫全畫面三角形，用不到，iPhone 上每張還要多配好幾倍的記憶體（評審 M1）
+    const gl = this.gl = c.getContext('webgl2', { preserveDrawingBuffer: true, premultipliedAlpha: false, antialias: false, depth: false, stencil: false });
     if (!gl) return;
     const sh = (t, s) => { const x = gl.createShader(t); gl.shaderSource(x, s); gl.compileShader(x); if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(x)); return x; };
     const prog = fs => { const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs)); gl.bindAttribLocation(p, 0, 'a'); gl.linkProgram(p); return p; };
@@ -568,6 +569,15 @@ export class SkinFx {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, data.w, data.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, a);
       });
     }
+  }
+  // 效果關掉時放掉跟照片一樣大的畫布、照片貼圖、三張模糊圖（評審 M1）；膚質資料留著，下次 apply 再重配
+  release() {
+    const gl = this.gl;
+    if (!gl || !this.src) return;
+    this.canvas.width = this.canvas.height = 1;
+    gl.bindTexture(gl.TEXTURE_2D, this.img); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    if (this.blurs) { for (const t of [this.blurs.tmp, ...this.blurs.out]) { gl.deleteTexture(t.t); gl.deleteFramebuffer(t.fb); } this.blurs = null; }
+    this.src = null; this.key = null;
   }
   // 回傳改好膚質的 canvas；imgKey 變了代表輸入的照片內容變了（例如頭髮改過），要重算模糊
   // scale：img 是原尺寸照片縮小幾倍的預覽（臉寬、毛孔這些照原尺寸算的大小要跟著縮）

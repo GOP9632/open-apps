@@ -467,14 +467,15 @@ function swapO(ses, o) {
   writeO(ses, o.x0, o.y0, o.x1, o.y1, o.d); o.d = cur;
 }
 
-// 遮罩筆一筆：遮罩往「強度」靠近（磨皮第一筆到強度、多塗會再強一點，最多 1.5 倍；其他筆第一筆就到強度），
-// 再重算遮罩改到的那塊照片
+// 遮罩筆一筆：遮罩往「強度」靠近（磨皮第一筆到強度、多塗會再強一點；其他筆第一筆就到強度），
+// 再重算遮罩改到的那塊照片。磨皮多塗的上限 C：強度 60 以下是 1.5 倍（跟以前一樣），60 到 100 從 0.9 拉到 1。
+// 以前上限一律 min(1, 1.5 倍)、每筆走 2/3，強度 67 以上第一筆都停在 0.667、多塗都到 1，滑桿上面三分之一沒作用（評審 M35）
 async function maskStroke(ses, tool, pts, R, k) {
   const { W, H, mw, mh } = ses, s = mw / W;
   const [x0, y0, x1, y1] = bounds(pts, R + 3 / s, s, mw, mh), w = x1 - x0, h = y1 - y0;
   if (w < 1 || h < 1) return null;
   const cov = stroke(pts, x0, y0, w, h, s, R), A = ses.A[tool] ||= new Uint8Array(mw * mh);
-  const T = Math.round(255 * (tool === 'smooth' ? Math.min(1, 1.5 * k) : k)), dep = tool === 'smooth' ? 2 / 3 : 1;
+  const C = tool !== 'smooth' ? k : k <= 0.6 ? 1.5 * k : 0.9 + 0.25 * (k - 0.6), T = Math.round(255 * C), dep = C > 0 ? Math.min(1, k / C) : 1;
   const old = new Uint8Array(w * h), c = toward(A, mw, x0, y0, w, h, cov, T, dep, old);
   if (!c) return null;
   const [cx0, cy0, cx1, cy1] = c;
