@@ -107,9 +107,15 @@ export function doodleInput(wrap, app) {
   });
   wrap.addEventListener('pointermove', e => {
     if (!pts) return;
-    const p = at(e), q = pts[pts.length - 1];
-    if (Math.hypot(p.x - q.x, p.y - q.y) < 2) return;
-    pts.push(p); preview();
+    // 主執行緒忙的時候手指的移動會被併成一個事件：拿回中間每一點，筆跡才不會變成直線
+    const ce = e.getCoalescedEvents?.();
+    let add = false;
+    for (const c of ce?.length ? ce : [e]) {
+      const p = at(c), q = pts[pts.length - 1];
+      if (Math.hypot(p.x - q.x, p.y - q.y) < 2) continue;
+      pts.push(p); add = true;
+    }
+    if (add) preview();
   });
   const up = () => {
     if (!pts) return;

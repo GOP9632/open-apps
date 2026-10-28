@@ -16,7 +16,7 @@ import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape, eva
 import { WarpField } from './warpfield.js';
 import { RESHAPE, liqDab, liqRadius } from './reshape.js';
 import { tabDoodle, doodleInput } from './doodle.js';
-import { tabBeautyBrush, beautyBrushInput, bbRelease } from './beautybrush.js';
+import { tabBeautyBrush, beautyBrushInput, bbRelease, bbWait } from './beautybrush.js';
 import { FONTS, T0, TEXT_COLORS, TEXT_FX, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
 import { initCollage, openCollage } from './collage.js';
 import { CATS as TPL_CATS } from './templates.js';
@@ -871,8 +871,9 @@ async function restore(i) {
   draftSoon();  // 復原、重做也要進草稿（不然被收掉，重開會回到復原前）
 }
 function syncHist() { $('#bUndo').disabled = hi <= 0; $('#bRedo').disabled = hi >= hist.length - 1; }
-$('#bUndo').onclick = () => hi > 0 && restore(hi - 1);
-$('#bRedo').onclick = () => hi < hist.length - 1 && restore(hi + 1);
+// 美顏筆放開的那幾筆還在算：先等它們畫進照片、記進復原，再往回一步（連點兩下就退兩步）
+$('#bUndo').onclick = async () => { await bbWait(); hi > 0 && restore(hi - 1); };
+$('#bRedo').onclick = async () => { await bbWait(); hi < hist.length - 1 && restore(hi + 1); };
 
 // 按住看原圖
 // 看原圖：畫在同一張 WebGL 畫布上（以前疊一張 2D 畫布，iPhone 放大時會糊、位置也會跳）
@@ -1110,7 +1111,8 @@ function paramRows(box, list) {
 // 消除筆在 erase.js，這裡把它要用的東西傳過去
 const eraseApp = { get base() { return base; }, setBase, commit, item, hideSlider, showTab, toast, busy, toSrc: srcMapper };
 doodleInput($('#wrap'), { get base() { return base; }, tab: () => tab, paint: paintPatch, commit, toSrc: srcMapper });
-beautyBrushInput($('#wrap'), { get base() { return base; }, tab: () => tab, surf: ensureSurf, paint: paintPatch, commit, toSrc: srcMapper });
+// queued：放開了一筆、還在算：復原先亮起來（按下去會等它算完再退回）；settled：都算完了，照實際的復原步數
+beautyBrushInput($('#wrap'), { get base() { return base; }, tab: () => tab, surf: ensureSurf, paint: paintPatch, commit, toSrc: srcMapper, queued: () => { $('#bUndo').disabled = false; }, settled: syncHist });
 function tabEraseHere(box) { tabErase(box, eraseApp); }
 
 function tabAdjust(box) { paramItems(box, ADJUST, 'brightness'); }
@@ -1166,6 +1168,7 @@ async function mergeFilter() {
   if (P.filter === 'none') return;
   busy('合併中…');
   try {
+    await bbWait();
     // 濾鏡裡皮膚、頭髮另外一套顏色要等臉找完
     await findFaces();
     const now = P, f = liveFilter(), lut = getLut(f);
@@ -2795,6 +2798,7 @@ async function save() {
   if (!base) return;
   busy('輸出中…');
   try {
+    await bbWait();
     const out = await compose();
     const png = P.bg === 'clear';
     const blob = await new Promise(r => out.toBlob(r, png ? 'image/png' : 'image/jpeg', 0.95));
