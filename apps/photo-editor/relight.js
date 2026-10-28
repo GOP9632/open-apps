@@ -3,6 +3,7 @@
 //   臉：臉部特徵點的 z（MediaPipe 給的，越靠近鏡頭越小）連成三角網格，
 //       鼻子、眉骨、顴骨、眼窩都有真的高低；頭髮、頭頂用一顆橢球補
 //   輸出一張小圖：R 是模糊過的人像遮罩（原本 segB 的用途不變），G、B 是 16 位元的高度
+import { boxBlur, mkCanvas } from './masktools.js';
 const LONG = 512;
 
 // Bowyer-Watson 三角化，臉部 468 個點只要幾毫秒
@@ -35,29 +36,7 @@ function delaunay(P) {
 }
 
 // 三次方框模糊，近似高斯
-function blur(a, w, h, r) {
-  if (r < 1) return a;
-  const b = new Float32Array(w * h), s = 1 / (2 * r + 1);
-  for (let pass = 0; pass < 3; pass++) {
-    for (let y = 0; y < h; y++) {
-      const o = y * w; let acc = 0;
-      for (let x = -r; x <= r; x++) acc += a[o + Math.min(w - 1, Math.max(0, x))];
-      for (let x = 0; x < w; x++) {
-        b[o + x] = acc * s;
-        acc += a[o + Math.min(w - 1, x + r + 1)] - a[o + Math.max(0, x - r)];
-      }
-    }
-    for (let x = 0; x < w; x++) {
-      let acc = 0;
-      for (let y = -r; y <= r; y++) acc += b[Math.min(h - 1, Math.max(0, y)) * w + x];
-      for (let y = 0; y < h; y++) {
-        a[y * w + x] = acc * s;
-        acc += b[Math.min(h - 1, y + r + 1) * w + x] - b[Math.max(0, y - r) * w + x];
-      }
-    }
-  }
-  return a;
-}
+const blur = (a, w, h, r) => boxBlur(a, w, h, r, 3, true);
 
 // segB：模糊過的人像遮罩 canvas；person：人像遮罩 canvas；faces：每張臉 478 個點（有 z）
 // 回傳 { canvas, max }，max 是高度的最大值（深度圖像素）
@@ -340,10 +319,11 @@ export function lightPosOf(L, P, base) {
 
 // 閃光燈要的整張照片統計（照片載入、找到臉和皮膚之後算一次）：
 // Lh 臉上皮膚亮度的第 90 百分位、Lm 中位數、cs 臉上皮膚的平均顏色比例（RGB ÷ 亮度）、Lb 背景平均亮度、cast 背景的平均色偏
+//   canvas：照片，或 { width, height, img }（同 skin.js prepSkin）
 export function flashStats(canvas, seg, mask, geom) {
-  const w = seg.w, h = seg.h, c = document.createElement('canvas'); c.width = w; c.height = h;
+  const w = seg.w, h = seg.h, c = mkCanvas(w, h);
   const x = c.getContext('2d', { willReadFrequently: true });
-  x.drawImage(canvas, 0, 0, w, h);
+  x.drawImage(canvas.img || canvas, 0, 0, w, h);
   const d = x.getImageData(0, 0, w, h).data;
   x.drawImage(mask, 0, 0, w, h);
   const mk = x.getImageData(0, 0, w, h).data;

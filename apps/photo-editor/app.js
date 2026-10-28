@@ -1,7 +1,7 @@
 import { Renderer, MAX_WARPS } from './gl.js';
 import { FILTERS, bakeLUT, thumb, filterFn, skinFilterFn, hairFilterFn } from './filters.js';
 import { loadXT, xtData, xtItem } from './xt.js';
-import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor } from './ai.js';
+import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor, beardSize } from './ai.js';
 import { COVERS, COVER_CATS, coverPixels } from './coverface.js';
 import { STICKERS, STICKER_CATS, EMOJIS, EMOJI_FONT, BLENDS, blendById, stickerAR, stickerURL, svgURL, renderSticker, putCanvas, getCanvas, canvasURL, touchCanvas, ownImages, NET_PACKS, netURL, loadNetSticker, restoreCanvas } from './stickers.js';
 import { FX, OVERLAYS, BG_PHOTOS, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
@@ -26,7 +26,7 @@ import { tabLooks } from './looks.js';
 import { perfReq, perfDrawn, perfBase, perfSkip } from './perf.js';
 import { STROKES, STROKE_COLORS, STROKE0, strokeLayer, alphaFromMatte, alphaBox } from './outline.js';
 import { SHAPES, MASK0, LAYER_LIMIT, shapePath, photoLayer, cutLayer, layerInfo, restoreLayer, cloneAlpha, compose as composeLayer, brush } from './layers.js';
-import { listDrafts, readDraft, writeDraft, deleteDraft, encode } from './draft.js';
+import { listDrafts, readDraft, writeDraft, deleteDraft, encode, encodeSmall } from './draft.js';
 import { POPS, POP_BGS, POP_P0, drawPop } from './popout.js';
 
 const $ = s => document.querySelector(s);
@@ -258,11 +258,11 @@ function setBase(canvas, keep) {
 // base.om：目前照片的像素 (x, y) 在最初照片上的位置（0～1）：u = a·x + c·y + e、v = b·x + d·y + f；
 // 裁切、旋轉、翻轉跟著換，消除、合併、美顏筆不變
 const ORIG_SIDE = 1600;
+// 縮圖、壓縮都在背景執行緒（src 交出去就不能再用）；還沒好之前比較鈕畫目前的照片（剛開的照片兩張一樣）
 function makeOrig(src, w, h) {
-  const k = Math.min(1, ORIG_SIDE / Math.max(w, h)), c = newCanvas(Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k)));
-  const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(src, 0, 0, c.width, c.height);
-  const o = { c, blob: null, bmp: null };
-  o.ready = encode(c, 'image/jpeg', 0.9).then(b => { if (b) { o.blob = b; o.c = null; c.width = 0; } return b; }, () => null);
+  const k = Math.min(1, ORIG_SIDE / Math.max(w, h)), o = { c: null, blob: null, bmp: null };
+  o.ready = encodeSmall(src, Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k)), 'image/jpeg', 0.9)
+    .then(b => { if (b) o.blob = b; else o.bad = true; if (cmpOn) render(); return b; }, () => { o.bad = true; return null; });
   return o;
 }
 // 照目前照片的大小、位置畫一張最初的照片；還在解開就回傳 null（這一格先不畫，解好再畫）
@@ -494,6 +494,51 @@ function getSeg(b) {
     .catch(e => { console.warn(e); b.segP = null; return null; });
   return b.segP;
 }
+// 背景執行緒（評審 M7、M8）：皮膚遮罩、閃光燈統計、膚質、頭髮的準備資料在 prepwork.js 算。
+// 以前在這裡算，開照片、第一次開膚質、頭髮時主執行緒各卡 0.5～1 秒，那時拖滑桿、縮放照片都不動。
+// 瀏覽器不支援（舊的 Safari 沒有 OffscreenCanvas）、執行緒出錯或 20 秒沒回應，就照舊在這裡算（local）
+let prepW, prepN = 0;
+const prepWait = new Map();
+function prepWorker() {
+  if (prepW !== undefined) return prepW;
+  prepW = false;
+  try {
+    if (typeof OffscreenCanvas === 'undefined' || !new OffscreenCanvas(1, 1).getContext('2d')) return prepW;
+    const w = new Worker(new URL('./prepwork.js', import.meta.url), { type: 'module' });
+    w.onmessage = e => { const r = prepWait.get(e.data.id); prepWait.delete(e.data.id); r?.(e.data); };
+    w.onerror = e => { console.warn('prepwork', e.message); prepW = false; prepWait.forEach(r => r({ err: 'worker' })); prepWait.clear(); };
+    prepW = w;
+  } catch (e) { console.warn(e); }
+  return prepW;
+}
+async function prep(op, args, local) {
+  const w = prepWorker();
+  if (!w) return local();
+  let r;
+  try {
+    const a = await args(), id = ++prepN;
+    r = await new Promise(res => {
+      prepWait.set(id, res); setTimeout(() => prepWait.delete(id) && res({ err: 'timeout' }), 20000);
+      w.postMessage({ id, op, a }, [a.img, a.bimg].filter(Boolean));
+    });
+  } catch (e) { r = { err: e }; }
+  if (r.err) { console.warn(op, r.err); return local(); }
+  return r.out;
+}
+// 分割結果只傳要用的（每個 Float32Array 約 4MB，傳過去要複製）；人像 canvas 傳不過去
+const segPart = (s, ...ks) => Object.fromEntries([['w', s.w], ['h', s.h], ...ks.map(k => [k, s[k]])]);
+// 照片縮成分割圖（或鬍子圖）大小給背景執行緒，縮法跟以前在這裡算時一樣，結果才會一模一樣。
+// 同一張、沒再畫過就不重縮（找臉、膚質接連要用）；5 秒後放掉，不然會一直抓著舊照片
+let segImg = null, segImgT = 0;
+async function segPhoto(b, w, h) {
+  const v = b.surf?.ver;
+  if (segImg?.src !== b.canvas || segImg.v !== v) segImg = { src: b.canvas, v, cs: {} };
+  const c = segImg.cs[w + 'x' + h] ||= newCanvas(w, h);
+  if (!c.done) { c.getContext('2d', { willReadFrequently: true }).drawImage(b.canvas, 0, 0, w, h); c.done = true; }
+  clearTimeout(segImgT); segImgT = setTimeout(() => { segImg = null; }, 5000);
+  return createImageBitmap(c);
+}
+const idle = f => (window.requestIdleCallback || (g => setTimeout(g, 300)))(f, { timeout: 3000 });
 function findFaces() {
   const b = base;
   if (b.facesP) return b.facesP;
@@ -503,10 +548,16 @@ function findFaces() {
     const live = share(b, 'facesP', ['faces', 'geoms', 'mask2']);
     if (live) { R.setMask2(b.mask2); render(); }
     if (live && !f.length && landing && tab === 'beauty') { landing = false; showTab('filter'); }
-    const seg = f.length ? await getSeg(b) : null;
-    b.mask = f.length ? skinMask(f, b.canvas.width, b.canvas.height, seg, b.canvas) : null;
-    b.flashSt = seg && b.mask ? flashStats(b.canvas, seg, b.mask, b.geoms[0]) : null;
+    const seg = f.length ? await getSeg(b) : null, W = b.canvas.width, H = b.canvas.height, g = b.geoms[0];
+    const r = !f.length ? null : await prep('face', async () => ({ faces: f, W, H, geom: g, ...seg && { seg: segPart(seg, 'skin', 'hair', 'bg'), img: await segPhoto(b, seg.w, seg.h), bimg: await segPhoto(b, ...beardSize(seg.w, seg.h)) } }), () => {
+      const mask = skinMask(f, W, H, seg, b.canvas);
+      return { mask, cls: mask.cls, flashSt: seg ? flashStats(b.canvas, seg, mask, g) : null };
+    });
+    b.mask = r?.mask || null; b.flashSt = r?.flashSt || null;
+    if (r?.cls) b.mask.cls = r.cls;
     if (share(b, 'facesP', ['mask', 'flashSt'])) { R.setMask(b.mask); render(); if (tab === 'beauty' || tab === 'sticker' || tab === 'makeup' || tab === 'looks') showTab(tab); }
+    // 評審 M8：膚質的準備資料、膚質和頭髮的 GPU 程式趁閒置先做好，第一次拉膚質、頭髮滑桿就不用等
+    if (f.length) idle(() => { if (base?.facesP !== b.facesP) return; getSkin(base); try { skinFx ||= new SkinFx(); hairFx ||= new HairFx(); } catch (e) { console.warn(e); } });
     return f;
   }).catch(e => { console.warn(e); b.faces = []; b.faceErr = true; if (share(b, 'facesP', ['faces', 'faceErr']) && (tab === 'beauty' || tab === 'makeup')) showTab(tab); return []; });
   return b.facesP;
@@ -749,9 +800,9 @@ function previewOf(c) {
 // 膚質、祛皺：要皮膚分割和臉，同一張照片只準備一次
 let skinFx = null, skinKeyNow = '';
 function getSkin(b) {
-  b.skinP ||= Promise.all([getSeg(b), findFaces()]).then(([s, f]) => {
+  b.skinP ||= Promise.all([getSeg(b), findFaces()]).then(async ([s, f]) => {
     if (!s) { b.skinP = null; return null; }
-    b.skin = prepSkin(b.canvas, s, f || []);
+    b.skin = await prep('skin', async () => ({ W: b.canvas.width, H: b.canvas.height, faces: f || [], seg: segPart(s, 'skin'), img: await segPhoto(b, s.w, s.h) }), () => prepSkin(b.canvas, s, f || []));
     if (share(b, 'skinP', ['skin'])) { hairFor = null; render(); if (tab === 'skin') showTab('skin'); }
     return b.skin;
   }).catch(e => { console.warn(e); b.skinP = null; return null; });
@@ -759,9 +810,9 @@ function getSkin(b) {
 }
 const HAIR_P0_KEYS = Object.keys(HAIR_P0);
 function getHair(b) {
-  b.hairP ||= Promise.all([getSeg(b), findFaces()]).then(([s, f]) => {
+  b.hairP ||= Promise.all([getSeg(b), findFaces()]).then(async ([s, f]) => {
     if (!s) { b.hairP = null; return null; }
-    b.hair = prepHair(b.canvas, s, f || []);
+    b.hair = await prep('hair', async () => ({ W: b.canvas.width, H: b.canvas.height, faces: f || [], seg: segPart(s, 'hair', 'bg'), img: await segPhoto(b, s.w, s.h) }), () => prepHair(b.canvas, s, f || []));
     if (share(b, 'hairP', ['hair'])) { hairFor = null; render(); if (tab === 'hair') showTab('hair'); }
     return b.hair;
   }).catch(e => { console.warn(e); b.hairP = null; return null; });
@@ -914,13 +965,17 @@ async function restore(i) {
   const s = hist[i];
   const changed = s.base !== base;
   if (changed && !s.base.canvas) {
-    restoring = true; busy('復原中…');
-    try { await unshelve(s.base); } catch (e) { console.error(e); toast('這一步復原不了'); return; } finally { restoring = false; busy(); }
+    // 解壓通常很快：0.3 秒內好就不蓋「復原中」（評審 #144 小 1：一閃一閃的）
+    restoring = true; const bt = setTimeout(() => busy('復原中…'), 300);
+    try { await unshelve(s.base); } catch (e) { console.error(e); toast('這一步復原不了'); return; } finally { restoring = false; clearTimeout(bt); busy(); }
   }
   hi = i;
+  const fr = P.frame;
   P = clone(s.P); texts = clone(s.texts); stickers = clone(s.stickers); selText = -1; selSt = -1;
   if (changed && s.base.surf && s.base.surf === base.surf) { seekSurf(s.base.surf, s.base.ver); base = s.base; render(); }
   else if (changed) { if (s.base.surf) seekSurf(s.base.surf, s.base.ver); const old = base; base = s.base; applyBase(); shelveLater(old); } else render();
+  // 只差在邊框的兩步：照片的位置、大小跟著邊框變（評審 #144 中 2）
+  if (P.frame !== fr) layout();
   showTab(tab); drawTexts(); drawStickers(); syncHist();
   draftSoon();  // 復原、重做也要進草稿（不然被收掉，重開會回到復原前）
 }

@@ -1,4 +1,6 @@
 // 臉部特徵點與人像分割：Google MediaPipe（免費、在裝置上跑，照片不會上傳）
+import { boxBlur as blurArr, mkCanvas } from './masktools.js';
+const boxBlur3 = (a, w, h, r) => blurArr(a, w, h, r, 3);
 const VER = '0.10.14';
 const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VER}`;
 const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
@@ -48,12 +50,20 @@ export async function detectFaces(src) {
     }
   };
   run(0, 0, W, H);
+  // 評審 M7：整張就找到夠大的臉（自拍、半身照）就不切區塊找了，區塊是為了全身照、團體照裡的小臉；
+  // 臉寬佔長邊兩成，模型看到的臉已經有 200 像素寬，放大也不會更準。區塊之間讓出主執行緒，找臉時拖滑桿、縮放照片才會動
+  if (found.some(f => f.rel >= 0.2)) return merge(found);
   for (const n of [2, 3]) {
     const tw = W / n * 1.5, th = H / n * 1.5;
     if (Math.max(tw, th) < 400) break;
-    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++)
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      await new Promise(r => setTimeout(r));
       run(Math.round((W - tw) * i / (n - 1)), Math.round((H - th) * j / (n - 1)), Math.round(tw), Math.round(th));
+    }
   }
+  return merge(found);
+}
+function merge(found) {
   // 合併同一張臉
   const ctr = f => f.pts[1];
   found.sort((a, b) => b.rel - a.rel);
@@ -117,7 +127,7 @@ export function skinMask(faces, w, h, seg, img) {
   const mh = seg ? seg.h : Math.max(1, Math.round(h * Math.min(1, 512 / Math.max(w, h))));
   const kx = mw / w, ky = mh / h, r = Math.max(2, Math.round(mw / 110));
   const layer = (bgColor, draw) => {
-    const c = document.createElement('canvas'); c.width = mw; c.height = mh;
+    const c = mkCanvas(mw, mh);
     const ctx = c.getContext('2d');
     ctx.fillStyle = bgColor; ctx.fillRect(0, 0, mw, mh);
     const poly = (pts, ids, v, grow = 1) => {
@@ -147,7 +157,7 @@ export function skinMask(faces, w, h, seg, img) {
     poly(pts, L_BROW, 0.6, 1.2); poly(pts, R_BROW, 0.6, 1.2);
     poly(pts, LIPS, 0.4, 1.05);
   });
-  const c = document.createElement('canvas'); c.width = mw; c.height = mh;
+  const c = mkCanvas(mw, mh);
   const ctx = c.getContext('2d'), out = ctx.createImageData(mw, mh), d = out.data;
   for (let i = 0; i < mw * mh; i++) {
     const skin = seg ? seg.skin[i] : oval[i];
@@ -161,7 +171,7 @@ export function skinMask(faces, w, h, seg, img) {
   //   A = 1 − 0.5 × 鬍子（beardMap）。五官 = 眼睛、眉毛、嘴唇、鼻孔、牙齒。頭髮和五官幾乎不會重疊，所以共用一個通道
   if (seg) {
     const bd = img ? beardMap(img, c, mw, mh) : null;
-    const k2 = document.createElement('canvas'); k2.width = mw; k2.height = mh;
+    const k2 = mkCanvas(mw, mh);
     const x2 = k2.getContext('2d'), o2 = x2.createImageData(mw, mh), e = o2.data;
     for (let i = 0; i < mw * mh; i++) {
       const sk = seg.skin[i], ft = Math.min(1, sk * (1 - holeS[i]) + teeth[i]);
@@ -191,9 +201,10 @@ function boxF(a, w, h, r) {
   }
   return o;
 }
+export const beardSize = (mw, mh) => { const k = 512 / Math.max(mw, mh); return [Math.max(1, Math.round(mw * k)), Math.max(1, Math.round(mh * k))]; };
 function beardMap(img, mask, mw, mh) {
-  const k = 512 / Math.max(mw, mh), w = Math.max(1, Math.round(mw * k)), h = Math.max(1, Math.round(mh * k));
-  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const [w, h] = beardSize(mw, mh);
+  const c = mkCanvas(w, h);
   const x = c.getContext('2d', { willReadFrequently: true });
   x.drawImage(img, 0, 0, w, h); const d = x.getImageData(0, 0, w, h).data;
   x.clearRect(0, 0, w, h); x.drawImage(mask, 0, 0, w, h); const m = x.getImageData(0, 0, w, h).data;
@@ -293,39 +304,18 @@ function boxBlur(ctx, w, h, r, rgb) {
     for (let ch = 0; ch < 3; ch++) {
       const a = new Float32Array(w * h);
       for (let i = 0; i < w * h; i++) a[i] = img.data[i * 4 + ch];
-      blur1(a, w, h, r);
+      boxBlur3(a, w, h, r);
       for (let i = 0; i < w * h; i++) out[i * 4 + ch] = a[i];
     }
     img.data.set(out); ctx.putImageData(img, 0, 0); return;
   }
   const img = ctx.getImageData(0, 0, w, h), d = img.data, a = new Float32Array(w * h);
   for (let i = 0; i < w * h; i++) a[i] = d[i * 4];
-  blur1(a, w, h, r);
+  boxBlur3(a, w, h, r);
   for (let i = 0; i < w * h; i++) d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = a[i];
   ctx.putImageData(img, 0, 0);
 }
 
-function blur1(a, w, h, r) {
-  const b = new Float32Array(w * h);
-  for (let pass = 0; pass < 3; pass++) {
-    for (let y = 0; y < h; y++) {
-      let s = 0;
-      for (let x = -r; x <= r; x++) s += a[y * w + Math.min(w - 1, Math.max(0, x))];
-      for (let x = 0; x < w; x++) {
-        b[y * w + x] = s / (2 * r + 1);
-        s += a[y * w + Math.min(w - 1, x + r + 1)] - a[y * w + Math.max(0, x - r)];
-      }
-    }
-    for (let x = 0; x < w; x++) {
-      let s = 0;
-      for (let y = -r; y <= r; y++) s += b[Math.min(h - 1, Math.max(0, y)) * w + x];
-      for (let y = 0; y < h; y++) {
-        a[y * w + x] = s / (2 * r + 1);
-        s += b[Math.min(h - 1, y + r + 1) * w + x] - b[Math.max(0, y - r) * w + x];
-      }
-    }
-  }
-}
 
 // 五官變形：每一項是「中心點、半徑、位移方向和量」
 //   - 橢圓範圍跟著頭的傾斜轉（rot），歪頭的照片也不會修歪
