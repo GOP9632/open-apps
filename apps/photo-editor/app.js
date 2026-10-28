@@ -203,6 +203,11 @@ function toast(msg, ms = 2200) {
 }
 function busy(msg) { $('#busyText').textContent = msg || '處理中…'; $('#busy').classList.toggle('on', !!msg); }
 const clone = o => JSON.parse(JSON.stringify(o));
+// P 的複本、比對用的字串都不含推臉的 P.liq：P.liq 每推一下就換一個新陣列，舊陣列和裡面每一下都不會再改，直接共用。
+// 推久了一串好幾千下，以前每放開一次手指（記一步復原）、每存一次草稿都整串複製，越推越慢、越吃記憶體
+const pStr = p => { const { liq, ...r } = p; return JSON.stringify(r); };
+const cloneP = p => { const { liq, ...r } = p; return { ...clone(r), liq }; };
+const sameLiq = (a, b) => a === b || (a.length === b.length && JSON.stringify(a) === JSON.stringify(b));
 
 // ---------- 載入照片 ----------
 // 照片檔解開、縮到能修的大小（bmp 是原尺寸，用完要 close）
@@ -244,7 +249,7 @@ async function loadFile(file, m) {
       // 草稿裡有原檔：最前面多一步「剛打開的照片」（用到才解開），全部重設、一直按復原才回得到真正的原圖。
       // 以前只回到這次接著修的那一刻，還常常說「還沒有修改」；按住看原圖卻看得到原圖（評審 #144 中 1）
       const f0 = draft.src;
-      if (f0 && (m.patches?.length || !m.p0 || hist[0].sP !== JSON.stringify(P0) || texts.length || stickers.length)) {
+      if (f0 && (m.patches?.length || !m.p0 || hist[0].sP !== pStr(P0) || hist[0].P.liq.length || texts.length || stickers.length)) {
         hist.unshift(snap({ canvas: null, blob: f0, file: true, orig: base.orig }, P0, [], []));
         hist[0].first = true; hi = 1;
       }
@@ -674,8 +679,10 @@ $('#zOut').onclick = () => view.zoomStep(-1);
 $('#zPct').onclick = () => view.reset();
 new ResizeObserver(layout).observe($('#stage'));
 
-let raf = 0;
-function render() {
+let raf = 0, mainDirty = true;
+// liqOnly：推臉拖動中，這次只多了幾下推臉（P.liq），別的都沒改：那一格不重畫主 shader，只重畫推到的那一塊（gl.js liqFrame）
+function render(liqOnly) {
+  if (liqOnly !== true) mainDirty = true;
   // 上排的「合併」：有選濾鏡才亮
   $('#bMerge').classList.toggle('dim', P.filter === 'none');
   if (!base) return;
@@ -686,6 +693,13 @@ function render() {
     raf = 0;
     if (cmpOn) { const o = origFrame(); if (o) R.drawOrig(o); perfDrawn(); return; }
     if (held()) return;
+    R.keepPost = tab === 'reshape';
+    const only = !mainDirty; mainDirty = false;
+    if (only) {
+      if (P.bgProtect && P.liq.length && !base.segP) getSeg(base);  // 沒有臉的照片：背景保護要的人像遮罩推的時候才算（同 draw）
+      R.liqSync(P.liq, base.canvas.width, base.canvas.height);
+      if (R.liqFrame(P)) { paintPop(); if (curFrame()?.live) paintFrame(); perfDrawn(); return; }
+    }
     const f = liveFilter(), lut = gradeOn(P) ? getGradeLut() : f === 'none' ? null : getLut(f);
     // 皮膚、頭髮另外一套顏色要用皮膚遮罩和分類圖，還沒找過臉就先找
     if ((lut?.skin || lut?.hair) && !base.facesP) findFaces();
@@ -834,10 +848,11 @@ function syncView() {
   if (q !== R.view || f !== R.fast) { R.view = q; R.fast = f; render(); }
 }
 function setDragging(on) { if (dragging !== on) { dragging = on; syncView(); if (!on && (gradeLutKey.endsWith('|33') || skinFx?.stale)) render(); } }
-// 開始拖：任何滑桿；推臉、打光（拖燈）時在照片上按下。放開手指就畫回清楚的
+// 開始拖：任何滑桿；打光（拖燈）時在照片上按下。放開手指就畫回清楚的。
+// 推臉不用：推的時候主 shader 不重畫，只重畫推到的那一塊（render(true)），整張清楚的照推
 addEventListener('rangestart', () => setDragging(true));
 addEventListener('pointerdown', e => {
-  if (e.target.closest?.('#wrap') && !pinch.on && (tab === 'reshape' || (tab === 'light' && P.light))) setDragging(true);
+  if (e.target.closest?.('#wrap') && !pinch.on && tab === 'light' && P.light) setDragging(true);
 }, true);
 addEventListener('pointerup', () => setDragging(false), true);
 addEventListener('pointercancel', () => setDragging(false), true);
@@ -1086,14 +1101,14 @@ function getLut(id) {
 // ---------- 復原、重做 ----------
 // 復原紀錄的一步：參數、文字、貼紙另外留 JSON 字串，比對用
 function snap(b, p, t, s) {
-  const sP = JSON.stringify(p), sT = JSON.stringify(t), sS = JSON.stringify(s);
-  return { base: b, P: JSON.parse(sP), texts: JSON.parse(sT), stickers: JSON.parse(sS), sP, sT, sS };
+  const sP = pStr(p), sT = JSON.stringify(t), sS = JSON.stringify(s);
+  return { base: b, P: { ...JSON.parse(sP), liq: p.liq }, texts: JSON.parse(sT), stickers: JSON.parse(sS), sP, sT, sS };
 }
 function commit() {
   // 評審 M24、M26：跟現在這一步一模一樣就不記（調筆刷大小、強度只改筆，推臉輕點一下沒推動）：
   // 以前會多一步，第一下復原沒反應，還把可以重做的步驟砍掉、吃掉 50 步上限
   const cur = hist[hi], e = snap(base, P, texts, stickers);
-  if (cur && cur.base === base && cur.sP === e.sP && cur.sT === e.sT && cur.sS === e.sS) return;
+  if (cur && cur.base === base && cur.sP === e.sP && cur.sT === e.sT && cur.sS === e.sS && sameLiq(cur.P.liq, e.P.liq)) return;
   resetFrom = null;
   hist = hist.slice(0, hi + 1);
   hist.push(e);
@@ -1120,7 +1135,7 @@ async function restore(i) {
   }
   hi = i;
   const fr = P.frame;
-  P = clone(s.P); texts = clone(s.texts); stickers = clone(s.stickers); selText = -1; selSt = -1;
+  P = cloneP(s.P); texts = clone(s.texts); stickers = clone(s.stickers); selText = -1; selSt = -1;
   if (changed && s.base.surf && s.base.surf === base.surf) { seekSurf(s.base.surf, s.base.ver); base = s.base; render(); }
   else if (changed) { if (s.base.surf) seekSurf(s.base.surf, s.base.ver); const old = base; base = s.base; holdFrame(t0); applyBase(); shelveLater(old); } else render();
   // 只差在邊框的兩步：照片的位置、大小跟著邊框變（評審 #144 中 2）
@@ -1231,7 +1246,7 @@ wide.addEventListener('change', () => { syncNav(); showTab(tab); });
 // 每個分頁：on() 有沒有調過，reset() 回到原樣
 const keysOf = list => list.flatMap(x => SIDED.includes(x[0]) ? [x[0], x[0] + 'L', x[0] + 'R'] : [x[0]]);
 const toP0 = keys => keys.forEach(k => { P[k] = clone(P0[k]); });
-const keysOn = keys => () => keys.some(k => JSON.stringify(P[k]) !== JSON.stringify(P0[k]));
+const keysOn = keys => () => keys.some(k => Array.isArray(P[k]) && Array.isArray(P0[k]) ? !sameLiq(P[k], P0[k]) : JSON.stringify(P[k]) !== JSON.stringify(P0[k]));
 // 膚質裡的「磨皮」跟美顏的磨皮是同一個值，算在美顏：改美顏磨皮時膚質分頁不亮點、膚質的重設也不動它
 const tabKeys = {
   adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), ...keysOf(BEAUTY_OLD), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...TONE, ...WRINKLE]).filter(k => k !== 'smooth'), aiskin: keysOf([...AI_FACE, ...AI_BODY]), sculpt: Object.keys(SC_P0), reshape: ['liq'],
@@ -1301,6 +1316,8 @@ function showTab(t) {
   // 同一個分頁重畫（點選項）時，兩排選項留在原來捲到的位置
   const same = t === tab, sl = same ? [$('#items').scrollLeft, $('#cats').scrollLeft] : [0, 0];
   tab = t;
+  // 進出推臉：主 shader 要不要先畫到暫存（gl.js keepPost），進來就先畫好，第一下推不用等
+  if (R && R.keepPost !== (t === 'reshape')) render();
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   $('#hist').classList.toggle('crop', t === 'crop');
   const box = $('#items'); box.innerHTML = ''; $('#rows').innerHTML = ''; $('#items').hidden = false;
@@ -1867,33 +1884,39 @@ function rsRing(p) {
   // 背景保護開著、推的地方是背景：畫面不會動，使用者會以為推臉壞了。每次進推臉說一次，開關閃一下（評審 M16）
   const protHint = () => {
     const m = base.matte || base.seg?.person;
-    if (!P.bgProtect || !m || !p0 || rsHinted) return;
-    const x = Math.min(m.width - 1, Math.floor(p0.x / base.canvas.width * m.width)), y = Math.min(m.height - 1, Math.floor(p0.y / base.canvas.height * m.height));
-    const c = m.getContext?.('2d');
-    if (!c || c.getImageData(x, y, 1, 1).data[0] > 40) return;
+    if (!P.bgProtect || !m?.getContext || !p0 || rsHinted || inPerson(m, p0)) return;
     rsHinted = true;
     toast('這裡是背景，背景保護開著所以不會動，要推背景先把它關掉', 4000);
     const b = $('#protSw'); b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash');
   };
   const at = e => { const r = $('#wrap').getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * base.canvas.width, y: (e.clientY - r.top) / r.height * base.canvas.height }; };
+  // 人像遮罩縮小到長邊 256 讀一次：精細摳圖的遮罩跟照片一樣大（1200 萬像素），以前第一下推整張讀回來，iPhone 上要頓一下
+  const mData = new WeakMap();
+  const mSmall = m => {
+    let d = mData.get(m);
+    if (!d) {
+      const k = Math.min(1, 256 / Math.max(m.width, m.height)), w = Math.max(1, Math.round(m.width * k)), h = Math.max(1, Math.round(m.height * k));
+      const c = newCanvas(w, h), x = c.getContext('2d', { willReadFrequently: true });
+      x.drawImage(m, 0, 0, w, h);
+      mData.set(m, d = { w, h, d: x.getImageData(0, 0, w, h).data });
+    }
+    return d;
+  };
+  const inPerson = (m, p) => {
+    const s = mSmall(m), x = Math.min(s.w - 1, Math.max(0, Math.floor(p.x / base.canvas.width * s.w))), y = Math.min(s.h - 1, Math.max(0, Math.floor(p.y / base.canvas.height * s.h)));
+    return s.d[(y * s.w + x) * 4] > 40;
+  };
   // 這一筆整個在背景上（背景保護開著）：畫面沒動，這筆不算，不亮點、不多一步復原（評審 #145 小 I）。
   // 看筆刷中心和一圈 8 個點，碰到人就算有推到
-  const mData = new WeakMap();
   let allBg = false;
   const onBg = p => {
-    const m = base.matte || base.seg?.person, c = P.bgProtect && m?.getContext?.('2d');
-    if (!c) return false;
-    let d = mData.get(m);
-    if (!d) mData.set(m, d = c.getImageData(0, 0, m.width, m.height).data);
+    const m = base.matte || base.seg?.person;
+    if (!P.bgProtect || !m?.getContext) return false;
     const r = liqRadius(rsVal[rsTool].size, base.canvas.width, base.canvas.height) * 0.8;
-    for (let k = 0; k < 9; k++) {
-      const a = k * Math.PI / 4, q = k === 8 ? p : { x: p.x + Math.cos(a) * r, y: p.y + Math.sin(a) * r };
-      const x = Math.min(m.width - 1, Math.max(0, Math.floor(q.x / base.canvas.width * m.width))), y = Math.min(m.height - 1, Math.max(0, Math.floor(q.y / base.canvas.height * m.height)));
-      if (d[(y * m.width + x) * 4] > 40) return false;
-    }
+    for (let k = 0; k < 9; k++) if (inPerson(m, k === 8 ? p : { x: p.x + Math.cos(k * Math.PI / 4) * r, y: p.y + Math.sin(k * Math.PI / 4) * r })) return false;
     return true;
   };
-  const dab = (a, b) => { const v = rsVal[rsTool]; P.liq = liqDab(P.liq, rsTool, a, b, v.size, v.str, base.canvas.width, base.canvas.height); render(); };
+  const dab = (a, b) => { const v = rsVal[rsTool]; P.liq = liqDab(P.liq, rsTool, a, b, v.size, v.str, base.canvas.width, base.canvas.height); render(true); };
   $('#wrap').addEventListener('pointerdown', e => {
     if (tab !== 'reshape' || !base || e.target.closest('.st,.tx') || e.button > 0 || pinch.on) return;
     e.preventDefault(); $('#wrap').setPointerCapture(e.pointerId);
@@ -1912,7 +1935,7 @@ function rsRing(p) {
   });
   const up = () => {
     if (!last) return; last = null; clearInterval(timer); rsRing();
-    if (allBg) { P.liq = liq0; render(); } else commit();
+    if (allBg) { P.liq = liq0; render(true); } else commit();
     if (rsTool !== 'restore') protHint();
   };
   $('#wrap').addEventListener('pointerup', up); $('#wrap').addEventListener('pointercancel', up);
@@ -3381,7 +3404,7 @@ function saveDraft(mode) {
   if (slow || photo || !d.thumb) d.thumb = draftThumb();
   // 草稿裡的照片是不是原檔；不是的話原檔另外存一次（評審 #144 中 1）
   const p0 = d.p0 = plan?.base ? true : photo ? false : d.p0, file = !p0 && !d.fSaved && d.src;
-  const meta = { id: d.id, t: Date.now(), P: clone(P), texts: clone(texts), stickers: clone(stickers), tab, thumb: d.thumb, ptr: plan ? plan.ptr : d.ptr, om: base.om, p0 };
+  const meta = { id: d.id, t: Date.now(), P: cloneP(P), texts: clone(texts), stickers: clone(stickers), tab, thumb: d.thumb, ptr: plan ? plan.ptr : d.ptr, om: base.om, p0 };
   const assets = draftAssets(meta.stickers, meta.P), orig = !d.origSaved && base.orig;
   if (plan) { d.ph = plan.ph; d.ptr = plan.ptr; d.pc = c; }
   const puts = plan?.puts || [], blob = photo || (plan?.base ? Promise.resolve(plan.base) : null);
