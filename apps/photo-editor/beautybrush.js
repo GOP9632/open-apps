@@ -12,9 +12,11 @@
 //   （以前一筆要配 250～370MB 暫存，同一處畫幾次 iPhone 就整頁重開）。
 //   除斑去痘照 Hypic 去痘：放開手指時只修筆刷附近那一塊，修在「開始之前的照片」上，再跟其他筆一起混合。
 // 算好的結果寫進照片（app 的 paintPatch），復原只存改到的那一塊；遮罩、原圖的改動跟著那一步一起對調。
+// 放開手指那一筆排進佇列在 GPU 上算，不等它算完，手指可以馬上畫下一筆；算好才把粉紅筆跡換成效果。
+// 逐像素的迴圈都拆成小函式：放在大函式裡，瀏覽器很晚才最佳化，一個 30 萬像素的迴圈要 30～70ms（小函式 4～13ms）。
 import { pinch, stageZoom } from './ui.js';
 import { boxBlur } from './cblur.js';
-import { gpuMix, gpuBlem, gpuWarm, gpuFree } from './bbgpu.js';
+import { gpuMix, gpuBlem, gpuWarm, gpuPrime, gpuFree } from './bbgpu.js';
 
 export const BRUSHES = [
   { id: 'smooth', name: '磨皮', str: 60 },
@@ -164,11 +166,8 @@ function fresh(ses) {
   for (const [x0, y0, x1, y1] of ses.dirty) {
     const i0 = Math.floor(x0 * sx), i1 = Math.min(hw, Math.ceil(x1 * sx)), j0 = Math.floor(y0 * sy), j1 = Math.min(hh, Math.ceil(y1 * sy));
     const fx0 = Math.floor(i0 / sx), fx1 = Math.min(W, Math.ceil(i1 / sx)), fy0 = Math.floor(j0 / sy), fy1 = Math.min(H, Math.ceil(j1 / sy));
-    const d = readO(ses, fx0, fy0, fx1, fy1), fw = fx1 - fx0, n = (i1 - i0) * (j1 - j0), acc = new Float32Array(n * 4);
-    for (let y = fy0; y < fy1; y++) for (let x = fx0; x < fx1; x++) {
-      const i = Math.min(i1 - 1, Math.floor(x * sx)) - i0, j = Math.min(j1 - 1, Math.floor(y * sy)) - j0, o = (j * (i1 - i0) + i) * 4, p = ((y - fy0) * fw + x - fx0) * 4;
-      acc[o] += d[p]; acc[o + 1] += d[p + 1]; acc[o + 2] += d[p + 2]; acc[o + 3]++;
-    }
+    const d = readO(ses, fx0, fy0, fx1, fy1), acc = new Float32Array((i1 - i0) * (j1 - j0) * 4);
+    sumCells(d, fx0, fy0, fx1, fy1, sx, sy, i0, j0, i1, j1, acc);
     for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) {
       const o = ((j - j0) * (i1 - i0) + i - i0) * 4, q = j * hw + i, c = acc[o + 3] * 255;
       if (!c) continue;
@@ -178,6 +177,17 @@ function fresh(ses) {
     ses.hp.push([i0, j0, i1, j1]);
   }
   ses.dirty = [];
+}
+// 照片 [fx0,fx1)×[fy0,fy1)（d）每個像素加進小圖 [i0,i1)×[j0,j1) 對應的那格（acc：R G B 個數）
+function sumCells(d, fx0, fy0, fx1, fy1, sx, sy, i0, j0, i1, j1, acc) {
+  const fw = fx1 - fx0, iw = i1 - i0;
+  for (let y = fy0; y < fy1; y++) {
+    const jo = (Math.min(j1 - 1, Math.floor(y * sy)) - j0) * iw;
+    for (let x = fx0, p = (y - fy0) * fw * 4; x < fx1; x++, p += 4) {
+      const o = (jo + Math.min(i1 - 1, Math.floor(x * sx)) - i0) * 4;
+      acc[o] += d[p]; acc[o + 1] += d[p + 1]; acc[o + 2] += d[p + 2]; acc[o + 3]++;
+    }
+  }
 }
 // 各筆在小圖上只算一次的部分；之後除斑改到的那幾塊（seen 之後的 ses.hp）用到時才補算
 function hel(ses, t) {
@@ -244,24 +254,22 @@ function helPatch(ses, t, o, i0, j0, i1, j1) {
 //   全部重算（除斑改過原圖）：開始之前的照片 + 每支筆（強度 0 → 遮罩值）的變化
 //   一般一筆：現在的照片 + 這支筆（舊遮罩值 → 新遮罩值）的變化，只算這一支筆、只算遮罩有變的像素
 // m：這一筆改到的那塊遮罩（裡面存的是舊值）；沒有就是全部重算
-function compose(ses, x0, y0, x1, y1, m) {
+async function compose(ses, x0, y0, x1, y1, m) {
   fresh(ses);
   const w = x1 - x0, h = y1 - y0, before = ses.ctx.getImageData(x0, y0, w, h);
   // 先交給 GPU（bbgpu.js，同樣的公式）；不支援才在這裡逐塊算
   let d = gpu(ses, m, x0, y0, x1, y1, m ? before.data : null);
+  if (d) d = await d;
+  if (ses.dead) return null;
   if (!d) {
     d = m ? new Uint8ClampedArray(before.data) : readO(ses, x0, y0, x1, y1);
     for (let by = y0; by < y1; by += BS) for (let bx = x0; bx < x1; bx += BS) block(ses, bx, by, Math.min(x1, bx + BS), Math.min(y1, by + BS), d, x0, y0, w, m);
   }
   const after = new ImageData(d, w, h);
   // 只留真的有變的那塊
-  const a = before.data, b = after.data;
-  let cx0 = w, cy0 = h, cx1 = -1, cy1 = -1;
-  for (let y = 0; y < h; y++) for (let x = 0, i = y * w * 4; x < w; x++, i += 4) {
-    if (a[i] === b[i] && a[i + 1] === b[i + 1] && a[i + 2] === b[i + 2] && a[i + 3] === b[i + 3]) continue;
-    if (x < cx0) cx0 = x; if (x > cx1) cx1 = x; if (y < cy0) cy0 = y; if (y > cy1) cy1 = y;
-  }
-  if (cx1 < 0) return null;
+  const c = diffBox(before.data, d, w, h);
+  if (!c) return null;
+  const [cx0, cy0, cx1, cy1] = c;
   const crop = im => {
     if (cx0 === 0 && cy0 === 0 && cx1 === w - 1 && cy1 === h - 1) return im;
     const o = new ImageData(cx1 - cx0 + 1, cy1 - cy0 + 1);
@@ -269,6 +277,18 @@ function compose(ses, x0, y0, x1, y1, m) {
     return o;
   };
   return { x: x0 + cx0, y: y0 + cy0, before: crop(before), after: crop(after) };
+}
+// 兩塊寬 w 高 h 的 RGBA 哪裡不一樣：回傳 [x0, y0, x1, y1]（含），都一樣回傳 null（一個像素當一個 32 位元整數比）
+function diffBox(a, b, w, h) {
+  const A = new Uint32Array(a.buffer, a.byteOffset, w * h), B = new Uint32Array(b.buffer, b.byteOffset, w * h);
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) {
+    let l = -1, r = -1;
+    for (let x = 0, i = y * w; x < w; x++, i++) if (A[i] !== B[i]) { if (l < 0) l = x; r = x; }
+    if (l < 0) continue;
+    if (l < x0) x0 = l; if (r > x1) x1 = r; if (y < y0) y0 = y; y1 = y;
+  }
+  return x1 < 0 ? null : [x0, y0, x1, y1];
 }
 // 遮罩取樣到這一塊的每個像素（0～1）；A 的左上角在 (ox, oy)、寬 w
 function maskAt(A, w, ox, oy, gx, gy, bw, bh, dst) {
@@ -323,22 +343,27 @@ function pix(t, a, r, g, b, l, e) {
 const HELD = { smooth: hp => [hp.V, ...hp.B], circle: hp => hp.D, fold: hp => hp.D, oil: hp => hp.ref, texture: hp => hp.b2, eye: () => [], teeth: () => [] };
 // GPU 用：小圖上的效果打包成一張 RGBA 浮點貼圖（去油光多放周圍亮度 Lb），小模糊每個通道的半徑
 const PACK = { ...HELD, oil: hp => [...hp.ref, hp.Lb] }, RAD = { eye: s => [s.re, s.re, s.re, 0], texture: s => [s.rt, s.rt, s.rt, 0], oil: s => [2, 2, 2, s.ro] };
-function gpu(ses, m, x0, y0, x1, y1, before) {
-  const job = t => {
-    const hp = hel(ses, t);
-    // r：只打包小圖的 [r0,r2)×[r1,r3)
-    const pack = (r = [0, 0, ses.hw, ses.hh]) => {
-      const a = PACK[t](hp);
-      if (!a.length) return null;
-      const w = r[2] - r[0], d = new Float32Array(w * (r[3] - r[1]) * 4);
-      for (let k = 0; k < a.length; k++) { const c = a[k]; for (let y = r[1], o = k; y < r[3]; y++) for (let i = y * ses.hw + r[0], e = i + w; i < e; i++, o += 4) d[o] = c[i]; }
-      return d;
-    };
-    return { t, A: ses.A[t], m: m || null, box: ses.box[t], hel: hp, pack, rad: RAD[t]?.(ses) || null };
+// GPU 上一支筆要的東西（見 gpuMix）
+function mkJob(ses, t, m) {
+  const hp = hel(ses, t);
+  // r：只打包小圖的 [r0,r2)×[r1,r3)
+  const pack = (r = [0, 0, ses.hw, ses.hh]) => {
+    const a = PACK[t](hp);
+    if (!a.length) return null;
+    const w = r[2] - r[0], d = new Float32Array(w * (r[3] - r[1]) * 4);
+    for (let k = 0; k < a.length; k++) packCh(a[k], d, k, ses.hw, r[0], r[1], w, r[3]);
+    return d;
   };
+  return { t, A: ses.A[t], m: m || null, box: ses.box[t], hel: hp, pack, rad: RAD[t]?.(ses) || null };
+}
+function packCh(c, d, k, hw, x0, y0, w, y1) {
+  for (let y = y0, o = k; y < y1; y++) for (let i = y * hw + x0, e = i + w; i < e; i++, o += 4) d[o] = c[i];
+}
+// 回傳 Promise（GPU 在算）或 null（不支援，用 CPU）
+function gpu(ses, m, x0, y0, x1, y1, before) {
   // 全部重算：只算遮罩塗過這一塊的筆（同 block()），其他筆的效果不用補算
   const mx = ses.mw / ses.W, my = ses.mh / ses.H, hit = b => b && b[0] <= x1 * mx + 1 && b[2] >= x0 * mx - 1 && b[1] <= y1 * my + 1 && b[3] >= y0 * my - 1;
-  const jobs = m ? [job(m.tool)] : MASKED.filter(t => ses.A[t] && hit(ses.box[t])).map(job);
+  const jobs = m ? [mkJob(ses, m.tool, m)] : MASKED.filter(t => ses.A[t] && hit(ses.box[t])).map(t => mkJob(ses, t));
   return jobs.length ? gpuMix(ses, jobs, ses.mg, (a, b, c, e) => readO(ses, a, b, c, e), x0, y0, x1, y1, before) : null;
 }
 function block(ses, x0, y0, x1, y1, out, ox, oy, ow, m) {
@@ -444,24 +469,15 @@ function swapO(ses, o) {
 
 // 遮罩筆一筆：遮罩往「強度」靠近（磨皮第一筆到強度、多塗會再強一點，最多 1.5 倍；其他筆第一筆就到強度），
 // 再重算遮罩改到的那塊照片
-function maskStroke(ses, tool, pts, R, k) {
+async function maskStroke(ses, tool, pts, R, k) {
   const { W, H, mw, mh } = ses, s = mw / W;
   const [x0, y0, x1, y1] = bounds(pts, R + 3 / s, s, mw, mh), w = x1 - x0, h = y1 - y0;
   if (w < 1 || h < 1) return null;
   const cov = stroke(pts, x0, y0, w, h, s, R), A = ses.A[tool] ||= new Uint8Array(mw * mh);
   const T = Math.round(255 * (tool === 'smooth' ? Math.min(1, 1.5 * k) : k)), dep = tool === 'smooth' ? 2 / 3 : 1;
-  const old = new Uint8Array(w * h);
-  let cx0 = w, cy0 = h, cx1 = -1, cy1 = -1;
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const j = y * w + x, i = (y0 + y) * mw + x0 + x, a = A[i];
-    old[j] = a;
-    if (cov[j] < 0.002) continue;
-    const v = Math.round(a + (T - a) * Math.min(1, cov[j] * dep));
-    if (v === a) continue;
-    A[i] = v;
-    if (x < cx0) cx0 = x; if (x > cx1) cx1 = x; if (y < cy0) cy0 = y; if (y > cy1) cy1 = y;
-  }
-  if (cx1 < 0) return null;
+  const old = new Uint8Array(w * h), c = toward(A, mw, x0, y0, w, h, cov, T, dep, old);
+  if (!c) return null;
+  const [cx0, cy0, cx1, cy1] = c;
   const m = { tool, x: x0 + cx0, y: y0 + cy0, w: cx1 - cx0 + 1, h: cy1 - cy0 + 1 };
   m.d = new Uint8Array(m.w * m.h);
   for (let y = 0; y < m.h; y++) m.d.set(old.subarray((cy0 + y) * w + cx0, (cy0 + y) * w + cx1 + 1), y * m.w);
@@ -470,15 +486,36 @@ function maskStroke(ses, tool, pts, R, k) {
   // 遮罩改到的格子會影響到的照片範圍（雙線性多一格）
   const fx0 = Math.max(0, Math.floor((m.x - 1) / s)), fy0 = Math.max(0, Math.floor((m.y - 1) * H / mh)), fx1 = Math.min(W, Math.ceil((m.x + m.w + 1) / s)), fy1 = Math.min(H, Math.ceil((m.y + m.h + 1) * H / mh));
   capture(ses, fx0, fy0, fx1, fy1);
-  const p = compose(ses, fx0, fy0, fx1, fy1, m);
-  if (!p) { swapMask(ses, m); return null; }
+  const p = await compose(ses, fx0, fy0, fx1, fy1, m);
+  if (!p) { if (!ses.dead) swapMask(ses, m); return null; }
   return { ...p, aux: { ses, bytes: m.d.length, swap() { if (!ses.dead) swapMask(ses, m); } } };
 }
+// 遮罩 A 的 [x0,x0+w)×[y0,y0+h) 往 T 靠近 cov × dep，舊值存進 old；回傳有變的範圍 [x0, y0, x1, y1]（含、相對這塊），沒變回傳 null
+function toward(A, mw, x0, y0, w, h, cov, T, dep, old) {
+  let cx0 = w, cy0 = h, cx1 = -1, cy1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0, j = y * w, i = (y0 + y) * mw + x0; x < w; x++, j++, i++) {
+    const a = A[i];
+    old[j] = a;
+    if (cov[j] < 0.002) continue;
+    const v = Math.round(a + (T - a) * Math.min(1, cov[j] * dep));
+    if (v === a) continue;
+    A[i] = v;
+    if (x < cx0) cx0 = x; if (x > cx1) cx1 = x; if (y < cy0) cy0 = y; if (y > cy1) cy1 = y;
+  }
+  return cx1 < 0 ? null : [cx0, cy0, cx1, cy1];
+}
 
+// 照片一條（寬 Gw、sh 列，從第 sy 列開始）n × n 加進小圖那格（c0 c1 c2：R G B 總和，cnt：個數）
+function sumDown(d, Gw, sh, sy, n, gw, c0, c1, c2, cnt) {
+  for (let y = 0; y < sh; y++) {
+    const ro = ((sy + y) / n | 0) * gw;
+    for (let x = 0, p = y * Gw * 4; x < Gw; x++, p += 4) { const o = ro + (x / n | 0); c0[o] += d[p]; c1[o] += d[p + 1]; c2[o] += d[p + 2]; cnt[o]++; }
+  }
+}
 // 除斑去痘一筆：塗到的地方用筆刷外面的皮膚補（點一下痘痘就消掉），再把細紋理加回去。
 // 長長一筆塗過去時，中間離邊太遠，就改用附近「不比周圍暗、不比周圍紅」的皮膚補。
 // 補的那層是大範圍模糊，筆刷大時縮小算（最多 16 萬格），原尺寸只逐點混合
-function blemishStroke(ses, pts, R, k) {
+async function blemishStroke(ses, pts, R, k) {
   const { W, H } = ses;
   const F = bounds(pts, R + 2, 1, W, H), G = bounds(pts, R * 2.2, 1, W, H), Gw = G[2] - G[0], Gh = G[3] - G[1];
   if (F[2] - F[0] < 2 || F[3] - F[1] < 2) return null;
@@ -486,11 +523,8 @@ function blemishStroke(ses, pts, R, k) {
   // 縮小的原圖（n × n 平均），一次讀一條，不要一口氣讀一大塊
   const c = [0, 1, 2].map(() => new Float32Array(N)), cnt = new Float32Array(N), step = n * Math.max(1, Math.floor(64 / n));
   for (let sy = 0; sy < Gh; sy += step) {
-    const sh = Math.min(step, Gh - sy), d = readO(ses, G[0], G[1] + sy, G[2], G[1] + sy + sh);
-    for (let y = 0; y < sh; y++) for (let x = 0; x < Gw; x++) {
-      const p = (y * Gw + x) * 4, o = ((sy + y) / n | 0) * gw + (x / n | 0);
-      c[0][o] += d[p]; c[1][o] += d[p + 1]; c[2][o] += d[p + 2]; cnt[o]++;
-    }
+    const sh = Math.min(step, Gh - sy);
+    sumDown(readO(ses, G[0], G[1] + sy, G[2], G[1] + sy + sh), Gw, sh, sy, n, gw, c[0], c[1], c[2], cnt);
   }
   for (let i = 0; i < N; i++) for (let j = 0; j < 3; j++) c[j][i] = cnt[i] ? c[j][i] / cnt[i] / 255 : 0;
   const m = stroke(pts.map(p => ({ x: p.x - G[0], y: p.y - G[1] })), 0, 0, gw, gh, 1 / n, R);
@@ -506,12 +540,13 @@ function blemishStroke(ses, pts, R, k) {
   const before = readO(ses, F[0], F[1], F[2], F[3]), fw = F[2] - F[0];
   let cx0 = Infinity, cy0 = Infinity, cx1 = -1, cy1 = -1;
   // 先交給 GPU（bbgpu.js，同樣的公式）；不支援才在這裡逐塊算
-  const g = gpuBlem(W, H, F, G, n, gw, gh, [...fill, m], [Lb, redB], k, (a, b, c, e) => readO(ses, a, b, c, e)), after = g || new Uint8ClampedArray(before);
+  let g = gpuBlem(W, H, F, G, n, gw, gh, [...fill, m], [Lb, redB], k, (a, b, c, e) => readO(ses, a, b, c, e));
+  if (g) g = await g;
+  if (ses.dead) return null;
+  const after = g || new Uint8ClampedArray(before);
   if (g) {
-    for (let y = F[1]; y < F[3]; y++) for (let x = F[0], q = (y - F[1]) * fw * 4; x < F[2]; x++, q += 4) {
-      if (after[q] === before[q] && after[q + 1] === before[q + 1] && after[q + 2] === before[q + 2]) continue;
-      if (x < cx0) cx0 = x; if (x > cx1) cx1 = x; if (y < cy0) cy0 = y; if (y > cy1) cy1 = y;
-    }
+    const c = diffBox(before, after, fw, F[3] - F[1]);
+    if (c) { cx0 = F[0] + c[0]; cy0 = F[1] + c[1]; cx1 = F[0] + c[2]; cy1 = F[1] + c[3]; }
   } else for (let by = F[1]; by < F[3]; by += BS) for (let bx = F[0]; bx < F[2]; bx += BS) {
     const x1 = Math.min(F[2], bx + BS), y1 = Math.min(F[3], by + BS), bw = x1 - bx, bh = y1 - by;
     const gx = grid(bx - G[0], bw, 1 / n, gw, 'bx'), gy = grid(by - G[1], bh, 1 / n, gh, 'by');
@@ -553,8 +588,8 @@ function blemishStroke(ses, pts, R, k) {
   writeO(ses, o.x0, o.y0, o.x1, o.y1, nd);
   const mg = ses.mg, rx0 = Math.max(0, o.x0 - mg), ry0 = Math.max(0, o.y0 - mg), rx1 = Math.min(W, o.x1 + mg), ry1 = Math.min(H, o.y1 + mg);
   capture(ses, rx0, ry0, rx1, ry1);
-  const p = compose(ses, rx0, ry0, rx1, ry1);
-  if (!p) { swapO(ses, o); return null; }
+  const p = await compose(ses, rx0, ry0, rx1, ry1);
+  if (!p) { if (!ses.dead) swapO(ses, o); return null; }
   return { ...p, aux: { ses, bytes: o.d.length, swap() { if (!ses.dead) swapO(ses, o); } } };
 }
 
@@ -584,49 +619,81 @@ export function tabBeautyBrush(box, app) {
     if (app.tab() !== 'bbrush') return;
     const S = app.surf();
     if (!valid(S.bbSes, S)) { bbRelease(S); S.bbSes = session(S.canvas, S.ver); }
-    if (MASKED.includes(st.tool)) hel(S.bbSes, st.tool);
     gpuWarm(st.tool, !!RAD[st.tool]);
+    if (MASKED.includes(st.tool)) gpuPrime(S.bbSes, mkJob(S.bbSes, st.tool));
   }, 250);
 }
 let warmT = 0;
 
+// 放開了、還在算的筆一筆一筆照順序算（每一筆都要從上一筆畫好的照片接著算）；復原、存檔先等這裡算完
+let queue = Promise.resolve();
+export const bbWait = () => queue;
+
 // 塗的時候先在照片上面畫半透明的筆跡（Hypic 也是先用紅色顯示塗到哪），放開手指才算進照片
 export function beautyBrushInput(wrap, app) {
   let pts = null, ov = null;
-  const at = e => { const r = wrap.getBoundingClientRect(), b = app.base.canvas; return { x: (e.clientX - r.left) / r.width * b.width, y: (e.clientY - r.top) / r.height * b.height }; };
+  const pend = [];  // 放開了、還在算的筆：粉紅筆跡留著，算好才換成效果
+  const at = (e, r) => { const b = app.base.canvas; return { x: (e.clientX - r.left) / r.width * b.width, y: (e.clientY - r.top) / r.height * b.height }; };
   const preview = () => {
-    const b = app.base.canvas, k = Math.min(1, 1200 / Math.max(b.width, b.height));
+    const b = app.base?.canvas;
+    if (!b || (!pts && !pend.length)) { ov?.remove(); ov = null; return; }
+    const k = Math.min(1, 1200 / Math.max(b.width, b.height));
     if (!ov) { ov = newCanvas(b.width * k, b.height * k); ov.id = 'ddov'; wrap.append(ov); }
     const ctx = ov.getContext('2d');
     ctx.clearRect(0, 0, ov.width, ov.height);
-    ctx.strokeStyle = 'rgba(255,90,122,.35)'; ctx.lineWidth = 2 * bbRadius(st.size, b.width, b.height) * k; ctx.lineCap = ctx.lineJoin = 'round';
-    ctx.beginPath();
-    pts.forEach((p, i) => i ? ctx.lineTo(p.x * k, p.y * k) : ctx.moveTo(p.x * k, p.y * k));
-    if (pts.length === 1) ctx.lineTo(pts[0].x * k + 0.01, pts[0].y * k);
-    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,90,122,.35)'; ctx.lineCap = ctx.lineJoin = 'round';
+    for (const s of pts ? [...pend, { pts, rd: bbRadius(st.size, b.width, b.height) }] : pend) {
+      ctx.lineWidth = 2 * s.rd * k;
+      ctx.beginPath();
+      s.pts.forEach((p, i) => i ? ctx.lineTo(p.x * k, p.y * k) : ctx.moveTo(p.x * k, p.y * k));
+      if (s.pts.length === 1) ctx.lineTo(s.pts[0].x * k + 0.01, s.pts[0].y * k);
+      ctx.stroke();
+    }
   };
   wrap.addEventListener('pointerdown', e => {
     if (app.tab() !== 'bbrush' || !app.base || e.target.closest('.st,.tx') || e.button > 0 || pinch.on) return;
     e.preventDefault(); wrap.setPointerCapture(e.pointerId);
-    pts = [at(e)]; preview();
+    pts = [at(e, wrap.getBoundingClientRect())]; preview();
   });
   wrap.addEventListener('pointermove', e => {
     if (!pts) return;
-    const p = at(e), q = pts[pts.length - 1];
-    if (Math.hypot(p.x - q.x, p.y - q.y) < 2) return;
-    pts.push(p); preview();
+    // 主執行緒忙的那段，手指的移動會被併成一個事件：拿回中間每一點，筆跡才不會變成直線
+    const r = wrap.getBoundingClientRect(), ce = e.getCoalescedEvents?.();
+    let add = false;
+    for (const c of ce?.length ? ce : [e]) {
+      const p = at(c, r), q = pts[pts.length - 1];
+      if (Math.hypot(p.x - q.x, p.y - q.y) < 2) continue;
+      pts.push(p); add = true;
+    }
+    if (add) preview();
   });
   const up = () => {
     if (!pts) return;
-    const S = app.surf(), b = app.base.canvas, R = bbRadius(st.size, b.width, b.height), k = st.str[st.tool] / 100;
-    if (!valid(S.bbSes, S)) { bbRelease(S); S.bbSes = session(S.canvas, S.ver); }
-    // 瘦臉、推臉這些變形開著時，畫面上的點換回原圖上的點，才會修在手指下面
-    const map = app.toSrc?.(), sp = map ? pts.map(map) : pts;
-    const ses = S.bbSes, r = st.tool === 'blemish' ? blemishStroke(ses, sp, R, k) : maskStroke(ses, st.tool, sp, R, k);
-    pts = null; ov?.remove(); ov = null;
+    const S = app.surf(), b = S.canvas;
+    // 瘦臉、推臉這些變形開著時，畫面上的點換回原圖上的點，才會修在手指下面（照放開這時候的變形換）
+    const job = { pts, rd: bbRadius(st.size, b.width, b.height), tool: st.tool, k: st.str[st.tool] / 100, S, map: app.toSrc?.() };
+    pts = null; pend.push(job); preview(); app.queued?.();
+    queue = queue.then(() => run(job)).catch(e => console.error(e));
+  };
+  // 還是放開時那張照片（中間沒有合併、裁切、換照片）
+  const same = job => app.base?.surf === job.S && app.base.canvas === job.S.canvas;
+  const run = async job => {
+    let r = null;
+    try {
+      if (!same(job)) return;
+      const S = job.S;
+      if (!valid(S.bbSes, S)) { bbRelease(S); S.bbSes = session(S.canvas, S.ver); }
+      const ses = S.bbSes, sp = job.map ? job.pts.map(job.map) : job.pts;
+      r = await (job.tool === 'blemish' ? blemishStroke(ses, sp, job.rd, job.k) : maskStroke(ses, job.tool, sp, job.rd, job.k));
+      // 算的時候照片被整張換掉（合併、裁切…）：這一筆不算
+      if (r && !same(job)) { r.aux.swap(); r = null; }
+    } finally {
+      pend.splice(pend.indexOf(job), 1); preview();
+    }
     if (r) { app.paint(r); app.commit(); }
+    if (!pend.length) app.settled?.();
   };
   wrap.addEventListener('pointerup', up); wrap.addEventListener('pointercancel', up);
-  // 第二指放下是要縮放：這一筆不算
-  addEventListener('pinchstart', () => { pts = null; ov?.remove(); ov = null; });
+  // 第二指放下是要縮放：這一筆不算（已經放開、在算的照算）
+  addEventListener('pinchstart', () => { pts = null; preview(); });
 }

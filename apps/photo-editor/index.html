@@ -234,7 +234,7 @@ input[type=range].grad::-moz-range-progress{background:transparent}
 .textedit input{flex:1;height:40px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);padding:0 12px;color:var(--text)}
 .textedit textarea{flex:1;min-height:44px;max-height:96px;resize:none;border-radius:12px;border:1px solid var(--line);background:var(--panel2);padding:10px 12px;color:var(--text)}
 
-#toast{position:fixed;left:50%;bottom:calc(var(--safe-b) + 190px);transform:translateX(-50%);background:rgba(30,30,34,.95);padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9;max-width:86vw;text-align:center}
+#toast{position:fixed;left:50%;top:calc(var(--safe-t) + 64px);transform:translateX(-50%);width:max-content;max-width:calc(100vw - 32px);box-sizing:border-box;background:rgba(30,30,34,.95);padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9;text-align:center}
 #toast.on{opacity:1}
 #busy{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;place-items:center;z-index:8}
 #busy.on{display:grid}

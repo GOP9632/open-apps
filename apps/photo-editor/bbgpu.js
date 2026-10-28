@@ -4,6 +4,8 @@
 //   遮罩、小圖的雙線性取樣照 grid() 的算法，眼部亮白、調膚質、去油光的小模糊照 boxBlur（三次方框、邊緣用最邊上的值）。
 // 自己開一個小的 WebGL2，不跟主畫面共用狀態。貼圖一律用 texelFetch、不翻轉：第 y 列就是照片的第 y 列。
 // 不支援 WebGL2、浮點貼圖不能畫、或中途出錯，就回傳 null，照舊用 CPU 算。
+// 算好的結果非同步讀回（評審驗 #141：同步 readPixels 等 GPU 算完，放開後主執行緒整段卡住，下一筆的開頭被吃掉）：
+// 指令送出去就回傳 Promise，GPU 在算的時候主執行緒可以繼續處理手指。
 
 const VS = `#version 300 es
 in vec2 a;
@@ -132,28 +134,33 @@ function init() {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
-    G = { gl, c, fl, f32, prog: {}, tex: {}, fb: {}, hk: {} };
+    G = { gl, c, fl, f32, par: gl.getExtension('KHR_parallel_shader_compile'), prog: {}, tex: {}, fb: {}, hk: {}, pbo: null };
     // 背景太久被系統收回：下次再開一個
     c.addEventListener('webglcontextlost', () => { G = null; });
   } catch (e) { off = true; G = null; }
   return G;
 }
+// 送去編譯就回來，不問結果（問了就得等編譯完）；第一次真的要用時才檢查（linked）
 function program(fs) {
-  const { gl } = G, p = gl.createProgram();
+  const { gl } = G, p = gl.createProgram(), sh = [];
   for (const [type, src] of [[gl.VERTEX_SHADER, VS], [gl.FRAGMENT_SHADER, fs]]) {
     const s = gl.createShader(type);
-    gl.shaderSource(s, src); gl.compileShader(s);
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
-    gl.attachShader(p, s);
+    gl.shaderSource(s, src); gl.compileShader(s); gl.attachShader(p, s); sh.push(s);
   }
   gl.bindAttribLocation(p, 0, 'a'); gl.linkProgram(p);
-  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return { p, sh, u: null };
+}
+function linked(P) {
+  if (P.u) return P;
+  const { gl } = G, p = P.p;
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(P.sh.map(s => gl.getShaderInfoLog(s)).join(' ') + gl.getProgramInfoLog(p));
   const u = {}, n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
   for (let i = 0; i < n; i++) { const name = gl.getActiveUniform(p, i).name; u[name] = gl.getUniformLocation(p, name); }
-  return { p, u };
+  P.u = u;
+  return P;
 }
 const FS = { prep: FS_PREP, box: FS_BOX, bprep: FS_BPREP, bfin: FS_BFIN };
-const prog = k => G.prog[k] ||= program(FS[k] || fsMix(k));
+const prog = k => linked(G.prog[k] ||= program(FS[k] || fsMix(k)));
 function newTex() {
   const { gl } = G, t = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, t);
@@ -192,29 +199,107 @@ function draw(k, f, w, h, set, texs) {
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 // 停筆 10 秒、照片收起來、換一串美顏筆：放掉貼圖（程式留著），iPhone 記憶體才夠別的功能用；再塗時重傳只要幾毫秒
-let freeT = 0;
+// 還有一筆在等 GPU（busy）：等它讀回來再放
+let freeT = 0, busy = 0, freeLater = false;
 const idle = () => { clearTimeout(freeT); freeT = setTimeout(gpuFree, 10000); };
 export function gpuFree() {
   if (!G) return;
+  if (busy) { freeLater = true; return; }
   const { gl } = G;
   for (const t of Object.values(G.tex)) gl.deleteTexture(t);
   for (const f of Object.values(G.fb)) { gl.deleteTexture(f.t); gl.deleteFramebuffer(f.f); }
   for (const k of Object.values(G.hk)) gl.deleteTexture(k.t);
-  G.tex = {}; G.fb = {}; G.hk = {};
+  if (G.pbo) gl.deleteBuffer(G.pbo.b);
+  G.tex = {}; G.fb = {}; G.hk = {}; G.pbo = null; freeLater = false;
 }
-// 先開好、編好這支筆的程式，第一筆放開才不會等
+function fail(e, what) {
+  console.warn(what + ' GPU 失敗，改用 CPU', e);
+  busy = 0; off = true; gpuFree(); G = null;
+  return null;
+}
+// 讀回：每塊 readPixels 進 PIXEL_PACK_BUFFER（排在 GPU 指令後面，不用等），最後放一個 fence；
+// 之後每幾毫秒問一次做完沒（不會卡），做完才一次拿回來。回傳 Promise：true 讀到了；false 畫布被系統收回（下次重開）
+function pack(n) {
+  const { gl } = G;
+  if (!G.pbo || G.pbo.n < n) {
+    if (G.pbo) gl.deleteBuffer(G.pbo.b);
+    G.pbo = { b: gl.createBuffer(), n };
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, G.pbo.b); gl.bufferData(gl.PIXEL_PACK_BUFFER, n, gl.STREAM_READ);
+  } else gl.bindBuffer(gl.PIXEL_PACK_BUFFER, G.pbo.b);
+}
+function readBack(o8) {
+  const g = G, { gl } = g, sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); gl.flush();
+  busy++;
+  return new Promise((ok, bad) => {
+    const poll = () => {
+      if (G !== g || gl.isContextLost()) { busy = 0; return ok(false); }
+      const r = gl.clientWaitSync(sync, 0, 0);
+      if (r === gl.TIMEOUT_EXPIRED) { setTimeout(poll, 2); return; }
+      gl.deleteSync(sync);
+      if (r === gl.WAIT_FAILED) return bad(new Error('wait failed'));
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, g.pbo.b);
+      gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, o8, 0, o8.length);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      if (gl.getError() !== gl.NO_ERROR) return bad(new Error('gl error'));
+      busy--; if (!busy && freeLater) gpuFree();
+      idle(); ok(true);
+    };
+    setTimeout(poll, 1);
+  });
+}
+// 先開好、編好這支筆的程式，再每支畫一個像素（GPU 第一次畫才建管線），第一筆放開才不會多等。
+// 支援平行編譯就等它在背景編完再畫，不卡主執行緒
 export function gpuWarm(tool, local) {
-  try {
-    if (!init()) return;
-    if (tool === 'blemish') { if (G.fl) { prog('bprep'); prog('box'); prog('bfin'); } } else { prog(tool); if (local && G.fl) { prog('prep'); prog('box'); } }
-  } catch (e) { off = true; G = null; }
+  if (!init()) return;
+  const ks = tool === 'blemish' ? (G.fl ? [['bprep', 32], ['box', 32], ['bfin', 0]] : []) : [[tool, 0], ...(local && G.fl ? [['prep', 16], ['box', 16]] : [])];
+  try { for (const [k] of ks) G.prog[k] ||= program(FS[k] || fsMix(k)); } catch (e) { return fail(e, '預備'); }
+  const g = G, go = () => {
+    if (G !== g || busy) return;
+    const { gl, par } = G;
+    if (par && ks.some(([k]) => !gl.getProgramParameter(G.prog[k].p, par.COMPLETION_STATUS_KHR))) { setTimeout(go, 20); return; }
+    try {
+      // 每個貼圖單元都放一張 1×1 的空貼圖（取樣器不能指到正在畫的那張）
+      const fs = ks.map(([, f]) => target('w' + f, f, 1, 1)), t = upload('w', 'rgba', 1, 1, new Uint8Array(4));
+      for (let i = 0; i < 8; i++) { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); }
+      ks.forEach(([k], i) => draw(k, fs[i], 1, 1, () => {}, []));
+      gl.getError();
+    } catch (e) { fail(e, '預備'); }
+  };
+  setTimeout(go, 0);
+}
+// 先把這支筆在小圖上的效果傳上去（j 同 gpuMix 的 jobs），第一筆放開才不用打包、上傳
+export function gpuPrime(s, j) {
+  if (!init() || busy) return;
+  try { helper(j, s.hw, s.hh); } catch (e) { fail(e, '預備'); }
+}
+function helper(j, hw, hh) {
+  const { gl } = G;
+  let hk = G.hk[j.t];
+  if (hk && hk.o === j.hel && hk.v === j.hel.v) return;
+  // 除斑只改了小圖的一塊：只重傳那塊
+  const r = j.hel.pr;
+  if (hk && hk.o === j.hel && r) {
+    gl.bindTexture(gl.TEXTURE_2D, hk.t);
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0); gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0); gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, r[0], r[1], r[2] - r[0], r[3] - r[1], gl.RGBA, gl.FLOAT, j.pack(r));
+    hk.v = j.hel.v; j.hel.pr = null;
+    return;
+  }
+  const d = j.pack(); j.hel.pr = null;
+  if (hk) gl.deleteTexture(hk.t);
+  hk = G.hk[j.t] = { o: j.hel, v: j.hel.v, t: newTex() };
+  gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0); gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0); gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, d ? hw : 1, d ? hh : 1, 0, gl.RGBA, gl.FLOAT, d || new Float32Array(4));
 }
 // 除斑去痘一筆在原尺寸的那段：F 是要算的範圍、G 是小圖的範圍（一格 n 個像素、gw × gh 格），
-// low：[補色 R G B, 筆刷遮罩]、low2：[周圍亮度, 周圍紅度]（小圖上的 Float32Array）；k：強度。回傳 F 那塊的 after，做不到回傳 null
+// low：[補色 R G B, 筆刷遮罩]、low2：[周圍亮度, 周圍紅度]（小圖上的 Float32Array）；k：強度。
+// 回傳 Promise：F 那塊的 after；做不到回傳 null（不用 Promise）
 export function gpuBlem(W, H, F, G0, n, gw, gh, low, low2, k, readO) {
-  if (!init() || !G.fl) return null;
+  if (!init() || !G.fl || busy) return null;
   try {
     const { gl } = G, w = F[2] - F[0], h = F[3] - F[1], out = new Uint8ClampedArray(w * h * 4), N = gw * gh;
+    pack(w * h * 4); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
     const packLow = a => { const d = new Float32Array(N * 4); a.forEach((c, j) => { for (let i = 0; i < N; i++) d[i * 4 + j] = c[i]; }); return d; };
     const tL = upload('bl', 'f32', gw, gh, packLow(low)), tL2 = upload('bl2', 'f32', gw, gh, packLow(low2));
     const lowU = (gl, u) => { gl.uniform2i(u.uG, G0[0], G0[1]); gl.uniform2i(u.uGn, gw, gh); gl.uniform1f(u.uS, 1 / n); };
@@ -230,18 +315,12 @@ export function gpuBlem(W, H, F, G0, n, gw, gh, low, low2, k, readO) {
       }
       const fo = target('out', 0, tw, th);
       draw('bfin', fo, tw, th, (gl, u) => { lowU(gl, u); gl.uniform2i(u.uE, ex0, ey0); gl.uniform2i(u.uF, tx, ty); gl.uniform1f(u.uAmt, k); }, [['uO', tO], ['uK', f0.t], ['uL', tL], ['uL2', tL2]]);
-      gl.pixelStorei(gl.PACK_ROW_LENGTH, w);
-      gl.readPixels(0, 0, tw, th, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(out.buffer), ((ty - F[1]) * w + tx - F[0]) * 4);
-      gl.pixelStorei(gl.PACK_ROW_LENGTH, 0);
+      gl.pixelStorei(gl.PACK_ROW_LENGTH, w); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, G.pbo.b);
+      gl.readPixels(0, 0, tw, th, gl.RGBA, gl.UNSIGNED_BYTE, ((ty - F[1]) * w + tx - F[0]) * 4);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); gl.pixelStorei(gl.PACK_ROW_LENGTH, 0);
     }
-    if (gl.getError() !== gl.NO_ERROR) throw new Error('gl error');
-    idle();
-    return out;
-  } catch (e) {
-    console.warn('除斑 GPU 失敗，改用 CPU', e);
-    off = true; gpuFree(); G = null;
-    return null;
-  }
+    return readBack(new Uint8Array(out.buffer)).then(r => r ? out : null, e => fail(e, '除斑'));
+  } catch (e) { return fail(e, '除斑'); }
 }
 
 // 重算照片的 [x0,x1)×[y0,y1)，回傳算好的 after（RGBA）；做不到回傳 null。同 compose()：
@@ -251,29 +330,16 @@ export function gpuBlem(W, H, F, G0, n, gw, gh, low, low2, k, readO) {
 //   jobs：每支筆 { t, A（遮罩）, m（這一筆改到的那塊遮罩的舊值，全部重算時沒有）, box（遮罩塗過的範圍）,
 //          hel、pack()（小圖上的效果打包成 RGBA 浮點，沒有就 null）, rad（小模糊每個通道的半徑，不用就 null） }
 //   mg：小模糊要多讀的邊；readO：讀開始之前的照片
+// 回傳 Promise：算好的 after；做不到回傳 null（不用 Promise）
 export function gpuMix(s, jobs, mg, readO, x0, y0, x1, y1, before) {
   // 小模糊、好幾支筆疊加都要畫進浮點貼圖：這台不能畫浮點就整個交給 CPU
-  if (!init() || ((jobs.some(j => j.rad) || (!before && jobs.length > 1)) && !G.fl)) return null;
+  if (!init() || busy || ((jobs.some(j => j.rad) || (!before && jobs.length > 1)) && !G.fl)) return null;
   try {
     const { gl } = G, { W, H, mw, mh, hw, hh } = s, w = x1 - x0, h = y1 - y0, out = new Uint8ClampedArray(w * h * 4), o8 = new Uint8Array(out.buffer);
-    for (const j of jobs) {
-      let hk = G.hk[j.t];
-      if (hk && hk.o === j.hel && hk.v === j.hel.v) continue;
-      // 除斑只改了小圖的一塊：只重傳那塊
-      const r = j.hel.pr;
-      if (hk && hk.o === j.hel && r) {
-        gl.bindTexture(gl.TEXTURE_2D, hk.t);
-        gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0); gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0); gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, r[0], r[1], r[2] - r[0], r[3] - r[1], gl.RGBA, gl.FLOAT, j.pack(r));
-        hk.v = j.hel.v; j.hel.pr = null;
-        continue;
-      }
-      const d = j.pack(); j.hel.pr = null;
-      if (hk) gl.deleteTexture(hk.t);
-      hk = G.hk[j.t] = { o: j.hel, v: j.hel.v, t: newTex() };
-      gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0); gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0); gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, d ? hw : 1, d ? hh : 1, 0, gl.RGBA, gl.FLOAT, d || new Float32Array(4));
-    }
+    for (const j of jobs) helper(j, hw, hh);
+    pack(w * h * 4); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    // 沒有筆塗到的那幾塊照抄開始之前的照片：讀回來之後再填（讀回會蓋過整塊）
+    const keep = [];
     const bv = before && new Uint8Array(before.buffer, before.byteOffset, before.length), mx = mw / W, my = mh / H;
     // 遮罩用到的格子（照 grid() 算，前後多留一格，GPU 浮點算出來差一點也不會超出去）
     const cells = (p0, p1, k, n) => { const u = p => Math.min(n - 1, Math.max(0, (p + 0.5) * k - 0.5)); return [Math.max(0, Math.floor(u(p0)) - 1), Math.min(n - 1, Math.floor(u(p1 - 1)) + 2)]; };
@@ -285,7 +351,7 @@ export function gpuMix(s, jobs, mg, readO, x0, y0, x1, y1, before) {
       const ex0 = Math.max(0, tx - g), ey0 = Math.max(0, ty - g), ex1 = Math.min(W, tx1 + g), ey1 = Math.min(H, ty1 + g), ew = ex1 - ex0, eh = ey1 - ey0;
       const od = readO(ex0, ey0, ex1, ey1);
       if (!js.length) {
-        for (let y = 0; y < th; y++) out.set(od.subarray(((ty - ey0 + y) * ew + tx - ex0) * 4, ((ty - ey0 + y) * ew + tx1 - ex0) * 4), ((ty - y0 + y) * w + tx - x0) * 4);
+        keep.push(() => { for (let y = 0; y < th; y++) out.set(od.subarray(((ty - ey0 + y) * ew + tx - ex0) * 4, ((ty - ey0 + y) * ew + tx1 - ex0) * 4), ((ty - y0 + y) * w + tx - x0) * 4); });
         continue;
       }
       const tO = upload('o', 'rgba', ew, eh, new Uint8Array(od.buffer, od.byteOffset, od.length));
@@ -313,16 +379,10 @@ export function gpuMix(s, jobs, mg, readO, x0, y0, x1, y1, before) {
         }, [['uB', tB], ['uO', tO], ['uA', tA], ['uMo', tMo], ['uH', hk.t], ['uK', tK]]);
         tB = fo.t; bo = [0, 0];
       });
-      gl.pixelStorei(gl.PACK_ROW_LENGTH, w);
-      gl.readPixels(0, 0, tw, th, gl.RGBA, gl.UNSIGNED_BYTE, o8, ((ty - y0) * w + tx - x0) * 4);
-      gl.pixelStorei(gl.PACK_ROW_LENGTH, 0);
+      gl.pixelStorei(gl.PACK_ROW_LENGTH, w); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, G.pbo.b);
+      gl.readPixels(0, 0, tw, th, gl.RGBA, gl.UNSIGNED_BYTE, ((ty - y0) * w + tx - x0) * 4);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); gl.pixelStorei(gl.PACK_ROW_LENGTH, 0);
     }
-    if (gl.getError() !== gl.NO_ERROR) throw new Error('gl error');
-    idle();
-    return out;
-  } catch (e) {
-    console.warn('美顏筆 GPU 失敗，改用 CPU', e);
-    off = true; gpuFree(); G = null;
-    return null;
-  }
+    return readBack(o8).then(r => { if (!r) return null; keep.forEach(f => f()); return out; }, e => fail(e, '美顏筆'));
+  } catch (e) { return fail(e, '美顏筆'); }
 }
