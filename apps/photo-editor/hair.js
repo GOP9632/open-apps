@@ -164,7 +164,8 @@ void main(){
 export class HairFx {
   constructor() {
     const c = this.canvas = document.createElement('canvas');
-    const gl = this.gl = c.getContext('webgl2', { preserveDrawingBuffer: true, premultipliedAlpha: false });
+    // 不要反鋸齒、深度、模板（同 skin.js SkinFx，評審 M1）
+    const gl = this.gl = c.getContext('webgl2', { preserveDrawingBuffer: true, premultipliedAlpha: false, antialias: false, depth: false, stencil: false });
     if (!gl) return;
     const sh = (t, s) => { const x = gl.createShader(t); gl.shaderSource(x, s); gl.compileShader(x); if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(x)); return x; };
     const p = this.p = gl.createProgram();
@@ -182,6 +183,14 @@ export class HairFx {
     this.src = null; this.data = null;
   }
   up(i, src) { const gl = this.gl; gl.bindTexture(gl.TEXTURE_2D, this.t[i]); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src); }
+  // 效果關掉時放掉跟照片一樣大的畫布和照片貼圖（評審 M1）；頭髮資料留著
+  release() {
+    const gl = this.gl;
+    if (!gl || !this.src) return;
+    this.canvas.width = this.canvas.height = 1;
+    gl.bindTexture(gl.TEXTURE_2D, this.t[0]); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    this.src = null;
+  }
   // 回傳改好頭髮的 canvas
   apply(img, data, p) {
     const gl = this.gl;

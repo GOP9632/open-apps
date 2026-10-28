@@ -68,6 +68,7 @@ const I = {
   fade: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 15l5-5 4 4 3-3 6 6" opacity=".6"/></svg>',
   magic: '<svg viewBox="0 0 24 24"><path d="M5 19L17 7M14 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1zM19 11l.7 1.3L21 13l-1.3.7L19 15l-.7-1.3L17 13l1.3-.7z"/></svg>',
   skin: '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="7" ry="9"/><path d="M9 15c1.5 1 4.5 1 6 0"/></svg>',
+  fresh: '<svg viewBox="0 0 24 24"><path d="M12 3c3.5 4.2 6 7.4 6 10.5a6 6 0 0 1-12 0C6 10.4 8.5 7.2 12 3z"/><path d="M9.5 14a2.6 2.6 0 0 0 2.5 2.5"/></svg>',
   white: '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="7" ry="9"/><path d="M15 6l1 2 2 1-2 1-1 2-1-2-2-1 2-1z"/></svg>',
   slim: '<svg viewBox="0 0 24 24"><path d="M6 6c0 8 3 14 6 14s6-6 6-14"/><path d="M3 11l3 1M21 11l-3 1"/></svg>',
   vface: '<svg viewBox="0 0 24 24"><path d="M5 5c0 6 4 15 7 15s7-9 7-15"/><path d="M12 20v-3"/></svg>',
@@ -128,7 +129,7 @@ const SIDED = ['slim', 'eyes'];
 // 臉型的量照舊版美顏瘦臉 15、大眼 10 換算（兩邊位移量差 0.06／0.055、0.28／0.26）
 const ONE_TAPS = [
   { name: '美圖俊俊', icon: I.magic, set: { smooth: 70, white: 40 }, shape: { face_thin: 16, eye_size: 11 }, note: '美圖俊俊：磨皮、美白，加一點瘦臉、大眼（在「臉型」可以再調）' },
-  { name: '醒俊', icon: I.skin, set: { smooth: 30, white: 18 }, shape: {}, note: '醒俊：只修皮膚，不動臉型' },
+  { name: '醒俊', icon: I.fresh, set: { smooth: 30, white: 18 }, shape: {}, note: '醒俊：只修皮膚，不動臉型' },
 ];
 const RATIOS = [['free', '自由'], ['orig', '原比例'], [1, '1:1'], [3 / 4, '3:4'], [4 / 3, '4:3'], [9 / 16, '9:16'], [16 / 9, '16:9']];
 const BG_COLORS = ['#ffffff', '#f1f3f5', '#ffe3ec', '#fff3bf', '#d3f9d8', '#d0ebff', '#e5dbff', '#212529'];
@@ -577,9 +578,10 @@ async function findPerson(quiet) {
 function layout() {
   if (!base) return;
   const st = $('#stage').getBoundingClientRect();
-  const pad = 12, w = base.canvas.width, h = base.canvas.height;
+  // 裁切時照片往上讓出底下一排（復原、重做），按鈕不會壓在裁切框的把手上（評審 M25；#stage.crop 底下留 52px）
+  const pad = 12, w = base.canvas.width, h = base.canvas.height, low = cropState ? 52 : 0;
   const f = curFrame(), g = f ? f.geom(w, h) : { W: w, H: h, x: 0, y: 0 };
-  const k = Math.min((st.width - pad * 2) / g.W, (st.height - pad * 2) / g.H);
+  const k = Math.min((st.width - pad * 2) / g.W, (st.height - pad * 2 - low) / g.H);
   const fb = $('#fbox');
   fb.style.width = Math.round(g.W * k) + 'px'; fb.style.height = Math.round(g.H * k) + 'px';
   Object.assign($('#wrap').style, { left: Math.round(g.x * k) + 'px', top: Math.round(g.y * k) + 'px', width: Math.round(w * k) + 'px', height: Math.round(h * k) + 'px' });
@@ -770,6 +772,8 @@ function syncHair(full) {
   const sKey = sWant ? skinKey(P) : '';
   if (hairNeedsSeg(P) && !base.hair) getHair(base);
   if (skinOn(P) && !base.skin) getSkin(base);
+  // 沒在用的那個放掉大張的畫布（評審 M1：放大、存檔時會跟著長到 600 萬、1200 萬像素，一直留著）
+  if (!want) hairFx?.release(); if (!sWant) skinFx?.release();
   // 預覽時用螢幕大小的照片算，存檔才用原尺寸
   const src = (want || sWant) && !full ? previewOf(base.canvas) : base.canvas;
   if (hairFor === base && hairSrc === src && key === hairKey && sKey === skinKeyNow) return;
@@ -945,9 +949,13 @@ function getLut(id) {
 
 // ---------- 復原、重做 ----------
 function commit() {
+  // 評審 M24、M26：跟現在這一步一模一樣就不記（調筆刷大小、強度只改筆，推臉輕點一下沒推動）：
+  // 以前會多一步，第一下復原沒反應，還把可以重做的步驟砍掉、吃掉 50 步上限
+  const cur = hist[hi], sP = JSON.stringify(P), sT = JSON.stringify(texts), sS = JSON.stringify(stickers);
+  if (cur && cur.base === base && cur.sP === sP && cur.sT === sT && cur.sS === sS) return;
   resetFrom = null;
   hist = hist.slice(0, hi + 1);
-  hist.push({ base, P: clone(P), texts: clone(texts), stickers: clone(stickers) });
+  hist.push({ base, P: JSON.parse(sP), texts: JSON.parse(sT), stickers: JSON.parse(sS), sP, sT, sS });
   if (hist.length > 50) hist.shift();  // 醒圖：最多復原 50 步
   // 消除、合併每一步都是一張新的整張照片：舊的會壓成檔案（見 shelve），最多留 15 張不同的照片
   // （美顏筆、塗鴉畫在同一張上，整串算一張）
@@ -1385,18 +1393,33 @@ function tabBeauty(box) {
   else if (!faces.length) $('#note').textContent = base.faceErr ? '臉部偵測模型載入失敗，檢查一下網路再換一次照片。' : '這張照片沒找到臉，美顏只對人臉有效。';
   else $('#note').textContent = faceNote(faces);
   const T = faceP();
-  // 一鍵美顏的量（v：0～100）寫進美顏、臉型的滑桿；換成另一種時先把前一種加的臉型拿掉
+  // 一鍵美顏的量（v：0～100）寫進美顏、臉型的滑桿。臉型是加在套用前的值上（T.oneShapeB），強度只控制加的那一段；
+  // 套用後在臉型自己改過的（跟 T.oneShapeW 記的不一樣）就不再動（評審 #145 中 C：以前會蓋掉自己調的瘦臉、大眼）
   const oneSet = (t, v) => {
     Object.keys(t.set).forEach(k => T[k] = Math.round(t.set[k] * v / 100));
-    Object.entries(t.shape).forEach(([id, x]) => setShape(T, id, 'both', Math.round(x * v / 100)));
+    const B = T.oneShapeB ||= {}, W = T.oneShapeW ||= {};
+    Object.entries(t.shape).forEach(([id, x]) => {
+      const now = getShape(T, id, 'both');
+      if (id in W && now !== W[id]) return;
+      if (!(id in B)) B[id] = now;
+      setShape(T, id, 'both', W[id] = Math.min(100, B[id] + Math.round(x * v / 100)));
+    });
+  };
+  // 換成另一種或關掉：前一種加的臉型退回套用前（之後在臉型改過的就留著）
+  const oneUndo = t => {
+    const B = T.oneShapeB, W = T.oneShapeW;
+    Object.entries(t.shape).forEach(([id, x]) => {
+      const now = getShape(T, id, 'both');
+      if (W ? id in W && now === W[id] : now === Math.round(x * T.oneAmt / 100)) setShape(T, id, 'both', B?.[id] || 0);
+    });
+    delete T.oneShapeB; delete T.oneShapeW;
   };
   ONE_TAPS.forEach((t, i) => box.append(item({
     label: t.name, icon: t.icon, on: T.oneTap === i, onclick: () => {
       const off = T.oneTap === i, was = ONE_TAPS[T.oneTap];
-      // 只拿掉前一種自己加的（之後在臉型改過的就留著）
-      if (was) Object.entries(was.shape).forEach(([id, x]) => { if (getShape(T, id, 'both') === Math.round(x * T.oneAmt / 100)) setShape(T, id, 'both', 0); });
+      if (was) oneUndo(was); else { delete T.oneShapeB; delete T.oneShapeW; }  // 重設過美顏：舊的紀錄不算數
       T.oneTap = off ? -1 : i; T.oneAmt = 100;
-      oneSet(t, off ? 0 : 100);
+      if (off) Object.keys(t.set).forEach(k => T[k] = 0); else oneSet(t, 100);
       cur = off ? 'smooth' : 'oneTap';
       render(); commit(); showTab('beauty');
     },
@@ -1408,9 +1431,11 @@ function tabBeauty(box) {
   BEAUTY_JUMP.forEach(([label, icon, c, id]) => box.insertBefore(item({
     label, icon, cls: 'jump', set: shapeIsSet(T, id), onclick: () => {
       shapeCat = c; shapeCur = id;
-      const d = SHAPE_CATS.find(x => x.id === c).items.find(x => x.id === id).def;
+      const C = SHAPE_CATS.find(x => x.id === c), it = C.items.find(x => x.id === id), d = it.def;
       if (d && !shapeIsSet(T, id)) { setShape(T, id, 'both', d); render(); commit(); }
       showTab('shape');
+      // 臉型裡叫「眼睛 › 大小」（醒圖的名字），跟美顏的「大眼」對不上：跳過去時說一聲（評審 #145 小 H）
+      if (it.name !== label) toast(`${label}在「臉型 › ${C.name} › ${it.name}」`, 2500);
     },
   }), at));
   if (one) {
@@ -1605,11 +1630,28 @@ function rsRing(p) {
     const b = $('#protSw'); b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash');
   };
   const at = e => { const r = $('#wrap').getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * base.canvas.width, y: (e.clientY - r.top) / r.height * base.canvas.height }; };
+  // 這一筆整個在背景上（背景保護開著）：畫面沒動，這筆不算，不亮點、不多一步復原（評審 #145 小 I）。
+  // 看筆刷中心和一圈 8 個點，碰到人就算有推到
+  const mData = new WeakMap();
+  let allBg = false;
+  const onBg = p => {
+    const m = base.matte || base.seg?.person, c = P.bgProtect && m?.getContext?.('2d');
+    if (!c) return false;
+    let d = mData.get(m);
+    if (!d) mData.set(m, d = c.getImageData(0, 0, m.width, m.height).data);
+    const r = liqRadius(rsVal[rsTool].size, base.canvas.width, base.canvas.height) * 0.8;
+    for (let k = 0; k < 9; k++) {
+      const a = k * Math.PI / 4, q = k === 8 ? p : { x: p.x + Math.cos(a) * r, y: p.y + Math.sin(a) * r };
+      const x = Math.min(m.width - 1, Math.max(0, Math.floor(q.x / base.canvas.width * m.width))), y = Math.min(m.height - 1, Math.max(0, Math.floor(q.y / base.canvas.height * m.height)));
+      if (d[(y * m.width + x) * 4] > 40) return false;
+    }
+    return true;
+  };
   const dab = (a, b) => { const v = rsVal[rsTool]; P.liq = liqDab(P.liq, rsTool, a, b, v.size, v.str, base.canvas.width, base.canvas.height); render(); };
   $('#wrap').addEventListener('pointerdown', e => {
     if (tab !== 'reshape' || !base || e.target.closest('.st,.tx') || e.button > 0 || pinch.on) return;
     e.preventDefault(); $('#wrap').setPointerCapture(e.pointerId);
-    last = p0 = at(e); liq0 = P.liq; rsRing(last);
+    last = p0 = at(e); liq0 = P.liq; rsRing(last); allBg = rsTool !== 'restore' && onBg(last);
     // 旋轉、脹大、縮小：按住不動也會一直作用；還原是畫一筆還原一點，按住不會一直還原
     if (rsTool !== 'push') { dab(last, last); if (rsTool !== 'restore') timer = setInterval(() => last && dab(last, last), 90); }
   });
@@ -1619,9 +1661,14 @@ function rsRing(p) {
     rsRing(p);
     if (Math.hypot(p.x - last.x, p.y - last.y) < r * 0.12) return;
     if (rsTool === 'push' || rsTool === 'restore') dab(last, p); else dab(p, p);
+    if (allBg && !onBg(p)) allBg = false;
     last = p;
   });
-  const up = () => { if (!last) return; last = null; clearInterval(timer); rsRing(); commit(); if (rsTool !== 'restore') protHint(); };
+  const up = () => {
+    if (!last) return; last = null; clearInterval(timer); rsRing();
+    if (allBg) { P.liq = liq0; render(); } else commit();
+    if (rsTool !== 'restore') protHint();
+  };
   $('#wrap').addEventListener('pointerup', up); $('#wrap').addEventListener('pointercancel', up);
   // 第二指放下是要縮放：這一筆不算
   addEventListener('pinchstart', () => { if (!last) return; last = null; clearInterval(timer); P.liq = liq0; rsRing(); render(); });
@@ -1653,7 +1700,7 @@ function tabLooksHere(box) {
 // ---------- 美妝（makeup.js） ----------
 function tabMakeup(box) {
   makeupTab(box, {
-    P: () => P, base: () => base, item, setSlider, hideSlider, render, commit, findFaces,
+    P: () => P, base: () => base, item, setSlider, hideSlider, render, commit, findFaces, edgeFade,
     refresh: () => showTab('makeup'), note: t => { $('#note').textContent = t; },
   });
 }
@@ -2526,9 +2573,9 @@ function tabCrop(box) {
 }
 function startCrop() {
   cropState = { x: 0, y: 0, w: 1, h: 1, ratio: 'free' };
-  $('#crop').classList.add('on'); layout();
+  $('#crop').classList.add('on'); $('#stage').classList.add('crop'); layout();
 }
-function endCrop() { cropState = null; $('#crop').classList.remove('on'); layout(); }
+function endCrop() { cropState = null; $('#crop').classList.remove('on'); $('#stage').classList.remove('crop'); layout(); }
 function setRatio(r) {
   cropState.ratio = r;
   if (r === 'free') return drawCrop();
