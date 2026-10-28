@@ -667,13 +667,13 @@ export function makeupTab(box, api) {
     else api.hideSlider();
   }
   box.append(wrap);
-  // 回到上次捲到的地方；第一次看到這排、或選中的那顆在畫面外，就把它捲到中間
+  // 回到上次捲到的地方；第一次看到這排、或選中的那顆在畫面外，就把它捲到看得到的地方
+  // 順便讓邊上那顆露一半（app.js peekRow，評審 #149：套裝、卸妝這兩排以前沒算到）
   for (const [r, key] of rows) {
-    if (scrolled[key] != null) r.scrollLeft = scrolled[key];
     const on = r.querySelector('.on');
-    if (!on) { api.edgeFade?.(r); continue; }
-    const l = on.offsetLeft - r.offsetLeft;
-    if (scrolled[key] == null ? l + on.offsetWidth > r.clientWidth * 0.8 : l < r.scrollLeft || l + on.offsetWidth > r.scrollLeft + r.clientWidth) r.scrollLeft = l - (r.clientWidth - on.offsetWidth) / 2;
+    api.peekRow(r, on, scrolled[key]);
+    const l = on ? on.offsetLeft - r.offsetLeft : 0;
+    if (on && scrolled[key] != null && (l < r.scrollLeft || l + on.offsetWidth > r.scrollLeft + r.clientWidth)) api.peekRow(r, on);
     scrolled[key] = r.scrollLeft; api.edgeFade?.(r);
   }
 }

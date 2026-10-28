@@ -364,11 +364,13 @@ function seekSurf(S, v) {
 // 同一張 canvas 的內容變了：照 canvas 記住的預覽、皮膚、頭髮圖要重算。
 // rects：改到的那幾塊，照片的貼圖只傳這幾塊（整張重傳又慢又吃記憶體）
 function pixelsChanged(c, rects) {
-  if (hairFx) hairFx.src = null; if (skinFx) skinFx.src = null;
+  const v = pvCache.get(c);
+  // 頭髮、膚質用的那份照片貼圖（R.srcTex）是這張或它的預覽：只補改到的那幾塊，不然下次整張重傳
+  const keep = rects && R?.srcOf && (R.srcOf === c || R.srcOf === v?.p);
+  if (R && !keep) R.srcOf = null;
   alphaOf.delete(c);
   if (!rects) { pvCache.delete(c); return; }
   // 預覽縮圖只重畫改到的那幾塊（以前整張 1200 萬像素重縮）
-  const v = pvCache.get(c);
   if (v) {
     const x = v.p.getContext('2d'), k = v.p.width / c.width;
     for (const r of rects) {
@@ -379,11 +381,13 @@ function pixelsChanged(c, rects) {
       x.save(); x.beginPath(); x.rect(x0, y0, x1 - x0, y1 - y0); x.clip();
       x.drawImage(c, a0 / k, b0 / k, (a1 - a0) / k, (b1 - b0) / k, a0, b0, a1 - a0, b1 - b0);
       x.restore();
+      if (keep && R.srcOf === v.p) R.patchSrc(x.getImageData(x0, y0, x1 - x0, y1 - y0), x0, y0);
     }
   }
+  if (keep && R.srcOf === c) rects.forEach(r => R.patchSrc(r.img, r.x, r.y));
   if (rects.every(r => R.patchImage(r.img, r.x, r.y))) R.derive();
   // 貼圖是膚質、頭髮處理過的預覽：不用整張原尺寸重傳，接著的 render 會用新的預覽重算再傳（評審 2026-10-27）
-  else if (R.imgW === c.width && R.imgH === c.height) R.setImage(c);
+  else if (R.tImg === R.tOwn && R.imgW === c.width && R.imgH === c.height) R.setImage(c);
   else hairFor = null;
 }
 // 每一筆存的那一塊加起來的上限，超過就丟掉最舊的復原步驟
@@ -597,7 +601,8 @@ function findFaces() {
     if (r?.cls) b.mask.cls = r.cls;
     if (share(b, 'facesP', ['mask', 'flashSt'])) { R.setMask(b.mask); render(); if (tab === 'beauty' || tab === 'sticker' || tab === 'makeup' || tab === 'looks') showTab(tab); }
     // 評審 M8：膚質的準備資料、膚質和頭髮的 GPU 程式趁閒置先做好，第一次拉膚質、頭髮滑桿就不用等
-    if (f.length) idle(() => { if (base?.facesP !== b.facesP) return; getSkin(base); try { skinFx ||= new SkinFx(); hairFx ||= new HairFx(); } catch (e) { console.warn(e); } });
+    // 頭髮資料也趁閒置先算（背景執行緒），點開頭髮分頁就有
+    if (f.length) idle(() => { if (base?.facesP !== b.facesP) return; getSkin(base); getHair(base); fxWarm(); });
     return f;
   }).catch(e => { console.warn(e); b.faces = []; b.faceErr = true; if (share(b, 'facesP', ['faces', 'faceErr']) && (tab === 'beauty' || tab === 'makeup')) showTab(tab); return []; });
   return b.facesP;
@@ -812,7 +817,7 @@ function syncView() {
   const f = dragging ? Math.min(1, Math.sqrt(FAST_PX / (px * q * q))) : 1;
   if (q !== R.view || f !== R.fast) { R.view = q; R.fast = f; render(); }
 }
-function setDragging(on) { if (dragging !== on) { dragging = on; syncView(); if (!on && gradeLutKey.endsWith('|33')) render(); } }
+function setDragging(on) { if (dragging !== on) { dragging = on; syncView(); if (!on && (gradeLutKey.endsWith('|33') || skinFx?.stale)) render(); } }
 // 開始拖：任何滑桿；推臉、打光（拖燈）時在照片上按下。放開手指就畫回清楚的
 addEventListener('rangestart', () => setDragging(true));
 addEventListener('pointerdown', e => {
@@ -833,6 +838,8 @@ function getBody(b) {
 }
 // 頭髮：先把頭髮改好的照片交給主管線，參數沒變就不重算
 let hairFx = null, hairKey = '', hairFor = null, hairSrc = null;
+// 用到膚質效果的分頁（膚質、AI 美肌、塑臉的顏色、臉型的豐臉拉皮）：在這些分頁裡效果關掉也先不放掉暫存，來回拉不用重配
+const SKIN_TABS = ['skin', 'aiskin', 'sculpt', 'shape'];
 function syncHair(full) {
   const want = hairColorOn(P) && base.hair;
   const key = want ? HAIR_P0_KEYS.map(k => P[k]).join('|') : '';
@@ -840,21 +847,56 @@ function syncHair(full) {
   const sKey = sWant ? skinKey(P) : '';
   if (hairNeedsSeg(P) && !base.hair) getHair(base);
   if (skinOn(P) && !base.skin) getSkin(base);
-  // 沒在用的那個放掉大張的畫布（評審 M1：放大、存檔時會跟著長到 600 萬、1200 萬像素，一直留著）
-  if (!want) hairFx?.release(); if (!sWant) skinFx?.release();
+  fxTrim(want, sWant);
   // 預覽時用螢幕大小的照片算，存檔才用原尺寸
   const src = (want || sWant) && !full ? previewOf(base.canvas) : base.canvas;
-  if (hairFor === base && hairSrc === src && key === hairKey && sKey === skinKeyNow) return;
+  // 拖頭髮時膚質的模糊圖先用舊的，放開手指這一格補算
+  const restale = sWant && !dragging && skinFx?.stale;
+  if (hairFor === base && hairSrc === src && key === hairKey && sKey === skinKeyNow && !restale) return;
   const first = hairFor !== base;
   hairFor = base; hairSrc = src; hairKey = key; skinKeyNow = sKey;
-  // 先改頭髮，再改膚質，最後交給主管線
-  let img = src;
-  // 頭髮、膚質各自的 WebGL 也可能被收回：收回了就重開一個，不然交出去的是一張空白圖
-  if (hairFx?.gl?.isContextLost()) hairFx = null;
-  if (skinFx?.gl?.isContextLost()) skinFx = null;
-  if (want) { hairFx ||= new HairFx(); img = hairFx.apply(src, base.hair, P); }
-  if (sWant) { skinFx ||= new SkinFx(); img = skinFx.apply(img, base.skin, P, key + '|' + src.width, src.width / base.canvas.width); }
-  if (want || sWant || !first) R.setImage(img, base.canvas.width, base.canvas.height);
+  // 先改頭髮，再改膚質，最後交給主管線：三個都在主畫面同一個 WebGL 上，中間結果是貼圖，不用複製
+  if (want || sWant) R.useTex(fxTex(src, want, sWant, key), src.width, src.height, base.canvas.width, base.canvas.height);
+  else if (!first) R.setImage(src, base.canvas.width, base.canvas.height);
+  fxTrim(want, sWant);  // 剛換下來的那張
+}
+function fxTex(src, hair, skin, key) {
+  if (hairFx && hairFx.gl !== R.gl) hairFx = null;  // 主畫面重建過（WebGL 被收回）
+  if (skinFx && skinFx.gl !== R.gl) skinFx = null;
+  let t = R.srcTex(src);
+  const k = key + '|' + R.srcVer, w = src.width, h = src.height;
+  if (hair) { hairFx ||= new HairFx(R.gl); t = hairFx.apply(t, w, h, base.hair, P, k); }
+  if (skin) { skinFx ||= new SkinFx(R.gl); t = skinFx.apply(t, w, h, base.skin, P, k, w / base.canvas.width, dragging); }
+  return t;
+}
+// 沒在用、也不在那個分頁：放掉跟照片一樣大的暫存（評審 M1：放大、存檔時會跟著長到 600 萬、1200 萬像素，一直留著）
+function fxTrim(want = hairColorOn(P) && base?.hair, sWant = skinOn(P) && base?.skin) {
+  if (!R) return;
+  if (hairFx && !want && tab !== 'hair' && R.tImg !== hairFx.out.t) hairFx.release();
+  if (skinFx && !sWant && !SKIN_TABS.includes(tab) && R.tImg !== skinFx.out.t) skinFx.release();
+  if (!(hairFx?.out.w > 1) && !skinFx?.src) R.dropSrc();
+}
+// 先建好頭髮、膚質的 GPU 程式、各畫一次，資料好了就傳上去（評審 M8）
+function fxWarm() {
+  if (!R || glLost || !base) return;
+  try {
+    hairFx ||= new HairFx(R.gl); skinFx ||= new SkinFx(R.gl);
+    hairFx.warm(base.hair); skinFx.warm(base.skin);
+  } catch (e) { console.warn(e); }
+}
+// 進頭髮、膚質分頁：趁閒置把預覽照片傳上去、照現在的參數跑一次，第一次拉滑桿只要畫一次（評審 M8：第一下頭髮 387ms、膚質 127ms）。
+// 只跑現在沒顯示出來的那一個，畫面上的貼圖不動
+function fxPrime() {
+  if (!R || glLost || !base?.canvas || hold) return;
+  const want = hairColorOn(P) && base.hair, sWant = skinOn(P) && base.skin, src = previewOf(base.canvas);
+  const key = want ? HAIR_P0_KEYS.map(k => P[k]).join('|') : '';
+  try {
+    if (tab === 'hair' && base.hair && !want && R.tImg !== hairFx?.out.t) fxTex(src, true, false, HAIR_P0_KEYS.map(k => P[k]).join('|'));
+    if (SKIN_TABS.includes(tab) && tab !== 'shape' && base.skin && !sWant && R.tImg !== skinFx?.out.t) {
+      // 頭髮開著的話它的結果要是現在這一張（同一個 key，不會重畫）
+      if (!want || (hairFor === base && hairSrc === src)) fxTex(src, want, true, key);
+    }
+  } catch (e) { console.warn(e); }
 }
 // 照片縮成預覽大小（跟著 R.view），每張照片、每種大小只縮一次
 const pvCache = new WeakMap();
@@ -875,7 +917,7 @@ function getSkin(b) {
   b.skinP ||= Promise.all([getSeg(b), findFaces()]).then(async ([s, f]) => {
     if (!s) { b.skinP = null; return null; }
     b.skin = await prep('skin', async () => ({ W: b.canvas.width, H: b.canvas.height, faces: f || [], seg: segPart(s, 'skin'), img: await segPhoto(b, s.w, s.h) }), () => prepSkin(b.canvas, s, f || []));
-    if (share(b, 'skinP', ['skin'])) { hairFor = null; render(); if (tab === 'skin') showTab('skin'); }
+    if (share(b, 'skinP', ['skin'])) { hairFor = null; fxWarm(); render(); if (tab === 'skin') showTab('skin'); }
     return b.skin;
   }).catch(e => { console.warn(e); b.skinP = null; return null; });
   return b.skinP;
@@ -885,7 +927,7 @@ function getHair(b) {
   b.hairP ||= Promise.all([getSeg(b), findFaces()]).then(async ([s, f]) => {
     if (!s) { b.hairP = null; return null; }
     b.hair = await prep('hair', async () => ({ W: b.canvas.width, H: b.canvas.height, faces: f || [], seg: segPart(s, 'hair', 'bg'), img: await segPhoto(b, s.w, s.h) }), () => prepHair(b.canvas, s, f || []));
-    if (share(b, 'hairP', ['hair'])) { hairFor = null; render(); if (tab === 'hair') showTab('hair'); }
+    if (share(b, 'hairP', ['hair'])) { hairFor = null; fxWarm(); render(); if (tab === 'hair') showTab('hair'); }
     return b.hair;
   }).catch(e => { console.warn(e); b.hairP = null; return null; });
   return b.hairP;
@@ -1245,42 +1287,65 @@ function showTab(t) {
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
   lightDot(); bmBox(); rsRing(); faceBoxes();
   syncNav();
-  peekRow(box);
-  // 換分頁：選中的那個捲到看得到的地方（以前留在上一個分頁捲到的位置，預設選中的磨皮、彎曲會在畫面外）
-  if (same) { box.scrollLeft = sl[0]; $('#cats').scrollLeft = sl[1]; }
-  else for (const [row, on] of [[box, box.querySelector('.it.on')], [$('#cats'), $('#cats .it.on')], [$('#tabs'), $(`#tabs .tab[data-tab="${t}"]`)]]) {
-    if (!row || !on || wide.matches) continue;
-    const l = on.getBoundingClientRect().left - row.getBoundingClientRect().left + row.scrollLeft;
-    row.scrollLeft = l + on.offsetWidth / 2 < row.clientWidth * 0.8 ? 0 : l - (row.clientWidth - on.offsetWidth) / 2;
-  }
+  fxTrim();
+  if (t === 'hair' || SKIN_TABS.includes(t)) idle(fxPrime);
+  // 換分頁：選中的那個捲到看得到的地方（以前留在上一個分頁捲到的位置，預設選中的磨皮、彎曲會在畫面外）；
+  // 同一個分頁重畫：回到原本捲到的位置。peekRow 順便調間距，讓邊上那顆露一半
+  peekRow(box, box.querySelector('.it.on'), same ? sl[0] : null); peekRow($('#cats'), $('#cats .it.on'), same ? sl[1] : null);
+  peekRow($('#tabs'), $(`#tabs .tab[data-tab="${t}"]`), same ? $('#tabs').scrollLeft : null);
   FADE_ROWS.forEach(edgeFade);
 }
 // 橫著捲的列：還能往左、往右滑就在那一邊淡出（評審 M13）。電腦版不捲，不會淡出
 const FADE_ROWS = ['#tabs', '#cats', '#items'].map(s => $(s));
-// 一排放不下時，畫面邊上那一顆露出一半左右，一看就知道還能滑（評審 #145 小 F、#147：375 寬時美顏的下一顆只露 13px，
-// 看起來像到底了）。間距在 2～14px 之間挑（原本 6px），照沒捲動時的位置算
-function peekRow(row) {
+// 換分頁時一排捲到哪：選中的那顆在右邊兩成以內就不捲，不然捲到中間
+const rowScroll = (l, w, W) => l + w / 2 < W * 0.8 ? 0 : l - (W - w) / 2;
+// 一排捲到 sel（選中的那顆，rowScroll）或 at（要回到的捲動位置），順便讓畫面邊上那顆露出一半左右，一看就知道還能滑
+// （評審 #145 小 F、#147、#149）：間距在原本的 −4～+8px 之間挑；捲到 sel 時位置也可以差一點（最多一成五，選中那顆還整顆看得到）。
+// 看右邊被切到的那顆；最後一顆整顆看得到（捲到底）就看左邊那顆。擠 1～2px 就整排放得下（連右邊留白）就不用滑。
+// 同一排（一樣寬、一樣幾顆）回到原本位置重畫時沿用上次的間距，點選項時那排才不會晃
+function peekRow(row, sel = null, at = null) {
+  if (!row || row.hidden) return;
   row.style.gap = '';
-  const its = [...row.children];
-  if (wide.matches || its.length < 3) return;
-  const L = row.getBoundingClientRect().left - row.scrollLeft, W = row.clientWidth;
-  const x0 = its[0].getBoundingClientRect().left - L, ws = its.map(e => e.offsetWidth);
-  let best = 6, bd = 9;
-  for (let g = 2; g <= 14; g++) {
-    let x = x0, f = null;
-    for (const w of ws) { if (x + w > W) { f = Math.max(0, (W - x) / w); break; } x += w + g; }
-    if (f == null) { if (g === 6) return; continue; }  // 放得下
-    const d = Math.abs(f - 0.5) + Math.abs(g - 6) / 40;
-    if (d < bd) { bd = d; best = g; }
+  if (wide.matches) return;
+  const its = [...row.children].filter(e => !e.hidden && e.offsetWidth > 0), n = its.length, W = row.clientWidth;
+  const L = row.getBoundingClientRect().left - row.scrollLeft, xOf = e => e.getBoundingClientRect().left - L;
+  const go = S => { if (S != null) row.scrollLeft = S; };
+  if (n < 3) { go(at ?? (sel ? rowScroll(xOf(sel), sel.offsetWidth, W) : null)); return; }
+  const cs = getComputedStyle(row), g0 = parseFloat(cs.columnGap) || 0, pr = parseFloat(cs.paddingRight) || 0;
+  const x0 = xOf(its[0]), ws = its.map(e => e.offsetWidth), key = W + ':' + ws.join(','), si = its.indexOf(sel);
+  if (at != null && row._peek?.key === key) { if (row._peek.g !== g0) row.style.gap = row._peek.g + 'px'; go(at); return; }
+  let best = null, fit = null;
+  for (let g = Math.max(2, g0 - 4); g <= g0 + 8; g++) {
+    const xs = [];
+    let x = x0;
+    for (const w of ws) { xs.push(x); x += w + g; }
+    const max = x - g + pr - W;  // 最多能捲多少
+    if (max <= 0) { fit = g; continue; }
+    const peek = S => {
+      const end = xs[n - 1] - S + ws[n - 1] <= W;
+      for (let i = 0; i < n; i++) { const a = xs[i] - S; if (end ? a < 0 && a + ws[i] > 0 : a < W && a + ws[i] > W) return end ? (a + ws[i]) / ws[i] : (W - a) / ws[i]; }
+      return 0;  // 邊剛好落在兩顆中間：下一顆完全看不到
+    };
+    const S0 = Math.min(max, Math.max(0, at ?? (si < 0 ? 0 : rowScroll(xs[si], ws[si], W)))), cand = [S0];
+    if (at == null && S0 > 0) for (let i = 0; i < n; i++) cand.push(xs[i] + ws[i] / 2 - W, xs[i] + ws[i] / 2);
+    for (const S of cand) {
+      if (S < 0 || S > max || Math.abs(S - S0) > W * 0.15) continue;
+      if (si >= 0 && S !== S0 && (xs[si] < S + 8 || xs[si] + ws[si] > S + W - 8)) continue;
+      const d = Math.abs(peek(S) - 0.5) + Math.abs(g - g0) / 100 + Math.abs(S - S0) / W * 0.3;
+      if (!best || d < best.d) best = { g, S, d };
+    }
   }
-  if (best !== 6) row.style.gap = best + 'px';
+  if (!best || (fit != null && fit >= g0 - 2)) best = { g: Math.min(g0, fit ?? g0), S: 0 };
+  row._peek = { key, g: best.g };
+  if (best.g !== g0) row.style.gap = best.g + 'px';
+  go(at ?? (si >= 0 ? best.S : null));
 }
 function edgeFade(el) {
   const l = el.scrollLeft > 2, r = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
   el.classList.toggle('fadeL', l); el.classList.toggle('fadeR', r);
 }
 FADE_ROWS.forEach(el => el.addEventListener('scroll', () => edgeFade(el), { passive: true }));
-addEventListener('resize', () => { peekRow($('#items')); FADE_ROWS.forEach(edgeFade); });
+addEventListener('resize', () => { FADE_ROWS.forEach(r => { peekRow(r, r.querySelector('.on'), r.scrollLeft); edgeFade(r); }); });
 
 const isSet = (k, T = P) => T[k] !== 0 || (SIDED.includes(k) && (T[k + 'L'] !== 0 || T[k + 'R'] !== 0));
 // 兩邊／左／右：固定放在說明那一列右邊。以前插在項目列最前面，點到瘦臉整排被推走 178px、剛點的那顆跑出畫面（評審 H3）。
@@ -1796,7 +1861,7 @@ function tabLooksHere(box) {
 // ---------- 美妝（makeup.js） ----------
 function tabMakeup(box) {
   makeupTab(box, {
-    P: () => P, base: () => base, item, setSlider, hideSlider, render, commit, findFaces, edgeFade,
+    P: () => P, base: () => base, item, setSlider, hideSlider, render, commit, findFaces, edgeFade, peekRow,
     refresh: () => showTab('makeup'), note: t => { $('#note').textContent = t; },
   });
 }
@@ -2008,9 +2073,9 @@ function tabSticker(box) {
     : stCat === 'mine' ? '匯入自己的圖片當貼紙，人像照可以自動摳圖。' : net ? '線上貼紙包，要連網路。圖案是 Microsoft Fluent Emoji（MIT 授權）。' : '點一下加到照片上';
   const list = stQ ? STICKERS.filter(sk => sk.name.toLowerCase().includes(stQ.toLowerCase()))
     : stCat === 'emoji' || stCat === 'mine' || net ? [] : STICKERS.filter(sk => sk.cat === stCat);
-  list.forEach(sk => box.append(item({
+  list.forEach(sk => stkTone(box.appendChild(item({
     label: sk.name, cls: 'stk', icon: `<img src="${svgURL(sk.id)}" alt="">`, onclick: () => addSticker({ kind: 'svg', v: sk.id }, sk.face),
-  })));
+  }))));
   if (stQ && !list.length) $('#note').textContent = '找不到這個貼紙，換個關鍵字試試。';
   if (!stQ && stCat === 'emoji') EMOJIS.forEach(e => box.append(item({ label: '', cls: 'stk emo', icon: e, onclick: () => addSticker({ kind: 'emoji', v: e }) })));
   if (!stQ && net) {
@@ -2025,6 +2090,28 @@ function tabSticker(box) {
     ownImages().forEach(id => box.append(item({ label: '', cls: 'stk', icon: `<img src="${canvasURL(id)}" alt="">`, onclick: () => addSticker({ kind: 'img', v: id }) })));
   }
 }
+// 貼紙縮圖跟格子底色太像（黑墨鏡、音符、遮臉面具放在深灰格子上幾乎看不到）：那一格換成反過來的底色（評審 L55）。
+// 縮圖載入後縮成 24×24 看一次：不透明的地方有一半以上跟底色亮度差不到 48 就換；每張貼紙只看一次。b 要已經放進畫面（才讀得到底色）
+const stkSeen = new Map();
+function stkTone(b) {
+  const img = b.querySelector('img'), ic = b.querySelector('.ic'), bg = img && getComputedStyle(ic).backgroundColor.match(/[\d.]+/g);
+  if (!bg) return b;
+  const bl = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2], key = img.src + (bl < 128 ? 'd' : 'l');
+  const set = v => { if (v) b.classList.add(bl < 128 ? 'lite' : 'dim'); };
+  if (stkSeen.has(key)) { set(stkSeen.get(key)); return b; }
+  const look = () => {
+    try {
+      const c = document.createElement('canvas'); c.width = c.height = 24;
+      const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(img, 0, 0, 24, 24);
+      const d = x.getImageData(0, 0, 24, 24).data;
+      let n = 0, near = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 96) { n++; if (Math.abs(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2] - bl) < 48) near++; }
+      const v = n > 0 && near * 2 > n; stkSeen.set(key, v); set(v);
+    } catch (e) { stkSeen.set(key, false); }
+  };
+  if (img.complete && img.naturalWidth) look(); else img.addEventListener('load', look, { once: true });
+  return b;
+}
 // ---------- 遮臉 ----------
 // 遮臉的圖案也放進貼紙庫，貼上去以後就是一般的貼紙
 STICKERS.push(...COVERS.filter(c => c.svg));
@@ -2034,9 +2121,9 @@ function tabCover(box) {
   if (!faces) findFaces().then(() => tab === 'cover' && showTab('cover'));
   const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
   COVER_CATS.forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: cvCat === k, onclick: () => { cvCat = k; showTab('cover'); } })));
-  COVERS.filter(c => c.cat === cvCat).forEach(c => box.append(item({
+  COVERS.filter(c => c.cat === cvCat).forEach(c => stkTone(box.appendChild(item({
     label: c.name, cls: 'stk', icon: c.svg ? `<img src="${svgURL(c.id)}" alt="">` : c.name.slice(0, 2), onclick: () => addCover(c),
-  })));
+  }))));
   hideSlider();
   $('#note').textContent = !faces ? '正在找臉…' : !faces.length ? '這張照片沒找到臉。' : `點一下貼到 ${faces.length} 張臉上，貼上後可以到「文字」裡的「貼紙」移動或刪除。`;
 }

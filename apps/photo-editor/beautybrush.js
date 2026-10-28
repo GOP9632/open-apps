@@ -56,12 +56,6 @@ function buf(key, n) {
   if (!a || a.length < n) { a = new Float32Array(Math.max(n, 1 << 16)); pool.set(key, a); }
   return a.subarray(0, n);
 }
-const u8pool = new Map();
-function u8(key, n) {
-  let a = u8pool.get(key);
-  if (!a || a.length < n) { a = new Uint8Array(Math.max(n, 1 << 14)); u8pool.set(key, a); }
-  return a.subarray(0, n);
-}
 // 小塊方框模糊（結果放 dst），暫存也重用
 const blurTo = (src, dst, w, h, r) => { dst.set(src); return boxBlur(dst, w, h, r, 3, buf('tmp', src.length)); };
 // 雙線性取樣用的格子：第 p0 + k 個像素落在小圖哪兩格之間
@@ -250,20 +244,18 @@ function helPatch(ses, t, o, i0, j0, i1, j1) {
   o.v = (o.v || 0) + 1; o.pr = o.pr ? [Math.min(o.pr[0], a0), Math.min(o.pr[1], b0), Math.max(o.pr[2], a1), Math.max(o.pr[3], b1)] : [a0, b0, a1, b1];
 }
 
-// 重算照片的 [x0,x1)×[y0,y1)。效果都從開始之前的照片算、各筆互相不疊，所以：
-//   全部重算（除斑改過原圖）：開始之前的照片 + 每支筆（強度 0 → 遮罩值）的變化
-//   一般一筆：現在的照片 + 這支筆（舊遮罩值 → 新遮罩值）的變化，只算這一支筆、只算遮罩有變的像素
-// m：這一筆改到的那塊遮罩（裡面存的是舊值）；沒有就是全部重算
-async function compose(ses, x0, y0, x1, y1, m) {
+// 重算照片的 [x0,x1)×[y0,y1)：開始之前的照片 + 每支筆（強度 0 → 遮罩值）的變化。效果都從開始之前的照片算、各筆互相不疊，
+// 四捨五入只有最後一次（以前一般一筆是「現在的照片 + 這支筆舊遮罩 → 新遮罩的變化」，每筆捨一次，多塗的小變化會被捨掉，評審 #149）
+async function compose(ses, x0, y0, x1, y1) {
   fresh(ses);
   const w = x1 - x0, h = y1 - y0, before = ses.ctx.getImageData(x0, y0, w, h);
   // 先交給 GPU（bbgpu.js，同樣的公式）；不支援才在這裡逐塊算
-  let d = gpu(ses, m, x0, y0, x1, y1, m ? before.data : null);
+  let d = gpu(ses, x0, y0, x1, y1);
   if (d) d = await d;
   if (ses.dead) return null;
   if (!d) {
-    d = m ? new Uint8ClampedArray(before.data) : readO(ses, x0, y0, x1, y1);
-    for (let by = y0; by < y1; by += BS) for (let bx = x0; bx < x1; bx += BS) block(ses, bx, by, Math.min(x1, bx + BS), Math.min(y1, by + BS), d, x0, y0, w, m);
+    d = readO(ses, x0, y0, x1, y1);
+    for (let by = y0; by < y1; by += BS) for (let bx = x0; bx < x1; bx += BS) block(ses, bx, by, Math.min(x1, bx + BS), Math.min(y1, by + BS), d, x0, y0, w);
   }
   const after = new ImageData(d, w, h);
   // 只留真的有變的那塊
@@ -344,7 +336,7 @@ const HELD = { smooth: hp => [hp.V, ...hp.B], circle: hp => hp.D, fold: hp => hp
 // GPU 用：小圖上的效果打包成一張 RGBA 浮點貼圖（去油光多放周圍亮度 Lb），小模糊每個通道的半徑
 const PACK = { ...HELD, oil: hp => [...hp.ref, hp.Lb] }, RAD = { eye: s => [s.re, s.re, s.re, 0], texture: s => [s.rt, s.rt, s.rt, 0], oil: s => [2, 2, 2, s.ro] };
 // GPU 上一支筆要的東西（見 gpuMix）
-function mkJob(ses, t, m) {
+function mkJob(ses, t) {
   const hp = hel(ses, t);
   // r：只打包小圖的 [r0,r2)×[r1,r3)
   const pack = (r = [0, 0, ses.hw, ses.hh]) => {
@@ -354,45 +346,32 @@ function mkJob(ses, t, m) {
     for (let k = 0; k < a.length; k++) packCh(a[k], d, k, ses.hw, r[0], r[1], w, r[3]);
     return d;
   };
-  return { t, A: ses.A[t], m: m || null, box: ses.box[t], hel: hp, pack, rad: RAD[t]?.(ses) || null };
+  return { t, A: ses.A[t], m: null, box: ses.box[t], hel: hp, pack, rad: RAD[t]?.(ses) || null };
 }
 function packCh(c, d, k, hw, x0, y0, w, y1) {
   for (let y = y0, o = k; y < y1; y++) for (let i = y * hw + x0, e = i + w; i < e; i++, o += 4) d[o] = c[i];
 }
 // 回傳 Promise（GPU 在算）或 null（不支援，用 CPU）
-function gpu(ses, m, x0, y0, x1, y1, before) {
-  // 全部重算：只算遮罩塗過這一塊的筆（同 block()），其他筆的效果不用補算
+function gpu(ses, x0, y0, x1, y1) {
+  // 只算遮罩塗過這一塊的筆（同 block()），其他筆的效果不用補算
   const mx = ses.mw / ses.W, my = ses.mh / ses.H, hit = b => b && b[0] <= x1 * mx + 1 && b[2] >= x0 * mx - 1 && b[1] <= y1 * my + 1 && b[3] >= y0 * my - 1;
-  const jobs = m ? [mkJob(ses, m.tool, m)] : MASKED.filter(t => ses.A[t] && hit(ses.box[t])).map(t => mkJob(ses, t));
-  return jobs.length ? gpuMix(ses, jobs, ses.mg, (a, b, c, e) => readO(ses, a, b, c, e), x0, y0, x1, y1, before) : null;
+  const jobs = MASKED.filter(t => ses.A[t] && hit(ses.box[t])).map(t => mkJob(ses, t));
+  return jobs.length ? gpuMix(ses, jobs, ses.mg, (a, b, c, e) => readO(ses, a, b, c, e), x0, y0, x1, y1, null) : null;
 }
-function block(ses, x0, y0, x1, y1, out, ox, oy, ow, m) {
+function block(ses, x0, y0, x1, y1, out, ox, oy, ow) {
   const { W, H, mw, mh, hw, hh } = ses, mx = mw / W, my = mh / H;
-  const tools = m ? [m.tool] : MASKED.filter(t => {
+  const tools = MASKED.filter(t => {
     const b = ses.box[t];
     return ses.A[t] && b && b[0] <= x1 * mx + 1 && b[2] >= x0 * mx - 1 && b[1] <= y1 * my + 1 && b[3] >= y0 * my - 1;
   });
   if (!tools.length) return;
   const bw = x1 - x0, bh = y1 - y0, nb = bw * bh;
   const gx = grid(x0, bw, mx, mw, 'mx'), gy = grid(y0, bh, my, mh, 'my');
-  // 這一塊每支筆的新、舊強度；都沒變就不用算
+  // 這一塊每支筆的強度；都沒塗到就不用算
   const todo = [];
   for (const t of tools) {
     const a1 = buf('a1' + t, nb);
-    if (!maskAt(ses.A[t], mw, 0, 0, gx, gy, bw, bh, a1) && !m) continue;
-    let a0 = null;
-    if (m) {
-      // 舊遮罩：這一塊用到的格子抄一份，m 那塊換回舊值
-      const cx0 = Math.min(...gx.i0), cy0 = Math.min(...gy.i0), cw = Math.max(...gx.i1) - cx0 + 1, ch = Math.max(...gy.i1) - cy0 + 1, A = ses.A[t], o = u8('a0m', cw * ch);
-      for (let y = 0; y < ch; y++) o.set(A.subarray((cy0 + y) * mw + cx0, (cy0 + y) * mw + cx0 + cw), y * cw);
-      for (let y = Math.max(cy0, m.y); y < Math.min(cy0 + ch, m.y + m.h); y++) for (let x = Math.max(cx0, m.x); x < Math.min(cx0 + cw, m.x + m.w); x++) o[(y - cy0) * cw + x - cx0] = m.d[(y - m.y) * m.w + x - m.x];
-      a0 = buf('a0', nb);
-      maskAt(o, cw, cx0, cy0, gx, gy, bw, bh, a0);
-      let same = true;
-      for (let j = 0; j < nb; j++) if (Math.abs(a1[j] - a0[j]) > 1e-4) { same = false; break; }
-      if (same) continue;
-    }
-    todo.push({ t, a1, a0 });
+    if (maskAt(ses.A[t], mw, 0, 0, gx, gy, bw, bh, a1)) todo.push({ t, a1 });
   }
   if (!todo.length) return;
   const local = todo.some(j => j.t === 'eye' || j.t === 'texture' || j.t === 'oil'), mg = local ? ses.mg : 0;
@@ -405,7 +384,7 @@ function block(ses, x0, y0, x1, y1, out, ox, oy, ow, m) {
   const d = [buf('d0', nb).fill(0), buf('d1', nb).fill(0), buf('d2', nb).fill(0)];
   const hx = grid(x0, bw, hw / W, hw, 'hx'), hy = grid(y0, bh, hh / H, hh, 'hy');
   const blur3 = (key, r) => c.map((a, j) => blurTo(a, buf(key + j, n), ew, eh, r));
-  for (const { t, a1, a0 } of todo) {
+  for (const { t, a1 } of todo) {
     const hp = hel(ses, t), hs = HELD[t](hp), nh = hs.length;
     if (t === 'eye') K.lb = blur3('le', ses.re);
     if (t === 'texture') K.lb = blur3('lt', ses.rt);
@@ -419,16 +398,15 @@ function block(ses, x0, y0, x1, y1, out, ox, oy, ow, m) {
     for (let y = 0; y < bh; y++) {
       const r0 = hy.i0[y] * hw, r1 = hy.i1[y] * hw, fy = hy.f[y];
       for (let x = 0; x < bw; x++) {
-        const j = y * bw + x, an_ = a1[j], ao_ = a0 ? a0[j] : 0;
-        if (an_ === ao_ || (an_ <= 0.002 && ao_ <= 0.002)) continue;
+        const j = y * bw + x, an_ = a1[j];
+        if (an_ <= 0.002) continue;
         const e = (y + y0 - ey0) * ew + x + x0 - ex0, r = c[0][e], g = c[1][e], b = c[2][e], l = L[e];
         if (nh) {
           const c0 = hx.i0[x], c1 = hx.i1[x], fx = hx.f[x], w00 = (1 - fx) * (1 - fy), w01 = fx * (1 - fy), w10 = (1 - fx) * fy, w11 = fx * fy;
           for (let k = 0; k < nh; k++) { const a = hs[k]; h[k] = a[r0 + c0] * w00 + a[r0 + c1] * w01 + a[r1 + c0] * w10 + a[r1 + c1] * w11; }
         }
-        pix(t, an_, r, g, b, l, e); const q0 = P0, q1 = P1, q2 = P2;
-        pix(t, ao_, r, g, b, l, e);
-        d[0][j] += q0 - P0; d[1][j] += q1 - P1; d[2][j] += q2 - P2;
+        pix(t, an_, r, g, b, l, e);
+        d[0][j] += P0 - r; d[1][j] += P1 - g; d[2][j] += P2 - b;
       }
     }
   }
@@ -468,15 +446,18 @@ function swapO(ses, o) {
 }
 
 // 遮罩筆一筆：遮罩往「強度」靠近（磨皮第一筆到強度、多塗會再強一點；其他筆第一筆就到強度），
-// 再重算遮罩改到的那塊照片。磨皮多塗的上限 C：強度 50 以下是 1.5 倍（跟以前一樣），50 到 100 從 0.75 拉到 1（60 是 0.8）。
-// 以前上限一律 min(1, 1.5 倍)、每筆走 2/3，強度 67 以上第一筆都停在 0.667、多塗都到 1，滑桿上面三分之一沒作用（評審 M35）；
-// #147 上限 60 以上只從 0.9 拉到 1 太窄，67 和 80 多塗五筆一樣（評審 #147）
+// 再重算遮罩改到的那塊照片。磨皮多塗的上限 C = 強度 ×（1.5 − 強度／2）：輕的時候約 1.5 倍，越強越接近強度本身，
+// 50／60／67／80／100 是 0.625／0.72／0.78／0.88／1，相鄰都差 0.06 以上（評審 #149）。
+// 以前上限一律 min(1, 1.5 倍)、每筆走 2/3，強度 67 以上第一筆都停在 0.667、多塗都到 1，滑桿上面三分之一沒作用（評審 M35）。
+// 照片那塊一律從「開始之前的照片」用全部遮罩重算（四捨五入只有一次）：以前每筆在已經四捨五入的照片上加「新遮罩 − 舊遮罩」，
+// 多塗的後幾筆遮罩只多幾階，變化不到半階就被捨掉，多塗等於沒塗（評審 #149）。
+// 這筆遮罩有變、照片卻一個像素都沒變時，遮罩照樣留著（不記一步復原），下一筆才累積得上去
 async function maskStroke(ses, tool, pts, R, k) {
   const { W, H, mw, mh } = ses, s = mw / W;
   const [x0, y0, x1, y1] = bounds(pts, R + 3 / s, s, mw, mh), w = x1 - x0, h = y1 - y0;
   if (w < 1 || h < 1) return null;
   const cov = stroke(pts, x0, y0, w, h, s, R), A = ses.A[tool] ||= new Uint8Array(mw * mh);
-  const C = tool !== 'smooth' ? k : k <= 0.5 ? 1.5 * k : 0.75 + 0.5 * (k - 0.5), T = Math.round(255 * C), dep = C > 0 ? Math.min(1, k / C) : 1;
+  const C = tool !== 'smooth' ? k : k * (1.5 - 0.5 * k), T = Math.round(255 * C), dep = C > 0 ? Math.min(1, k / C) : 1;
   const old = new Uint8Array(w * h), c = toward(A, mw, x0, y0, w, h, cov, T, dep, old);
   if (!c) return null;
   const [cx0, cy0, cx1, cy1] = c;
@@ -488,8 +469,8 @@ async function maskStroke(ses, tool, pts, R, k) {
   // 遮罩改到的格子會影響到的照片範圍（雙線性多一格）
   const fx0 = Math.max(0, Math.floor((m.x - 1) / s)), fy0 = Math.max(0, Math.floor((m.y - 1) * H / mh)), fx1 = Math.min(W, Math.ceil((m.x + m.w + 1) / s)), fy1 = Math.min(H, Math.ceil((m.y + m.h + 1) * H / mh));
   capture(ses, fx0, fy0, fx1, fy1);
-  const p = await compose(ses, fx0, fy0, fx1, fy1, m);
-  if (!p) { if (!ses.dead) swapMask(ses, m); return null; }
+  const p = await compose(ses, fx0, fy0, fx1, fy1, null);
+  if (!p) return null;
   return { ...p, aux: { ses, bytes: m.d.length, swap() { if (!ses.dead) swapMask(ses, m); } } };
 }
 // 遮罩 A 的 [x0,x0+w)×[y0,y0+h) 往 T 靠近 cov × dep，舊值存進 old；回傳有變的範圍 [x0, y0, x1, y1]（含、相對這塊），沒變回傳 null

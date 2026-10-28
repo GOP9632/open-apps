@@ -214,6 +214,14 @@ export function prepSkin(canvas, seg, faces) {
 const VS = `#version 300 es
 in vec2 a; out vec2 vUV;
 void main(){ vUV = vec2((a.x + 1.0) * 0.5, (1.0 - a.y) * 0.5); gl_Position = vec4(a, 0.0, 1.0); }`;
+// 照片、結果的暫存貼圖：上下不翻，第 0 列還是照片最上面那列（模糊那兩次照舊各翻一次，結果跟以前一模一樣）
+const VSF = `#version 300 es
+in vec2 a; out vec2 vUV;
+void main(){ vUV = (a + 1.0) * 0.5; gl_Position = vec4(a, 0.0, 1.0); }`;
+const COPY = `#version 300 es
+precision highp float;
+uniform sampler2D uSrc; out vec4 o;
+void main(){ o = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0); }`;
 // 高斯模糊（分兩次：橫、直）。取樣間距大於 1 像素時讀縮小過的貼圖，免得出現格紋
 const BLUR = `#version 300 es
 precision highp float;
@@ -498,19 +506,15 @@ void main(){
   o = vec4(clamp(col, 0.0, 1.0), 1.0);
 }`;
 
+// 畫在主畫面的 WebGL 上（同 hair.js HairFx）：輸入、結果都是同一個 WebGL 裡的貼圖，不用從別張畫布複製
 export class SkinFx {
-  constructor() {
-    const c = this.canvas = document.createElement('canvas');
-    // 不要反鋸齒、深度、模板：只畫全畫面三角形，用不到，iPhone 上每張還要多配好幾倍的記憶體（評審 M1）
-    const gl = this.gl = c.getContext('webgl2', { preserveDrawingBuffer: true, premultipliedAlpha: false, antialias: false, depth: false, stencil: false });
-    if (!gl) return;
+  constructor(gl) {
+    this.gl = gl;
     const sh = (t, s) => { const x = gl.createShader(t); gl.shaderSource(x, s); gl.compileShader(x); if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(x)); return x; };
-    const prog = fs => { const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs)); gl.bindAttribLocation(p, 0, 'a'); gl.linkProgram(p); return p; };
-    this.pBlur = prog(BLUR); this.pMain = prog(FS);
-    const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    this.img = this.tex(); this.T = [this.tex(), this.tex(), this.tex()];
+    const prog = (vs, fs) => { const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs)); gl.bindAttribLocation(p, 0, 'a'); gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; };
+    this.pBlur = prog(VS, BLUR); this.pMain = prog(VSF, FS); this.pCopy = prog(VSF, COPY);
+    // 頂點用主畫面的全畫面三角形（同一個 WebGL，位置 0 已經設好）
+    this.img = this.target(0, 0); this.out = this.target(0, 0); this.T = [this.tex(), this.tex(), this.tex()];
     this.src = null; this.data = null; this.blurs = null;
   }
   tex() {
@@ -519,14 +523,21 @@ export class SkinFx {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     return t;
   }
-  // 可以當畫布的貼圖（模糊的中間結果）
+  // 可以當畫布的貼圖（模糊的中間結果、照片、結果）
   target(w, h) {
-    const gl = this.gl, t = this.tex();
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+    const gl = this.gl, o = { t: this.tex(), fb: gl.createFramebuffer(), w: -1, h: -1 };
+    this.fit(o, w, h);
+    return o;
+  }
+  fit(o, w, h) {
+    if (o.w === w && o.h === h) return;
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, o.t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, Math.max(1, w), Math.max(1, h), 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, o.fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, o.t, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    return { t, fb, w, h };
+    o.w = w; o.h = h;
   }
   mip(t) { const gl = this.gl; gl.bindTexture(gl.TEXTURE_2D, t); gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); }
   pass(p, out, w, h, tex, uni) {
@@ -538,16 +549,31 @@ export class SkinFx {
     uni(n => gl.getUniformLocation(p, n));
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
+  upData(data) {
+    if (this.data === data) return;
+    const gl = this.gl;
+    this.data = data; this.src = null;  // 模糊的粗細照臉寬算，要重算
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    [data.T1, data.T2, data.T3].forEach((a, i) => {
+      gl.bindTexture(gl.TEXTURE_2D, this.T[i]);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, data.w, data.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, a);
+    });
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  }
+  // src：照片貼圖（同一個 WebGL），抄一份做縮小版（模糊時讀縮小版才不會有格紋）
+  copyIn(src, W, H) {
+    this.fit(this.img, W, H);
+    this.pass(this.pCopy, this.img, W, H, [['uSrc', src]], () => {});
+    this.mip(this.img.t);
+  }
   // 照片換了才重算三張模糊圖
-  prepare(img, data, scale) {
-    const gl = this.gl, W = img.width, H = img.height;
-    this.canvas.width = W; this.canvas.height = H;
-    gl.bindTexture(gl.TEXTURE_2D, this.img);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-    this.mip(this.img);
+  prepare(src, W, H, data, scale) {
+    const gl = this.gl;
+    this.copyIn(src, W, H);
     // 模糊在最長邊 1280 以內的解析度上算
     const k = Math.min(1, 1280 / Math.max(W, H)), w = Math.max(1, Math.round(W * k)), h = Math.max(1, Math.round(H * k));
     if (!this.blurs || this.blurs.w !== w || this.blurs.h !== h) {
+      this.dropBlurs();
       this.blurs = { w, h, tmp: this.target(w, h), out: [0, 1, 2].map(() => this.target(w, h)) };
     }
     const fw = data.W * scale;
@@ -557,36 +583,44 @@ export class SkinFx {
       const step = s / 2.33;                        // 15 個取樣點涵蓋 ±3 sigma
       const lodH = Math.max(0, Math.log2(step / k)), lodV = Math.max(0, Math.log2(step));
       const b = this.blurs, out = b.out[i];
-      this.pass(this.pBlur, b.tmp, w, h, [['uSrc', this.img]], u => { gl.uniform2f(u('uStep'), step / w, 0); gl.uniform1f(u('uLod'), lodH); });
+      this.pass(this.pBlur, b.tmp, w, h, [['uSrc', this.img.t]], u => { gl.uniform2f(u('uStep'), step / w, 0); gl.uniform1f(u('uLod'), lodH); });
       this.mip(b.tmp.t);
       this.pass(this.pBlur, out, w, h, [['uSrc', b.tmp.t]], u => { gl.uniform2f(u('uStep'), 0, step / h); gl.uniform1f(u('uLod'), lodV); });
     });
-    if (this.data !== data) {
-      this.data = data;
-      [data.T1, data.T2, data.T3].forEach((a, i) => {
-        gl.bindTexture(gl.TEXTURE_2D, this.T[i]);
-        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, data.w, data.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, a);
-      });
-    }
   }
-  // 效果關掉時放掉跟照片一樣大的畫布、照片貼圖、三張模糊圖（評審 M1）；膚質資料留著，下次 apply 再重配
-  release() {
+  dropBlurs() {
     const gl = this.gl;
-    if (!gl || !this.src) return;
-    this.canvas.width = this.canvas.height = 1;
-    gl.bindTexture(gl.TEXTURE_2D, this.img); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     if (this.blurs) { for (const t of [this.blurs.tmp, ...this.blurs.out]) { gl.deleteTexture(t.t); gl.deleteFramebuffer(t.fb); } this.blurs = null; }
-    this.src = null; this.key = null;
   }
-  // 回傳改好膚質的 canvas；imgKey 變了代表輸入的照片內容變了（例如頭髮改過），要重算模糊
-  // scale：img 是原尺寸照片縮小幾倍的預覽（臉寬、毛孔這些照原尺寸算的大小要跟著縮）
-  apply(img, data, p, imgKey, scale = 1) {
+  // 先傳膚質資料、三個程式各在 1×1 上畫一次（iPhone 第一次畫才真的編譯 shader），第一次拉滑桿不用等（評審 M8）
+  warm(data) {
+    if (data) this.upData(data);
+    if (this.warmed) return;
+    this.warmed = true;
+    const gl = this.gl, t = this.target(1, 1);
+    for (const p of [this.pCopy, this.pBlur, this.pMain]) this.pass(p, t, 1, 1, [['uSrc', this.T[0]]], () => {});
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteTexture(t.t); gl.deleteFramebuffer(t.fb);
+  }
+  // 效果關掉、離開分頁時放掉跟照片一樣大的暫存、三張模糊圖（評審 M1）；膚質資料留著，下次 apply 再重配
+  release() {
+    if (!this.src) return;
+    this.fit(this.img, 0, 0); this.fit(this.out, 0, 0); this.dropBlurs();
+    this.src = this.key = this.imgK = null;
+  }
+  // 三張模糊圖還是舊照片的（拖頭髮時先不重算，見 apply 的 lazy）
+  get stale() { return !!this.src && this.key !== this.imgK; }
+  // 回傳改好膚質的貼圖。src：照片貼圖（同一個 WebGL），W、H 是它的大小；imgKey 變了代表照片內容變了（例如頭髮改過），要重算模糊
+  // scale：src 是原尺寸照片縮小幾倍的預覽（臉寬、毛孔這些照原尺寸算的大小要跟著縮）
+  // lazy：拖滑桿中（例如拖頭髮）照片變了，只換照片、三張模糊圖先用舊的（每格少 6 次大模糊），放開手指再補算（stale）
+  apply(src, W, H, data, p, imgKey, scale = 1, lazy = false) {
     const gl = this.gl;
-    if (!gl) return img;
-    if (this.src !== img || this.data !== data || this.key !== imgKey) { this.src = img; this.key = imgKey; this.prepare(img, data, scale); }
-    const b = this.blurs, W = img.width, H = img.height;
-    this.pass(this.pMain, null, W, H, [['uImg', this.img], ['uA', b.out[0].t], ['uB', b.out[1].t], ['uC', b.out[2].t], ['uT1', this.T[0]], ['uT2', this.T[1]], ['uT3', this.T[2]]], u => {
+    this.upData(data);
+    if (this.src !== src || this.img.w !== W || this.img.h !== H || !this.blurs || (this.key !== imgKey && !lazy)) { this.src = src; this.key = this.imgK = imgKey; this.prepare(src, W, H, data, scale); }
+    else if (this.imgK !== imgKey) { this.imgK = imgKey; this.copyIn(src, W, H); }
+    const b = this.blurs;
+    this.fit(this.out, W, H);
+    this.pass(this.pMain, this.out, W, H, [['uImg', this.img.t], ['uA', b.out[0].t], ['uB', b.out[1].t], ['uC', b.out[2].t], ['uT1', this.T[0]], ['uT2', this.T[1]], ['uT3', this.T[2]]], u => {
       const f = k => (p[k] || 0) / 100;
       gl.uniform2f(u('uPx'), scale / W, scale / H);
       gl.uniform3fv(u('uMean'), data.mean);
@@ -594,7 +628,8 @@ export class SkinFx {
       for (const [n, k] of Object.entries({ ...map, ...FILL, ...SCCOL })) gl.uniform1f(u(n), f(k));
       gl.uniform1fv(u('uAi'), AI.map(f));
     });
-    return this.canvas;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return this.out.t;
   }
 }
 
