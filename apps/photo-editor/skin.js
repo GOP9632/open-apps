@@ -7,6 +7,7 @@
 //     - 用人像分割的皮膚類別 + 臉部特徵點畫出皮膚、各部位的遮罩
 //     - 照片在 GPU 上算三種粗細的模糊，拆成「細紋理、中等起伏、大範圍明暗」三層，再分別調整
 //   流程跟頭髮一樣：先算出「改過膚質的照片」，再交給主管線（美顏、濾鏡…）接著處理。
+import { boxBlur, mkCanvas } from './masktools.js';
 
 // [key, 名稱, 圖示, 最小, 第一次點開的強度]
 const ic = d => `<svg viewBox="0 0 24 24">${d}</svg>`;
@@ -90,37 +91,15 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const avg = (pts, ids) => ids.reduce((s, i) => ({ x: s.x + pts[i].x / ids.length, y: s.y + pts[i].y / ids.length }), { x: 0, y: 0 });
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
-function boxBlur(a, w, h, r, n = 2) {
-  if (r < 1) return a;
-  const b = new Float32Array(w * h);
-  for (let pass = 0; pass < n; pass++) {
-    for (let y = 0; y < h; y++) {
-      let s = 0; const o = y * w;
-      for (let x = -r; x <= r; x++) s += a[o + Math.min(w - 1, Math.max(0, x))];
-      for (let x = 0; x < w; x++) {
-        b[o + x] = s / (2 * r + 1);
-        s += a[o + Math.min(w - 1, x + r + 1)] - a[o + Math.max(0, x - r)];
-      }
-    }
-    for (let x = 0; x < w; x++) {
-      let s = 0;
-      for (let y = -r; y <= r; y++) s += b[Math.min(h - 1, Math.max(0, y)) * w + x];
-      for (let y = 0; y < h; y++) {
-        a[y * w + x] = s / (2 * r + 1);
-        s += b[Math.min(h - 1, y + r + 1) * w + x] - b[Math.max(0, y - r) * w + x];
-      }
-    }
-  }
-  return a;
-}
 
 // 準備膚質資料，同一張照片只算一次
 //   T1：R = 全部皮膚（扣掉眼、眉、嘴、鼻孔）、G = 臉部皮膚、B = 身體皮膚、A = 嘴唇和嘴唇周圍（唇紋）
 //   T2：R = 額頭（抬頭紋）、G = 法令紋、B = 眼周（眼紋）、A = 脖子（頸紋）
 //   T3：R = 臉的高點（水光肌）、G = 蘋果肌（腮紅肌）、B = 眼睛裡面（亮眼）、A = 眼皮到眉毛（眼睛顏色）
+//   canvas：照片，或 { width, height, img }（背景執行緒：原尺寸的寬高，img 是縮成分割圖大小的照片）
 export function prepSkin(canvas, seg, faces) {
   const w = seg.w, h = seg.h, n = w * h, kx = w / canvas.width, ky = h / canvas.height;
-  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const c = mkCanvas(w, h);
   const ctx = c.getContext('2d', { willReadFrequently: true });
   const r0 = Math.max(1, Math.round(Math.max(w, h) / 200));
   // 畫一層灰階形狀、模糊後取出
@@ -217,8 +196,7 @@ export function prepSkin(canvas, seg, faces) {
     T3[i * 4] = glow[i] * face * holes[i] * 255; T3[i * 4 + 1] = cheek[i] * face * 255; T3[i * 4 + 2] = eyeIn[i] * 255; T3[i * 4 + 3] = lid[i] * 255;
   }
   // 皮膚平均色（線性空間平均後轉回 sRGB），原生感、素顏肌的膚色統一用
-  const s = document.createElement('canvas'); s.width = w; s.height = h;
-  const sc = s.getContext('2d', { willReadFrequently: true }); sc.drawImage(canvas, 0, 0, w, h);
+  const sc = mkCanvas(w, h).getContext('2d', { willReadFrequently: true }); sc.drawImage(canvas.img || canvas, 0, 0, w, h);
   const px = sc.getImageData(0, 0, w, h).data;
   const m = [0, 0, 0]; let ms = 0;
   for (let i = 0; i < n; i += 3) {

@@ -2,6 +2,7 @@
 //   醒圖的頭髮面板全部是上傳到伺服器用 AI 重畫，只有低、中、高幾檔。
 //   這裡改成在裝置上做：用 MediaPipe 的頭髮分割當遮罩，自己寫的 GPU 調色和局部變形，強度可以連續調。
 //   流程：先算出「改過頭髮的照片」，再交給主管線（美顏、濾鏡…）接著處理。
+import { boxBlur as blur, mkCanvas } from './masktools.js';
 
 // 第一次點開時的強度，照醒圖點開時預設的那一檔換算（低 33、中 66）
 export const HAIR = [
@@ -33,28 +34,6 @@ export const hairColorOn = p => !!p.hairDye || ['hairUni', 'hairFly', 'hairGap',
 export const hairNeedsSeg = p => hairColorOn(p) || !!p.hairVol;
 
 // ---------- 遮罩（在分割圖的解析度上，用 CPU 算一次） ----------
-function blur(a, w, h, r, n = 2) {
-  const b = new Float32Array(w * h);
-  for (let pass = 0; pass < n; pass++) {
-    for (let y = 0; y < h; y++) {
-      let s = 0; const o = y * w;
-      for (let x = -r; x <= r; x++) s += a[o + Math.min(w - 1, Math.max(0, x))];
-      for (let x = 0; x < w; x++) {
-        b[o + x] = s / (2 * r + 1);
-        s += a[o + Math.min(w - 1, x + r + 1)] - a[o + Math.max(0, x - r)];
-      }
-    }
-    for (let x = 0; x < w; x++) {
-      let s = 0;
-      for (let y = -r; y <= r; y++) s += b[Math.min(h - 1, Math.max(0, y)) * w + x];
-      for (let y = 0; y < h; y++) {
-        a[y * w + x] = s / (2 * r + 1);
-        s += b[Math.min(h - 1, y + r + 1) * w + x] - b[Math.max(0, y - r) * w + x];
-      }
-    }
-  }
-  return a;
-}
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 // 用權重平均把顏色「填」到周圍：頭髮的顏色場、背景的顏色場
@@ -73,11 +52,11 @@ function field(rgb, wt, w, h, r) {
 // 準備頭髮資料，同一張照片只算一次
 //   M：R = 頭髮、G = 髮縫（頭頂範圍內，頭髮包起來但沒被判成頭髮的地方）、B = 頭髮主體（往內縮）
 //   HF：頭髮的顏色場；BF：背景的顏色場（祛碎髮把邊緣換成背景）
+//   canvas：照片，或 { width, height, img }（同 skin.js prepSkin）
 export function prepHair(canvas, seg, faces) {
   const { w, h } = seg, n = w * h;
-  const src = document.createElement('canvas'); src.width = w; src.height = h;
-  const sctx = src.getContext('2d', { willReadFrequently: true });
-  sctx.drawImage(canvas, 0, 0, w, h);
+  const sctx = mkCanvas(w, h).getContext('2d', { willReadFrequently: true });
+  sctx.drawImage(canvas.img || canvas, 0, 0, w, h);
   const rgb = sctx.getImageData(0, 0, w, h).data;
   const H = seg.hair, bg = seg.bg;
   const r = Math.max(2, Math.round(Math.max(w, h) / 90));
@@ -117,7 +96,7 @@ export function prepHair(canvas, seg, faces) {
     if (core[i] > 0.5) { const wt = core[i]; mr += rgb[i * 4] * wt; mg += rgb[i * 4 + 1] * wt; mb += rgb[i * 4 + 2] * wt; ms += wt; }
   }
   const mean = ms > 0 ? [mr / ms / 255, mg / ms / 255, mb / ms / 255] : [0.15, 0.12, 0.1];
-  const img = (d) => { const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').putImageData(new ImageData(d, w, h), 0, 0); return c; };
+  const img = (d) => { const c = mkCanvas(w, h); c.getContext('2d').putImageData(new ImageData(d, w, h), 0, 0); return c; };
   return {
     M: img(M), F: img(F),
     HF: img(field(rgb, hairW, w, h, r * 2)),

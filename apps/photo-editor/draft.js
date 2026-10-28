@@ -64,11 +64,13 @@ function encWorker() {
   if (worker !== null) return worker;
   try {
     if (typeof OffscreenCanvas === 'undefined' || !OffscreenCanvas.prototype.convertToBlob) throw 0;
+    // w、h：先縮到這個大小再壓（encodeSmall）
     const src = `onmessage = async e => {
-      const { id, b, type, q } = e.data;
+      const { id, b, type, q, w, h } = e.data;
       try {
-        const c = new OffscreenCanvas(b.width, b.height), x = c.getContext('bitmaprenderer');
-        if (x) x.transferFromImageBitmap(b); else { c.getContext('2d').drawImage(b, 0, 0); b.close(); }
+        const c = new OffscreenCanvas(w || b.width, h || b.height), x = !w && c.getContext('bitmaprenderer');
+        if (x) x.transferFromImageBitmap(b);
+        else { const y = c.getContext('2d'); y.imageSmoothingQuality = 'high'; y.drawImage(b, 0, 0, c.width, c.height); b.close(); }
         postMessage({ id, blob: await c.convertToBlob({ type, quality: q }) });
       } catch (err) { postMessage({ id, err: String(err) }); }
     };`;
@@ -79,6 +81,18 @@ function encWorker() {
   return worker;
 }
 const viaToBlob = (c, type, q) => new Promise(r => c.toBlob(r, type, q));
+// 縮小再壓（看原圖用的最初照片）：src 是 ImageBitmap 就整張交給背景執行緒縮、壓，主執行緒不用縮 1200 萬像素（評審 M7）。
+// 交出去的 src 就不能再用了；背景執行緒失敗時回傳 null
+export async function encodeSmall(src, w, h, type, q) {
+  const wk = typeof ImageBitmap !== 'undefined' && src instanceof ImageBitmap && encWorker();
+  if (wk) {
+    const id = ++wId, r = await new Promise(res => { waiting.set(id, res); wk.postMessage({ id, b: src, type, q, w, h }, [src]); });
+    return r.blob || null;
+  }
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(src, 0, 0, w, h);
+  const b = await encode(c, type, q); c.width = 0; return b;
+}
 export async function encode(c, type, q = 0.95) {
   const w = encWorker();
   if (w) {
