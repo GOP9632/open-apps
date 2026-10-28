@@ -44,7 +44,7 @@ const CATS = [['all', '全部'], ['face', '人像'], ['scene', '生活風景'], 
 const XT_CAT = '📸一鍵出片';
 const xtId = name => { const d = xtData(), it = d?.items.find(x => x.name === name && d.cats[x.cat] === XT_CAT); return it ? it.id : null; };
 
-// 一鍵出片會動到的參數：換風格時先全部歸零，才不會越疊越多
+// 一鍵出片會動到的參數：換風格時先回到套風格前的樣子（P.lookBase），才不會越疊越多
 const KEYS = [...new Set(LOOKS.flatMap(l => Object.keys(l.set || {})).concat(['temp', 'tint', 'exposure', 'contrast', 'highlights', 'shadows', 'saturation', 'sharpen', 'mk', 'mkLook', 'mkLookAmt']))];
 
 // 智慧優化：照醒圖「智能優化」那幾項（智能調色、色偏矯正、去灰、細節增強），依照片的統計自動算
@@ -85,14 +85,19 @@ function fullSet(L, base) {
   return L.set;
 }
 
-// 套用：先把一鍵出片的參數歸零，再按強度放上去
+// 套用：先回到套風格前的樣子，再按強度從那裡往風格的值靠。
+// 以前是先全部歸零：點一個風格（連點「原圖」）會無聲洗掉自己調的美白、妝容、亮度（評審 M15）。
+// 現在第一次套風格時記下這些參數（P.lookBase），換風格、點「原圖」都回到它
 export function applyLook(P, P0, L, amt, base) {
-  for (const k of KEYS) P[k] = typeof P0[k] === 'object' ? JSON.parse(JSON.stringify(P0[k])) : P0[k];
+  const cp = v => typeof v === 'object' && v !== null ? JSON.parse(JSON.stringify(v)) : v;
+  if (L && !P.look && !P.lookBase) P.lookBase = Object.fromEntries(KEYS.map(k => [k, cp(P[k])]));
+  const b = P.lookBase || {};
+  for (const k of KEYS) P[k] = cp(k in b ? b[k] : P0[k]);
   P.look = L ? L.id : '';
   P.lookAmt = amt;
-  if (!L) return;
+  if (!L) { delete P.lookBase; return; }
   const s = amt / 100;
-  for (const [k, v] of Object.entries(fullSet(L, base))) P[k] = typeof v === 'number' ? Math.round(v * s) : v;
+  for (const [k, v] of Object.entries(fullSet(L, base))) P[k] = typeof v === 'number' ? Math.round((typeof P[k] === 'number' ? P[k] : 0) * (1 - s) + v * s) : v;
   if (L.set?.light) Object.assign(P, { lightX: null, lightY: null, lightCol: null, lightSpec: null, lightSeed: 0 });
   if (L.mk) {
     const i = mkIdx(L.mk[0]), a = L.mk[1] * s;
@@ -142,9 +147,11 @@ export function tabLooks(box, api) {
   })));
   base.lookThumbs ||= {};
   const pick = L => {
-    const off = !L || P.look === L.id;
+    const had = !!P.look, off = !L || P.look === L.id;
     applyLook(P, api.P0, off ? null : L, 100, base);
     api.render(); api.commit(); api.refresh();
+    if (!off) api.toast(`已套用「${L.name}」，點「原圖」回到套用前的樣子`, 3000);
+    else if (had) api.toast('已回到套用風格前的樣子');
     if (!off && api.needSeg()) api.findPerson();
   };
   box.append(api.item({ label: '原圖', icon: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>', on: !P.look, onclick: () => pick(null) }));
@@ -159,9 +166,9 @@ export function tabLooks(box, api) {
   if (L) api.setSlider('強度', 0, 100, P.lookAmt ?? 100, v => { applyLook(api.P(), api.P0, L, v, base); api.render(); });
   else api.hideSlider();
   const faces = base.faces;
-  api.note(!L ? '點一下套用整組風格，再點一次取消。套用後各分頁還可以再微調。'
+  api.note(!L ? '點一下套用整組風格（會取代同一類的設定），再點一次或點「原圖」回到套用前。'
     : L.xt === '富士閃光' && faces && !faces.length ? '這張照片沒找到人，富士閃光跟醒圖一樣只對人像有效，照片保持原樣。'
     : L.face && faces && !faces.length ? '這張照片沒找到臉，人像風格只會套到色調；可以試試「生活風景」。'
       : L.auto ? '依這張照片自動校正色偏、亮度、去灰和細節。'
-        : '整組效果一起調強度。套用後各分頁還可以再微調。');
+        : '整組效果一起調強度，點「原圖」回到套用前。套用後各分頁還可以再微調。');
 }
