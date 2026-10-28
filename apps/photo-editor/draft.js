@@ -2,6 +2,8 @@
 // 照醒圖首頁的「草稿」：最多留 5 份，舊的自動刪掉。每份存：m:<id> 參數和縮圖（小）、p:<id> 照片、
 // q:<id>:<第幾筆> 之後美顏筆、塗鴉每一筆改到的那一塊（原始像素，不用壓）。接著修時照片疊上前幾筆（m 裡的 ptr 記到第幾筆）。
 // o:<id> 看原圖用的最初照片（縮小的 JPEG，只寫一次；m 裡的 om 記目前照片對到它的位置）。
+// f:<id> 使用者選的原檔：p 換成重壓過的整張（消除、合併、裁切）以後才另外存一份，不重壓；
+// p 還是原檔時 m 裡記 p0（不用存兩份）。接著修時「全部重設」才回得到真正的原圖（評審 #144 中 1）。
 // 每一筆只存改到的那一塊：不用每筆重壓整張 1200 萬像素照片，畫完不會頓一下（評審 2026-10-27）
 const KEEP = 5;
 let dbP = null;
@@ -36,24 +38,25 @@ const qKey = (id, i) => `q:${id}:${String(i).padStart(7, '0')}`;
 const qRange = id => IDBKeyRange.bound(`q:${id}:`, `q:${id}:\uffff`);
 // patches：照順序排好、只留 ptr 範圍內的那幾筆
 export async function readDraft(id) {
-  const r = await tx('readonly', s => [s.get('m:' + id), s.get('p:' + id), s.getAll(qRange(id)), s.getAllKeys(qRange(id)), s.get('o:' + id)]);
+  const r = await tx('readonly', s => [s.get('m:' + id), s.get('p:' + id), s.getAll(qRange(id)), s.getAllKeys(qRange(id)), s.get('o:' + id), s.get('f:' + id)]);
   if (!r || !r[0] || !r[1]) return null;
   const ptr = r[0].ptr || { i0: 0, pv: 0 };
   const patches = r[3].map((k, j) => [+k.slice(k.lastIndexOf(':') + 1), r[2][j]]).filter(([i]) => i >= ptr.i0 && i < ptr.pv).sort((a, b) => a[0] - b[0]).map(x => x[1]);
-  return { meta: r[0], photo: r[1], patches, orig: r[4]?.blob || null };
+  return { meta: r[0], photo: r[1], patches, orig: r[4]?.blob || null, file: r[5]?.blob || null };
 }
-// photo：新的整張照片（之前的每一筆一起清掉）；puts：[[第幾筆, { x, y, img }]]；orig：最初照片（第一次存才給）
-export async function writeDraft(meta, { photo = null, puts = [], orig = null } = {}) {
+// photo：新的整張照片（之前的每一筆一起清掉）；puts：[[第幾筆, { x, y, img }]]；orig：最初照片（第一次存才給）；file：原檔（只寫一次）
+export async function writeDraft(meta, { photo = null, puts = [], orig = null, file = null } = {}) {
   const old = (await listDrafts()).filter(m => m.id !== meta.id).slice(KEEP - 1);
   await tx('readwrite', s => {
     if (photo) { s.put({ blob: photo }, 'p:' + meta.id); s.delete(qRange(meta.id)); }
     if (orig) s.put({ blob: orig }, 'o:' + meta.id);
+    if (file) s.put({ blob: file }, 'f:' + meta.id);
     for (const [i, q] of puts) s.put(q, qKey(meta.id, i));
     s.put(meta, 'm:' + meta.id);
     old.forEach(m => drop(s, m.id));
   });
 }
-const drop = (s, id) => { s.delete('m:' + id); s.delete('p:' + id); s.delete('o:' + id); s.delete(qRange(id)); };
+const drop = (s, id) => { s.delete('m:' + id); s.delete('p:' + id); s.delete('o:' + id); s.delete('f:' + id); s.delete(qRange(id)); };
 export const deleteDraft = id => tx('readwrite', s => drop(s, id));
 
 // 照片壓成檔案：交給背景執行緒壓（1200 萬像素在主執行緒壓會卡一下，剛好碰到下一筆就不跟手）。

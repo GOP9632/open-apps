@@ -205,36 +205,51 @@ function busy(msg) { $('#busyText').textContent = msg || '處理中…'; $('#bus
 const clone = o => JSON.parse(JSON.stringify(o));
 
 // ---------- 載入照片 ----------
+// 照片檔解開、縮到能修的大小（bmp 是原尺寸，用完要 close）
+async function decodePhoto(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(async () => {
+    const img = new Image(); img.src = URL.createObjectURL(file); await img.decode(); return img;
+  });
+  let w = bmp.width, h = bmp.height;
+  const k = Math.min(1, MAX_SIDE / Math.max(w, h), Math.sqrt(MAX_AREA / (w * h)));
+  w = Math.round(w * k); h = Math.round(h * k);
+  const c = photoCanvas(w, h);
+  c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+  return { bmp, c };
+}
 // m：草稿（接著修上次的照片）
 async function loadFile(file, m) {
   if (!file || !R) return;
   if (base) saveDraft(true);  // 換照片前，修到一半的這張先存成草稿
   busy(m ? '打開上次的照片…' : '讀取照片…');
   try {
-    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(async () => {
-      const img = new Image(); img.src = URL.createObjectURL(file); await img.decode(); return img;
-    });
-    let w = bmp.width, h = bmp.height;
-    const k = Math.min(1, MAX_SIDE / Math.max(w, h), Math.sqrt(MAX_AREA / (w * h)));
-    w = Math.round(w * k); h = Math.round(h * k);
-    const c = photoCanvas(w, h);
-    c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    const { bmp, c } = await decodePhoto(file), w = c.width, h = c.height, saved = m?.origBlob && m.om;
     // 看原圖用的最初照片：草稿有存就用存的，沒有就是這張（疊上之後的筆畫之前）
-    const orig = m?.origBlob && m.om ? { blob: m.origBlob, ready: Promise.resolve(m.origBlob) } : makeOrig(bmp, bmp.width, bmp.height);
-    const om = m?.origBlob && m.om ? m.om : [1 / w, 0, 0, 1 / h, 0, 0];
+    if (saved) bmp.close?.();
+    const orig = saved ? { blob: m.origBlob, ready: Promise.resolve(m.origBlob) } : makeOrig(bmp, bmp.width, bmp.height);
+    const om = saved ? m.om : [1 / w, 0, 0, 1 / h, 0, 0];
     m?.patches?.forEach(q => c.getContext('2d').putImageData(q.img, q.x, q.y));  // 草稿：照片疊上之後畫的每一筆
     P = { ...P0, ...m?.P }; texts = m?.texts || []; selText = -1; stickers = m?.stickers || []; selSt = -1;
     hist = []; hi = -1;
     perfSkip(); setBase(c, { orig, om });
     if (!m) srcFile.set(c, file);
-    newDraft(c, m);
+    newDraft(c, m, file);
     $('#empty').style.display = 'none'; $('#empty').classList.remove('over');
     $('#wrap').classList.add('on'); $('#panel').classList.remove('off');
     ['#bSave', '#bCmp', '#bResetAll', '#bMerge'].forEach(s => $(s).disabled = false);
     view.reset(); $('#zoom').classList.add('on'); $('#hist').classList.add('on');
     commit(); hist[0].first = !m;
     if (m) {
-      hist[0].resumed = true; tab = ''; showTab(TABS_OK(m.tab) ? m.tab : 'beauty'); drawTexts(); drawStickers();
+      hist[0].resumed = true;
+      // 草稿裡有原檔：最前面多一步「剛打開的照片」（用到才解開），全部重設、一直按復原才回得到真正的原圖。
+      // 以前只回到這次接著修的那一刻，還常常說「還沒有修改」；按住看原圖卻看得到原圖（評審 #144 中 1）
+      const f0 = draft.src;
+      if (f0 && (m.patches?.length || !m.p0 || hist[0].sP !== JSON.stringify(P0) || texts.length || stickers.length)) {
+        hist.unshift(snap({ canvas: null, blob: f0, file: true, orig: base.orig }, P0, [], []));
+        hist[0].first = true; hi = 1;
+      }
+      syncHist();
+      tab = ''; showTab(TABS_OK(m.tab) ? m.tab : 'beauty'); drawTexts(); drawStickers();
     } else {
       // 照 Hypic：人像照進來先停在「人像」；找不到臉就改停在濾鏡
       landing = true; tab = ''; showTab('beauty');
@@ -350,6 +365,7 @@ function seekSurf(S, v) {
 // rects：改到的那幾塊，照片的貼圖只傳這幾塊（整張重傳又慢又吃記憶體）
 function pixelsChanged(c, rects) {
   if (hairFx) hairFx.src = null; if (skinFx) skinFx.src = null;
+  alphaOf.delete(c);
   if (!rects) { pvCache.delete(c); return; }
   // 預覽縮圖只重畫改到的那幾塊（以前整張 1200 萬像素重縮）
   const v = pvCache.get(c);
@@ -394,6 +410,14 @@ function shelve(b) {
   if (b.surf) { shelveSurf(b.surf); return; }
   const c = b.canvas;
   if (!c || shelving.has(b) || !hist.some(h => h.base === b)) return;
+  // 原檔解開的那張（剛打開的照片）：不用重壓，放掉畫布、留著原檔就好，復原時照原檔重解（一樣的像素）
+  const f = srcFile.get(c);
+  if (f) {
+    if (b === base) return;
+    Object.assign(b, { canvas: null, blob: f, file: true, w: c.width, h: c.height });
+    new Set(hist.map(h => h.base)).forEach(strip);
+    return;
+  }
   shelving.add(b);
   c.toBlob(blob => {
     shelving.delete(b);
@@ -418,9 +442,9 @@ function shelveSurf(S) {
 // 壓起來的舊照片：跟現在這張共用的偵測結果（臉、人像）留著；不共用的放掉，復原時再重算
 function strip(b) {
   if (!b.blob || !('facesP' in b) || b.facesP === base.facesP) return;
-  const { blob, w, h, orig, om } = b;
+  const { blob, w, h, orig, om, file } = b;
   for (const k of Object.keys(b)) delete b[k];
-  Object.assign(b, { canvas: null, blob, w, h, orig, om });
+  Object.assign(b, { canvas: null, blob, w, h, orig, om, file });
 }
 async function unshelve(b) {
   if (b.canvas) return;
@@ -435,12 +459,27 @@ async function unshelve(b) {
     b.canvas = S.canvas;
     return;
   }
+  if (!('facesP' in b)) Object.assign(b, BASE0);
+  if (b.file) {
+    // 草稿裡的原檔（評審 #144 中 1）：跟剛打開時一樣解開、縮小；之後存草稿直接存這個原檔
+    const f = b.blob, { bmp, c } = await decodePhoto(f); bmp.close?.();
+    b.om ||= [1 / c.width, 0, 0, 1 / c.height, 0, 0];
+    srcFile.set(c, f);
+    Object.assign(b, { canvas: c, blob: null, file: false });
+    return;
+  }
   const bmp = await createImageBitmap(b.blob), c = photoCanvas(b.w, b.h);
   c.getContext('2d').drawImage(bmp, 0, 0); bmp.close?.();
-  if (!('facesP' in b)) Object.assign(b, BASE0);
   b.canvas = c; b.blob = null;
 }
+// 結果記在 canvas 上（存草稿、壓舊照片都要問，12MP 縮一次在 iPhone 要幾十 ms，評審 L9）；畫過就重問（pixelsChanged）
+const alphaOf = new WeakMap();
 function hasAlpha(c) {
+  let a = alphaOf.get(c);
+  if (a === undefined) alphaOf.set(c, a = alphaNow(c));
+  return a;
+}
+function alphaNow(c) {
   const t = newCanvas(32, 32), x = t.getContext('2d', { willReadFrequently: true });
   x.drawImage(c, 0, 0, 32, 32);
   const d = x.getImageData(0, 0, 32, 32).data;
@@ -577,6 +616,7 @@ async function findPerson(quiet) {
 // ---------- 畫面 ----------
 function layout() {
   if (!base) return;
+  if (hold?.b === base) { layoutLater = true; return; }
   const st = $('#stage').getBoundingClientRect();
   // 裁切時照片往上讓出底下一排（復原、重做），按鈕不會壓在裁切框的把手上（評審 M25；#stage.crop 底下留 52px）
   const pad = 12, w = base.canvas.width, h = base.canvas.height, low = cropState ? 52 : 0;
@@ -626,6 +666,7 @@ function render() {
   raf = requestAnimationFrame(() => {
     raf = 0;
     if (cmpOn) { const o = origFrame(); if (o) R.drawOrig(o); perfDrawn(); return; }
+    if (held()) return;
     const f = liveFilter(), lut = gradeOn(P) ? getGradeLut() : f === 'none' ? null : getLut(f);
     // 皮膚、頭髮另外一套顏色要用皮膚遮罩和分類圖，還沒找過臉就先找
     if ((lut?.skin || lut?.hair) && !base.facesP) findFaces();
@@ -635,6 +676,33 @@ function render() {
     if (curFrame()?.live) paintFrame();
     perfDrawn();
   });
+}
+// 復原、重做跳到另一張照片（裁切、消除、合併的前後）：那張的臉、膚質、頭髮資料重算好之前，畫面先停在上一格，
+// 不然會先閃一下沒修過的臉（評審 #144 小 2）。最多等 3 秒；超過 0.3 秒就蓋上「復原中」。版面也等到換畫面時才換
+let hold = null, layoutLater = false;
+const DATA_TABS = ['beauty', 'shape', 'makeup', 'skin', 'aiskin', 'hair', 'light'];
+// t0：按下復原的時間（解壓照片已經等了一段，「復原中」不要先收再蓋）
+function holdFrame(t0) {
+  if (hold) { clearTimeout(hold.bt); clearTimeout(hold.tt); }
+  const h = hold = { b: base, t: performance.now() + 3000, tt: setTimeout(render, 3020) }, show = () => { if (hold === h) { h.shown = true; busy('復原中…'); } };
+  const wait = 300 - (performance.now() - t0);
+  if (wait > 0) h.bt = setTimeout(show, wait); else show();
+}
+// 這張還缺資料（順便開始算膚質、頭髮：平常是畫的時候才開始）
+function needsData(b) {
+  if (!DATA_TABS.some(t => TAB_RESET[t]?.on())) return false;
+  const sk = skinOn(P) && !b.skin, hr = hairNeedsSeg(P) && !b.hair;
+  if (sk) getSkin(b); if (hr) getHair(b);
+  return !b.faces || (b.faces.length > 0 && !b.mask) || sk || hr;
+}
+function held() {
+  if (!hold) return false;
+  if (hold.b === base && performance.now() < hold.t && needsData(base)) return true;
+  clearTimeout(hold.bt); clearTimeout(hold.tt);
+  if (hold.shown) busy();
+  hold = null;
+  if (layoutLater) { layoutLater = false; layout(); }
+  return false;
 }
 // 存檔、合併、摳圖要原尺寸；其他時候畫預覽大小
 let holdFull = false;
@@ -948,14 +1016,19 @@ function getLut(id) {
 }
 
 // ---------- 復原、重做 ----------
+// 復原紀錄的一步：參數、文字、貼紙另外留 JSON 字串，比對用
+function snap(b, p, t, s) {
+  const sP = JSON.stringify(p), sT = JSON.stringify(t), sS = JSON.stringify(s);
+  return { base: b, P: JSON.parse(sP), texts: JSON.parse(sT), stickers: JSON.parse(sS), sP, sT, sS };
+}
 function commit() {
   // 評審 M24、M26：跟現在這一步一模一樣就不記（調筆刷大小、強度只改筆，推臉輕點一下沒推動）：
   // 以前會多一步，第一下復原沒反應，還把可以重做的步驟砍掉、吃掉 50 步上限
-  const cur = hist[hi], sP = JSON.stringify(P), sT = JSON.stringify(texts), sS = JSON.stringify(stickers);
-  if (cur && cur.base === base && cur.sP === sP && cur.sT === sT && cur.sS === sS) return;
+  const cur = hist[hi], e = snap(base, P, texts, stickers);
+  if (cur && cur.base === base && cur.sP === e.sP && cur.sT === e.sT && cur.sS === e.sS) return;
   resetFrom = null;
   hist = hist.slice(0, hi + 1);
-  hist.push({ base, P: JSON.parse(sP), texts: JSON.parse(sT), stickers: JSON.parse(sS), sP, sT, sS });
+  hist.push(e);
   if (hist.length > 50) hist.shift();  // 醒圖：最多復原 50 步
   // 消除、合併每一步都是一張新的整張照片：舊的會壓成檔案（見 shelve），最多留 15 張不同的照片
   // （美顏筆、塗鴉畫在同一張上，整串算一張）
@@ -970,7 +1043,7 @@ let restoring = false;
 async function restore(i) {
   if (restoring) return;
   resetFrom = null;
-  const s = hist[i];
+  const s = hist[i], t0 = performance.now();
   const changed = s.base !== base;
   if (changed && !s.base.canvas) {
     // 解壓通常很快：0.3 秒內好就不蓋「復原中」（評審 #144 小 1：一閃一閃的）
@@ -981,7 +1054,7 @@ async function restore(i) {
   const fr = P.frame;
   P = clone(s.P); texts = clone(s.texts); stickers = clone(s.stickers); selText = -1; selSt = -1;
   if (changed && s.base.surf && s.base.surf === base.surf) { seekSurf(s.base.surf, s.base.ver); base = s.base; render(); }
-  else if (changed) { if (s.base.surf) seekSurf(s.base.surf, s.base.ver); const old = base; base = s.base; applyBase(); shelveLater(old); } else render();
+  else if (changed) { if (s.base.surf) seekSurf(s.base.surf, s.base.ver); const old = base; base = s.base; holdFrame(t0); applyBase(); shelveLater(old); } else render();
   // 只差在邊框的兩步：照片的位置、大小跟著邊框變（評審 #144 中 2）
   if (P.frame !== fr) layout();
   showTab(tab); drawTexts(); drawStickers(); syncHist();
@@ -1289,6 +1362,9 @@ function tabFilter(box) {
 // 上排的「合併」：把目前的濾鏡畫進照片，就能再疊下一個濾鏡（醒圖、美圖秀秀的「合併」）
 $('#bMerge').onclick = () => P.filter === 'none' ? toast('先在「濾鏡」選一個濾鏡，再按合併') : mergeFilter();
 // 只套濾鏡、其他調整先不算，畫成原尺寸的新照片；其他調整、美顏照舊留著可以再改
+// shader 裡排在濾鏡 LUT 前面的整張調整和打光、閃光燈：合併時跟濾鏡一起畫進照片再歸零。以前只畫濾鏡、這些留著，
+// 合併後變成先濾鏡再調整，LUT 不是線性的，按下去整張亮一點（評審 L47：日系空氣 +3～4 階；現在平均差 0.03 階）
+const PRE_LUT = ['backlight', 'exposure', 'brightness', 'lightSense', 'shadows', 'highlights', 'contrast', 'temp', 'tint', 'saturation', 'vibrance', 'fade'];
 async function mergeFilter() {
   if (P.filter === 'none') return;
   busy('合併中…');
@@ -1296,8 +1372,8 @@ async function mergeFilter() {
     await bbWait();
     // 濾鏡裡皮膚、頭髮另外一套顏色要等臉找完
     await findFaces();
-    const now = P, f = liveFilter(), lut = getLut(f);
-    P = { ...clone(P0), filter: now.filter, filterAmt: now.filterAmt };
+    const now = P, f = liveFilter(), lut = getLut(f), pre = k => Object.fromEntries([...PRE_LUT, ...tabKeys.light].map(x => [x, clone(k[x] ?? null)]));
+    P = { ...clone(P0), filter: now.filter, filterAmt: now.filterAmt, ...pre(now) };
     let out;
     try {
       R.setLut(lut?.c, lut?.skin, lut?.hair);
@@ -1305,12 +1381,13 @@ async function mergeFilter() {
       out = photoCanvas(base.canvas.width, base.canvas.height);
       out.getContext('2d').drawImage($('#gl'), 0, 0);
     } finally { P = now; }
-    P = { ...now, filter: 'none', filterAmt: P0.filterAmt };
+    P = { ...now, filter: 'none', filterAmt: P0.filterAmt, ...pre(P0) };
     // 臉、人像這些偵測結果還是同一張照片，留著不用重算；濾鏡縮圖要照新照片重算
     const keep = { ...base };
     for (const k of ['canvas', 'thumbs', 'thumbSrc', 'harm', 'small', 'lookThumbs', 'autoSet']) delete keep[k];
     setBase(out, keep); commit(); showTab(tab);
-    toast('已合併，可以再選一個濾鏡疊上去');
+    const parts = ['濾鏡', PRE_LUT.some(k => now[k]) && '調整', (now.light || now.flash) && '打光'].filter(Boolean);
+    toast(parts.length > 1 ? `已合併（${parts.join('、')}都畫進照片了），可以再選一個濾鏡疊上去` : '已合併，可以再選一個濾鏡疊上去');
   } catch (e) { console.error(e); toast('合併失敗，再試一次'); }
   finally { busy(); }
 }
@@ -3032,10 +3109,12 @@ const TABS_OK = t => t && t !== 'crop' && t !== 'tpl' && GROUPS.some(g => g[3].i
 const PATCH_CAP = 32e6;  // 一筆一筆的加起來超過就重壓一張整張的，草稿不會越存越大
 addEventListener('pointerdown', e => { downs.add(e.pointerId); downAt = performance.now(); }, true);
 ['pointerup', 'pointercancel'].forEach(t => addEventListener(t, e => downs.delete(e.pointerId), true));
-function newDraft(c, m) {
+// file：打開的檔案。src：使用者選的原檔（p0：草稿裡的照片就是原檔；不是的話另外存一份，fSaved：存過了）
+function newDraft(c, m, file) {
   const p = m?.ptr || { i0: 0, pv: 0 };
   // pc：草稿裡的照片（加上那幾筆）是哪一張 canvas 的樣子
   draft = { id: m?.id || Date.now(), on: !!m, thumb: m?.thumb || '', pend: { c, m: new Map() }, ptr: m ? p : null, pc: m ? c : null, origSaved: !!m?.origBlob,
+    src: !m ? file : m.p0 ? file : m.file0 || null, p0: !!m?.p0, fSaved: !!m?.file0,
     ph: m ? { c, i0: p.i0, n: p.pv - p.i0, ib: p.pv, vb: 0, bytes: (m.patches || []).reduce((s, q) => s + q.img.data.length, 0) } : null };
 }
 // 美顏筆、塗鴉畫了第 k 筆：先記在記憶體，下一次存草稿時寫進去
@@ -3097,7 +3176,9 @@ function saveDraft(mode) {
   }
   if (!plan && !d.ptr) { clearTimeout(draftT2); draftT2 = setTimeout(() => saveDraft('idle'), 6000); return draftQ; }  // 草稿裡還沒有照片：等停手再壓
   if (slow || photo || !d.thumb) d.thumb = draftThumb();
-  const meta = { id: d.id, t: Date.now(), P: clone(P), texts: clone(texts), stickers: clone(stickers), tab, thumb: d.thumb, ptr: plan ? plan.ptr : d.ptr, om: base.om };
+  // 草稿裡的照片是不是原檔；不是的話原檔另外存一次（評審 #144 中 1）
+  const p0 = d.p0 = plan?.base ? true : photo ? false : d.p0, file = !p0 && !d.fSaved && d.src;
+  const meta = { id: d.id, t: Date.now(), P: clone(P), texts: clone(texts), stickers: clone(stickers), tab, thumb: d.thumb, ptr: plan ? plan.ptr : d.ptr, om: base.om, p0 };
   const assets = draftAssets(meta.stickers, meta.P), orig = !d.origSaved && base.orig;
   if (plan) { d.ph = plan.ph; d.ptr = plan.ptr; d.pc = c; }
   const puts = plan?.puts || [], blob = photo || (plan?.base ? Promise.resolve(plan.base) : null);
@@ -3106,8 +3187,9 @@ function saveDraft(mode) {
     if (blob && !b) throw new Error('照片壓不起來');
     meta.assets = await assets;
     const ob = orig && await orig.ready;
-    await writeDraft(meta, { photo: b, puts, orig: ob });
+    await writeDraft(meta, { photo: b, puts, orig: ob, file });
     if (ob && d === draft) d.origSaved = true;
+    if (file && d === draft) d.fSaved = true;
     // 寫進去了：記憶體裡那幾筆可以放掉
     for (const [i, q] of puts) { const k = plan.ph.vb + i - plan.ph.ib; if (d.pend.m.get(k) === q) d.pend.m.delete(k); }
     if (photo) for (const k of d.pend.m.keys()) if (k < ver) d.pend.m.delete(k);
@@ -3156,7 +3238,7 @@ async function resumeDraft(id) {
       else if (v.rgb && v.alpha) restoreLayer(k, { rgb: await toCanvas(v.rgb), alpha: await toCanvas(v.alpha), cut: v.cut });
     }
     busy();
-    await loadFile(d.photo.blob, { ...d.meta, patches: d.patches, origBlob: d.orig });
+    await loadFile(d.photo.blob, { ...d.meta, patches: d.patches, origBlob: d.orig, file0: d.file });
   } catch (e) { console.error(e); busy(); toast('這份草稿打不開'); }
 }
 // 首頁的草稿列（修圖中按「換照片」也會回到首頁，現在這張不列）
