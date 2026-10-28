@@ -109,9 +109,11 @@ button{background:none;border:0;padding:0;cursor:pointer}
 .st.erasing{cursor:crosshair}
 .st.sel{outline-color:rgba(255,255,255,.85)}
 #wrap.lightdrag{cursor:grab}
-#bmbox{position:absolute;border:2px dashed #fff;box-shadow:0 0 0 1px rgba(0,0,0,.4);pointer-events:none;z-index:5;box-sizing:border-box}
-#bmbox.band{border-left:0;border-right:0;background:rgba(255,255,255,.08)}
-#bmbox.oval{border-radius:50%}
+#bmctl{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:5;overflow:visible}
+#bmctl path{fill:none;stroke:#fff;stroke-width:1.5px;vector-effect:non-scaling-stroke}
+#bmctl path.sh{stroke:rgba(0,0,0,.3);stroke-width:3.5px}
+#bmctl circle{fill:#fff;stroke:rgba(0,0,0,.2);stroke-width:1px;vector-effect:non-scaling-stroke}
+#bmctl g path{stroke:#222;stroke-width:1.8px;vector-effect:none;stroke-linecap:round;stroke-linejoin:round}
 #ddov{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:4}
 #rsring{position:absolute;transform:translate(-50%,-50%);border:2px solid #fff;border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.4);pointer-events:none;z-index:5}
 #rsring.idle{opacity:.6;border-style:dashed}
@@ -374,7 +376,7 @@ input[type=range].grad::-moz-range-progress{background:transparent}
     <div id="pbody">
     <div class="srow hide" id="srow"><label id="sLabel"></label><input type="range" id="slider" min="-100" max="100" value="0" aria-label="強度"><output id="sVal">0</output></div>
     <div id="rows"></div>
-    <div class="phead"><div class="note" id="note"></div><div class="seg" id="sideSeg" role="group" aria-label="調哪一邊" hidden><button data-sd="both">兩邊</button><button data-sd="L">左</button><button data-sd="R">右</button></div><button id="protSw" role="switch" aria-checked="true" hidden>背景保護<i></i></button><button id="bTabReset" hidden>重設</button></div>
+    <div class="phead"><div class="note" id="note"></div><div class="seg" id="sideSeg" role="group" aria-label="調哪一邊" hidden><button data-sd="both">兩邊</button><button data-sd="L">左</button><button data-sd="R">右</button></div><div class="seg" id="modeSeg" role="group" aria-label="塗抹或擦除" hidden><button data-m="paint">塗抹</button><button data-m="erase">擦除</button></div><button id="protSw" role="switch" aria-checked="true" hidden>背景保護<i></i></button><button id="bTabReset" hidden>重設</button></div>
     <div class="textedit" id="textedit" hidden><textarea id="textInput" rows="1" placeholder="輸入文字"></textarea></div>
     <div class="textedit" id="stsearch" hidden><input id="stkQ" type="search" placeholder="搜尋貼紙，例如愛心、星星" enterkeyhint="search"></div>
     <div class="items" id="cats" hidden></div>

@@ -3,7 +3,7 @@ import { FILTERS, bakeLUT, thumb, filterFn, skinFilterFn, hairFilterFn } from '.
 import { loadXT, xtData, xtItem } from './xt.js';
 import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor, beardSize } from './ai.js';
 import { COVERS, COVER_CATS, coverPixels } from './coverface.js';
-import { STICKERS, STICKER_CATS, EMOJIS, EMOJI_FONT, BLENDS, blendById, stickerAR, stickerURL, svgURL, renderSticker, putCanvas, getCanvas, canvasURL, touchCanvas, ownImages, NET_PACKS, netURL, loadNetSticker, restoreCanvas } from './stickers.js';
+import { STICKERS, STICKER_CATS, EMOJIS, EMOJI_FONT, BLENDS, blendById, stickerAR, stickerURL, thumbURL, renderSticker, putCanvas, getCanvas, canvasURL, touchCanvas, ownImages, NET_PACKS, netURL, loadNetSticker, restoreCanvas } from './stickers.js';
 import { FX, OVERLAYS, BG_PHOTOS, FRAMES, frameById, drawFrame, paint, fitSize } from './creative.js';
 import { matte, LOW_MEM } from './matte.js';
 import { GRADE_P0, gradeOn, gradeFn, gradeKey, tabGrade, gradeHide } from './grade.js';
@@ -439,7 +439,7 @@ function shelveSurf(S) {
     shelving.delete(S);
     if (!blob || S === base.surf || S.canvas !== c) return;
     Object.assign(S, { canvas: null, blob, blobVer: S.ver, w: c.width, h: c.height });
-    bbRelease(S);
+    bbRelease(S); S.ddSes = null;
     hist.forEach(h => { if (h.base.surf === S) h.base.canvas = null; });
   }, hasAlpha(c) ? 'image/png' : 'image/jpeg', 0.95);
 }
@@ -583,6 +583,11 @@ async function segPhoto(b, w, h) {
   return createImageBitmap(c);
 }
 const idle = f => (window.requestIdleCallback || (g => setTimeout(g, 300)))(f, { timeout: 3000 });
+// 使用者最後一次碰畫面（手指按著、滾輪、鍵盤）的時間。可以晚點做的事（暖機）等停手 1 秒才做：
+// iPhone Safari 沒有 requestIdleCallback，idle 只是晚 0.3 秒，手指還在拖也照做（評審 #150）
+let lastInput = 0;
+for (const ev of ['pointerdown', 'pointermove', 'wheel', 'keydown']) addEventListener(ev, e => { if (ev !== 'pointermove' || e.buttons) lastInput = performance.now(); }, { capture: true, passive: true });
+const whenStill = f => { const w = 1000 - (performance.now() - lastInput); if (w > 0) setTimeout(() => whenStill(f), w + 50); else idle(f); };
 function findFaces() {
   const b = base;
   if (b.facesP) return b.facesP;
@@ -602,7 +607,7 @@ function findFaces() {
     if (share(b, 'facesP', ['mask', 'flashSt'])) { R.setMask(b.mask); render(); if (tab === 'beauty' || tab === 'sticker' || tab === 'makeup' || tab === 'looks') showTab(tab); }
     // 評審 M8：膚質的準備資料、膚質和頭髮的 GPU 程式趁閒置先做好，第一次拉膚質、頭髮滑桿就不用等
     // 頭髮資料也趁閒置先算（背景執行緒），點開頭髮分頁就有
-    if (f.length) idle(() => { if (base?.facesP !== b.facesP) return; getSkin(base); getHair(base); fxWarm(); });
+    if (f.length) whenStill(() => { if (base?.facesP !== b.facesP) return; getSkin(base); getHair(base); fxWarm(); });
     return f;
   }).catch(e => { console.warn(e); b.faces = []; b.faceErr = true; if (share(b, 'facesP', ['faces', 'faceErr']) && (tab === 'beauty' || tab === 'makeup')) showTab(tab); return []; });
   return b.facesP;
@@ -650,10 +655,10 @@ function paintFrame() {
 const view = canvasZoom({
   stage: $('#stage'), box: $('#fbox'),
   // 手機上一指是筆刷，兩指捏合縮放（筆刷工具看到 pinchstart 會取消這一筆）；裁切和移動燈的時候不接兩指
-  canPan: (e, touch) => !!base && !e.target.closest('.st,.tx') && (!touch || !(tab === 'crop' || (tab === 'light' && P.light))),
+  canPan: (e, touch) => !!base && !e.target.closest('.st,.tx') && !bmHit(e) && (!touch || !(tab === 'crop' || (tab === 'light' && P.light))),
   // 手機上平常不顯示縮放按鈕，放大了才出現（點百分比回到全覽）
   unit: () => frameK,
-  onChange: z => { zoomZ = z; syncView(); if (tab === 'reshape') rsRing(); if (z > 1.15) pickCenterFace(); $('#zPct').textContent = Math.round(frameK * z * 100) + '%'; $('#zoom').classList.toggle('zoomed', z !== 1); },
+  onChange: z => { zoomZ = z; syncView(); if (tab === 'reshape') rsRing(); bmBox(); if (z > 1.15) pickCenterFace(); $('#zPct').textContent = Math.round(frameK * z * 100) + '%'; $('#zoom').classList.toggle('zoomed', z !== 1); },
 });
 $('#zIn').onclick = () => view.zoomStep(1);
 $('#zOut').onclick = () => view.zoomStep(-1);
@@ -718,7 +723,9 @@ function draw(full) {
   // 手動增高也會改整張照片的上下位置，排第一個
   const pf = perFace();
   const fw = !base.faces ? [] : pf ? base.faces.flatMap((f, i) => faceWarps([f], PF(i))) : faceWarps(base.faces, P);
-  const warps = [...manualWarps(base.body, P, base.canvas.width, base.canvas.height), ...(base.body ? bodyWarps(base.body, base.faces, P) : []), ...(base.faces ? [...fw, ...hairWarps(base.faces, P, base.hair)] : [])];
+  const man = manualWarps(base.body, P, base.canvas.width, base.canvas.height);
+  const warps = [...man, ...(base.body ? bodyWarps(base.body, base.faces, P) : []), ...(base.faces ? [...fw, ...hairWarps(base.faces, P, base.hair)] : [])];
+  warps.manual = man.length;  // 手動塑身不受背景保護（gl.js uWm）
   // 背景保護要知道人在哪；有臉的照片開圖時就算好了，沒有臉的照片推的時候才算
   if (P.bgProtect && (warps.length || P.liq.length) && !base.segP) getSeg(base);
   let p = gradeOn(P) ? { ...P, filterAmt: 100 } : P;
@@ -876,13 +883,22 @@ function fxTrim(want = hairColorOn(P) && base?.hair, sWant = skinOn(P) && base?.
   if (skinFx && !sWant && !SKIN_TABS.includes(tab) && R.tImg !== skinFx.out.t) skinFx.release();
   if (!(hairFx?.out.w > 1) && !skinFx?.src) R.dropSrc();
 }
-// 先建好頭髮、膚質的 GPU 程式、各畫一次，資料好了就傳上去（評審 M8）
+// 先建好頭髮、膚質的 GPU 程式、各畫一次，資料好了就傳上去（評審 M8）。
+// 拆成四段，每段都等使用者停手 1 秒才做（評審 #150：以前開照片後 3～5 秒一口氣做完，iPhone 停 0.5～0.9 秒）。
+// 還沒做完就拉頭髮、膚質滑桿：那時候才建，跟以前一樣
+let warmQ = null;
 function fxWarm() {
-  if (!R || glLost || !base) return;
-  try {
-    hairFx ||= new HairFx(R.gl); skinFx ||= new SkinFx(R.gl);
-    hairFx.warm(base.hair); skinFx.warm(base.skin);
-  } catch (e) { console.warn(e); }
+  if (warmQ) { warmQ.again = true; return; }
+  const q = warmQ = { again: false };
+  const steps = [() => { hairFx ||= new HairFx(R.gl); }, () => hairFx?.warm(base.hair), () => { skinFx ||= new SkinFx(R.gl); }, () => skinFx?.warm(base.skin)];
+  const next = () => {
+    if (!R || glLost || !base) { warmQ = null; return; }
+    const st = steps.shift();
+    if (!st) { warmQ = null; if (q.again) fxWarm(); return; }
+    try { st(); } catch (e) { console.warn(e); }
+    whenStill(next);
+  };
+  whenStill(next);
 }
 // 進頭髮、膚質分頁：趁閒置把預覽照片傳上去、照現在的參數跑一次，第一次拉滑桿只要畫一次（評審 M8：第一下頭髮 387ms、膚質 127ms）。
 // 只跑現在沒顯示出來的那一個，畫面上的貼圖不動
@@ -1278,7 +1294,7 @@ function showTab(t) {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   $('#hist').classList.toggle('crop', t === 'crop');
   const box = $('#items'); box.innerHTML = ''; $('#rows').innerHTML = ''; $('#items').hidden = false;
-  $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true; $('#sideSeg').hidden = true; $('#protSw').hidden = true;
+  $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true; $('#sideSeg').hidden = true; $('#modeSeg').hidden = true; $('#protSw').hidden = true;
   if (!same && t === 'reshape') rsHinted = false;
   gradeHide(); hideSlider();
   if (!base) return;
@@ -1310,10 +1326,19 @@ function peekRow(row, sel = null, at = null) {
   const its = [...row.children].filter(e => !e.hidden && e.offsetWidth > 0), n = its.length, W = row.clientWidth;
   const L = row.getBoundingClientRect().left - row.scrollLeft, xOf = e => e.getBoundingClientRect().left - L;
   const go = S => { if (S != null) row.scrollLeft = S; };
-  if (n < 3) { go(at ?? (sel ? rowScroll(xOf(sel), sel.offsetWidth, W) : null)); return; }
+  // 回到原本位置時，選中的那顆被邊切到（剛點了邊上露一半那顆）：捲到整顆看得到，旁邊那顆露一半（評審 #150）
+  const keep = S => {
+    const i = its.indexOf(sel);
+    if (i < 0) return S;
+    const l = xOf(sel), r = l + sel.offsetWidth, nx = its[i + 1], pv = its[i - 1];
+    if (r > S + W) return Math.min(row.scrollWidth - W, nx ? xOf(nx) + nx.offsetWidth / 2 - W : r - W);
+    if (l < S) return Math.max(0, pv ? xOf(pv) + pv.offsetWidth / 2 : l);
+    return S;
+  };
+  if (n < 3) { go(at != null ? keep(at) : sel ? rowScroll(xOf(sel), sel.offsetWidth, W) : null); return; }
   const cs = getComputedStyle(row), g0 = parseFloat(cs.columnGap) || 0, pr = parseFloat(cs.paddingRight) || 0;
   const x0 = xOf(its[0]), ws = its.map(e => e.offsetWidth), key = W + ':' + ws.join(','), si = its.indexOf(sel);
-  if (at != null && row._peek?.key === key) { if (row._peek.g !== g0) row.style.gap = row._peek.g + 'px'; go(at); return; }
+  if (at != null && row._peek?.key === key) { if (row._peek.g !== g0) row.style.gap = row._peek.g + 'px'; go(keep(at)); return; }
   let best = null, fit = null;
   for (let g = Math.max(2, g0 - 4); g <= g0 + 8; g++) {
     const xs = [];
@@ -1392,7 +1417,7 @@ function paramRows(box, list) {
 
 // 消除筆在 erase.js，這裡把它要用的東西傳過去
 const eraseApp = { get base() { return base; }, setBase, commit, item, hideSlider, showTab, toast, busy, toSrc: srcMapper };
-doodleInput($('#wrap'), { get base() { return base; }, tab: () => tab, paint: paintPatch, commit, toSrc: srcMapper });
+doodleInput($('#wrap'), { get base() { return base; }, tab: () => tab, surf: ensureSurf, paint: paintPatch, commit, toSrc: srcMapper });
 // queued：放開了一筆、還在算：復原先亮起來（按下去會等它算完再退回）；settled：都算完了，照實際的復原步數
 beautyBrushInput($('#wrap'), { get base() { return base; }, tab: () => tab, surf: ensureSurf, paint: paintPatch, commit, toSrc: srcMapper, queued: () => { $('#bUndo').disabled = false; }, settled: syncHist });
 function tabEraseHere(box) { tabErase(box, eraseApp); }
@@ -1659,69 +1684,119 @@ function tabAiSkin(box) {
 let bodySec = 'auto';
 function tabBody(box) {
   if (!base.body) getBody(base);
-  protSw();
   const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
   [['auto', '自動塑身', BODY], ['man', '手動塑身', BODY_MAN]].forEach(([s, lb, l]) => cats.append(item({
     label: lb, icon: lb, cls: 'wide', on: bodySec === s, set: l.some(x => isSet(x[0])),
     onclick: () => { bodySec = s; cur = l[0][0]; showTab('body'); },
   })));
   if (bodySec === 'man') {
+    // 手動塑身沒有背景保護（跟 Hypic 一樣，保護只在自動塑身）
     paramItems(box, BODY_MAN, 'bmHeight');
-    $('#note').textContent = '在照片上拖曳框線調整範圍，拖框的中間可以移動。';
+    $('#note').textContent = { bmHeight: '拖兩條線選要拉長的那一段。', bmSlim: '拖中間移動，上下兩端調長短、左右調寬窄，右下角旋轉。', bmZoom: '拖圓圈移動，右下角調大小。' }[manKey()];
     return;
   }
+  protSw();
   paramItems(box, BODY, 'bodyHead');
   $('#note').textContent = bodyNote(base.body, cur);
 }
-// 手動塑身的框：增高是兩條橫線，瘦身是長方形，放大是橢圓
+// 手動塑身的控制（照 Hypic）：增高是兩條橫線（右邊有把手），瘦身是兩條腰身弧線加中軸
+// （中間移動、上下兩端調長短、左右對稱調寬窄、右下角旋轉和縮放），重塑是圓（中間移動、右下角調大小）
 const manKey = () => base && tab === 'body' && bodySec === 'man' ? (BODY_MAN.some(x => x[0] === cur) ? cur : 'bmHeight') : null;
+// 控制在照片上的樣子（照片像素）：線、把手（id、位置、圖示、轉幾度）
+function bmGeom(k) {
+  const W = base.canvas.width, H = base.canvas.height, r = manualRegion(k, base.body, P, W, H);
+  if (k === 'bmHeight') {
+    // 跟 Hypic 一樣兩條線橫過整個畫面，把手在畫面右邊（不擋照片）
+    const wr = $('#wrap').getBoundingClientRect(), sr = $('#stage').getBoundingClientRect(), u = W / Math.max(1, wr.width);
+    const xl = (sr.left - wr.left) * u, xr = (sr.right - wr.left) * u, hx = xr - 22 * u, y0 = r.y0 * H, y1 = r.y1 * H;
+    return { r, lines: [`M${xl} ${y0}H${xr}`, `M${xl} ${y1}H${xr}`], hs: [{ id: 'y0', x: hx, y: y0, ic: 'ud' }, { id: 'y1', x: hx, y: y1, ic: 'ud' }] };
+  }
+  const c = { x: r.cx * W, y: r.cy * H };
+  if (k === 'bmZoom') {
+    const R = r.r * W, q = R * Math.SQRT1_2;
+    return { r, c, R, lines: [`M${c.x - R} ${c.y}a${R} ${R} 0 1 0 ${2 * R} 0a${R} ${R} 0 1 0 ${-2 * R} 0`], hs: [{ id: 'size', x: c.x + q, y: c.y + q, ic: 'size' }] };
+  }
+  const a = r.a || 0, ax = { x: -Math.sin(a), y: Math.cos(a) }, n = { x: ax.y, y: -ax.x }, hw = r.hw * W, hh = r.hh * W;
+  const at = (u, v) => ({ x: c.x + n.x * u + ax.x * v, y: c.y + n.y * u + ax.y * v }), P2 = (u, v) => { const q = at(u, v); return `${q.x} ${q.y}`; };
+  // 弧線：兩端比中間寬一點（腰身），中間經過左右把手
+  const arc = sd => `M${P2(sd * 1.064 * hw, -hh)}Q${P2(sd * 0.936 * hw, 0)} ${P2(sd * 1.064 * hw, hh)}`;
+  const deg = a * 180 / Math.PI, h = (id, u, v, ic) => ({ id, ...at(u, v), ic, deg });
+  return { r, c, ax, n, hw, hh, lines: [arc(-1), arc(1), `M${P2(0, -hh)}L${P2(0, hh)}`],
+    hs: [h('top', 0, -hh, 'up'), h('bottom', 0, hh, 'down'), h('left', -hw, 0, 'left'), h('right', hw, 0, 'right'), h('move', 0, 0, 'move'), h('rot', 1.064 * hw, hh, 'rot')] };
+}
+const BM_IC = {
+  up: 'M-4 2l4-4 4 4', down: 'M-4-2l4 4 4-4', left: 'M2-4l-4 4 4 4', right: 'M-2-4l4 4-4 4', ud: 'M-3-2l3-3 3 3M-3 2l3 3 3-3',
+  move: 'M0-6v12M-6 0h12M-2-4l2-2 2 2M-2 4l2 2 2-2M-4-2l-2 2 2 2M4-2l2 2-2 2', size: 'M-4-4l8 8M-4 0v-4h4M4 0v4h-4',
+  rot: 'M4.5-1A4.5 4.5 0 1 0 3 3.3M4.5-4v3h-3',
+};
 function bmBox() {
-  let d = $('#bmbox');
-  if (!d) { d = document.createElement('div'); d.id = 'bmbox'; $('#wrap').append(d); }
+  let s = $('#bmctl');
+  if (!s) { $('#wrap').insertAdjacentHTML('beforeend', '<svg id="bmctl"></svg>'); s = $('#bmctl'); }
   const k = manKey();
-  d.hidden = !k;
+  s.style.display = k ? '' : 'none';
   if (!k) return;
-  const r = manualRegion(k, base.body, P);
-  d.className = k === 'bmHeight' ? 'band' : k === 'bmZoom' ? 'oval' : 'rect';
-  Object.assign(d.style, { left: r.x0 * 100 + '%', top: r.y0 * 100 + '%', width: (r.x1 - r.x0) * 100 + '%', height: (r.y1 - r.y0) * 100 + '%' });
+  const W = base.canvas.width, H = base.canvas.height, g = bmGeom(k), u = W / Math.max(1, $('#wrap').getBoundingClientRect().width);
+  s.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const line = g.lines.map(d => `<path d="${d}" class="sh"/><path d="${d}"/>`).join('');
+  const hs = g.hs.map(h => `<g transform="translate(${h.x} ${h.y}) scale(${u}) rotate(${h.deg || 0})"><circle r="12"/><path d="${BM_IC[h.ic]}"/></g>`).join('');
+  s.innerHTML = line + hs;
+}
+// 手指在照片上的哪一點（照片像素）；u：螢幕 1px 是照片幾像素
+const bmPos = e => { const r = $('#wrap').getBoundingClientRect(), W = base.canvas.width, H = base.canvas.height; return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H, u: W / r.width }; };
+// 點到手動塑身控制的哪裡：最近的把手，沒點到把手、在範圍裡面就是整個移動
+function bmHit(e) {
+  const k = manKey();
+  if (!k || e.target.closest('.st,.tx,button')) return null;
+  const q = bmPos(e), g = bmGeom(k);
+  let id = null, best = 26 * q.u;
+  for (const h of g.hs) { const d = Math.hypot(q.x - h.x, q.y - h.y); if (d < best) { best = d; id = h.id; } }
+  if (!id && k === 'bmHeight') for (const y of ['y0', 'y1']) { const d = Math.abs(q.y - g.r[y] * base.canvas.height); if (d < best) { best = d; id = y; } }
+  if (!id && k === 'bmSlim') { const d = { x: q.x - g.c.x, y: q.y - g.c.y }; if (Math.abs(d.x * g.n.x + d.y * g.n.y) < g.hw * 1.1 && Math.abs(d.x * g.ax.x + d.y * g.ax.y) < g.hh) id = 'move'; }
+  if (!id && k === 'bmZoom' && Math.hypot(q.x - g.c.x, q.y - g.c.y) < g.R) id = 'move';
+  return id && { k, q, g, id, h: g.hs.find(h => h.id === id) };
 }
 (() => {
   let drag = null;
-  const pos = e => { const r = $('#wrap').getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height, w: r.width, h: r.height }; };
-  $('#wrap').addEventListener('pointerdown', e => {
-    const k = manKey();
-    if (!k || e.target.closest('.st,.tx')) return;
-    const q = pos(e), r = { ...manualRegion(k, base.body, P) }, tx = 22 / q.w, ty = 22 / q.h;
-    const inX = q.x > r.x0 - tx && q.x < r.x1 + tx, inY = q.y > r.y0 - ty && q.y < r.y1 + ty;
-    // 靠近哪條邊就拖那條邊，在框裡面就整個移動
-    const edge = {
-      x0: k !== 'bmHeight' && inY && Math.abs(q.x - r.x0) < tx, x1: k !== 'bmHeight' && inY && Math.abs(q.x - r.x1) < tx,
-      y0: (k === 'bmHeight' || inX) && Math.abs(q.y - r.y0) < ty, y1: (k === 'bmHeight' || inX) && Math.abs(q.y - r.y1) < ty,
-    };
-    if (edge.y0 && edge.y1) edge[Math.abs(q.y - r.y0) < Math.abs(q.y - r.y1) ? 'y1' : 'y0'] = false;
-    if (edge.x0 && edge.x1) edge[Math.abs(q.x - r.x0) < Math.abs(q.x - r.x1) ? 'x1' : 'x0'] = false;
-    const move = !Object.values(edge).some(Boolean);
-    if (move && !(q.x > r.x0 && q.x < r.x1 && q.y > r.y0 && q.y < r.y1)) return;
-    e.preventDefault(); $('#wrap').setPointerCapture(e.pointerId);
-    drag = { k, q, r, edge, move };
+  // 聽整個畫面（不只照片）：增高的把手在照片外面
+  $('#stage').addEventListener('pointerdown', e => {
+    if (e.button > 0 || pinch.on) return;
+    const hit = bmHit(e);
+    if (!hit) return;
+    e.preventDefault(); $('#stage').setPointerCapture(e.pointerId);
+    drag = hit;
   });
-  $('#wrap').addEventListener('pointermove', e => {
-    if (!drag) return;
-    const q = pos(e), dx = q.x - drag.q.x, dy = q.y - drag.q.y, r0 = drag.r, r = { ...r0 }, m = 0.03;
-    const cl = v => Math.max(0, Math.min(1, v));
-    if (drag.move) {
-      const ex = drag.k === 'bmHeight' ? 0 : Math.max(-r0.x0, Math.min(1 - r0.x1, dx)), ey = Math.max(-r0.y0, Math.min(1 - r0.y1, dy));
-      r.x0 += ex; r.x1 += ex; r.y0 += ey; r.y1 += ey;
+  $('#stage').addEventListener('pointermove', e => {
+    if (!drag || pinch.on) return;
+    // m：範圍最小多大（螢幕上 28px，把手才不會疊在一起）
+    const W = base.canvas.width, H = base.canvas.height, q = bmPos(e), { k, g, id } = drag, r = { ...g.r }, m = 28 * q.u;
+    const cl = (v, a, b) => Math.max(a, Math.min(b, v));
+    if (k === 'bmHeight') {
+      if (id === 'y0') r.y0 = cl(q.y, 0, r.y1 * H - m) / H;
+      else r.y1 = cl(q.y, r.y0 * H + m, H) / H;
+    } else if (id === 'move') {
+      r.cx = cl(g.c.x + q.x - drag.q.x, 0, W) / W; r.cy = cl(g.c.y + q.y - drag.q.y, 0, H) / H;
+    } else if (k === 'bmZoom') {
+      r.r = Math.max(m, Math.hypot(q.x - g.c.x, q.y - g.c.y)) / W;
     } else {
-      if (drag.edge.x0) r.x0 = Math.min(cl(r0.x0 + dx), r.x1 - m);
-      if (drag.edge.x1) r.x1 = Math.max(cl(r0.x1 + dx), r.x0 + m);
-      if (drag.edge.y0) r.y0 = Math.min(cl(r0.y0 + dy), r.y1 - m);
-      if (drag.edge.y1) r.y1 = Math.max(cl(r0.y1 + dy), r.y0 + m);
+      const d = { x: q.x - g.c.x, y: q.y - g.c.y }, u = d.x * g.n.x + d.y * g.n.y, v = d.x * g.ax.x + d.y * g.ax.y;
+      if (id === 'left' || id === 'right') r.hw = Math.max(m, Math.abs(u)) / W;
+      else if (id === 'top' || id === 'bottom') {
+        // 拖一端，另一端不動
+        const t = id === 'top' ? Math.min(v, g.hh - 2 * m) : -g.hh, b = id === 'bottom' ? Math.max(v, -g.hh + 2 * m) : g.hh;
+        r.cx = (g.c.x + g.ax.x * (t + b) / 2) / W; r.cy = (g.c.y + g.ax.y * (t + b) / 2) / H; r.hh = (b - t) / 2 / W;
+      } else {
+        // 旋轉：跟著手指轉，離中心遠近一起縮放
+        const h0 = { x: drag.h.x - g.c.x, y: drag.h.y - g.c.y }, sc = Math.max(0.2, Math.hypot(d.x, d.y) / Math.max(1, Math.hypot(h0.x, h0.y)));
+        r.a = (g.r.a || 0) + Math.atan2(d.y, d.x) - Math.atan2(h0.y, h0.x);
+        r.hw = Math.max(m / W, g.r.hw * sc); r.hh = Math.max(m / W, g.r.hh * sc);
+      }
     }
-    P[REG_OF[drag.k]] = r; render(); bmBox();
+    P[REG_OF[k]] = r; render(); bmBox();
   });
   const up = () => { if (drag) { drag = null; commit(); } };
-  $('#wrap').addEventListener('pointerup', up); $('#wrap').addEventListener('pointercancel', up);
+  $('#stage').addEventListener('pointerup', up); $('#stage').addEventListener('pointercancel', up);
+  // 第二根手指放下來是要縮放照片：這一下拖曳不算，範圍放回去
+  addEventListener('pinchstart', () => { if (!drag) return; P[REG_OF[drag.k]] = drag.g.r; drag = null; render(); bmBox(); });
 })();
 
 // ---------- 頭髮 ----------
@@ -2074,7 +2149,7 @@ function tabSticker(box) {
   const list = stQ ? STICKERS.filter(sk => sk.name.toLowerCase().includes(stQ.toLowerCase()))
     : stCat === 'emoji' || stCat === 'mine' || net ? [] : STICKERS.filter(sk => sk.cat === stCat);
   list.forEach(sk => stkTone(box.appendChild(item({
-    label: sk.name, cls: 'stk', icon: `<img src="${svgURL(sk.id)}" alt="">`, onclick: () => addSticker({ kind: 'svg', v: sk.id }, sk.face),
+    label: sk.name, cls: 'stk', icon: `<img src="${thumbURL(sk.id)}" alt="">`, onclick: () => addSticker({ kind: 'svg', v: sk.id }, sk.face),
   }))));
   if (stQ && !list.length) $('#note').textContent = '找不到這個貼紙，換個關鍵字試試。';
   if (!stQ && stCat === 'emoji') EMOJIS.forEach(e => box.append(item({ label: '', cls: 'stk emo', icon: e, onclick: () => addSticker({ kind: 'emoji', v: e }) })));
@@ -2122,7 +2197,7 @@ function tabCover(box) {
   const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
   COVER_CATS.forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: cvCat === k, onclick: () => { cvCat = k; showTab('cover'); } })));
   COVERS.filter(c => c.cat === cvCat).forEach(c => stkTone(box.appendChild(item({
-    label: c.name, cls: 'stk', icon: c.svg ? `<img src="${svgURL(c.id)}" alt="">` : c.name.slice(0, 2), onclick: () => addCover(c),
+    label: c.name, cls: 'stk', icon: c.svg ? `<img src="${thumbURL(c.id)}" alt="">` : c.name.slice(0, 2), onclick: () => addCover(c),
   }))));
   hideSlider();
   $('#note').textContent = !faces ? '正在找臉…' : !faces.length ? '這張照片沒找到臉。' : `點一下貼到 ${faces.length} 張臉上，貼上後可以到「文字」裡的「貼紙」移動或刪除。`;
@@ -2849,10 +2924,22 @@ function movePositions(W, H, W2, H2, f, v, mirror) {
     else if (m.t === 2 && mirror) o.a = -m.a;
     return o;
   });
-  for (const k of Object.values(REG_OF)) {
-    const r = P[k]; if (!r) continue;
-    const [x0, y0] = f(r.x0 * W, r.y0 * H), [x1, y1] = f(r.x1 * W, r.y1 * H);
-    P[k] = { x0: Math.min(x0, x1) / W2, x1: Math.max(x0, x1) / W2, y0: Math.min(y0, y1) / H2, y1: Math.max(y0, y1) / H2 };
+  for (const [key, k] of Object.entries(REG_OF)) {
+    if (!P[k]) continue;
+    const r = manualRegion(key, null, P, W, H);
+    if (key === 'bmHeight') {
+      // 轉 90° 後兩條橫線變直的，放不回去：回到預設位置
+      const a = f(W / 2, r.y0 * H)[1], b = f(W / 2, r.y1 * H)[1];
+      P[k] = Math.abs(b - a) < 2 || Math.abs(f(0, r.y0 * H)[1] - a) > 1 ? null : { y0: Math.min(a, b) / H2, y1: Math.max(a, b) / H2 };
+      continue;
+    }
+    const [cx, cy] = f(r.cx * W, r.cy * H);
+    if (key === 'bmZoom') { P[k] = { cx: cx / W2, cy: cy / H2, r: r.r * W / W2 }; continue; }
+    // 瘦身：中軸往下那一點跟著換，算出新的角度（上下翻過來的話轉半圈回來，範圍一樣、把手不會倒過來）
+    const a = r.a || 0, [dx, dy] = f(r.cx * W - Math.sin(a) * 100, r.cy * H + Math.cos(a) * 100);
+    let na = Math.atan2(-(dx - cx), dy - cy);
+    if (Math.abs(na) > Math.PI / 2 + 1e-6) na -= Math.sign(na) * Math.PI;
+    P[k] = { cx: cx / W2, cy: cy / H2, hw: r.hw * W / W2, hh: r.hh * W / W2, a: na };
   }
   if (P.lightX != null && P.lightY != null) { const [x, y] = f(P.lightX * W, P.lightY * H); P.lightX = x / W2; P.lightY = y / H2; }
 }

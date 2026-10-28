@@ -188,6 +188,8 @@ export function stickerAR(s) {
 }
 // 貼紙在畫面上顯示用的圖片網址
 export const svgURL = id => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(stickerById(id).svg);
+// 清單上的縮圖：有的貼紙縮圖另外描白邊（thumb），深色底上才看得到，貼上去不描
+export const thumbURL = id => { const s = stickerById(id); return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(s.thumb || s.svg); };
 export function stickerURL(s) {
   return s.kind === 'svg' ? svgURL(s.v) : s.kind === 'img' ? canvasURL(s.v) : '';
 }
