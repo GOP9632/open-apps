@@ -836,7 +836,7 @@ export class Renderer {
     this.pBil = program(gl, FS_BILATERAL);
     this.pMain = program(gl, FS_MAIN);
     this.pGauss = program(gl, FS_GAUSS); this.pW = program(gl, FS_WCOPY); this.pBokeh = program(gl, FS_BOKEH); this.fbK = this.fbo(); this.bkKey = '';
-    this.tImg = this.tex(); this.tMask = this.tex(); this.tSeg = this.tex(); this.tLut = this.tex();
+    this.tImg = this.tOwn = this.tex(); this.tMask = this.tex(); this.tSeg = this.tex(); this.tLut = this.tex();
     this.tMask2 = this.tex(); this.tSegB = this.tex();
     this.blank(this.tMask, 0); this.blank(this.tSeg, 255); this.blank(this.tLut, 0);
     this.blank(this.tMask2, 0); this.blank(this.tSegB, 255);
@@ -891,13 +891,34 @@ export class Renderer {
   }
   // w、h：照片的原尺寸（src 可能是縮小的預覽，座標一律照原尺寸算）
   setImage(src, w = src.width, h = src.height) {
-    this.w = w; this.h = h;
+    this.w = w; this.h = h; this.tImg = this.tOwn;
     this.upload(this.tImg, src); this.imgW = src.width; this.imgH = src.height;
+    this.derive();
+  }
+  // 頭髮、膚質要先改的照片（hair.js、skin.js 在同一個 WebGL 上改）：同一張只傳一次，srcVer 跟著內容變
+  srcTex(src) {
+    if (this.srcOf !== src) { this.tSrc ||= this.tex(); this.upload(this.tSrc, src); this.srcOf = src; this.srcVer = (this.srcVer || 0) + 1; }
+    return this.tSrc;
+  }
+  // 照片只改了一塊（美顏筆、塗鴉）：只補那一塊
+  patchSrc(img, x, y) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.tSrc);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    this.srcVer++;
+  }
+  dropSrc() { if (this.tSrc) { this.gl.deleteTexture(this.tSrc); this.tSrc = this.srcOf = null; } }
+  // 照片貼圖直接換成 t（頭髮、膚質改好的暫存貼圖，同一個 WebGL）：不用讀回、不用從別張畫布整張複製（評審：拖頭髮每格 82–89ms）。
+  // iw、ih：t 的大小；w、h：照片的原尺寸
+  useTex(t, iw, ih, w, h) {
+    if (this.tImg === this.tOwn) this.blank(this.tOwn, 0);  // 自己那張先放掉（可能跟照片一樣大），換回 setImage 時再傳
+    this.tImg = t; this.w = w; this.h = h; this.imgW = iw; this.imgH = ih;
     this.derive();
   }
   // 照片只改了一塊（美顏筆、塗鴉一筆、復原一筆）：只傳那一塊，不用整張重傳。貼圖現在不是原尺寸的照片（開著膚質、頭髮效果）就回傳 false
   patchImage(img, x, y) {
-    if (this.imgW !== this.w || this.imgH !== this.h) return false;
+    if (this.tImg !== this.tOwn || this.imgW !== this.w || this.imgH !== this.h) return false;
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.tImg);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);

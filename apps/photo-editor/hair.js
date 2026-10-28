@@ -106,9 +106,10 @@ export function prepHair(canvas, seg, faces) {
 }
 
 // ---------- GPU：把頭髮調整套到原尺寸照片上 ----------
+// 畫進暫存貼圖（不是畫布），上下不用翻：貼圖第 0 列還是照片最上面那列，跟傳上去的照片一樣
 const VS = `#version 300 es
 in vec2 a; out vec2 vUV;
-void main(){ vUV = vec2((a.x + 1.0) * 0.5, (1.0 - a.y) * 0.5); gl_Position = vec4(a, 0.0, 1.0); }`;
+void main(){ vUV = (a + 1.0) * 0.5; gl_Position = vec4(a, 0.0, 1.0); }`;
 const FS = `#version 300 es
 precision highp float;
 in vec2 vUV; out vec4 o;
@@ -161,54 +162,75 @@ void main(){
   o = vec4(col, 1.0);
 }`;
 
+// 畫在主畫面的 WebGL 上（gl.js Renderer），結果是一張暫存貼圖，主畫面直接拿來當照片用。
+// 以前自己一張 WebGL 畫布，每動一下滑桿整張照片要從這張畫布複製到膚質、再複製到主畫面，每格 82–89ms（評審驗 #146）
 export class HairFx {
-  constructor() {
-    const c = this.canvas = document.createElement('canvas');
-    // 不要反鋸齒、深度、模板（同 skin.js SkinFx，評審 M1）
-    const gl = this.gl = c.getContext('webgl2', { preserveDrawingBuffer: true, premultipliedAlpha: false, antialias: false, depth: false, stencil: false });
-    if (!gl) return;
+  constructor(gl) {
+    this.gl = gl;
     const sh = (t, s) => { const x = gl.createShader(t); gl.shaderSource(x, s); gl.compileShader(x); if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(x)); return x; };
     const p = this.p = gl.createProgram();
     gl.attachShader(p, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, FS));
     gl.bindAttribLocation(p, 0, 'a'); gl.linkProgram(p);
-    const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    this.t = [0, 1, 2, 3, 4].map(() => {
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    this.u = n => gl.getUniformLocation(p, n);
+    // 頂點用主畫面的全畫面三角形（同一個 WebGL，位置 0 已經設好）
+    const tex = () => {
       const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       return t;
-    });
-    this.src = null; this.data = null;
+    };
+    this.t = [0, 1, 2, 3].map(tex);  // M、HF、BF、F
+    this.out = { t: tex(), f: gl.createFramebuffer(), w: 0, h: 0 };
+    this.data = null; this.k = null;
   }
-  up(i, src) { const gl = this.gl; gl.bindTexture(gl.TEXTURE_2D, this.t[i]); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src); }
-  // 效果關掉時放掉跟照片一樣大的畫布和照片貼圖（評審 M1）；頭髮資料留著
-  release() {
+  upData(data) {
+    if (this.data === data) return;
     const gl = this.gl;
-    if (!gl || !this.src) return;
-    this.canvas.width = this.canvas.height = 1;
-    gl.bindTexture(gl.TEXTURE_2D, this.t[0]); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    this.src = null;
+    this.data = data; this.k = null;
+    [data.M, data.HF, data.BF, data.F].forEach((src, i) => { gl.bindTexture(gl.TEXTURE_2D, this.t[i]); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src); });
   }
-  // 回傳改好頭髮的 canvas
-  apply(img, data, p) {
+  size(w, h) {
+    const gl = this.gl, o = this.out;
+    if (o.w === w && o.h === h) return;
+    gl.bindTexture(gl.TEXTURE_2D, o.t); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, o.f); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, o.t, 0);
+    o.w = w; o.h = h; this.k = null;
+  }
+  // 先傳頭髮資料、在 1×1 上畫一次（iPhone 第一次畫才真的編譯 shader），第一次拉滑桿不用等（評審 M8）
+  warm(data) {
+    if (data) this.upData(data);
+    if (this.warmed) return;
     const gl = this.gl;
-    if (!gl) return img;
-    if (this.src !== img) { this.src = img; this.canvas.width = img.width; this.canvas.height = img.height; this.up(0, img); }
-    if (this.data !== data) { this.data = data; this.up(1, data.M); this.up(2, data.HF); this.up(3, data.BF); this.up(4, data.F); }
-    gl.useProgram(this.p);
-    gl.viewport(0, 0, img.width, img.height);
-    ['uImg', 'uM', 'uHF', 'uBF', 'uF'].forEach((n, i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, this.t[i]); gl.uniform1i(gl.getUniformLocation(this.p, n), i); });
-    const u = n => gl.getUniformLocation(this.p, n), f = k => (p[k] || 0) / 100;
-    const dye = DYES.find(d => d.id === p.hairDye);
-    gl.uniform3fv(u('uMean'), data.mean);
-    gl.uniform3fv(u('uDye'), dye ? dye.c : [0, 0, 0]);
-    gl.uniform1f(u('uDyeAmt'), dye ? f('hairDyeAmt') * 0.7 : 0 /* 預設 100 照 Hypic，看起來跟以前的 70 一樣 */);
-    gl.uniform1f(u('uUni'), f('hairUni')); gl.uniform1f(u('uFly'), f('hairFly'));
-    gl.uniform1f(u('uGap'), f('hairGap')); gl.uniform1f(u('uDense'), f('hairDense'));
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-    return this.canvas;
+    this.warmed = true; this.size(1, 1);
+    gl.useProgram(this.p); gl.bindFramebuffer(gl.FRAMEBUFFER, this.out.f); gl.viewport(0, 0, 1, 1);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.t[0]);
+    gl.drawArrays(gl.TRIANGLES, 0, 3); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+  // 效果關掉、離開頭髮分頁時放掉跟照片一樣大的暫存（評審 M1）；頭髮資料留著
+  release() { if (this.out.w > 1) this.size(1, 1); this.k = null; }
+  // src：照片貼圖（同一個 WebGL），w、h 是它的大小；key 一樣（同一張照片、同一組參數）就不重畫。回傳改好頭髮的貼圖
+  apply(src, w, h, data, p, key) {
+    const gl = this.gl;
+    this.upData(data); this.size(w, h);
+    if (key !== this.k) {
+      this.k = key;
+      gl.useProgram(this.p);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.out.f);
+      gl.viewport(0, 0, w, h);
+      [src, ...this.t].forEach((t, i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); });
+      ['uImg', 'uM', 'uHF', 'uBF', 'uF'].forEach((n, i) => gl.uniform1i(this.u(n), i));
+      const u = this.u, f = k => (p[k] || 0) / 100;
+      const dye = DYES.find(d => d.id === p.hairDye);
+      gl.uniform3fv(u('uMean'), data.mean);
+      gl.uniform3fv(u('uDye'), dye ? dye.c : [0, 0, 0]);
+      gl.uniform1f(u('uDyeAmt'), dye ? f('hairDyeAmt') * 0.7 : 0 /* 預設 100 照 Hypic，看起來跟以前的 70 一樣 */);
+      gl.uniform1f(u('uUni'), f('hairUni')); gl.uniform1f(u('uFly'), f('hairFly'));
+      gl.uniform1f(u('uGap'), f('hairGap')); gl.uniform1f(u('uDense'), f('hairDense'));
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+    return this.out.t;
   }
 }
 
