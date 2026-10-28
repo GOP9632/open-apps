@@ -2073,9 +2073,9 @@ function tabSticker(box) {
     : stCat === 'mine' ? '匯入自己的圖片當貼紙，人像照可以自動摳圖。' : net ? '線上貼紙包，要連網路。圖案是 Microsoft Fluent Emoji（MIT 授權）。' : '點一下加到照片上';
   const list = stQ ? STICKERS.filter(sk => sk.name.toLowerCase().includes(stQ.toLowerCase()))
     : stCat === 'emoji' || stCat === 'mine' || net ? [] : STICKERS.filter(sk => sk.cat === stCat);
-  list.forEach(sk => box.append(item({
+  list.forEach(sk => stkTone(box.appendChild(item({
     label: sk.name, cls: 'stk', icon: `<img src="${svgURL(sk.id)}" alt="">`, onclick: () => addSticker({ kind: 'svg', v: sk.id }, sk.face),
-  })));
+  }))));
   if (stQ && !list.length) $('#note').textContent = '找不到這個貼紙，換個關鍵字試試。';
   if (!stQ && stCat === 'emoji') EMOJIS.forEach(e => box.append(item({ label: '', cls: 'stk emo', icon: e, onclick: () => addSticker({ kind: 'emoji', v: e }) })));
   if (!stQ && net) {
@@ -2090,6 +2090,28 @@ function tabSticker(box) {
     ownImages().forEach(id => box.append(item({ label: '', cls: 'stk', icon: `<img src="${canvasURL(id)}" alt="">`, onclick: () => addSticker({ kind: 'img', v: id }) })));
   }
 }
+// 貼紙縮圖跟格子底色太像（黑墨鏡、音符、遮臉面具放在深灰格子上幾乎看不到）：那一格換成反過來的底色（評審 L55）。
+// 縮圖載入後縮成 24×24 看一次：不透明的地方有一半以上跟底色亮度差不到 48 就換；每張貼紙只看一次。b 要已經放進畫面（才讀得到底色）
+const stkSeen = new Map();
+function stkTone(b) {
+  const img = b.querySelector('img'), ic = b.querySelector('.ic'), bg = img && getComputedStyle(ic).backgroundColor.match(/[\d.]+/g);
+  if (!bg) return b;
+  const bl = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2], key = img.src + (bl < 128 ? 'd' : 'l');
+  const set = v => { if (v) b.classList.add(bl < 128 ? 'lite' : 'dim'); };
+  if (stkSeen.has(key)) { set(stkSeen.get(key)); return b; }
+  const look = () => {
+    try {
+      const c = document.createElement('canvas'); c.width = c.height = 24;
+      const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(img, 0, 0, 24, 24);
+      const d = x.getImageData(0, 0, 24, 24).data;
+      let n = 0, near = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 96) { n++; if (Math.abs(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2] - bl) < 48) near++; }
+      const v = n > 0 && near * 2 > n; stkSeen.set(key, v); set(v);
+    } catch (e) { stkSeen.set(key, false); }
+  };
+  if (img.complete && img.naturalWidth) look(); else img.addEventListener('load', look, { once: true });
+  return b;
+}
 // ---------- 遮臉 ----------
 // 遮臉的圖案也放進貼紙庫，貼上去以後就是一般的貼紙
 STICKERS.push(...COVERS.filter(c => c.svg));
@@ -2099,9 +2121,9 @@ function tabCover(box) {
   if (!faces) findFaces().then(() => tab === 'cover' && showTab('cover'));
   const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
   COVER_CATS.forEach(([k, lb]) => cats.append(item({ label: lb, icon: lb, cls: 'wide', on: cvCat === k, onclick: () => { cvCat = k; showTab('cover'); } })));
-  COVERS.filter(c => c.cat === cvCat).forEach(c => box.append(item({
+  COVERS.filter(c => c.cat === cvCat).forEach(c => stkTone(box.appendChild(item({
     label: c.name, cls: 'stk', icon: c.svg ? `<img src="${svgURL(c.id)}" alt="">` : c.name.slice(0, 2), onclick: () => addCover(c),
-  })));
+  }))));
   hideSlider();
   $('#note').textContent = !faces ? '正在找臉…' : !faces.length ? '這張照片沒找到臉。' : `點一下貼到 ${faces.length} 張臉上，貼上後可以到「文字」裡的「貼紙」移動或刪除。`;
 }
