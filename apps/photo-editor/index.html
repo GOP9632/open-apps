@@ -61,7 +61,7 @@ button{background:none;border:0;padding:0;cursor:pointer}
 @media (max-width:899px){#zoom.on:not(.zoomed){display:none}
   /* 面板固定高度（照醒圖）：換分頁時照片不縮放、選項列不跳。以前高度跟著分頁變，iPhone Safari 只搬舊圖層、
      只重畫一部分，選過的分頁看起來還亮著（殘影，評審 2026-10-27 在 iOS 模擬器重現）。內容貼著下面的分頁列 */
-  #pbody{height:227px;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden}
+  #pbody{height:231px;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden}
   #pbody::before{content:'';flex:1 0 0}
   /* 內容比面板高時整個面板上下捲，不要把選項列壓扁（以前文字、美妝的縮圖、色票被壓矮切掉，評審 H4） */
   #pbody > *{flex-shrink:0}
@@ -159,7 +159,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .items{display:flex;gap:6px;overflow-x:auto;padding:2px 12px 10px;scrollbar-width:none}
 .items::-webkit-scrollbar{display:none}
 .items[hidden]{display:none}
-#cats{padding-bottom:6px}
+#cats{padding-bottom:10px}
 #cats .it.wide .ic{height:34px;font-size:13px}
 .it{flex:none;width:64px;display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--muted);font-size:12px}
 .it .ic{width:46px;height:46px;border-radius:14px;background:var(--panel2);display:grid;place-items:center;position:relative;color:var(--text);font-size:13px}
@@ -168,6 +168,8 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .it.on .ic{box-shadow:0 0 0 2px var(--accent)}
 .it .dot{position:absolute;right:-2px;top:-2px;width:8px;height:8px;border-radius:50%;background:var(--accent);display:none}
 .it.set .dot{display:block}
+/* 跳到別的分頁的捷徑（美顏裡的瘦臉、大眼 → 臉型） */
+.it.jump .ic::after{content:'';position:absolute;right:5px;bottom:5px;width:5px;height:5px;border:solid var(--muted);border-width:1.5px 1.5px 0 0;transform:rotate(45deg)}
 .it.ft{width:68px}
 .it.ft .ic{width:62px;height:62px;border-radius:12px;overflow:hidden;background-size:cover;background-position:center}
 .it.wide{width:auto;padding:0 2px}
@@ -176,12 +178,25 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .sw.on{border-color:#fff;box-shadow:0 0 0 2px var(--accent)}
 
 .tabs{display:flex;gap:4px;padding:2px 12px 6px;overflow-x:auto;scrollbar-width:none}
+/* 橫著捲的列還能往左／右滑：那一邊淡出（評審 M13：人像 12 個分頁一半在畫面外，以前看不出來能滑） */
+.fadeR{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 36px),transparent)}
+.fadeL{-webkit-mask-image:linear-gradient(90deg,transparent,#000 36px);mask-image:linear-gradient(90deg,transparent,#000 36px)}
+.fadeL.fadeR{-webkit-mask-image:linear-gradient(90deg,transparent,#000 36px,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(90deg,transparent,#000 36px,#000 calc(100% - 36px),transparent)}
 .tabs::-webkit-scrollbar{display:none}
 .tab{flex:none;height:38px;padding:0 13px;border-radius:19px;color:var(--muted);font-size:14px;white-space:nowrap}
 .tab.on{color:var(--text);font-weight:600;background:var(--panel2)}
 
 .phead{display:flex;align-items:flex-start;gap:8px;padding-right:12px}
 .phead .note{flex:1}
+/* 背景保護：固定在說明那一列右邊的開關（評審 M16：以前是工具列最後一顆，要橫滑才看得到，開著又跟選中的工具長一樣） */
+#protSw{flex:none;display:flex;align-items:center;gap:6px;height:26px;padding:0 4px 0 10px;border-radius:13px;background:var(--panel2);color:var(--text2);font-size:13px;margin-top:-4px;white-space:nowrap}
+#protSw[hidden]{display:none}
+#protSw i{width:28px;height:18px;border-radius:9px;background:#4a4a52;position:relative;transition:background .15s}
+#protSw i::after{content:'';position:absolute;left:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:transform .15s}
+#protSw.on i{background:var(--accent)}
+#protSw.on i::after{transform:translateX(10px)}
+#protSw.flash{animation:pflash .45s 4}
+@keyframes pflash{50%{box-shadow:0 0 0 2px var(--accent)}}
 #bTabReset{flex:none;height:26px;padding:0 10px;border-radius:13px;background:var(--panel2);color:var(--text2);font-size:13px;margin-top:-4px}
 #bTabReset[hidden]{display:none}
 /* 兩邊／左／右：固定在說明那一列右邊，項目列不會因為多了三顆被推走（評審 H3） */
@@ -353,7 +368,7 @@ input[type=range].grad::-moz-range-progress{background:transparent}
     <div id="pbody">
     <div class="srow hide" id="srow"><label id="sLabel"></label><input type="range" id="slider" min="-100" max="100" value="0" aria-label="強度"><output id="sVal">0</output></div>
     <div id="rows"></div>
-    <div class="phead"><div class="note" id="note"></div><div class="seg" id="sideSeg" role="group" aria-label="調哪一邊" hidden><button data-sd="both">兩邊</button><button data-sd="L">左</button><button data-sd="R">右</button></div><button id="bTabReset" hidden>重設</button></div>
+    <div class="phead"><div class="note" id="note"></div><div class="seg" id="sideSeg" role="group" aria-label="調哪一邊" hidden><button data-sd="both">兩邊</button><button data-sd="L">左</button><button data-sd="R">右</button></div><button id="protSw" role="switch" aria-checked="true" hidden>背景保護<i></i></button><button id="bTabReset" hidden>重設</button></div>
     <div class="textedit" id="textedit" hidden><textarea id="textInput" rows="1" placeholder="輸入文字"></textarea></div>
     <div class="textedit" id="stsearch" hidden><input id="stkQ" type="search" placeholder="搜尋貼紙，例如愛心、星星" enterkeyhint="search"></div>
     <div class="items" id="cats" hidden></div>
@@ -372,8 +387,8 @@ input[type=range].grad::-moz-range-progress{background:transparent}
       <button class="tab" data-tab="hair">頭髮</button>
       <button class="tab" data-tab="body">身體</button>
       <button class="tab" data-tab="cover">遮臉</button>
-      <button class="tab" data-tab="looks">一鍵出片</button>
       <button class="tab" data-tab="filter">濾鏡</button>
+      <button class="tab" data-tab="looks">一鍵出片</button>
       <button class="tab" data-tab="adjust">調整</button>
       <button class="tab" data-tab="grade">調色</button>
       <button class="tab" data-tab="erase">消除</button>

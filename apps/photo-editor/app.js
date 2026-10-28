@@ -108,22 +108,27 @@ const ADJUST = [
   ['highlights', '高光', I.high], ['shadows', '陰影', I.shadow], ['backlight', '背光校正', I.backlit, 0], ['temp', '色溫', I.temp], ['tint', '色調', I.tint],
   ['grain', '顆粒', I.grain, 0], ['fade', '褪色', I.fade, 0], ['vignette', '暗角', I.vig],
 ];
+// 美顏只放皮膚類（照醒圖：美顏、臉部分開）。瘦臉、大眼以前在這裡另有一套滑桿，跟「臉型」的互不知道，
+// 兩邊都調會瘦兩次（評審 M14）。現在美顏裡的瘦臉、大眼是捷徑，點了跳到臉型的同一個滑桿
 const BEAUTY = [
   ['smooth', '磨皮', I.skin, 0], ['white', '美白', I.white, 0], ['dark', '黑眼圈', I.dark, 0], ['fold', '法令紋', I.fold, 0],
   ['eyeb', '亮眼', I.eyeb, 0], ['teeth', '白牙', I.teeth, 0],
-  ['slim', '瘦臉', I.slim, 0], ['vface', '小 V 臉', I.vface, 0], ['chin', '下巴', I.chin],
-  ['eyes', '大眼', I.eye], ['nose', '瘦鼻', I.nose], ['mouth', '嘴巴', I.mouth],
 ];
+// 舊版美顏的臉型滑桿：舊草稿裡可能有值，照樣畫、美顏的重設照樣清掉，只是不再出現滑桿
+const BEAUTY_OLD = [['slim'], ['vface'], ['chin'], ['eyes'], ['nose'], ['mouth']];
+// 美顏裡跳到臉型的捷徑：[名稱, 圖示, 臉型分類, 臉型項目]
+const BEAUTY_JUMP = [['瘦臉', I.slim, 'face', 'face_thin'], ['大眼', I.eye, 'eye', 'eye_size']];
 // 第一次點開時的起始強度，照醒圖點開滑桿時的預設值
-const BEAUTY_DEF = { white: 60, slim: 50 }; // 瘦臉點開 50 照 Hypic
-// 可以左右分開調的項目
+const BEAUTY_DEF = { white: 60 };
+// 可以左右分開調的項目（舊版美顏的瘦臉、大眼）
 const SIDED = ['slim', 'eyes'];
 // 兩種一鍵美顏
-//   美圖俊俊：照美圖「智能美化」，膚質加一點臉型
+//   美圖俊俊：照美圖「智能美化」，膚質加一點臉型（瘦臉、大眼寫進臉型的滑桿，在臉型看得到、能再調）
 //   醒俊：照醒圖「一鍵美顏」，只修膚質不動臉型，整體上限 60%
+// 臉型的量照舊版美顏瘦臉 15、大眼 10 換算（兩邊位移量差 0.06／0.055、0.28／0.26）
 const ONE_TAPS = [
-  { name: '美圖俊俊', set: { smooth: 70, white: 40, slim: 15, vface: 0, eyes: 10, nose: 0, mouth: 0 } },
-  { name: '醒俊', set: { smooth: 30, white: 18, slim: 0, vface: 0, eyes: 0, nose: 0, mouth: 0 } },
+  { name: '美圖俊俊', icon: I.magic, set: { smooth: 70, white: 40 }, shape: { face_thin: 16, eye_size: 11 }, note: '美圖俊俊：磨皮、美白，加一點瘦臉、大眼（在「臉型」可以再調）' },
+  { name: '醒俊', icon: I.skin, set: { smooth: 30, white: 18 }, shape: {}, note: '醒俊：只修皮膚，不動臉型' },
 ];
 const RATIOS = [['free', '自由'], ['orig', '原比例'], [1, '1:1'], [3 / 4, '3:4'], [4 / 3, '4:3'], [9 / 16, '9:16'], [16 / 9, '16:9']];
 const BG_COLORS = ['#ffffff', '#f1f3f5', '#ffe3ec', '#fff3bf', '#d3f9d8', '#d0ebff', '#e5dbff', '#212529'];
@@ -134,11 +139,11 @@ let base = null;     // { canvas, faces, seg, mask, thumbs }
 let P = { ...P0 };
 let texts = [];
 let stickers = [];   // { kind: 'svg' | 'emoji' | 'img', v, x, y, size, rot, flip, flipv, op, blend, mask }
-let side = 'both';
 let selSt = -1;
 let hist = [], hi = -1, resetFrom = null;  // resetFrom：全部重設前在第幾步
 let tab = 'beauty', cur = 'brightness', selText = -1;
 let cropState = null;
+let rsHinted = false;  // 這次進推臉已經提示過背景保護
 let landing = false;  // 剛開照片、使用者還沒自己換分頁
 // 景深的 6 種光斑樣式，名稱照 Hypic 背景模糊
 const bi = d => `<svg viewBox="0 0 24 24">${d}</svg>`;
@@ -968,7 +973,8 @@ const GI = {
 const GROUPS = [
   // 推臉、美顏筆往前放：最常用，以前排第 7、第 11，手機上要往右滑才看得到（評審 2026-10-27）。推臉照醒圖的叫法
   ['portrait', '人像', 'P', ['beauty', 'shape', 'reshape', 'bbrush', 'makeup', 'skin', 'sculpt', 'aiskin', 'light', 'hair', 'body', 'cover']],
-  ['filter', '濾鏡', 'F', ['looks', 'filter']],
+  // 點「濾鏡」先停在濾鏡，一鍵出片排第二（醒圖的一鍵出片也是濾鏡清單裡的一類；以前先停在一鍵出片，評審 M15）
+  ['filter', '濾鏡', 'F', ['filter', 'looks']],
   ['adjust', '調節', 'A', ['adjust', 'grade']],
   ['erase', '消除', 'E', ['erase', 'doodle', 'cutout']],
   ['fun', '創意', 'X', ['fun', 'cut']],
@@ -1024,7 +1030,7 @@ const toP0 = keys => keys.forEach(k => { P[k] = clone(P0[k]); });
 const keysOn = keys => () => keys.some(k => JSON.stringify(P[k]) !== JSON.stringify(P0[k]));
 // 膚質裡的「磨皮」跟美顏的磨皮是同一個值，算在美顏：改美顏磨皮時膚質分頁不亮點、膚質的重設也不動它
 const tabKeys = {
-  adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...TONE, ...WRINKLE]).filter(k => k !== 'smooth'), aiskin: keysOf([...AI_FACE, ...AI_BODY]), sculpt: Object.keys(SC_P0), reshape: ['liq'],
+  adjust: keysOf(ADJUST), beauty: [...keysOf(BEAUTY), ...keysOf(BEAUTY_OLD), 'oneTap', 'oneAmt'], skin: keysOf([...SKIN, ...TONE, ...WRINKLE]).filter(k => k !== 'smooth'), aiskin: keysOf([...AI_FACE, ...AI_BODY]), sculpt: Object.keys(SC_P0), reshape: ['liq'],
   body: Object.keys(BODY_P0), hair: Object.keys(HAIR_P0), makeup: ['mk', 'mkLook', 'mkLookAmt'], filter: ['filter', 'filterAmt'],
   light: ['light', 'lightAmt', 'lightBri', 'lightCol', 'lightDist', 'lightSpec', 'lightGloss', 'lightBlur', 'lightFg', 'lightBg', 'lightX', 'lightY', 'lightSeed', 'flash', 'flashAmt'],
   fun: ['blur', 'blurStyle', 'blurSize', 'fx', 'fxAmt', 'ov', 'ovAmt', 'ex', ...Object.keys(POP_P0)], frame: ['frame'], cutout: ['bg', 'bgColor', 'bgImg', 'bgBlur'],
@@ -1094,7 +1100,8 @@ function showTab(t) {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   $('#hist').classList.toggle('crop', t === 'crop');
   const box = $('#items'); box.innerHTML = ''; $('#rows').innerHTML = ''; $('#items').hidden = false;
-  $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true; $('#sideSeg').hidden = true;
+  $('#note').textContent = ''; $('#textedit').hidden = true; $('#stsearch').hidden = true; $('#cats').hidden = true; $('#sideSeg').hidden = true; $('#protSw').hidden = true;
+  if (!same && t === 'reshape') rsHinted = false;
   gradeHide(); hideSlider();
   if (!base) return;
   ({ looks: tabLooksHere, grade: tabGrade2, adjust: tabAdjust, filter: tabFilter, beauty: tabBeauty, shape: tabShape, makeup: tabMakeup, body: tabBody, cover: tabCover, hair: tabHair, skin: tabSkin, aiskin: tabAiSkin, sculpt: tabSculpt, reshape: tabReshape, doodle: box => tabDoodle(box, { item, setSlider, showTab }), bbrush: box => tabBeautyBrush(box, { item, sliderRow, showTab, surf: ensureSurf, tab: () => tab }), light: tabLight, sticker: tabSticker, cut: tabCut, fun: tabFun, frame: tabFrame, crop: tabCrop, tpl: tabTpl, cutout: tabCutout, text: tabText, erase: tabEraseHere })[t](box);
@@ -1109,7 +1116,16 @@ function showTab(t) {
     const l = on.getBoundingClientRect().left - row.getBoundingClientRect().left + row.scrollLeft;
     row.scrollLeft = l + on.offsetWidth / 2 < row.clientWidth * 0.8 ? 0 : l - (row.clientWidth - on.offsetWidth) / 2;
   }
+  FADE_ROWS.forEach(edgeFade);
 }
+// 橫著捲的列：還能往左、往右滑就在那一邊淡出（評審 M13）。電腦版不捲，不會淡出
+const FADE_ROWS = ['#tabs', '#cats', '#items'].map(s => $(s));
+function edgeFade(el) {
+  const l = el.scrollLeft > 2, r = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
+  el.classList.toggle('fadeL', l); el.classList.toggle('fadeR', r);
+}
+FADE_ROWS.forEach(el => el.addEventListener('scroll', () => edgeFade(el), { passive: true }));
+addEventListener('resize', () => FADE_ROWS.forEach(edgeFade));
 
 const isSet = (k, T = P) => T[k] !== 0 || (SIDED.includes(k) && (T[k + 'L'] !== 0 || T[k + 'R'] !== 0));
 // 兩邊／左／右：固定放在說明那一列右邊。以前插在項目列最前面，點到瘦臉整排被推走 178px、剛點的那顆跑出畫面（評審 H3）。
@@ -1135,12 +1151,8 @@ function paramItems(box, list, def, itemsOnly) {
   }
   if (itemsOnly) return;
   const it = list.find(x => x[0] === cur);
-  // 瘦臉、大眼可以只調一邊
-  const sided = list === BEAUTY && SIDED.includes(cur);
-  if (list === BEAUTY) sideSeg(sided, side, sd => { side = sd; showTab(tab); }, true);
-  const key = sided && side !== 'both' ? cur + side : cur;
-  setSlider(it[1] + (sided && side !== 'both' ? (side === 'L' ? '左' : '右') : ''), it[3] ?? -100, it[5] ?? 100, T[key], v => {
-    T[key] = v; if (list === BEAUTY) T.oneTap = -1; render();
+  setSlider(it[1], it[3] ?? -100, it[5] ?? 100, T[cur], v => {
+    T[cur] = v; if (list === BEAUTY) T.oneTap = -1; render();
     els[cur].classList.toggle('set', isSet(cur, T));
   }, it[4]);
 }
@@ -1148,19 +1160,12 @@ function paramItems(box, list, def, itemsOnly) {
 // 電腦版：每個項目一條滑桿，全部列出來
 function paramRows(box, list) {
   hideSlider();
-  const sided = list === BEAUTY;
-  if (sided) {
-    sideSeg(true, side, sd => { side = sd; showTab(tab); });
-    $('#note').textContent += (($('#note').textContent ? '　' : '') + '瘦臉、大眼可以只調左邊或右邊');
-  }
   $('#items').hidden = !box.children.length;
   const rows = $('#rows'), T = list === BEAUTY ? faceP() : P;
   for (const [k, label, , min, d, max] of list) {
-    const key = sided && SIDED.includes(k) && side !== 'both' ? k + side : k;
-    const sfx = key !== k ? (side === 'L' ? '（左）' : '（右）') : '';
     rows.append(sliderRow({
-      label: label + sfx, min: min ?? -100, max: max ?? 100, val: T[key], def: d,
-      onInput: v => { T[key] = v; cur = k; if (list === BEAUTY) T.oneTap = -1; render(); bmBox(); },
+      label, min: min ?? -100, max: max ?? 100, val: T[k], def: d,
+      onInput: v => { T[k] = v; cur = k; if (list === BEAUTY) T.oneTap = -1; render(); bmBox(); },
     }));
   }
 }
@@ -1325,24 +1330,39 @@ function tabBeauty(box) {
   else if (!faces.length) $('#note').textContent = base.faceErr ? '臉部偵測模型載入失敗，檢查一下網路再換一次照片。' : '這張照片沒找到臉，美顏只對人臉有效。';
   else $('#note').textContent = faceNote(faces);
   const T = faceP();
+  // 一鍵美顏的量（v：0～100）寫進美顏、臉型的滑桿；換成另一種時先把前一種加的臉型拿掉
+  const oneSet = (t, v) => {
+    Object.keys(t.set).forEach(k => T[k] = Math.round(t.set[k] * v / 100));
+    Object.entries(t.shape).forEach(([id, x]) => setShape(T, id, 'both', Math.round(x * v / 100)));
+  };
   ONE_TAPS.forEach((t, i) => box.append(item({
-    label: t.name, icon: I.magic, on: T.oneTap === i, onclick: () => {
-      const off = T.oneTap === i;
+    label: t.name, icon: t.icon, on: T.oneTap === i, onclick: () => {
+      const off = T.oneTap === i, was = ONE_TAPS[T.oneTap];
+      // 只拿掉前一種自己加的（之後在臉型改過的就留著）
+      if (was) Object.entries(was.shape).forEach(([id, x]) => { if (getShape(T, id, 'both') === Math.round(x * T.oneAmt / 100)) setShape(T, id, 'both', 0); });
       T.oneTap = off ? -1 : i; T.oneAmt = 100;
-      Object.keys(t.set).forEach(k => T[k] = off ? 0 : t.set[k]);
+      oneSet(t, off ? 0 : 100);
       cur = off ? 'smooth' : 'oneTap';
       render(); commit(); showTab('beauty');
     },
   })));
-  if (cur === 'oneTap' && T.oneTap >= 0) {
-    paramItems(box, BEAUTY, 'smooth', true);
+  const one = cur === 'oneTap' && T.oneTap >= 0;
+  paramItems(box, BEAUTY, 'smooth', one);
+  // 瘦臉、大眼：排在磨皮、美白後面，點了跳到臉型的同一個滑桿（第一次點跟臉型一樣套點開時的預設）
+  const at = box.children[ONE_TAPS.length + 2] || null;
+  BEAUTY_JUMP.forEach(([label, icon, c, id]) => box.insertBefore(item({
+    label, icon, cls: 'jump', set: shapeIsSet(T, id), onclick: () => {
+      shapeCat = c; shapeCur = id;
+      const d = SHAPE_CATS.find(x => x.id === c).items.find(x => x.id === id).def;
+      if (d && !shapeIsSet(T, id)) { setShape(T, id, 'both', d); render(); commit(); }
+      showTab('shape');
+    },
+  }), at));
+  if (one) {
     const t = ONE_TAPS[T.oneTap];
-    setSlider('強度', 0, 100, T.oneAmt, v => {
-      T.oneAmt = v;
-      Object.keys(t.set).forEach(k => T[k] = Math.round(t.set[k] * v / 100));
-      render();
-    });
-  } else paramItems(box, BEAUTY, 'smooth');
+    $('#note').textContent = t.note + (base.faces?.length > 1 ? '。' + faceNote(base.faces) : '');
+    setSlider('強度', 0, 100, T.oneAmt, v => { T.oneAmt = v; oneSet(t, v); render(); });
+  }
 }
 
 // ---------- 膚質、祛皺 ----------
@@ -1398,6 +1418,7 @@ function tabAiSkin(box) {
 let bodySec = 'auto';
 function tabBody(box) {
   if (!base.body) getBody(base);
+  protSw();
   const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
   [['auto', '自動塑身', BODY], ['man', '手動塑身', BODY_MAN]].forEach(([s, lb, l]) => cats.append(item({
     label: lb, icon: lb, cls: 'wide', on: bodySec === s, set: l.some(x => isSet(x[0])),
@@ -1483,7 +1504,7 @@ function tabHair(box) {
   }
   box.append(item({ label: '染髮', icon: '<svg viewBox="0 0 24 24"><path d="M5 20c0-9 3-15 7-15s7 6 7 15"/><path d="M15 3l4 4-6 6-2-2z" fill="currentColor" opacity=".4"/></svg>', set: !!P.hairDye, onclick: () => { cur = 'hairDye'; showTab('hair'); } }));
   paramItems(box, HAIR, 'hairUni');
-  box.append(protectItem());
+  protSw();
 }
 // ---------- 重新塑形（液化，reshape.js） ----------
 // 照 Hypic 修飾 › 重新塑形：彎曲、順時針旋轉、逆時針旋轉、脹大、縮小、還原，每個工具各自記大小、強度
@@ -1491,13 +1512,13 @@ let rsTool = 'push';
 const rsVal = Object.fromEntries(RESHAPE.map(t => [t.id, { size: t.size, str: t.str }]));
 function tabReshape(box) {
   RESHAPE.forEach(t => box.append(item({ label: t.name, icon: t.icon, on: rsTool === t.id, onclick: () => { rsTool = t.id; showTab('reshape'); } })));
-  box.append(protectItem());
+  protSw();
   // 大小、強度兩條一起顯示，不用再點膠囊切換（評審 2026-10-27）
   const v = rsVal[rsTool], t = RESHAPE.find(t => t.id === rsTool);
   $('#rows').append(
     sliderRow({ label: '大小', min: 1, max: 100, val: v.size, def: t.size, onInput: x => { v.size = x; rsRing(); } }),
     sliderRow({ label: '強度', min: 1, max: 100, val: v.str, def: t.str, onInput: x => { v.str = x; } }));
-  $('#note').textContent = rsTool === 'push' ? '用手指在照片上推，被推的地方會跟著走。兩指可以縮放照片。' : rsTool === 'restore' ? '塗抹推壞的地方，每畫一筆就變回原樣一點，只有塗到的地方會變。' : '在要改的地方按住或來回塗抹。';
+  $('#note').textContent = rsTool === 'push' ? '手指推到哪，照片就跟著走；兩指縮放照片。' : rsTool === 'restore' ? '塗抹推壞的地方，每畫一筆就變回原樣一點，只有塗到的地方會變。' : '在要改的地方按住或來回塗抹。';
   rsRing();
 }
 // 筆刷大小的圓圈（調大小時顯示在照片中間，畫的時候跟著手指）
@@ -1517,15 +1538,16 @@ function rsRing(p) {
 }
 (() => {
   let last = null, timer = 0, liq0 = null, p0 = null;
-  // 背景保護開著、推的地方是背景：畫面不會動，使用者會以為推臉壞了，說一次（評審 2026-10-27）
+  // 背景保護開著、推的地方是背景：畫面不會動，使用者會以為推臉壞了。每次進推臉說一次，開關閃一下（評審 M16）
   const protHint = () => {
     const m = base.matte || base.seg?.person;
-    if (!P.bgProtect || !m || !p0 || base.protHint) return;
+    if (!P.bgProtect || !m || !p0 || rsHinted) return;
     const x = Math.min(m.width - 1, Math.floor(p0.x / base.canvas.width * m.width)), y = Math.min(m.height - 1, Math.floor(p0.y / base.canvas.height * m.height));
     const c = m.getContext?.('2d');
     if (!c || c.getImageData(x, y, 1, 1).data[0] > 40) return;
-    base.protHint = true;
-    toast('這裡是背景，「背景保護」開著所以不會動。要推背景，把選項最後面的「背景保護」關掉');
+    rsHinted = true;
+    toast('這裡是背景，背景保護開著所以不會動，要推背景先把它關掉', 4000);
+    const b = $('#protSw'); b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash');
   };
   const at = e => { const r = $('#wrap').getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * base.canvas.width, y: (e.clientY - r.top) / r.height * base.canvas.height }; };
   const dab = (a, b) => { const v = rsVal[rsTool]; P.liq = liqDab(P.liq, rsTool, a, b, v.size, v.str, base.canvas.width, base.canvas.height); render(); };
@@ -1557,19 +1579,17 @@ function rsRing(p) {
   ['pointerup', 'pointercancel'].forEach(t => addEventListener(t, () => $('#hist').classList.remove('painting'), true));
 }
 
-// 背景保護開關：蓬鬆感、臉型、身體這些變形都會用到
-function protectItem() {
-  return item({
-    label: '背景保護', on: !!P.bgProtect, set: !!P.bgProtect,
-    icon: '<svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>',
-    onclick: () => { P.bgProtect = P.bgProtect ? 0 : 1; toast(P.bgProtect ? '背景保護已開：變形時背景不會跟著彎' : '背景保護已關'); render(); commit(); showTab(tab); },
-  });
+// 背景保護開關：推臉、頭髮蓬鬆、身體這些變形都會用到（臉型只動臉，碰不到背景，不放）
+function protSw() {
+  const b = $('#protSw'), on = !!P.bgProtect;
+  b.hidden = false; b.classList.toggle('on', on); b.setAttribute('aria-checked', on);
+  b.onclick = () => { P.bgProtect = on ? 0 : 1; toast(on ? '背景保護關：背景也會跟著變形' : '背景保護開：變形時背景不會跟著彎'); render(); commit(); showTab(tab); };
 }
 
 // ---------- 一鍵出片（looks.js） ----------
 function tabLooksHere(box) {
   tabLooks(box, {
-    P: () => P, P0, base: () => base, item, setSlider, hideSlider, render, commit, needSeg,
+    P: () => P, P0, base: () => base, item, setSlider, hideSlider, render, commit, needSeg, toast,
     findPerson: () => findPerson(true).then(() => render()),
     cats: () => $('#cats'), refresh: () => showTab('looks'), note: t => { $('#note').textContent = t; },
   });
@@ -1820,7 +1840,7 @@ function tabCover(box) {
     label: c.name, cls: 'stk', icon: c.svg ? `<img src="${svgURL(c.id)}" alt="">` : c.name.slice(0, 2), onclick: () => addCover(c),
   })));
   hideSlider();
-  $('#note').textContent = !faces ? '正在找臉…' : !faces.length ? '這張照片沒找到臉。' : `點一下貼到 ${faces.length} 張臉上，貼上後可以到「貼紙」移動或刪除。`;
+  $('#note').textContent = !faces ? '正在找臉…' : !faces.length ? '這張照片沒找到臉。' : `點一下貼到 ${faces.length} 張臉上，貼上後可以到「文字」裡的「貼紙」移動或刪除。`;
 }
 function addCover(c) {
   if (!base.faces?.length) return toast('這張照片沒找到臉');
