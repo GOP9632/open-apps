@@ -1,5 +1,7 @@
 // 塗鴉筆、馬賽克筆：照 Hypic 的塗鴉和馬賽克，粗細 1~100、不透明度 0~100、羽化 0~100
 // 每畫完一筆就畫進照片（跟消除一樣），可以用上一步復原
+// 橡皮擦：擦掉這一串塗鴉、馬賽克，露出開始畫之前的照片。開始畫之前的樣子只存畫到的格子（256 一格，第一次畫到時存），
+// 中間做了別的（美顏筆、消除）或復原到開始之前，就從那時候的照片重新算起
 
 export const DD_COLORS = ['ffffff', '000000', 'ff3b30', 'ff9500', 'ffcc00', '34c759', '30b0c7', '007aff', 'af52de', 'ff2d92'];
 import { pinch, stageZoom } from './ui.js';
@@ -12,6 +14,20 @@ const newCanvas = (w, h) => Object.assign(document.createElement('canvas'), { wi
 // 筆刷半徑（照片像素）：粗細 1~100 → 照片沒放大時是短邊的 0.2%~8%；照片放大幾倍筆刷就細幾倍
 const radius = (W, H) => Math.min(W, H) * (0.002 + 0.078 * st.size / 100) / stageZoom.z;
 
+// 這一串塗鴉（ses）：O 是開始畫之前的照片，只存畫到的格子
+const TS = 256;
+function session(S) {
+  const ses = S.ddSes;
+  if (ses && ses.canvas === S.canvas && S.ver >= ses.v0 && S.edits.slice(ses.v0, S.ver).every(e => e?.ses === ses)) return ses;
+  return S.ddSes = { canvas: S.canvas, v0: S.ver, O: new Map() };
+}
+function eachTile(c, x0, y0, x1, y1, f) {
+  for (let ty = Math.floor(y0 / TS); ty * TS < y1; ty++) for (let tx = Math.floor(x0 / TS); tx * TS < x1; tx++) f(ty * Math.ceil(c.width / TS) + tx, tx * TS, ty * TS);
+}
+function capture(ses, x0, y0, x1, y1) {
+  const ctx = ses.canvas.getContext('2d');
+  eachTile(ses.canvas, x0, y0, x1, y1, (k, X, Y) => { if (!ses.O.has(k)) ses.O.set(k, { x: X, y: Y, img: ctx.getImageData(X, Y, Math.min(TS, ses.canvas.width - X), Math.min(TS, ses.canvas.height - Y)) }); });
+}
 // 照片上的一筆 → 遮罩（白色、羽化過）
 function strokeMask(pts, W, H, r = radius(W, H)) {
   const c = newCanvas(W, H), ctx = c.getContext('2d');
@@ -42,10 +58,10 @@ function mosaicOf(src, cell) {
 }
 // 一筆畫進照片：只算筆跡附近那一塊，回傳 { x, y, before, after }（那一塊畫之前、之後的像素），
 // app 直接改在同一張照片上，復原只存這一塊，不用每筆複製好幾張原尺寸照片
-function bake(src, pts) {
-  const W = src.width, H = src.height, r = radius(W, H), cell = mosaicCell(W, H);
+function bake(ses, pts) {
+  const src = ses.canvas, W = src.width, H = src.height, r = radius(W, H), cell = mosaicCell(W, H);
   // 羽化會往外暈開；馬賽克要多留幾格（模糊、毛玻璃會取到旁邊的像素）；方格的起點對齊整張照片的格子
-  const pad = Math.ceil(r * (1 + st.feather / 100) + 2 + (st.tool === 'pen' ? 0 : cell * 2)), g = st.tool !== 'pen' && st.mosaic === 'square' ? cell : 1;
+  const pad = Math.ceil(r * (1 + st.feather / 100) + 2 + (st.tool === 'mosaic' ? cell * 2 : 0)), g = st.tool === 'mosaic' && st.mosaic === 'square' ? cell : 1;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
   x0 = Math.max(0, Math.floor((x0 - pad) / g) * g); y0 = Math.max(0, Math.floor((y0 - pad) / g) * g);
@@ -57,17 +73,25 @@ function bake(src, pts) {
   const before = o.getImageData(0, 0, w, h);
   const mask = strokeMask(pts.map(p => ({ x: p.x - x0, y: p.y - y0 })), w, h, r);
   const paint = newCanvas(w, h), px = paint.getContext('2d');
-  if (st.tool === 'pen') { px.fillStyle = '#' + st.color; px.fillRect(0, 0, w, h); }
+  if (st.tool === 'erase') {
+    // 開始畫之前的照片（沒存的格子還沒畫過，就是現在這樣）
+    px.putImageData(before, 0, 0);
+    for (const t of ses.O.values()) if (t.x < x1 && t.x + t.img.width > x0 && t.y < y1 && t.y + t.img.height > y0) px.putImageData(t.img, t.x - x0, t.y - y0);
+  } else if (st.tool === 'pen') { px.fillStyle = '#' + st.color; px.fillRect(0, 0, w, h); }
   else px.drawImage(mosaicOf(reg, cell), 0, 0);
   px.globalCompositeOperation = 'destination-in'; px.drawImage(mask, 0, 0);
-  o.globalAlpha = st.op / 100; o.drawImage(paint, 0, 0);
-  return { x: x0, y: y0, before, after: o.getImageData(0, 0, w, h) };
+  o.globalAlpha = st.tool === 'erase' ? 1 : st.op / 100; o.drawImage(paint, 0, 0);
+  const after = o.getImageData(0, 0, w, h);
+  // 擦的地方本來就沒畫過：不記一步
+  if (st.tool === 'erase' && after.data.every((v, i) => v === before.data[i])) return null;
+  if (st.tool !== 'erase') capture(ses, x0, y0, x1, y1);
+  return { x: x0, y: y0, before, after, aux: { ses, bytes: 0, swap() {} } };
 }
 
 export function tabDoodle(box, app) {
   const { item, setSlider, showTab } = app;
   const cats = document.querySelector('#cats'); cats.hidden = false; cats.innerHTML = '';
-  [['pen', '塗鴉筆'], ['mosaic', '馬賽克']].forEach(([k, lb]) => cats.append(item({
+  [['pen', '塗鴉筆'], ['mosaic', '馬賽克'], ['erase', '橡皮擦']].forEach(([k, lb]) => cats.append(item({
     label: lb, icon: lb, cls: 'wide', on: st.tool === k, onclick: () => { st.tool = k; showTab('doodle'); },
   })));
   if (st.tool === 'pen') {
@@ -75,15 +99,18 @@ export function tabDoodle(box, app) {
       label: '', icon: `<span style="display:block;width:26px;height:26px;border-radius:50%;background:#${c};border:2px solid ${st.color === c ? '#ff5a7a' : '#8886'}"></span>`,
       on: st.color === c, onclick: () => { st.color = c; showTab('doodle'); },
     })));
-  } else {
+  } else if (st.tool === 'mosaic') {
     MOSAICS.forEach(([k, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: st.mosaic === k, onclick: () => { st.mosaic = k; showTab('doodle'); } })));
   }
-  [['size', '粗細', 1, 20], ['op', '不透明度', 0, 100], ['feather', '羽化', 0, 0]].forEach(([k, lb]) => box.append(item({
+  // 橡皮擦沒有不透明度（擦乾淨）
+  const params = [['size', '粗細', 1, 20], ['op', '不透明度', 0, 100], ['feather', '羽化', 0, 0]].filter(x => st.tool !== 'erase' || x[0] !== 'op');
+  if (!params.some(x => x[0] === st.param)) st.param = 'size';
+  params.forEach(([k, lb]) => box.append(item({
     label: lb, icon: lb, cls: 'wide', on: st.param === k, onclick: () => { st.param = k; showTab('doodle'); },
   })));
-  const [k, lb, min, def] = [['size', '粗細', 1, 20], ['op', '不透明度', 0, 100], ['feather', '羽化', 0, 0]].find(x => x[0] === st.param);
+  const [k, lb, min, def] = params.find(x => x[0] === st.param);
   setSlider(lb, min, 100, st[k], v => { st[k] = v; }, def);
-  document.querySelector('#note').textContent = st.tool === 'pen' ? '在照片上畫。每畫一筆都可以用上一步復原。' : '塗抹要遮住的地方。';
+  document.querySelector('#note').textContent = { pen: '在照片上畫。每畫一筆都可以用上一步復原。', mosaic: '塗抹要遮住的地方。', erase: '擦掉畫上去的塗鴉、馬賽克。' }[st.tool];
 }
 
 // 畫的時候先畫在照片上面的透明畫布，放開手指才畫進照片
@@ -95,9 +122,9 @@ export function doodleInput(wrap, app) {
     if (!ov) { ov = newCanvas(b.width * k, b.height * k); ov.id = 'ddov'; wrap.append(ov); }
     const ctx = ov.getContext('2d'), m = strokeMask(pts.map(p => ({ x: p.x * k, y: p.y * k })), ov.width, ov.height);
     ctx.clearRect(0, 0, ov.width, ov.height);
-    ctx.globalAlpha = st.op / 100;
+    ctx.globalAlpha = st.tool === 'erase' ? 0.4 : st.op / 100;
     if (st.tool === 'pen') { ctx.fillStyle = '#' + st.color; ctx.fillRect(0, 0, ov.width, ov.height); }
-    else { ctx.fillStyle = 'rgba(128,128,128,0.8)'; ctx.fillRect(0, 0, ov.width, ov.height); }
+    else { ctx.fillStyle = st.tool === 'erase' ? '#fff' : 'rgba(128,128,128,0.8)'; ctx.fillRect(0, 0, ov.width, ov.height); }
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'destination-in'; ctx.drawImage(m, 0, 0); ctx.globalCompositeOperation = 'source-over';
   };
   wrap.addEventListener('pointerdown', e => {
@@ -120,7 +147,7 @@ export function doodleInput(wrap, app) {
   const up = () => {
     if (!pts) return;
     // 瘦臉、推臉這些變形開著時，畫面上的點換回原圖上的點，才會畫在手指下面
-    const map = app.toSrc?.(), patch = bake(app.base.canvas, map ? pts.map(map) : pts);
+    const map = app.toSrc?.(), patch = bake(session(app.surf()), map ? pts.map(map) : pts);
     pts = null; ov?.remove(); ov = null;
     if (patch) { app.paint(patch); app.commit(); }
   };

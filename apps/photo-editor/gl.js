@@ -140,9 +140,9 @@ precision highp float;
 in vec2 vUV;
 uniform sampler2D uImg, uSmooth, uMask, uSeg, uLut, uMask2, uSegB, uBlurS, uBgA, uBgB, uOver, uEx, uBgImg, uBgMid, uBgFar, uMakeup;
 uniform vec2 uSize;
-uniform int uWn;
+uniform int uWn, uWm;  // uWm：最前面幾個是手動塑身（不受背景保護，照 Hypic）
 uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）；骨架收窄是 A、B 兩端；拉長是 y0、y1、強度、照片高
-uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大 2 骨架收窄 3 往下拉長 4 整段拉長)、強度、橢圓比（收窄：只收一點的那側）
+uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大 2 骨架收窄 3 往下拉長 4 整段拉長 5 手動瘦身)、強度、橢圓比（收窄：只收一點的那側）
 uniform vec2 uW3[${MAX_WARPS}]; // 頭的傾斜 cos、sin（收窄：最強的位置、範圍）
 uniform float uExposure, uBright, uContrast, uSat, uTemp, uTint, uHigh, uShadow, uSharp, uVig, uGrain, uFade;
 uniform float uVib, uStruct, uTexture, uLSense, uBack;
@@ -221,10 +221,19 @@ vec3 lut(vec3 c, float side){
 
 void main(){
   // 變形：輸出的每個像素往回找要取原圖哪一點
-  vec2 p = vUV * uSize, pS = p;
+  vec2 p = vUV * uSize, pM = p;
   for (int i = 0; i < ${MAX_WARPS}; i++) {
     if (i >= uWn) break;
+    if (i == uWm) pM = p;
     float kind = uW2[i].y;
+    if (kind > 4.5) {
+      // 手動瘦身（照 Hypic 量出來的）：中軸兩側往中軸收（強度負的是撐開）。
+      // 離中軸 u、沿中軸 v：位移 = 強度 × u ×（1 − (u/寬)²)² ×（1 − (v/高)²)³，越靠中軸、越靠上下兩端動得越少
+      vec2 ax = uW1[i].zw, n = vec2(ax.y, -ax.x), d = p - uW1[i].xy;
+      float u = dot(d, n), x = u / uW2[i].x, y = dot(d, ax) / uW2[i].w;
+      if (abs(x) < 1.0 && abs(y) < 1.0) { float fx = 1.0 - x * x, fy = 1.0 - y * y; p += n * u * uW2[i].z * fx * fx * fy * fy * fy; }
+      continue;
+    }
     if (kind > 3.5) {
       // 手動增高：y0~y1 這一段整段拉長 1+s 倍（s 負的是縮短），下面的部分壓回照片裡
       float y0 = uW1[i].x, y1 = uW1[i].y, s = uW1[i].z, H = uW1[i].w, y1o = y0 + (y1 - y0) * (1.0 + s);
@@ -267,9 +276,10 @@ void main(){
       else { p = c + (p - c) * (1.0 - uW2[i].z * f * f); }
     }
   }
+  if (uWm >= uWn) pM = p;
   if (uProtect > 0.5) {
-    // 背景保護：位移量乘上「人像往外擴一點、邊緣羽化」的遮罩，背景的位移壓到 0，背景根本不動
-    p = pS + (p - pS) * smoothstep(0.02, 0.3, texture(uSegB, pS / uSize).r);
+    // 背景保護：位移量乘上「人像往外擴一點、邊緣羽化」的遮罩，背景的位移壓到 0，背景根本不動。手動塑身（到 pM 為止）不保護
+    p = pM + (p - pM) * smoothstep(0.02, 0.3, texture(uSegB, pM / uSize).r);
   }
   vec2 uv = p / uSize;
   vec2 popT = floor(clamp(uv, 0.0, 0.999) * 2.0); // 波普四格：在哪一格
@@ -1063,11 +1073,12 @@ export class Renderer {
       const w = warps[i];
       if (w.type === 'stretch' || w.type === 'band') { w1.set([w.y0, w.y1, w.s, w.H], i * 4); w2.set([1, w.type === 'band' ? 4 : 3, 0, 0], i * 4); continue; }
       if (w.type === 'seg') { w1.set([w.ax, w.ay, w.bx, w.by], i * 4); w2.set([w.r, 2, w.k, w.inner || 0], i * 4); w3.set([w.tc, w.ts], i * 2); continue; }
+      if (w.type === 'slim') { w1.set([w.cx, w.cy, -Math.sin(w.a), Math.cos(w.a)], i * 4); w2.set([w.R, 5, w.k, w.Hh], i * 4); continue; }
       w1.set([w.cx, w.cy, w.dx || 0, w.dy || 0], i * 4);
       w2.set([w.r, w.type === 'scale' ? 1 : 0, w.s || 0, w.ey || 1], i * 4);
       w3.set([Math.cos(w.rot || 0), Math.sin(w.rot || 0)], i * 2);
     }
-    gl.uniform1i(u.uWn, n);
+    gl.uniform1i(u.uWn, n); gl.uniform1i(u.uWm, Math.min(n, warps.manual || 0));
     gl.uniform4fv(u.uW1, w1); gl.uniform4fv(u.uW2, w2); gl.uniform2fv(u.uW3, w3);
     const L = fx.lit, ls = (L?.lights || []).slice(0, 8);
     const lp = new Float32Array(32), lr = new Float32Array(32), le = new Float32Array(32), ld = new Float32Array(32), lc = new Float32Array(24);

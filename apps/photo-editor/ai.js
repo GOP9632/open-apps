@@ -16,6 +16,40 @@ async function create(Cls, opts) {
   try { return await m[Cls].createFromOptions(files, { ...opts, baseOptions: { ...opts.baseOptions, delegate: 'GPU' } }); }
   catch { return await m[Cls].createFromOptions(files, { ...opts, baseOptions: { ...opts.baseOptions, delegate: 'CPU' } }); }
 }
+const FACE_OPTS = { baseOptions: { modelAssetPath: FACE_MODEL }, runningMode: 'IMAGE', numFaces: 5 };
+const SEG_OPTS = { baseOptions: { modelAssetPath: SEG_MODEL }, runningMode: 'IMAGE', outputConfidenceMasks: true, outputCategoryMask: false };
+
+// 背景執行緒跑 MediaPipe（aiwork.js，評審 M7）：建模型、推論、讀回遮罩都不佔主執行緒。
+// 不支援（沒有 OffscreenCanvas、舊的 Safari）、出錯，或模型好了 20 秒還沒算完，就改回在這裡跑
+let aiW, aiN = 0;
+const aiWait = new Map();
+function aiWorker() {
+  if (aiW !== undefined) return aiW;
+  aiW = null;
+  try {
+    if (typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return aiW;
+    const w = new Worker(new URL('./aiwork.js', import.meta.url));
+    w.onmessage = e => aiWait.get(e.data.id)?.(e.data);
+    w.onerror = e => { console.warn('aiwork', e.message); aiOff(); };
+    aiW = w;
+  } catch (e) { console.warn(e); }
+  return aiW;
+}
+function aiOff() { aiW?.terminate(); aiW = null; aiWait.forEach(r => r({ err: 'worker' })); aiWait.clear(); }
+// task：MediaPipe 類別名稱；src：要看的圖（canvas）。回傳結果；不能用背景執行緒就回傳 null，呼叫的人自己在這裡跑
+export async function runTask(task, opts, src) {
+  const w = aiWorker();
+  if (!w) return null;
+  const bm = await createImageBitmap(src), id = ++aiN;
+  const r = await new Promise(res => {
+    let t = 0;
+    const done = d => { clearTimeout(t); aiWait.delete(id); res(d); };
+    aiWait.set(id, d => { if (!d.ready) return done(d); t = setTimeout(() => done({ err: 'timeout' }), 20000); });
+    w.postMessage({ id, cdn: CDN, task, opts, bm }, [bm]);
+  });
+  if (r.err) { console.warn(task, r.err); if (aiW === w) aiOff(); return null; }
+  return r.out;
+}
 
 function shrink(src, max) {
   const k = Math.min(1, max / Math.max(src.width, src.height));
@@ -30,16 +64,20 @@ function shrink(src, max) {
 //   模型會把輸入縮得很小再找臉，全身照、團體照裡的小臉整張丟進去會找不到。
 //   所以整張找完，再把照片切成 2×2、3×3 互相重疊的區塊放大各找一次，
 //   同一張臉被找到好幾次時，留臉在區塊裡佔比較大（比較準）的那次。
+async function faceLms(c) {
+  const r = await runTask('FaceLandmarker', FACE_OPTS, c);
+  if (r) return r.faceLandmarks || [];
+  faceP ||= create('FaceLandmarker', FACE_OPTS);
+  return (await faceP).detect(c).faceLandmarks || [];
+}
 export async function detectFaces(src) {
-  faceP ||= create('FaceLandmarker', { baseOptions: { modelAssetPath: FACE_MODEL }, runningMode: 'IMAGE', numFaces: 5 });
-  const fl = await faceP;
   const W = src.width, H = src.height, found = [];
-  const run = (x, y, w, h) => {
+  const run = async (x, y, w, h) => {
     const k = Math.min(1, 1024 / Math.max(w, h));
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
     c.getContext('2d').drawImage(src, x, y, w, h, 0, 0, c.width, c.height);
-    for (const lm of fl.detect(c).faceLandmarks || []) {
+    for (const lm of await faceLms(c)) {
       const pts = lm.map(p => ({ x: x + p.x * w, y: y + p.y * h, z: p.z * w }));
       const fw = Math.hypot(pts[454].x - pts[234].x, pts[454].y - pts[234].y);
       // 臉貼到區塊邊緣的不算，等相鄰區塊（重疊的地方）找完整的
@@ -49,7 +87,7 @@ export async function detectFaces(src) {
       if (!cut) found.push({ pts, fw, rel: fw / Math.max(w, h) });
     }
   };
-  run(0, 0, W, H);
+  await run(0, 0, W, H);
   // 評審 M7：整張就找到夠大的臉（自拍、半身照）就不切區塊找了，區塊是為了全身照、團體照裡的小臉；
   // 臉寬佔長邊兩成，模型看到的臉已經有 200 像素寬，放大也不會更準。區塊之間讓出主執行緒，找臉時拖滑桿、縮放照片才會動
   if (found.some(f => f.rel >= 0.2)) return merge(found);
@@ -58,7 +96,7 @@ export async function detectFaces(src) {
     if (Math.max(tw, th) < 400) break;
     for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
       await new Promise(r => setTimeout(r));
-      run(Math.round((W - tw) * i / (n - 1)), Math.round((H - th) * j / (n - 1)), Math.round(tw), Math.round(th));
+      await run(Math.round((W - tw) * i / (n - 1)), Math.round((H - th) * j / (n - 1)), Math.round(tw), Math.round(th));
     }
   }
   return merge(found);
@@ -75,14 +113,19 @@ function merge(found) {
 // 人像分割（多類別模型）：回傳
 //   person：去背用的人像遮罩 canvas（R 通道 = 前景程度）
 //   skin：每個像素是皮膚（臉 + 身體）的機率，美白、磨皮用
+async function segMasks(img) {
+  const r = await runTask('ImageSegmenter', SEG_OPTS, img);
+  if (r) return r;
+  segP ||= create('ImageSegmenter', SEG_OPTS);
+  const res = (await segP).segment(img), ms = res.confidenceMasks;
+  const out = { w: ms[0].width, h: ms[0].height, ms: ms.map(m => Float32Array.from(m.getAsFloat32Array())) };
+  res.close?.();
+  return out;
+}
 export async function segment(src) {
-  segP ||= create('ImageSegmenter', { baseOptions: { modelAssetPath: SEG_MODEL }, runningMode: 'IMAGE', outputConfidenceMasks: true, outputCategoryMask: false });
-  const seg = await segP;
   const img = shrink(src, 1024);
-  const res = seg.segment(img);
-  const ms = res.confidenceMasks; // 0 背景、1 頭髮、2 身體皮膚、3 臉部皮膚、4 衣服、5 其他
-  const w = ms[0].width, h = ms[0].height, bg = ms[0].getAsFloat32Array();
-  const body = ms[2].getAsFloat32Array(), face = ms[3].getAsFloat32Array();
+  const { w, h, ms } = await segMasks(img);  // 0 背景、1 頭髮、2 身體皮膚、3 臉部皮膚、4 衣服、5 其他
+  const [bg, hair, body, face] = ms;
   const skin = new Float32Array(w * h);
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
@@ -97,9 +140,7 @@ export async function segment(src) {
   }
   ctx.putImageData(out, 0, 0);
   // 頭髮分頁用：頭髮機率、背景機率
-  const hair = Float32Array.from(ms[1].getAsFloat32Array()), bgA = Float32Array.from(bg);
-  res.close?.();
-  return { person: c, skin, hair, bg: bgA, w, h };
+  return { person: c, skin, hair, bg, w, h };
 }
 
 // MediaPipe 特徵點編號

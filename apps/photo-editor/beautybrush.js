@@ -28,7 +28,8 @@ export const BRUSHES = [
   { id: 'teeth', name: '牙齒美白', str: 60 },
   { id: 'fold', name: '去法令紋', str: 70 },
 ];
-const st = { tool: 'smooth', size: 30, str: Object.fromEntries(BRUSHES.map(b => [b.id, b.str])) };
+// erase：擦除（Hypic 每支筆都有塗抹、擦除兩種，擦掉這支筆塗過的地方）
+const st = { tool: 'smooth', size: 30, erase: false, str: Object.fromEntries(BRUSHES.map(b => [b.id, b.str])) };
 const MASKED = ['smooth', 'circle', 'fold', 'eye', 'oil', 'texture', 'teeth'];
 
 const newCanvas = (w, h) => Object.assign(document.createElement('canvas'), { width: Math.max(1, Math.round(w)), height: Math.max(1, Math.round(h)) });
@@ -88,6 +89,7 @@ function blit(a, ax, ay, aw, b, bx, by, bw, x0, y0, x1, y1) {
 // 同一張照片連續塗的美顏筆共用一個 ses：
 //   O：開始之前的照片，只存塗過的那幾格（256 × 256 一格，第一次要改那一格時才存）
 //   Oh：開始之前的照片縮到短邊 400，模糊、參考膚色都在這上面算，各筆第一次用到時算一次（hel）
+//   O0：除斑改過的格子，改之前真正的原圖（除斑的橡皮擦換回這個）
 //   A：每支筆一張遮罩（半解析度，0～255）
 const TS = 256, BS = 256;
 function session(canvas, v0) {
@@ -98,13 +100,13 @@ function session(canvas, v0) {
     canvas, ctx: canvas.getContext('2d'), W, H, S, R0, v0,
     mw: Math.max(1, Math.round(W * ms)), mh: Math.max(1, Math.round(H * ms)),
     hw: Math.max(1, Math.round(W * hs)), hh: Math.max(1, Math.round(H * hs)),
-    ntx: Math.ceil(W / TS), A: {}, box: {}, O: new Map(), hel: {}, hp: [], dirty: [],
+    ntx: Math.ceil(W / TS), A: {}, box: {}, O: new Map(), O0: new Map(), hel: {}, hp: [], dirty: [],
     re: loc[0], rt: loc[1], ro: loc[2], mg: 3 * Math.max(...loc, 2) + 2,
   };
   ses.Oh = shrink(canvas, ses.hw, ses.hh);
   return ses;
 }
-function kill(ses) { Object.assign(ses, { dead: true, canvas: null, ctx: null, O: null, A: null, Oh: null, hel: null }); }
+function kill(ses) { Object.assign(ses, { dead: true, canvas: null, ctx: null, O: null, O0: null, A: null, Oh: null, hel: null }); }
 // 縮小圖：一次縮一半（瀏覽器一次縮太多會跳格），回傳 [R, G, B, L]（0～1）
 function shrink(src, w, h) {
   let c = src;
@@ -149,6 +151,7 @@ function writeO(ses, x0, y0, x1, y1, d) {
   capture(ses, x0, y0, x1, y1);
   eachTile(ses, x0, y0, x1, y1, k => {
     const t = ses.O.get(k);
+    if (!ses.O0.has(k)) ses.O0.set(k, { ...t, d: t.d.slice() });
     blit(d, x0, y0, x1 - x0, t.d, t.x, t.y, t.w, Math.max(x0, t.x), Math.max(y0, t.y), Math.min(x1, t.x + t.w), Math.min(y1, t.y + t.h));
   });
   ses.dirty.push([x0, y0, x1, y1]);
@@ -452,12 +455,13 @@ function swapO(ses, o) {
 // 照片那塊一律從「開始之前的照片」用全部遮罩重算（四捨五入只有一次）：以前每筆在已經四捨五入的照片上加「新遮罩 − 舊遮罩」，
 // 多塗的後幾筆遮罩只多幾階，變化不到半階就被捨掉，多塗等於沒塗（評審 #149）。
 // 這筆遮罩有變、照片卻一個像素都沒變時，遮罩照樣留著（不記一步復原），下一筆才累積得上去
-async function maskStroke(ses, tool, pts, R, k) {
+// 擦除（erase）：遮罩往 0 走，塗到的地方回到沒塗過的樣子
+async function maskStroke(ses, tool, pts, R, k, erase) {
   const { W, H, mw, mh } = ses, s = mw / W;
   const [x0, y0, x1, y1] = bounds(pts, R + 3 / s, s, mw, mh), w = x1 - x0, h = y1 - y0;
   if (w < 1 || h < 1) return null;
   const cov = stroke(pts, x0, y0, w, h, s, R), A = ses.A[tool] ||= new Uint8Array(mw * mh);
-  const C = tool !== 'smooth' ? k : k * (1.5 - 0.5 * k), T = Math.round(255 * C), dep = C > 0 ? Math.min(1, k / C) : 1;
+  const C = tool !== 'smooth' ? k : k * (1.5 - 0.5 * k), T = erase ? 0 : Math.round(255 * C), dep = erase || C <= 0 ? 1 : Math.min(1, k / C);
   const old = new Uint8Array(w * h), c = toward(A, mw, x0, y0, w, h, cov, T, dep, old);
   if (!c) return null;
   const [cx0, cy0, cx1, cy1] = c;
@@ -563,7 +567,34 @@ async function blemishStroke(ses, pts, R, k) {
     }
   }
   if (cx1 < 0) return null;
-  // 改在「開始之前的照片」上（復原時對調回來），再跟其他筆一起重算這塊
+  return commitO(ses, F, before, after, cx0, cy0, cx1, cy1);
+}
+// 除斑的橡皮擦：塗到的地方，「開始之前的照片」換回除斑改之前的樣子（O0），再跟其他筆一起重算
+async function blemishErase(ses, pts, R) {
+  const { W, H } = ses, F = bounds(pts, R + 2, 1, W, H), fw = F[2] - F[0], fh = F[3] - F[1];
+  if (fw < 2 || fh < 2) return null;
+  const cov = stroke(pts, F[0], F[1], fw, fh, 1, R), before = readO(ses, F[0], F[1], F[2], F[3]), org = new Uint8ClampedArray(before);
+  eachTile(ses, F[0], F[1], F[2], F[3], k => {
+    const t = ses.O0.get(k);
+    if (t) blit(t.d, t.x, t.y, t.w, org, F[0], F[1], fw, Math.max(F[0], t.x), Math.max(F[1], t.y), Math.min(F[2], t.x + t.w), Math.min(F[3], t.y + t.h));
+  });
+  const after = new Uint8ClampedArray(before);
+  let cx0 = Infinity, cy0 = Infinity, cx1 = -1, cy1 = -1;
+  for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) {
+    const j = y * fw + x, c = cov[j], q = j * 4;
+    if (c < 0.002 || (before[q] === org[q] && before[q + 1] === org[q + 1] && before[q + 2] === org[q + 2])) continue;
+    for (let i = 0; i < 3; i++) after[q + i] = Math.round(before[q + i] + (org[q + i] - before[q + i]) * Math.min(1, c));
+    if (after[q] !== before[q] || after[q + 1] !== before[q + 1] || after[q + 2] !== before[q + 2]) {
+      const X = x + F[0], Y = y + F[1];
+      if (X < cx0) cx0 = X; if (X > cx1) cx1 = X; if (Y < cy0) cy0 = Y; if (Y > cy1) cy1 = Y;
+    }
+  }
+  if (cx1 < 0) return null;
+  return commitO(ses, F, before, after, cx0, cy0, cx1, cy1);
+}
+// 「開始之前的照片」F 這塊從 before 改成 after（有變的是 [cx0,cx1]×[cy0,cy1]）：改在 O 上（復原時對調回來），再跟其他筆一起重算這塊
+async function commitO(ses, F, before, after, cx0, cy0, cx1, cy1) {
+  const { W, H } = ses, fw = F[2] - F[0];
   const o = { x0: cx0, y0: cy0, x1: cx1 + 1, y1: cy1 + 1 }, ow = o.x1 - o.x0, nd = new Uint8ClampedArray(ow * (o.y1 - o.y0) * 4);
   blit(after, F[0], F[1], fw, nd, o.x0, o.y0, ow, o.x0, o.y0, o.x1, o.y1);
   o.d = new Uint8ClampedArray(nd.length);
@@ -591,11 +622,15 @@ export function tabBeautyBrush(box, app) {
     label: b.name, icon: b.name, cls: 'wide', on: st.tool === b.id, onclick: () => { st.tool = b.id; showTab('bbrush'); },
   })));
   const b = BRUSHES.find(x => x.id === st.tool);
+  // 塗抹、擦除（照 Hypic，切換只換這支筆）
+  const seg = document.querySelector('#modeSeg');
+  seg.hidden = false;
+  seg.querySelectorAll('button').forEach(e => { e.classList.toggle('on', (e.dataset.m === 'erase') === st.erase); e.onclick = () => { st.erase = e.dataset.m === 'erase'; showTab('bbrush'); }; });
   // 大小、強度兩條一起顯示，不用再點膠囊切換（評審 2026-10-27）
   document.querySelector('#rows').append(
     sliderRow({ label: '大小', min: 1, max: 100, val: st.size, def: 30, onInput: v => { st.size = v; } }),
-    sliderRow({ label: '強度', min: 0, max: 100, val: st.str[st.tool], def: b.str, onInput: v => { st.str[st.tool] = v; } }));
-  document.querySelector('#note').textContent = `塗抹要${b.name}的地方。同一處多塗幾次，到上限就停，不會越塗越假。`;
+    ...st.erase ? [] : [sliderRow({ label: '強度', min: 0, max: 100, val: st.str[st.tool], def: b.str, onInput: v => { st.str[st.tool] = v; } })]);
+  document.querySelector('#note').textContent = st.erase ? `擦掉${b.name}塗過的地方，回到原本的樣子。` : `塗抹要${b.name}的地方。同一處多塗幾次，到上限就停，不會越塗越假。`;
   // 點開美顏筆、換筆時先在背景把縮圖和這支筆要用的資料算好，第一筆放開才不會頓一下
   clearTimeout(warmT);
   warmT = setTimeout(() => {
@@ -624,8 +659,10 @@ export function beautyBrushInput(wrap, app) {
     if (!ov) { ov = newCanvas(b.width * k, b.height * k); ov.id = 'ddov'; wrap.append(ov); }
     const ctx = ov.getContext('2d');
     ctx.clearRect(0, 0, ov.width, ov.height);
-    ctx.strokeStyle = 'rgba(255,90,122,.35)'; ctx.lineCap = ctx.lineJoin = 'round';
-    for (const s of pts ? [...pend, { pts, rd: bbRadius(st.size, b.width, b.height) }] : pend) {
+    ctx.lineCap = ctx.lineJoin = 'round';
+    // 塗抹是粉紅、擦除是白色
+    for (const s of pts ? [...pend, { pts, rd: bbRadius(st.size, b.width, b.height), erase: st.erase }] : pend) {
+      ctx.strokeStyle = s.erase ? 'rgba(255,255,255,.4)' : 'rgba(255,90,122,.35)';
       ctx.lineWidth = 2 * s.rd * k;
       ctx.beginPath();
       s.pts.forEach((p, i) => i ? ctx.lineTo(p.x * k, p.y * k) : ctx.moveTo(p.x * k, p.y * k));
@@ -654,7 +691,7 @@ export function beautyBrushInput(wrap, app) {
     if (!pts) return;
     const S = app.surf(), b = S.canvas;
     // 瘦臉、推臉這些變形開著時，畫面上的點換回原圖上的點，才會修在手指下面（照放開這時候的變形換）
-    const job = { pts, rd: bbRadius(st.size, b.width, b.height), tool: st.tool, k: st.str[st.tool] / 100, S, map: app.toSrc?.() };
+    const job = { pts, rd: bbRadius(st.size, b.width, b.height), tool: st.tool, erase: st.erase, k: st.str[st.tool] / 100, S, map: app.toSrc?.() };
     pts = null; pend.push(job); preview(); app.queued?.();
     queue = queue.then(() => run(job)).catch(e => console.error(e));
   };
@@ -667,7 +704,7 @@ export function beautyBrushInput(wrap, app) {
       const S = job.S;
       if (!valid(S.bbSes, S)) { bbRelease(S); S.bbSes = session(S.canvas, S.ver); }
       const ses = S.bbSes, sp = job.map ? job.pts.map(job.map) : job.pts;
-      r = await (job.tool === 'blemish' ? blemishStroke(ses, sp, job.rd, job.k) : maskStroke(ses, job.tool, sp, job.rd, job.k));
+      r = await (job.tool !== 'blemish' ? maskStroke(ses, job.tool, sp, job.rd, job.k, job.erase) : job.erase ? blemishErase(ses, sp, job.rd) : blemishStroke(ses, sp, job.rd, job.k));
       // 算的時候照片被整張換掉（合併、裁切…）：這一筆不算
       if (r && !same(job)) { r.aux.swap(); r = null; }
     } finally {

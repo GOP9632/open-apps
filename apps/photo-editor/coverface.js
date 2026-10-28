@@ -10,9 +10,9 @@ const face = (id, cat, name, body) => ({ id, cat, name, at: 'cover', ar: 100 / 1
 const eyes = (id, cat, name, h, body) => ({ id, cat, name, at: 'eyes', ar: 300 / h, svg: sv(300, h, body) });
 const pix = (id, cat, name, kind) => ({ id, cat, name, at: 'cover', pix: kind });
 const OVAL = 'M50 4C78 4 96 28 96 62s-20 54-46 54S4 96 4 62 22 4 50 4z';
-const scribble = (col, w) => `<path d="M14 30c20-14 56-18 74-6M10 48c26-16 64-20 82-4M12 66c24-14 62-18 78-2M14 84c24-12 58-14 74 0M22 100c18-8 42-10 58 0" fill="none" stroke="${col}" stroke-width="${w}" stroke-linecap="round"/>`;
 // 來回亂塗的一筆（綠色塗鴉用；以前是幾條平行的弧線，綠色看起來像 Spotify 的標誌，評審 #145 小 K）
 const zigzag = (col, w) => `<path d="M16 26C40 20 66 18 86 22C60 30 36 36 12 44C40 40 66 36 90 38C64 46 38 52 10 60C38 58 64 54 88 56C62 64 38 70 12 78C38 76 62 72 86 74C62 82 40 88 18 96C40 94 60 92 80 94" fill="none" stroke="${col}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>`;
+const scrawl = (col, w) => `<path d="M24 16C44 8 64 9 78 14C58 22 34 26 14 32C40 28 68 26 90 28C64 38 36 42 8 48C38 46 66 44 94 46C66 54 38 58 8 64C38 62 66 60 94 62C66 70 38 74 8 80C38 78 64 76 92 78C66 86 40 90 12 96C36 94 60 94 86 94C64 102 44 106 26 112" fill="none" stroke="${col}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>`;
 const pixHeart = () => {
   const rows = ['0110110', '1111111', '1111111', '0111110', '0011100', '0001000'];
   return rows.flatMap((r, y) => [...r].map((c, x) => c === '1' ? `<rect x="${8 + x * 12}" y="${24 + y * 12}" width="12" height="12" fill="${(x + y) % 3 ? '#ff4d8d' : '#ff86b3'}"/>` : '')).join('');
@@ -25,8 +25,9 @@ export const COVERS = [
   pix('cvSens', 'daily', '敏感內容', 'sensitive'),
   face('cvLoveMe', 'daily', '我愛老己', `<path d="${OVAL}" fill="#ffd6e4"/><path d="M50 50c-8-14-30-8-26 8 3 12 26 26 26 26s23-14 26-26c4-16-18-22-26-8z" fill="#ff4d7a"/><text x="50" y="108" ${TXT} font-size="15" fill="#d6245a">我愛老己</text>`),
   face('cvGreenDoodle', 'daily', '綠色塗鴉', zigzag('#39d353', 10)),
-  // 黑線底下墊一層白邊：縮圖的深色底、深色照片上才看得到（評審 L53）
-  face('cvHandDoodle', 'daily', '手繪塗鴉', scribble('#fff', 13) + '<path d="M18 22l66 80M82 22l-66 80" stroke="#fff" stroke-width="10" stroke-linecap="round" fill="none"/>' + scribble('#222', 9) + '<path d="M18 22l66 80M82 22l-66 80" stroke="#222" stroke-width="6" stroke-linecap="round" fill="none"/>'),
+  // 來回塗滿整張臉（以前幾條弧線加叉，線縫露出五官，評審 #150）。白邊只在縮圖：深色底上才看得到；
+  // 貼到照片上不描白邊，深膚色上才不會像白框貼紙（評審 L53）
+  { ...face('cvHandDoodle', 'daily', '手繪塗鴉', scrawl('#222', 13)), thumb: sv(100, 120, scrawl('#fff', 18) + scrawl('#222', 13)) },
   face('cvSwirl', 'daily', '淡藍漩渦', `<path d="${OVAL}" fill="#d8f0ff"/><path d="M50 62c0-4 6-4 6 0 0 8-12 9-14 0-3-12 13-18 22-8 11 12 2 32-14 32-20 0-30-22-20-40 12-20 42-20 52 2" fill="none" stroke="#6ec3f5" stroke-width="7" stroke-linecap="round"/>`),
   face('cvBear', 'daily', '小熊臉', '<circle cx="20" cy="22" r="15" fill="#a86b3c"/><circle cx="80" cy="22" r="15" fill="#a86b3c"/><circle cx="20" cy="22" r="7" fill="#e7b48a"/><circle cx="80" cy="22" r="7" fill="#e7b48a"/><ellipse cx="50" cy="66" rx="44" ry="50" fill="#b97a47"/><ellipse cx="50" cy="82" rx="20" ry="15" fill="#efc9a3"/><ellipse cx="50" cy="75" rx="7" ry="5" fill="#3a2516"/><circle cx="33" cy="56" r="5" fill="#3a2516"/><circle cx="67" cy="56" r="5" fill="#3a2516"/><path d="M44 88c3 4 9 4 12 0" fill="none" stroke="#3a2516" stroke-width="3" stroke-linecap="round"/>'),
   face('cvKao', 'daily', '白色顏文字', `<path d="${OVAL}" fill="#fff" stroke="#ddd" stroke-width="2"/><text x="50" y="72" ${TXT} font-size="24" fill="#333">(・ω・)</text>`),
