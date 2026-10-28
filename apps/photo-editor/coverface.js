@@ -25,7 +25,8 @@ export const COVERS = [
   pix('cvSens', 'daily', '敏感內容', 'sensitive'),
   face('cvLoveMe', 'daily', '我愛老己', `<path d="${OVAL}" fill="#ffd6e4"/><path d="M50 50c-8-14-30-8-26 8 3 12 26 26 26 26s23-14 26-26c4-16-18-22-26-8z" fill="#ff4d7a"/><text x="50" y="108" ${TXT} font-size="15" fill="#d6245a">我愛老己</text>`),
   face('cvGreenDoodle', 'daily', '綠色塗鴉', zigzag('#39d353', 10)),
-  face('cvHandDoodle', 'daily', '手繪塗鴉', scribble('#222', 9) + '<path d="M18 22l66 80M82 22l-66 80" stroke="#222" stroke-width="6" stroke-linecap="round" fill="none"/>'),
+  // 黑線底下墊一層白邊：縮圖的深色底、深色照片上才看得到（評審 L53）
+  face('cvHandDoodle', 'daily', '手繪塗鴉', scribble('#fff', 13) + '<path d="M18 22l66 80M82 22l-66 80" stroke="#fff" stroke-width="10" stroke-linecap="round" fill="none"/>' + scribble('#222', 9) + '<path d="M18 22l66 80M82 22l-66 80" stroke="#222" stroke-width="6" stroke-linecap="round" fill="none"/>'),
   face('cvSwirl', 'daily', '淡藍漩渦', `<path d="${OVAL}" fill="#d8f0ff"/><path d="M50 62c0-4 6-4 6 0 0 8-12 9-14 0-3-12 13-18 22-8 11 12 2 32-14 32-20 0-30-22-20-40 12-20 42-20 52 2" fill="none" stroke="#6ec3f5" stroke-width="7" stroke-linecap="round"/>`),
   face('cvBear', 'daily', '小熊臉', '<circle cx="20" cy="22" r="15" fill="#a86b3c"/><circle cx="80" cy="22" r="15" fill="#a86b3c"/><circle cx="20" cy="22" r="7" fill="#e7b48a"/><circle cx="80" cy="22" r="7" fill="#e7b48a"/><ellipse cx="50" cy="66" rx="44" ry="50" fill="#b97a47"/><ellipse cx="50" cy="82" rx="20" ry="15" fill="#efc9a3"/><ellipse cx="50" cy="75" rx="7" ry="5" fill="#3a2516"/><circle cx="33" cy="56" r="5" fill="#3a2516"/><circle cx="67" cy="56" r="5" fill="#3a2516"/><path d="M44 88c3 4 9 4 12 0" fill="none" stroke="#3a2516" stroke-width="3" stroke-linecap="round"/>'),
   face('cvKao', 'daily', '白色顏文字', `<path d="${OVAL}" fill="#fff" stroke="#ddd" stroke-width="2"/><text x="50" y="72" ${TXT} font-size="24" fill="#333">(・ω・)</text>`),

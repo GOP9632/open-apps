@@ -1245,6 +1245,7 @@ function showTab(t) {
   $('#wrap').classList.toggle('lightdrag', t === 'light' && !!P.light);
   lightDot(); bmBox(); rsRing(); faceBoxes();
   syncNav();
+  peekRow(box);
   // 換分頁：選中的那個捲到看得到的地方（以前留在上一個分頁捲到的位置，預設選中的磨皮、彎曲會在畫面外）
   if (same) { box.scrollLeft = sl[0]; $('#cats').scrollLeft = sl[1]; }
   else for (const [row, on] of [[box, box.querySelector('.it.on')], [$('#cats'), $('#cats .it.on')], [$('#tabs'), $(`#tabs .tab[data-tab="${t}"]`)]]) {
@@ -1256,12 +1257,30 @@ function showTab(t) {
 }
 // 橫著捲的列：還能往左、往右滑就在那一邊淡出（評審 M13）。電腦版不捲，不會淡出
 const FADE_ROWS = ['#tabs', '#cats', '#items'].map(s => $(s));
+// 一排放不下時，畫面邊上那一顆露出一半左右，一看就知道還能滑（評審 #145 小 F、#147：375 寬時美顏的下一顆只露 13px，
+// 看起來像到底了）。間距在 2～14px 之間挑（原本 6px），照沒捲動時的位置算
+function peekRow(row) {
+  row.style.gap = '';
+  const its = [...row.children];
+  if (wide.matches || its.length < 3) return;
+  const L = row.getBoundingClientRect().left - row.scrollLeft, W = row.clientWidth;
+  const x0 = its[0].getBoundingClientRect().left - L, ws = its.map(e => e.offsetWidth);
+  let best = 6, bd = 9;
+  for (let g = 2; g <= 14; g++) {
+    let x = x0, f = null;
+    for (const w of ws) { if (x + w > W) { f = Math.max(0, (W - x) / w); break; } x += w + g; }
+    if (f == null) { if (g === 6) return; continue; }  // 放得下
+    const d = Math.abs(f - 0.5) + Math.abs(g - 6) / 40;
+    if (d < bd) { bd = d; best = g; }
+  }
+  if (best !== 6) row.style.gap = best + 'px';
+}
 function edgeFade(el) {
   const l = el.scrollLeft > 2, r = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
   el.classList.toggle('fadeL', l); el.classList.toggle('fadeR', r);
 }
 FADE_ROWS.forEach(el => el.addEventListener('scroll', () => edgeFade(el), { passive: true }));
-addEventListener('resize', () => FADE_ROWS.forEach(edgeFade));
+addEventListener('resize', () => { peekRow($('#items')); FADE_ROWS.forEach(edgeFade); });
 
 const isSet = (k, T = P) => T[k] !== 0 || (SIDED.includes(k) && (T[k + 'L'] !== 0 || T[k + 'R'] !== 0));
 // 兩邊／左／右：固定放在說明那一列右邊。以前插在項目列最前面，點到瘦臉整排被推走 178px、剛點的那顆跑出畫面（評審 H3）。
