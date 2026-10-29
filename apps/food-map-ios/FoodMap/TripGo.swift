@@ -27,6 +27,28 @@ enum TripAsked {
         l.append(id)
         UserDefaults.standard.set(Array(l.suffix(300)), forKey: key)
     }
+    static func remove(_ id: String) {
+        var l = UserDefaults.standard.stringArray(forKey: key) ?? []
+        l.removeAll { $0 == id }
+        UserDefaults.standard.set(l, forKey: key)
+    }
+}
+
+// 出發時跳過的站（有 done_at 但沒去）：不算進「今天吃了 N 間」
+enum TripSkipped {
+    private static let key = "tripSkipped"
+    static func has(_ id: String) -> Bool { (UserDefaults.standard.stringArray(forKey: key) ?? []).contains(id) }
+    static func add(_ id: String) {
+        var l = UserDefaults.standard.stringArray(forKey: key) ?? []
+        guard !l.contains(id) else { return }
+        l.append(id)
+        UserDefaults.standard.set(Array(l.suffix(300)), forKey: key)
+    }
+    static func remove(_ id: String) {
+        var l = UserDefaults.standard.stringArray(forKey: key) ?? []
+        l.removeAll { $0 == id }
+        UserDefaults.standard.set(l, forKey: key)
+    }
 }
 
 // 上方的「下一站」卡片
@@ -39,6 +61,7 @@ struct GoCard: View {
     let near: Bool             // 離這站 80 公尺內：「到了」變亮
     let nav: () -> Void
     let arrived: () -> Void
+    let skip: () -> Void
     let close: () -> Void
     @State private var pulse = false
 
@@ -49,14 +72,15 @@ struct GoCard: View {
                     .contentTransition(.numericText())
                 Spacer()
                 Button(action: close) {
-                    Text("結束").font(.caption.weight(.heavy)).foregroundStyle(Color.ink.opacity(0.55))
-                        .padding(.horizontal, 10).frame(height: 26).background(Color.ink.opacity(0.07), in: .capsule)
+                    // 上面的「完成」出發時藏起來了，這顆是唯一的出口：字大一點、看得清楚
+                    Text("結束").font(.subheadline.weight(.heavy)).foregroundStyle(Color.ink.opacity(0.75))
+                        .padding(.horizontal, 14).frame(height: 32).background(Color.ink.opacity(0.08), in: .capsule)
                         .frame(minWidth: 44, minHeight: 44).contentShape(.rect)
                 }
                 .buttonStyle(PressStyle())
                 .accessibilityLabel("結束出發")
             }
-            .frame(height: 28)
+            .frame(height: 32)
             HStack(spacing: 10) {
                 if !stop.isPlace {
                     Image(systemName: POI.icon(stop.poi, kind: stop.kind)).font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
@@ -89,6 +113,9 @@ struct GoCard: View {
                 .scaleEffect(near && pulse ? 1.04 : 1)
                 .animation(near ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true) : .default, value: pulse)
                 .onChange(of: near, initial: true) { _, v in pulse = v }
+                // 店沒開、不想去：長按跳過（不問好不好吃、不算吃了幾間）
+                .contextMenu { Button("跳過這站", systemImage: "forward.end") { skip() } }
+                .accessibilityAction(named: "跳過這站") { skip() }
             }
         }
         .padding(14)

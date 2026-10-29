@@ -41,29 +41,9 @@ struct TripsList: View {
                     if showPast { ForEach(past) { t in card(t, today: false).opacity(0.75) } }
                 }
             }
-            .padding(.horizontal, 16).padding(.bottom, 30)
+            .padding(.horizontal, 16).padding(.bottom, 80)
         }
         .background(Color.bg)
-        // 刪掉的「復原」：這張 sheet 蓋住了首頁的訊息條，在這裡也放一條（倒數照首頁那條，時間到一起收）
-        .overlay(alignment: .bottom) {
-            if let msg = store.toast, msg.hasPrefix("已刪除「"), let act = store.toastAction {
-                HStack(spacing: 10) {
-                    Image(systemName: "trash.fill").font(.system(size: 14, weight: .bold)).foregroundStyle(.white.opacity(0.8))
-                    Text(msg).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
-                    Spacer(minLength: 0)
-                    Button { act.run() } label: {
-                        Text(act.label).font(.subheadline.weight(.heavy)).foregroundStyle(Color.sprYellow)
-                            .padding(.horizontal, 10).frame(minWidth: 56, minHeight: 44).contentShape(.rect)
-                    }
-                    .padding(.trailing, -10)
-                }
-                .padding(.horizontal, 16).padding(.vertical, 3)
-                .background(Color.ink.opacity(0.92), in: .capsule)
-                .padding(.horizontal, 24).padding(.bottom, 16)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
-        .animation(.snappy, value: store.toast)
         .confirmationDialog("刪除「\(asking?.title ?? "")」？每一站都會一起刪掉", isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } }),
                             titleVisibility: .visible, presenting: asking) { t in
             Button("刪除行程", role: .destructive) { delete(t) }
@@ -71,7 +51,7 @@ struct TripsList: View {
         .toolbarVisibility(.hidden, for: .navigationBar)
         .sheet(isPresented: $adding) { TripForm(trip: nil) { t in enterTrip(t) } }
         .task { await trips.load() }
-        .refreshable { await trips.load() }
+        .refreshable { if !(await trips.load()) { store.saySyncFailed() } }
         .onAppear { Perf.shared.mark("我的行程") }
     }
 

@@ -26,8 +26,6 @@ struct Root: View {
     @State private var myName = ""
     // 刪除時卡片縮小飛到訊息條（卡片和訊息條左邊的小照片共用）
     @Namespace private var toastNS
-    // 訊息條時間到：先淡掉、原地多擋 0.45 秒點擊（想按「復原」剛好消失時，不會按到底下的按鈕）
-    @State private var toastFading = false
     // 冷啟動：啟動畫面的甜甜圈咬一口再放大淡掉（減少動態時不播）
     @State private var bite = !UIAccessibility.isReduceMotionEnabled
     @State private var clip = ClipWatch.shared
@@ -49,85 +47,15 @@ struct Root: View {
             Task { await store.takePendingJoin() }
         }
         // 存檔失敗之類的訊息，從下面浮出來，幾秒後自己消失
-        .overlay(alignment: .bottom) {
-            if let t = store.toast {
-                let act = store.toastAction
-                // 地圖首頁（不在行程、沒點進店家頁）：貼著下面那塊的上緣，右邊讓開行程、定位兩顆；其他分頁照舊
-                // 面板拉到最高段時上緣在篩選籤附近：改放分頁列上方，不壓到籤
-                let onMap = store.tab == 0 && store.mapPath.isEmpty && store.panelTop > 0 && !TripMode.shared.on && MapPanel.shared.stage != .high
-                // 行程模式（還沒出發）：貼著行程面板的上緣，不蓋住站卡。面板拉到最高時放進面板最上面那條（把手、起點那排），
-                // 不浮在清單中間：蓋在站卡右邊時，想點垃圾桶、交通方式會按到訊息條上的「復原」
-                let onTrip = store.tab == 0 && store.mapPath.isEmpty && TripMode.shared.on && !TripMode.shared.going && TripMode.shared.panelH > 0
-                let tripPad = TripMode.shared.panelH <= 420 ? TripMode.shared.panelH + 8 : TripMode.shared.panelH - 56
-                // 店家頁（分頁列藏著）：貼著底部按鈕列；分頁列有顯示時一律 96（bottomBar 留著舊值也不會用錯）
-                let pad: CGFloat = onMap ? store.panelTop + 8 : onTrip ? tripPad : (store.barHidden && store.bottomBar > 0) ? store.bottomBar + 8 : 96
-                HStack(spacing: 10) {
-                    if let p = store.toastPlace {
-                        PhotoView(place: p, px: 120).frame(width: 30, height: 30).clipShape(.rect(cornerRadius: 8))
-                            .matchedGeometryEffect(id: "del-" + p.id, in: toastNS)
-                    }
-                    if let i = store.toastIcon { ToastGlyph(icon: i).id(t) }
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(t).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
-                        if store.toastTap != nil {
-                            Text("按一下打開行程").font(.caption2.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
-                        }
-                    }
-                    .padding(.trailing, act == nil ? 0 : 4)
-                    if let act {
-                        // 有「復原」的訊息條撐滿寬度、按鈕固定在最右邊：店名長短不同，按鈕位置也不跑
-                        Spacer(minLength: 0)
-                        Button { if !toastFading { act.run() } } label: {
-                            Text(act.label).font(.subheadline.weight(.heavy)).foregroundStyle(Color.sprYellow)
-                                .padding(.horizontal, 10).frame(minWidth: 56, minHeight: 44).contentShape(.rect)
-                        }
-                        .padding(.trailing, -10)
-                    }
-                }
-                .frame(maxWidth: act == nil ? nil : .infinity, alignment: .leading)
-                .padding(.horizontal, 16).padding(.vertical, act == nil ? 11 : 3)
-                .background(Color.ink.opacity(0.92), in: .capsule)
-                .padding(.bottom, pad).padding(.horizontal, 24).padding(.trailing, onMap ? 52 : 0)
-                // 返回時從按鈕列上方滑到面板上緣，不是一格跳過去
-                .animation(.snappy(duration: 0.3), value: pad)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .accessibilityAddTraits(.isButton)
-                .onAppear { AccessibilityNotification.Announcement(t).post() }
-                // 時間到自己收起來；手指按著訊息條時暫停倒數
-                .task(id: t) {
-                    toastFading = false
-                    var left: Double = Store.slowToasts ? 20 : (store.toastSeconds ?? (act == nil ? 2.6 : store.toastTap != nil ? 5 : 4))
-                    while left > 0 {
-                        try? await Task.sleep(for: .milliseconds(100))
-                        if Task.isCancelled { return }
-                        if !store.toastHeld { left -= 0.1 }
-                    }
-                    if act != nil {
-                        withAnimation(.easeOut(duration: 0.2)) { toastFading = true }
-                        try? await Task.sleep(for: .milliseconds(450))
-                        if Task.isCancelled { return }
-                    }
-                    withAnimation(.snappy) { if store.toast == t { store.toast = nil; store.toastAction = nil } }
-                    toastFading = false
-                }
-                .simultaneousGesture(DragGesture(minimumDistance: 0)
-                    .onChanged { _ in if !store.toastHeld { store.toastHeld = true } }
-                    .onEnded { _ in store.toastHeld = false })
-                .opacity(toastFading ? 0.011 : 1)
-                .onTapGesture {
-                    guard !toastFading else { return }
-                    let tap = store.toastTap
-                    withAnimation(.snappy) { store.toast = nil; store.toastTap = nil }
-                    tap?()
-                }
-            }
-        }
+        .overlay(alignment: .bottom) { toastLayer }
         // 剛複製了連結：在面板上緣（其他分頁在分頁列上方）浮一條膠囊問要不要收。訊息條優先，有訊息條時先藏著
         .overlay(alignment: .bottom) {
             if clip.showing && store.loggedIn && store.coach.isEmpty && store.toast == nil && !store.askNotify && !TripMode.shared.on {
                 ClipCapsule()
             }
         }
+        // 訊息條時間到自己收起來（不管畫在 Root 還是 sheet 裡，只倒數這一份）；手指按著時暫停
+        .task(id: store.toast) { await toastCountdown() }
         .environment(\.toastNS, toastNS)
         .overlay { if bite { LaunchBite(on: $bite) } }
         // 手感量測浮層（「我的」版本號連點 5 下打開）
@@ -156,6 +84,49 @@ struct Root: View {
                 Task { _ = try? await Supa.fresh(); await store.sync() }
             }
         }
+    }
+
+    // 存檔失敗之類的訊息，從下面浮出來，幾秒後自己消失（sheet 開著時畫在 sheet 裡，這裡先藏起來）
+    @ViewBuilder private var toastLayer: some View {
+        if let t = store.toast, store.toastSheets == 0 {
+            // 地圖首頁（不在行程、沒點進店家頁）：貼著下面那塊的上緣，右邊讓開行程、定位兩顆；其他分頁照舊
+            // 面板拉到最高段時上緣在篩選籤附近：改放分頁列上方，不壓到籤
+            let onMap = store.tab == 0 && store.mapPath.isEmpty && store.panelTop > 0 && !TripMode.shared.on && MapPanel.shared.stage != .high
+            // 行程模式（還沒出發）：貼著行程面板的上緣，不蓋住站卡。面板拉到最高時放進面板最上面那條（把手、起點那排），
+            // 不浮在清單中間：蓋在站卡右邊時，想點垃圾桶、交通方式會按到訊息條上的「復原」
+            let onTrip = store.tab == 0 && store.mapPath.isEmpty && TripMode.shared.on && !TripMode.shared.going && TripMode.shared.panelH > 0
+            let tripPad: CGFloat = TripMode.shared.panelH <= 420 ? TripMode.shared.panelH + 8 : TripMode.shared.panelH - 56
+            // 出發中：貼著下面的評分卡上緣（沒有評分卡時貼底），不被它蓋住
+            let onGo = store.tab == 0 && store.mapPath.isEmpty && TripMode.shared.going
+            let goPad: CGFloat = max(24, TripMode.shared.goInset + 8)
+            // 店家頁（分頁列藏著）：貼著底部按鈕列；分頁列有顯示時一律 96（bottomBar 留著舊值也不會用錯）
+            let barPad: CGFloat = (store.barHidden && store.bottomBar > 0) ? store.bottomBar + 8 : 96
+            let pad: CGFloat = onMap ? store.panelTop + 8 : onTrip ? tripPad : onGo ? goPad : barPad
+            ToastBar(text: t, bottom: pad, trailing: onMap ? 52 : 0, ns: toastNS)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    // 訊息條的倒數：Root 和 sheet 裡那條共用這一份（sheet 和 Root 各自倒數的話，關 sheet 時 Root 那條會從頭再數，停得比說好的久）
+    private func toastCountdown() async {
+        store.toastFading = false
+        guard let t = store.toast else { return }
+        AccessibilityNotification.Announcement(t).post()
+        let act = store.toastAction
+        var left: Double = Store.slowToasts ? 20 : (store.toastSeconds ?? (act == nil ? 2.6 : store.toastTap != nil ? 5 : 4))
+        while left > 0 {
+            try? await Task.sleep(for: .milliseconds(100))
+            if Task.isCancelled { return }
+            if !store.toastHeld { left -= 0.1 }
+        }
+        // 有「復原」的：先淡掉、原地多擋 0.45 秒點擊（想按「復原」剛好消失時，不會按到底下的按鈕）
+        if act != nil {
+            withAnimation(.easeOut(duration: 0.2)) { store.toastFading = true }
+            try? await Task.sleep(for: .milliseconds(450))
+            if Task.isCancelled { return }
+        }
+        withAnimation(.snappy) { if store.toast == t { store.toast = nil; store.toastAction = nil } }
+        store.toastFading = false
     }
 
     // 登入後的畫面拆成三段（分頁、事件、彈出的卡和問題）：整串接在 body 裡，Release 建置時編譯器在合理時間內推不出型別
@@ -434,4 +405,79 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
 extension Notification.Name {
     static let openSaved = Notification.Name("bitemap.openSaved")
+}
+
+// 訊息條本體：Root 和 sheet 共用（倒數、淡出、朗讀只在 Root 跑一份）
+struct ToastBar: View {
+    let text: String
+    let bottom: CGFloat
+    var trailing: CGFloat = 0
+    var ns: Namespace.ID?
+    @Environment(Store.self) private var store
+    var body: some View {
+        let act = store.toastAction
+        HStack(spacing: 10) {
+            if let p = store.toastPlace {
+                let photo = PhotoView(place: p, px: 120).frame(width: 30, height: 30).clipShape(.rect(cornerRadius: 8))
+                if let ns { photo.matchedGeometryEffect(id: "del-" + p.id, in: ns) } else { photo }
+            }
+            if let i = store.toastIcon { ToastGlyph(icon: i).id(text) }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(text).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
+                if store.toastTap != nil {
+                    Text("按一下打開行程").font(.caption2.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
+                }
+            }
+            .padding(.trailing, act == nil ? 0 : 4)
+            if let act {
+                // 有「復原」的訊息條撐滿寬度、按鈕固定在最右邊：店名長短不同，按鈕位置也不跑
+                Spacer(minLength: 0)
+                Button { if !store.toastFading { act.run() } } label: {
+                    Text(act.label).font(.subheadline.weight(.heavy)).foregroundStyle(Color.sprYellow)
+                        .padding(.horizontal, 10).frame(minWidth: 56, minHeight: 44).contentShape(.rect)
+                }
+                .padding(.trailing, -10)
+            }
+        }
+        .frame(maxWidth: act == nil ? nil : .infinity, alignment: .leading)
+        .padding(.horizontal, 16).padding(.vertical, act == nil ? 11 : 3)
+        .background(Color.ink.opacity(0.92), in: .capsule)
+        .padding(.bottom, bottom).padding(.horizontal, 24).padding(.trailing, trailing)
+        // 返回時從按鈕列上方滑到面板上緣，不是一格跳過去
+        .animation(.snappy(duration: 0.3), value: bottom)
+        .accessibilityAddTraits(.isButton)
+        // 手指按著訊息條時暫停倒數（刪行程、刪一站、刪收藏的真刪除也會等）
+        .simultaneousGesture(DragGesture(minimumDistance: 0)
+            .onChanged { _ in if !store.toastHeld { store.toastHeld = true } }
+            .onEnded { _ in store.toastHeld = false })
+        // 時間到：淡掉但原地多擋 0.45 秒點擊，不會點到底下的東西
+        .opacity(store.toastFading ? 0.011 : 1)
+        .onTapGesture {
+            guard !store.toastFading else { return }
+            let tap = store.toastTap
+            withAnimation(.snappy) { store.toast = nil; store.toastTap = nil }
+            tap?()
+        }
+    }
+}
+
+extension View {
+    // sheet 裡也看得到訊息條（復原按得到）；開著時 Root 那條先藏起來
+    func toastHost(bottom: CGFloat = 16) -> some View { overlay(alignment: .bottom) { ToastHostLayer(bottom: bottom) } }
+}
+
+private struct ToastHostLayer: View {
+    let bottom: CGFloat
+    @Environment(Store.self) private var store
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Color.clear.allowsHitTesting(false)
+            if let t = store.toast {
+                ToastBar(text: t, bottom: bottom, ns: nil)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .onAppear { store.toastSheets += 1 }
+        .onDisappear { store.toastSheets -= 1 }
+    }
 }

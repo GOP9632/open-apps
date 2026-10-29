@@ -22,12 +22,17 @@ struct TripTop: View {
         HStack(spacing: 8) {
             if let t { capsule(t) } else { Spacer() }
             if t != nil && !mode.going { findButton }
-            Button { mode.close() } label: { Text("完成").frame(minHeight: 50) }
-                .buttonStyle(ChunkyStyle(radius: 16))
-                .accessibilityLabel("完成，回到地圖")
+            // 出發中不放「完成」：一按就整個離開行程，跟出發卡的「結束」容易按錯
+            if !mode.going {
+                Button { mode.close() } label: { Text("完成").frame(minHeight: 50) }
+                    .buttonStyle(ChunkyStyle(radius: 16))
+                    .accessibilityLabel("完成，回到地圖")
+                    .transition(.opacity)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 6)
+        .animation(.snappy(duration: 0.25), value: mode.going)
         // 框地圖時圖釘要在這條線下面（不被 🔍 蓋住）
         .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { mode.barBottom = $0 }
         .task(id: searchKey) {
@@ -36,9 +41,12 @@ struct TripTop: View {
         }
         .task(id: routeKey(t)) {
             guard let t, !mode.going else { return }
+            // 路線一段一段回來時 key 連續變：等 200ms 沒再變才量（task(id:) 換 key 會取消上一個）
+            try? await Task.sleep(for: .milliseconds(200))
+            if Task.isCancelled { return }
             let d = min(mode.day, t.days)
             // 傳行程預設；走路（＝自動）時每段依距離選，跟面板同一套
-            mode.search.measure(trips.stops(t.id, day: d), seg: mode.seg, mode: TravelMode(rawValue: t.mode) ?? .walk, store: store)
+            await mode.search.measure(trips.stops(t.id, day: d), seg: mode.seg, mode: TravelMode(rawValue: t.mode) ?? .walk, store: store)
         }
         // 鍵盤收起來（捲結果、按搜尋、點地圖）：不算在打字了（搜尋框還開著，✕ 或點地圖才收）
         // （輸入框蓋在地圖上，@FocusState 收不到焦點變化，所以直接看鍵盤）
@@ -115,10 +123,17 @@ struct TripTop: View {
             // 名字一行、摘要在下面一行（擠在同一行時名字只剩「TE…」），「第 N 天 ▾」靠右
             HStack(spacing: 6) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(t.title).font(.system(size: 15, weight: .heavy)).foregroundStyle(.white).lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text(t.title).font(.system(size: 15, weight: .heavy)).foregroundStyle(.white)
+                            .lineLimit(1).layoutPriority(1)
+                        // 這顆膠囊點了有選單（設定、改名、分享、換行程）：給一個看得出可以點的記號。
+                        // 用 ellipsis 不用 chevron，免得跟右邊「第 N 天 ▾」搞混
+                        Image(systemName: "ellipsis.circle.fill").font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.5)).fixedSize()
+                    }
                     if !mode.summary.isEmpty {
                         Text(mode.summary).font(.system(size: 11, weight: .bold)).foregroundStyle(.white.opacity(0.6))
-                            .lineLimit(1).minimumScaleFactor(0.75)
+                            .lineLimit(1).minimumScaleFactor(0.9)
                             .contentTransition(.numericText())
                             .animation(.snappy, value: mode.summary)
                     }
@@ -200,9 +215,29 @@ struct TripTop: View {
     private func addDay(_ t: Trip) {
         guard t.days < 14 else { return }
         Haptic.light()
+        let back = min(mode.day, t.days)
         var x = t; x.days += 1
+        let n = x.days, tid = t.id
         trips.update(x, store: store)
-        withAnimation(.snappy) { mode.day = x.days; mode.cand = nil; mode.hot = nil }
+        withAnimation(.snappy) { mode.day = n; mode.cand = nil; mode.hot = nil }
+        // 訊息條的復原晚幾秒才跑，TripTop 可能已經不在畫面上：用 shared 和先拿好的 store，不靠 view 裡的屬性
+        let st = store
+        store.say("加了第 \(n) 天", icon: .check, action: ("復原", {
+            let ts = TripStore.shared, m = TripMode.shared
+            guard var y = ts.trip(tid), y.days == n, n > 1 else { st.toast = nil; return }
+            // 這幾秒內已經在新的那天放了站：不動，請他用選單拿（站會移到隔壁那天，不會刪掉）
+            guard ts.stops(tid, day: n).isEmpty else { st.say("第 \(n) 天已經有店，要拿掉請用「第 \(n) 天 ▾」選單"); return }
+            Haptic.light()
+            y.days -= 1
+            ts.update(y, store: st)
+            withAnimation(.snappy) {
+                if m.tid == tid {
+                    if m.day >= n { m.day = min(back, y.days) }
+                    m.cand = nil; m.hot = nil
+                }
+            }
+            st.toast = nil
+        }), seconds: 6)
     }
 
     // ----- 🔍：展開、收起搜尋 -----
@@ -461,9 +496,10 @@ struct TripResults: View {
 // 地圖上搜到的地點：30pt 深色圓＋名字
 struct HitPin: View {
     let hit: MapHit
-    let on: Bool
     let tap: () -> Void
     @State private var shown = false
+    @State private var mode = TripMode.shared
+    private var on: Bool { mode.cand?.id == hit.id }
 
     var body: some View {
         Button(action: tap) {

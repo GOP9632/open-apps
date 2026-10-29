@@ -28,11 +28,13 @@ struct TripCand: Equatable {
     var day = 1
     var level: TripLevel = .mid
     var going = false                // 出發中
+    var offFollow = false            // 出發中自己拖過地圖（鏡頭不跟了）：「跟著我」鈕看這個
     // 面板算好、地圖要畫的
     var segs: [TripSeg] = []
     var marks: [TripMark] = []
     var summary = ""                 // 「4 站・16:40 回」
     var panelH: CGFloat = 0          // 下面面板停好時的高度（訊息條貼在它上面）
+    var goInset: CGFloat = 0          // 出發時下面評分卡上緣到安全區底的距離（訊息條貼在它上面）
     var hot: String?                 // 地圖上放大的那站（清單點了一下）
     var fly = 0                      // 要地圖飛到 hot 那站
     var fitTick = 0                  // 要地圖重新框住這天的站
@@ -41,8 +43,7 @@ struct TripCand: Equatable {
     var overDay: Int?                // 拖一站到上面「第 N 天」
     var moving = false               // 正在拖一站：標題列下面露出「第 N 天」可以放
     var cand: TripCand?
-    var preview: TripSeg?            // 加站卡：前一站 → 這間 → 後一站 的虛線
-    var previewN: Int?               // 「新的第 3 站」
+    var preview: CandPreview?        // 加站卡：虛線和「新的第 N 站」一起改，MapTab 只看這一個
     // 搜尋（在同一張地圖上）
     var q = ""
     var filter: AddFilter?
@@ -93,7 +94,7 @@ struct TripCand: Equatable {
         Haptic.light()
         Perf.shared.mark("離開行程")
         clearSearch()
-        cand = nil; hot = nil; expand = nil; preview = nil; previewN = nil; moving = false
+        cand = nil; hot = nil; expand = nil; preview = nil; moving = false
         withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
             tid = nil; going = false; segs = []; marks = []
         }
@@ -135,6 +136,47 @@ struct TripCand: Equatable {
         Haptic.light()
         hot = sid
         fly += 1
+    }
+
+    // 正在看的這間插在哪：空檔推薦、選住宿是固定位置，不然挑多走最少的；沒座標放最後
+    func candAt(_ order: [TripStop], _ c: TripCand) -> (at: Int, extra: Double) {
+        guard let co = c.coord else { return (order.count, 0) }
+        if let s = slot {
+            let i = TripInsert.at(order, slot: s)
+            return (i, TripInsert.extra(order, co, at: i))
+        }
+        return TripInsert.best(order, co)
+    }
+
+    // 加站卡、店家頁（在地圖分頁排行程時）共用：加到目前這天，訊息條可以復原
+    func addCand(_ c: TripCand, at i: Int? = nil, store: Store) {
+        let trips = TripStore.shared
+        guard let tid, let t = trips.trip(tid) else { return }
+        let d = min(day, t.days)
+        let order = trips.stops(t.id, day: d)
+        let at = i ?? candAt(order, c).at
+        var s: TripStop
+        if let p = c.place { s = trips.makeStop(t.id, day: d, place: p) }
+        else if let h = c.hit { s = trips.makeStop(t.id, day: d, hit: h) }
+        else { return }
+        s.pos = TripInsert.pos(order, at: at)
+        Haptic.success()
+        Perf.shared.mark("加站")
+        trips.insert(s, store: store)
+        store.say("加到第 \(at + 1) 站", icon: .check, action: ("復原", {
+            Perf.shared.mark("復原加站")
+            TripStore.shared.remove(s, dropTrip: false, store: store)
+            store.toast = nil
+        }))
+        // 空檔推薦只加一間：用完就收起搜尋
+        if slot != nil { clearSearch() }
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            cand = nil
+            // 從搜尋結果加的：結果框先收起來（地圖上的結果還在，點搜尋框或換分類再打開）
+            if searchOn { folded = true }
+            hot = s.id
+        }
+        scrollTo = s.id
     }
 }
 
@@ -294,7 +336,7 @@ enum TripInsert {
     func clear() { if !hits.isEmpty { hits = [] }; if !found.isEmpty { found = [] }; busy = false }
 
     // 這天的路線（還沒算好就用兩站直線）；空檔推薦只看那兩站中間
-    func measure(_ all: [TripStop], seg: [String]?, mode: TravelMode, store: Store) {
+    func measure(_ all: [TripStop], seg: [String]?, mode: TravelMode, store: Store) async {
         let router = TripRouter.shared
         let ss = seg.map { ids in all.filter { ids.contains($0.id) } } ?? all
         let cs = ss.compactMap { s in s.coord.map { (s, $0) } }
@@ -307,12 +349,20 @@ enum TripInsert {
             lines.append(router.leg(a, b, m).coords ?? [a, b])
         }
         if lines.isEmpty, let h = store.here { lines = [[h.coordinate]] }
-        let n = RouteNear(lines)
-        var d: [String: Double] = [:]
-        for p in store.places {
-            guard let la = p.lat, let ln = p.lng, !n.isEmpty else { continue }
-            d[p.id] = n.meters(CLLocationCoordinate2D(latitude: la, longitude: ln))
-        }
+        let ls = lines
+        let pts = store.places.compactMap { p in p.lat.flatMap { la in p.lng.map { (p.id, la, $0) } } }
+        let t0 = CACurrentMediaTime()
+        // 算距離不在主執行緒（收藏數乘路線點數，剛進行程時每段路線回來都要算）
+        let (n, d) = await Task.detached(priority: .userInitiated) { () -> (RouteNear, [String: Double]) in
+            let n = RouteNear(ls)
+            var d: [String: Double] = [:]
+            if !n.isEmpty { for (id, la, ln) in pts { d[id] = n.meters(CLLocationCoordinate2D(latitude: la, longitude: ln)) } }
+            return (n, d)
+        }.value
+        if Task.isCancelled { return }
+        Perf.shared.mark("路線距離 \(d.count) 間 \(Int((CACurrentMediaTime() - t0) * 1000))ms（背景）")
+        // 值沒變就不寫，免得 foundKey、searchKey 跟著變
+        guard d != dist || n.isEmpty != near.isEmpty || n.radius != near.radius || n.center?.latitude != near.center?.latitude else { return }
         near = n
         dist = d
     }
@@ -521,5 +571,21 @@ enum TripInsert {
         guard !text.isEmpty else { return [] }
         let hint = c.map { CLCircularRegion(center: $0, radius: 50_000, identifier: "trip") }
         return (try? await CLGeocoder().geocodeAddressString(text, in: hint, preferredLocale: Locale(identifier: "zh_TW"))) ?? []
+    }
+}
+
+// 加站卡在地圖上要畫的東西：前一站、這間、後一站的虛線，和「新的第 N 站」牌子
+struct CandPreview {
+    let line: TripSeg?               // 行程還沒有站（或前後站沒座標）時沒有線
+    let at: CLLocationCoordinate2D
+    let n: Int
+    let color: Color
+    let onPin: Bool                  // 收藏圖釘：牌子要讓開圖釘
+    // 跟上一次一樣就不用再寫（寫了 MapTab 會整張重算）
+    func same(_ o: CandPreview?) -> Bool {
+        guard let o else { return false }
+        let a = line?.coords ?? [], b = o.line?.coords ?? []
+        return n == o.n && onPin == o.onPin && at.latitude == o.at.latitude && at.longitude == o.at.longitude
+            && a.count == b.count && zip(a, b).allSatisfy { $0.latitude == $1.latitude && $0.longitude == $1.longitude }
     }
 }

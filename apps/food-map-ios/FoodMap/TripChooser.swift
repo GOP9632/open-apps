@@ -59,6 +59,7 @@ private struct TripChooser: View {
             meta.append("沒排日期")
         }
         meta.append(n == 0 ? "還沒有站" : "\(n) 站")
+        if t.days > 1 { meta.append("會加到第 \(trips.pickDay(t, place: place)) 天") }
         return Button {
             trips.add(place, to: t, made: false, store: store)
         } label: {

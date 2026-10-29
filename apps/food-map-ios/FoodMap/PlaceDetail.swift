@@ -227,15 +227,30 @@ struct PlaceDetail: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in if abs(store.bottomBar - h) > 0.5 { store.bottomBar = h } }
     }
 
-    // 加進行程：只有一個進行中的行程就直接加在最順的位置，不然先問加到哪個；已經在行程裡就打開那個行程、捲到那一站
+    // 加進行程：在地圖分頁排行程時加進正在排的這一天（跟加站卡同一套）；不然只有一個進行中的行程就直接加，不然先問加到哪個。
+    // 已經在行程裡就打開那個行程、捲到那一站（排行程時只看正在排的這個行程）
     @ViewBuilder private func tripButton(_ place: Place) -> some View {
-        if let s = trips.stopOf(place: place.id) {
+        let m = TripMode.shared
+        let planning = m.on && store.tab == 0
+        let inTrip = planning ? m.tid.flatMap { tid in trips.stops(tid).first { $0.place_id == place.id } } : trips.stopOf(place: place.id)
+        if let s = inTrip {
             Button { Haptic.light(); TripMode.shared.open(s.trip_id, focus: s.id, store: store) } label: {
                 Label("在行程裡", systemImage: "checkmark").foregroundStyle(Color.sprMint.mix(with: .black, by: 0.15))
                     .modifier(TripBtnLook())
             }
             .buttonStyle(PressStyle())
             .transition(.scale(scale: 0.9).combined(with: .opacity))
+        } else if planning {
+            Button {
+                // 從加站卡「看店家」進來的：沿用那張卡（空檔推薦的固定位置也一起）；不然當成新的一張
+                let c = m.cand.flatMap { $0.id == place.id ? $0 : nil } ?? TripCand(place: place)
+                m.addCand(c, store: store)
+                store.mapPath = NavigationPath()   // 回地圖看到新號碼
+            } label: {
+                Label("加進這個行程", systemImage: "plus").foregroundStyle(Color.ink)
+                    .modifier(TripBtnLook())
+            }
+            .buttonStyle(PressStyle())
         } else {
             Button {
                 Task {

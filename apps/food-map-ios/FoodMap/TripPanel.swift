@@ -21,7 +21,7 @@ struct TripPanel: View {
     @State private var lift = Lift()
     @State private var dragY = Lift()
     @State private var cardLift = Lift()
-    @State private var pullList = false         // 最低段往下拉超過 20、往上拉超過 40：換成直的清單（跨過線才改，不是每幀）
+    @State private var pullList = false         // 最低段往上拉超過 40：換成直的清單（跨過線才改，不是每幀）
     @State private var drag = RowDrag()
     @State private var gapMemo = GapMemo()
     @State private var size: CGSize = .zero
@@ -31,6 +31,7 @@ struct TripPanel: View {
     @State private var candFit: Task<Void, Never>?  // 加站卡的框地圖晚 40ms 起步：卡高、畫面大小接著變時只框一次
     // 出發中：上面「下一站」卡片的下緣、下面那塊的上緣（螢幕座標），藍點要放在中間看得到的地方
     @State private var goTop: CGFloat = 0
+    @State private var followBox = FollowBox()
     @State private var goBot: CGFloat = 0
     @State private var goSpan = 900.0 / 111_000     // 出發時鏡頭的緯度範圍（框鏡頭那塊），之後跟著走不再改
     @State private var loving = false
@@ -125,8 +126,12 @@ struct TripPanel: View {
         }
         .overlay(alignment: .top) {
             if mode.going, let next {
-                goCard(t, order: order, next: next, plan: plan).padding(.horizontal, 14).padding(.top, 6)
-                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { goTop = $0 }
+                VStack(alignment: .trailing, spacing: 8) {
+                    goCard(t, order: order, next: next, plan: plan)
+                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { goTop = $0 }
+                    FollowMeButton { recenter() }
+                }
+                .padding(.horizontal, 14).padding(.top, 6)
             } else if mode.searchOn && !mode.going {
                 // 🔍 展開的搜尋框＋分類，下面是結果（正在看加站卡時先收起結果）
                 VStack(spacing: 0) {
@@ -149,8 +154,18 @@ struct TripPanel: View {
             mode.marks = TripMath.marks(order)
             mode.summary = TripMath.summary(order, plan: plan)
         }
-        // 換天、加站、刪站：地圖 0.5 秒縮放到包住這天所有站
-        .onChange(of: fitKey(d, base)) { fit(base, origin: origin, animated: true) }
+        // 換天、刪站、移到別天、加減天數：0.5 秒框住這天。只多一站（加站、刪站後按復原）或只換順序：鏡頭不動，新站跑出畫面才小移一下
+        .onChange(of: fitKey(t, d, base)) { old, new in
+            let o = old.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+            let n = new.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+            let ids = { (p: [Substring]) -> [Substring] in p.count > 1 ? p[1].split(separator: ",") : [] }
+            let oi = ids(o), ni = ids(n)
+            if o.first == n.first && ni.count <= oi.count + 1 && Set(oi).isSubset(of: Set(ni)) {
+                if let nid = ni.first(where: { !oi.contains($0) }) { panToNew(base.first { $0.id == String(nid) }?.coord) }
+                return
+            }
+            fit(base, origin: origin, animated: true)
+        }
         .onChange(of: mode.fitTick) {
             // 重新打開行程（店家頁「在行程裡」、訊息條）：不管之前拖到一半的狀態
             if !held.on && drag.id != nil { clearDrag(); mode.overDay = nil }
@@ -183,7 +198,13 @@ struct TripPanel: View {
         .onChange(of: mode.cand?.id) { _, id in if id != nil, cardLift.y != 0 { cardLift = Lift() } }
         .onChange(of: mode.sharing) { share(t) }
         // 搜尋結果：地圖框住結果和這天的站
-        .onChange(of: resultKey) { fit(base, origin: origin, animated: true) }
+        .onChange(of: resultKey) {
+            // 剛從結果加了一站（結果框收著）：路線變了結果跟著變，鏡頭不跟著重框
+            guard !mode.folded else { return }
+            fit(base, origin: origin, animated: true)
+        }
+        // 點搜尋框把收著的結果框打開：結果沒變也框一次，結果才不會被結果框蓋住
+        .onChange(of: mode.folded) { _, f in if !f { fit(base, origin: origin, animated: true) } }
         .task(id: needKey(t, base, origin: origin)) { router.need(TripMath.needs(t, base, origin: origin)) }
         .onAppear {
             if let e = mode.expand { mode.expand = nil; expandStop(e) }
@@ -259,17 +280,22 @@ struct TripPanel: View {
                         Task { try? await Task.sleep(for: .seconds(0.35)); withAnimation(.snappy) { sp.scrollTo(id, anchor: .top) } }
                     }
                 }
-                .opacity(strip ? 0 : 1)
+                // 最低段往上拉：清單跟著手指變清楚（只有 PullFade 那層讀 lift）
+                .modifier(PullFade(lift: lift, on: mode.level == .low, out: false, range: 80))
                 .allowsHitTesting(!strip)
                 .accessibilityHidden(strip)
-                if strip {
+                // 站卡在最低段一直掛著（拉的過程中跟著手指變淡，停到中段才拿掉）；在站卡上往上推也能拉面板
+                if mode.level == .low {
                     cards(t, base: base, order: order, plan: plan)
                         .background(Color.bg)
+                        .gesture(stripPan)
+                        .modifier(PullFade(lift: lift, on: strip, out: true, range: 40))
+                        .accessibilityHidden(!strip)
                         .transition(.opacity)
                 }
             }
             // 這天還沒有站：不放「排順序／出發」，空白提示不會被蓋住
-            if !base.isEmpty { actions(t, base: base) }
+            if !base.isEmpty { actions(t, base: base).gesture(stripPan) }
         }
         .frame(maxWidth: .infinity)
         .modifier(LiftHeight(lift: lift, base: settledHeight(), lo: hs.low, hi: hs.high))
@@ -319,6 +345,17 @@ struct TripPanel: View {
         VStack(spacing: 0) {
             Capsule().fill(Color.ink.opacity(0.18)).frame(width: 40, height: 5)
                 .frame(maxWidth: .infinity).frame(height: strip ? 20 : 16)
+                // VoiceOver：上下滑就能換段（歸零的寫法跟 settleSheet 一樣）
+                .accessibilityElement()
+                .accessibilityLabel("行程面板")
+                .accessibilityValue(mode.level == .low ? "站卡一排" : mode.level == .mid ? "一半" : "整份清單")
+                .accessibilityAdjustableAction { d in
+                    let all: [TripLevel] = [.low, .mid, .high]
+                    let i = all.firstIndex(of: mode.level)! + (d == .increment ? 1 : d == .decrement ? -1 : 0)
+                    guard all.indices.contains(i), all[i] != mode.level else { return }
+                    Haptic.light()
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { mode.level = all[i]; lift.y = 0; pullList = false }
+                }
             // 起點那列一直掛著（最低段收成 0 高），往上拉換成清單時不用當場建選單
             HStack(spacing: 0) {
                 startChip(t, d: d, base: base)
@@ -403,14 +440,25 @@ struct TripPanel: View {
             .updating($pulling) { _, st, _ in st = true }
             .onChanged { v in
                 guard drag.id == nil else { return }
-                lift.y = -v.translation.height
-                let alt = mode.level == .low && (lift.y < -20 || lift.y > 40)
-                if alt != pullList { pullList = alt }
+                pullChanged(-v.translation.height)
             }
             .onEnded { v in
                 guard drag.id == nil else { lift.y = 0; return }
                 settleSheet(-v.predictedEndTranslation.height)
             }
+    }
+
+    // 拉面板的量（往上為正）：最低段往上拉超過 40 換成直的清單（跨過線才寫 @State，不是每幀）
+    private func pullChanged(_ up: CGFloat) {
+        lift.y = up
+        let alt = mode.level == .low && up > 40
+        if alt != pullList { pullList = alt }
+    }
+
+    // 最低段在站卡、按鈕上往上推：拉面板（見 PanelLift.swift 的 PanelPan）
+    private var stripPan: PanelPan {
+        PanelPan(canBegin: { drag.id == nil && !held.on && mode.level == .low && mode.cand == nil },
+                 changed: { pullChanged($0) }, ended: { settleSheet($0) })
     }
 
     // 放開（拉橫條或清單捲到頂往下拉）：up 是預測會停的位移（往上為正）
@@ -444,12 +492,12 @@ struct TripPanel: View {
         VStack(spacing: 0) {
             ForEach(Array(base.enumerated()), id: \.element.id) { k, s in
                 let i = order.firstIndex { $0.id == s.id } ?? k
-                block(t, s, k: k, i: i, prev: k > 0 ? base[k - 1] : nil, leg: k > 0 && i == k ? legs[i] : nil, row: i < plan.rows.count ? plan.rows[i] : nil)
+                block(t, s, k: k, i: i, prev: k > 0 ? base[k - 1] : nil, leg: k > 0 && i == k ? legs[i] : nil, row: i < plan.rows.count ? plan.rows[i] : nil, last: k == base.count - 1)
             }
         }
     }
 
-    private func block(_ t: Trip, _ s: TripStop, k: Int, i: Int, prev: TripStop?, leg: Leg?, row: DayPlan.Row?) -> some View {
+    private func block(_ t: Trip, _ s: TripStop, k: Int, i: Int, prev: TripStop?, leg: Leg?, row: DayPlan.Row?, last: Bool) -> some View {
         let dragging = drag.id == s.id
         return VStack(spacing: 0) {
             if let prev {
@@ -486,7 +534,9 @@ struct TripPanel: View {
                         mode.tap(s.id)
                         if expanded != nil { withAnimation(.snappy) { expanded = nil } }
                     }
-                }, hold: rowHold(t, s, k: k))
+                }, hold: rowHold(t, s, k: k),
+                   moveUp: k > 0 ? { nudge(t, s, by: -1) } : nil,
+                   moveDown: last ? nil : { nudge(t, s, by: 1) })
             }
         }
         .id(s.id)
@@ -568,27 +618,45 @@ struct TripPanel: View {
             return
         }
         let base = trips.stops(t.id, day: d)
-        let order = drag.preview(base)
-        if drag.to != drag.from, let i = order.firstIndex(where: { $0.id == id }) {
-            let before = i > 0 ? order[i - 1].pos : nil
-            let after = i + 1 < order.count ? order[i + 1].pos : nil
-            switch (before, after) {
-            case let (b?, a?): s.pos = (b + a) / 2
-            case let (b?, nil): s.pos = b + 1
-            case let (nil, a?): s.pos = a - 1
-            default: break
-            }
-            // 交通方式存在到達站上：前一站換了的站（拖的這站、原本在它後面的、現在在它後面的），手動選的方式回到自動
-            s.mode = nil
-            var reset: Set<String> = []
-            if let k = base.firstIndex(where: { $0.id == id }), k + 1 < base.count { reset.insert(base[k + 1].id) }
-            if i + 1 < order.count { reset.insert(order[i + 1].id) }
-            for sid in reset where sid != id {
-                if var x = trips.stops.first(where: { $0.id == sid }), x.mode != nil { x.mode = nil; trips.update(x, store: store) }
-            }
-        }
+        if drag.to != drag.from { s = moved(s, order: drag.preview(base), base: base) }
         Haptic.light()
         withAnimation(.snappy(duration: 0.28)) { trips.update(s, store: store); clearDrag() }
+    }
+
+    // 把 s 放到 order 裡它的位置：算新的 pos；交通方式存在到達站上，前一站換了的站（拖的這站、原本在它後面的、現在在它後面的），
+    // 手動選的方式回到自動。drop() 和 VoiceOver 的「往前移／往後移」共用
+    private func moved(_ s: TripStop, order: [TripStop], base: [TripStop]) -> TripStop {
+        var s = s
+        guard let i = order.firstIndex(where: { $0.id == s.id }) else { return s }
+        let before = i > 0 ? order[i - 1].pos : nil
+        let after = i + 1 < order.count ? order[i + 1].pos : nil
+        switch (before, after) {
+        case let (b?, a?): s.pos = (b + a) / 2
+        case let (b?, nil): s.pos = b + 1
+        case let (nil, a?): s.pos = a - 1
+        default: break
+        }
+        s.mode = nil
+        var reset: Set<String> = []
+        if let k = base.firstIndex(where: { $0.id == s.id }), k + 1 < base.count { reset.insert(base[k + 1].id) }
+        if i + 1 < order.count { reset.insert(order[i + 1].id) }
+        for sid in reset where sid != s.id {
+            if var x = trips.stops.first(where: { $0.id == sid }), x.mode != nil { x.mode = nil; trips.update(x, store: store) }
+        }
+        return s
+    }
+
+    // VoiceOver：往前、往後移一站（手指正拿著一站時不動）
+    private func nudge(_ t: Trip, _ s: TripStop, by step: Int) {
+        let base = trips.stops(t.id, day: min(mode.day, t.days))
+        guard drag.id == nil, !held.on, let k = base.firstIndex(where: { $0.id == s.id }), base.indices.contains(k + step),
+              let cur = trips.stops.first(where: { $0.id == s.id }) else { return }
+        var order = base
+        order.insert(order.remove(at: k), at: k + step)
+        let x = moved(cur, order: order, base: base)
+        Haptic.light()
+        withAnimation(.snappy(duration: 0.28)) { trips.update(x, store: store) }
+        AccessibilityNotification.Announcement("移到第 \(k + step + 1) 站").post()
     }
 
     // ----- 最低：一排橫向站卡 -----
@@ -610,6 +678,10 @@ struct TripPanel: View {
                         .contentShape(.rect)
                         .onTapGesture { if drag.id == nil, !held.justEnded { mode.tap(s.id) } }
                         .modifier(RowHoldIf(hold: rowHoldX(t, s, k: k)))
+                        .accessibilityActions {
+                            if k > 0 { Button("往前移") { nudge(t, s, by: -1) } }
+                            if k < base.count - 1 { Button("往後移") { nudge(t, s, by: 1) } }
+                        }
                         .offset(x: dragging ? 0 : drag.shift(k))
                         .modifier(LiftOffset(lift: dragY, on: dragging, x: true))
                         .scaleEffect(dragging ? 1.06 : 1)
@@ -655,14 +727,7 @@ struct TripPanel: View {
 
     // ----- 加站卡：點了地圖上的收藏、或搜尋結果 -----
 
-    private func candAt(_ order: [TripStop], _ c: TripCand) -> (at: Int, extra: Double) {
-        guard let co = c.coord else { return (order.count, 0) }
-        if let s = mode.slot {
-            let i = TripInsert.at(order, slot: s)
-            return (i, TripInsert.extra(order, co, at: i))
-        }
-        return TripInsert.best(order, co)
-    }
+    private func candAt(_ order: [TripStop], _ c: TripCand) -> (at: Int, extra: Double) { mode.candAt(order, c) }
 
     private func candKey(_ order: [TripStop]) -> String {
         (mode.cand?.id ?? "") + "|" + order.map(\.id).joined(separator: ",")
@@ -672,7 +737,7 @@ struct TripPanel: View {
     private func placeCand(_ t: Trip, _ order: [TripStop]) {
         guard let c = mode.cand, let co = c.coord, stopOf(c, t) == nil else {
             candFit?.cancel(); candFit = nil
-            if mode.preview != nil { mode.preview = nil; mode.previewN = nil }
+            if mode.preview != nil { mode.preview = nil }
             if let c = mode.cand { Perf.shared.mark(c.coord == nil ? "加站卡不框：沒座標" : "加站卡不框：已在行程") }
             return
         }
@@ -681,8 +746,10 @@ struct TripPanel: View {
         if r.at > 0, let a = order[r.at - 1].coord { line.append(a) }
         line.append(co)
         if r.at < order.count, let b = order[r.at].coord { line.append(b) }
-        mode.preview = line.count > 1 ? TripSeg(id: "cand", coords: line, color: TripColor.of(r.at), routed: false) : nil
-        mode.previewN = r.at + 1
+        let seg = line.count > 1 ? TripSeg(id: "cand", coords: line, color: TripColor.of(r.at), routed: false) : nil
+        let pv = CandPreview(line: seg, at: co, n: r.at + 1, color: seg?.color ?? Color.accent, onPin: c.place != nil)
+        // 面板大小、卡片高度變了會再叫一次：一樣就不寫，MapTab 不跟著重算
+        if !pv.same(mode.preview) { mode.preview = pv }
         // 同一張卡量到新高度、鍵盤收起改了大小，一兩幀內會再叫一次：等一下再框，只框最後那次（不會連發兩段鏡頭）
         let cid = c.id, pts = line
         candFit?.cancel()
@@ -753,13 +820,13 @@ struct TripPanel: View {
                         .buttonStyle(ChunkyStyle(color: .sprPink, edge: Color.sprPink.mix(with: .black, by: 0.2), radius: 16))
                 }
             } else {
-                Button { add(t, c, order: order, at: r.at) } label: {
+                Button { mode.addCand(c, at: r.at, store: store) } label: {
                     Label("加進行程（第 \(n) 站）", systemImage: "plus").font(.headline).frame(maxWidth: .infinity)
                 }
                 .buttonStyle(ChunkyStyle(radius: 18))
                 HStack(spacing: 8) {
                     if r.at != order.count && !order.isEmpty {
-                        smallButton("加到最後", icon: "arrow.down.to.line") { add(t, c, order: order, at: order.count) }
+                        smallButton("加到最後", icon: "arrow.down.to.line") { mode.addCand(c, at: order.count, store: store) }
                     }
                     if let p = c.place {
                         NavigationLink(value: p) {
@@ -831,33 +898,6 @@ struct TripPanel: View {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { mode.cand = nil }
     }
 
-    private func add(_ t: Trip, _ c: TripCand, order: [TripStop], at i: Int) {
-        let d = min(mode.day, t.days)
-        var s: TripStop
-        if let p = c.place { s = trips.makeStop(t.id, day: d, place: p) }
-        else if let h = c.hit { s = trips.makeStop(t.id, day: d, hit: h) }
-        else { return }
-        s.pos = TripInsert.pos(order, at: i)
-        Haptic.success()
-        Perf.shared.mark("加站")
-        trips.insert(s, store: store)
-        store.say("加到第 \(i + 1) 站", icon: .check, action: ("復原", {
-            Perf.shared.mark("復原加站")
-            TripStore.shared.remove(s, dropTrip: false, store: store)
-            store.toast = nil
-        }))
-        // 空檔推薦只加一間：用完就收起搜尋
-        if mode.slot != nil { mode.clearSearch() }
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-            mode.cand = nil
-            // 從搜尋結果加的：結果框不再冒出來蓋住地圖（地圖上的結果還在，點搜尋框或換分類再打開）
-            if mode.searchOn { mode.folded = true }
-            mode.hot = s.id
-            if mode.level == .low && !mode.searchOn { mode.level = .mid }
-        }
-        mode.scrollTo = s.id
-    }
-
     // 搜到的餐廳存進收藏：存好後這張卡換成收藏的店（再按加進行程）
     private func love(_ h: MapHit) {
         guard !loving else { return }
@@ -877,7 +917,7 @@ struct TripPanel: View {
 
     // ----- 地圖 -----
 
-    private func fitKey(_ d: Int, _ base: [TripStop]) -> String { "\(d)|" + base.map(\.id).joined(separator: ",") }
+    private func fitKey(_ t: Trip, _ d: Int, _ base: [TripStop]) -> String { "\(d)/\(t.days)|" + base.map(\.id).joined(separator: ",") }
 
     private var resultKey: String {
         guard mode.searchOn else { return "" }
@@ -995,6 +1035,25 @@ struct TripPanel: View {
         }
     }
 
+    // 新加的站不在看得到的那塊（上面那排、🔍 下面到面板上緣之間）：只平移到剛好看得到，不改縮放
+    private func panToNew(_ c: CLLocationCoordinate2D?) {
+        guard let c, !mode.going, let p = mode.toScreen?(c), let r = store.mapRegion else { return }
+        let top = max(top0, mode.barBottom) + 12 + (mode.searchOn ? TripFind.height : 0) + 64   // 64：圖釘頭的高度
+        let bot = top0 + size.height - settledHeight() - 24
+        let w = MapTab.mapWidth
+        guard bot > top else { return }
+        let dy = p.y < top ? p.y - top : p.y > bot ? p.y - bot : 0
+        let dx = p.x < 24 ? p.x - 24 : p.x > w - 24 ? p.x - (w - 24) : 0
+        guard dy != 0 || dx != 0 else { return }
+        let ft = Double(mode.mapBottom > mode.mapTop ? mode.mapTop : top0)
+        let fb = Double(mode.mapBottom > mode.mapTop ? mode.mapBottom : top0 + size.height)
+        var r2 = r
+        r2.center.latitude -= Double(dy) / ((fb - ft) / r.span.latitudeDelta)
+        r2.center.longitude += Double(dx) / (Double(w) / r.span.longitudeDelta)
+        Perf.shared.mark("加站小移")
+        withAnimation(.easeInOut(duration: 0.35)) { pos = .region(r2) }
+    }
+
     // 清單或地圖上點一站：地圖飛過去（放大到看得清楚附近）
     private func flyTo(_ id: String?) {
         guard let id, let c = trips.stops.first(where: { $0.id == id })?.coord else { return }
@@ -1064,7 +1123,7 @@ struct TripPanel: View {
 
     // 出發時的全畫面：全部到完的卡片、定位、路線、快到了輕震、選導航 App
     private func goMods<V: View>(_ v: V, _ t: Trip, order: [TripStop], next: TripStop?) -> some View {
-        let eaten = order.filter { $0.isPlace && $0.done_at != nil }.count
+        let eaten = order.filter { $0.isPlace && $0.done_at != nil && !TripSkipped.has($0.id) }.count   // 跳過的不算
         let near = nearNext(next)
         let ask = Binding(get: { navAsk != nil }, set: { if !$0 { navAsk = nil } })
         return v
@@ -1096,6 +1155,10 @@ struct TripPanel: View {
                     Button(a.name) { NavApp.saved = a; openNav(t, s, a) }
                 }
             }
+            // 出發中沒有下一站了（別人刪了站、別台裝置都標成到了），又不是自己按到最後一站：收掉出發，回到排行程
+            .onChange(of: next == nil) { _, none in
+                if none, mode.going, !finished { endGo() }
+            }
     }
 
     private func startGo(_ base: [TripStop], again: Bool) {
@@ -1103,11 +1166,12 @@ struct TripPanel: View {
         Perf.shared.mark("出發")
         // 全部到過了：清掉「到了」重新走一次
         if again {
-            for s in base { var x = s; x.done_at = nil; trips.update(x, store: store) }
+            for s in base { var x = s; x.done_at = nil; TripSkipped.remove(s.id); trips.update(x, store: store) }
         }
         expanded = nil
         pinged = nil
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { mode.going = true; mode.cand = nil }
+        mode.offFollow = false
         mode.clearSearch()
         if let h = here {
             // 拉近到街道（已經比這更近就不動縮放）
@@ -1125,6 +1189,7 @@ struct TripPanel: View {
     private func endGo() {
         Haptic.light()
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { mode.going = false; finished = false; rate = nil }
+        mode.offFollow = false
         Task { try? await Task.sleep(for: .seconds(0.05)); mode.fitTick += 1 }
     }
 
@@ -1132,18 +1197,27 @@ struct TripPanel: View {
     // 地圖不一直跟著你動畫（那樣整張地圖每幀重畫，走路時手機會燙）：走出 40 公尺才移一次；自己拖過地圖就不搶回來
     private func follow() async {
         guard mode.going else { return }
-        var centered = here          // 出發時已經移到這裡
+        followBox.centered = here      // 出發時已經移到這裡
         do {
             for try await u in CLLocationUpdate.liveUpdates() {
                 if Task.isCancelled || !mode.going { break }
                 guard let l = u.location else { continue }
                 // 走 10 公尺以上才更新（每次更新面板都要重算）
                 if me.map({ $0.distance(from: l) >= 10 }) ?? true { me = l }
-                guard !pos.positionedByUser, centered.map({ $0.distance(from: l) >= 40 }) ?? true else { continue }
-                centered = l
+                // 出發那一刻還沒有位置：第一筆位置一定移過去（出發前拖過地圖也一樣）
+                let first = followBox.centered == nil
+                guard first || !pos.positionedByUser, followBox.centered.map({ $0.distance(from: l) >= 40 }) ?? true else { continue }
+                followBox.centered = l
                 withAnimation(.easeInOut(duration: 0.6)) { pos = .region(goRegion(l.coordinate)) }
             }
         } catch {}
+    }
+
+    // 「跟著我」：鏡頭回到目前位置。設成 region 後 positionedByUser 變回 false，follow() 自然接手；下一次 40 公尺從這裡算
+    private func recenter() {
+        guard let h = here else { return }
+        followBox.centered = h
+        withAnimation(.easeInOut(duration: 0.6)) { pos = .region(goRegion(h.coordinate)) }
     }
 
     // 出發中的鏡頭：你的位置放在「下一站」卡片和下面那塊中間；緯度決定縮放（經度範圍給小一點）
@@ -1197,6 +1271,7 @@ struct TripPanel: View {
                       near: nearNext(next),
                       nav: { goNav(t, order, next) },
                       arrived: { arrive(t, order, next) },
+                      skip: { skip(t, order, next) },
                       close: { endGo() })
             .id(next.id)
             .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .move(edge: .leading).combined(with: .opacity)))
@@ -1234,6 +1309,7 @@ struct TripPanel: View {
     private func arrive(_ t: Trip, _ order: [TripStop], _ s: TripStop) {
         Haptic.success()
         Perf.shared.mark("到了")
+        let oldRate = rate, oldFinished = finished
         var x = s; x.done_at = ISO8601DateFormatter().string(from: Date())
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { trips.update(x, store: store) }
         askAbout(before: s, order)
@@ -1243,6 +1319,39 @@ struct TripPanel: View {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { finished = true }
             party += 1
         }
+        store.say("到了 \(s.name)", icon: .check, action: ("復原", { undoArrive(s, oldRate: oldRate, oldFinished: oldFinished) }))
+    }
+
+    // 「到了」「跳過」的復原：清掉 done_at，評分卡和完成卡放回按之前的樣子
+    private func undoArrive(_ s: TripStop, oldRate: String?, oldFinished: Bool, skipped: Bool = false, wasAsked: Bool = true) {
+        Perf.shared.mark("復原到了")
+        guard var y = TripStore.shared.stops.first(where: { $0.id == s.id }), y.done_at != nil else { store.toast = nil; return }
+        y.done_at = nil
+        if skipped { TripSkipped.remove(s.id); if !wasAsked { TripAsked.remove(s.id) } }
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            TripStore.shared.update(y, store: store)
+            // 已經按「結束」離開出發（endGo 把 finished、rate 清掉了）就不要放回去，不然下次出發一開始就冒出評分卡
+            if mode.going { finished = oldFinished; rate = oldRate }
+        }
+        pinged = nil
+        store.toast = nil
+    }
+
+    // 跳過這站（店沒開、不想去）：跟「到了」一樣往下一站，但不問這間好不好吃、不算進吃了幾間
+    private func skip(_ t: Trip, _ order: [TripStop], _ s: TripStop) {
+        Haptic.light()
+        Perf.shared.mark("跳過")
+        let oldRate = rate, oldFinished = finished, wasAsked = TripAsked.has(s.id)
+        TripAsked.add(s.id); TripSkipped.add(s.id)
+        var x = s; x.done_at = ISO8601DateFormatter().string(from: Date())
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { trips.update(x, store: store) }
+        askAbout(before: s, order)
+        // 最後一站：跟 arrive() 一樣在同一個動作裡設 finished（「沒有下一站就收掉出發」的保險才不會先 endGo），只是不問這間
+        if order.allSatisfy({ $0.id == s.id || $0.done_at != nil }) {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { finished = true }
+            party += 1
+        }
+        store.say("跳過 \(s.name)", icon: .check, action: ("復原", { undoArrive(s, oldRate: oldRate, oldFinished: oldFinished, skipped: true, wasAsked: wasAsked) }))
     }
 
     // 離開上一間收藏的店：問好不好吃（自己的收藏才問，問過不再問）
@@ -1275,6 +1384,9 @@ struct TripPanel: View {
             }
             .padding(.horizontal, 14).padding(.bottom, 8)
             .transition(.move(edge: .bottom).combined(with: .opacity))
+            // 訊息條貼在評分卡上面，不壓到星星和 ✕（Root 的訊息條從安全區底往上算）
+            .onGeometryChange(for: CGFloat.self) { MapTab.windowHeight - $0.frame(in: .global).minY } action: { mode.goInset = max(0, $0 - MapTab.safeBottom) }
+            .onDisappear { mode.goInset = 0 }
         }
     }
 
@@ -1415,7 +1527,8 @@ struct TripMark: Identifiable {
 // 地圖上的站：收藏是 40pt 甜甜圈號碼（白底、粗彩色圈、數字同色）；景點、住宿是 28pt 小灰點
 struct MarkView: View {
     let m: TripMark
-    var hot = false
+    @State private var trip = TripMode.shared
+    private var hot: Bool { trip.hot == m.id }
     @State private var shown = false
     @Environment(\.accessibilityReduceMotion) private var reduce
 
@@ -1472,6 +1585,8 @@ struct StopCard: View {
     // 點一下展開、長按拿起來換順序：只放在上面那排，展開後的停留滑桿、開關不會被吃掉
     var tap: () -> Void = {}
     var hold: RowHold? = nil
+    var moveUp: (() -> Void)? = nil      // VoiceOver「往前移」（第一站沒有）
+    var moveDown: (() -> Void)? = nil    // VoiceOver「往後移」（最後一站沒有）
 
     var body: some View {
         let color = TripColor.of(n - 1)
@@ -1514,6 +1629,14 @@ struct StopCard: View {
             .contentShape(.rect)
             .modifier(TapIf(on: !V11.noTap, tap: tap))
             .modifier(RowHoldIf(hold: V11.noHold ? nil : hold))
+            // VoiceOver：上面那排唸成一個元素，雙擊跟點一下一樣；往前移、往後移換順序
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { tap() }
+            .accessibilityActions {
+                if let moveUp { Button("往前移", action: moveUp) }
+                if let moveDown { Button("往後移", action: moveDown) }
+            }
             if open { StopEditor(stop: stop, place: place, arrive: row?.arrive).padding(.horizontal, 12).padding(.bottom, 12) }
         }
         .background {
@@ -1736,5 +1859,25 @@ struct MiniStop: View {
         .animation(.snappy(duration: 0.2), value: hot)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("第 \(n) 站 \(stop.name)")
+    }
+}
+
+// 出發中鏡頭上次對準的位置（不被觀察，寫了不重畫）：follow() 和「跟著我」共用
+final class FollowBox { var centered: CLLocation? }
+
+// 出發中拖過地圖才出現：按了鏡頭回到自己的位置、繼續跟（只有這顆看 offFollow，面板不跟著重畫）
+struct FollowMeButton: View {
+    @State private var mode = TripMode.shared
+    let action: () -> Void
+    var body: some View {
+        ZStack {
+            if mode.offFollow {
+                Button(action: action) { CircleIcon(icon: "location.fill") }
+                    .buttonStyle(PressStyle(haptic: true))   // 按下當幀就輕震，action 裡不要再震
+                    .accessibilityLabel("跟著我")
+                    .transition(.opacity.combined(with: .scale))
+            }
+        }
+        .animation(.snappy(duration: 0.2), value: mode.offFollow)
     }
 }

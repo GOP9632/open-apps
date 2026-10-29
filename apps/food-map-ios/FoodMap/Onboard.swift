@@ -236,6 +236,7 @@ struct ClipCapsule: View {
 struct LoginCarousel: View {
     @State private var page = 0
     @Environment(\.accessibilityReduceMotion) private var reduce
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     private let texts = ["IG 看到想吃的，分享給 Bitemap", "收藏的店都在地圖上", "不知道吃什麼？抽一間"]
 
     var body: some View {
@@ -243,7 +244,7 @@ struct LoginCarousel: View {
             TabView(selection: $page) {
                 ForEach(0..<3, id: \.self) { i in
                     VStack(spacing: 12) {
-                        art(i).frame(height: 96)
+                        art(i).frame(height: 96).accessibilityHidden(true)
                         Text(texts[i]).font(.system(size: 16, weight: .heavy)).foregroundStyle(Color.ink)
                             .multilineTextAlignment(.center)
                     }
@@ -262,11 +263,12 @@ struct LoginCarousel: View {
             .animation(.snappy, value: page)
             .accessibilityHidden(true)
         }
-        // 每換一格（自己換或手滑）重新數 2.5 秒
-        .task(id: page) {
-            guard !reduce else { return }
+        // 每換一格（自己換或手滑）重新數 2.5 秒；VoiceOver 開著不自己換（會打斷朗讀），關掉後 task id 變了會再開始
+        .task(id: "\(page)-\(voiceOver)") {
+            guard !reduce, !voiceOver else { return }
             try? await Task.sleep(for: .seconds(2.5))
-            guard !Task.isCancelled else { return }
+            // 等的途中才打開 VoiceOver：用 UIKit 的即時值（閉包拿到的是舊的 view 值）
+            guard !Task.isCancelled, !UIAccessibility.isVoiceOverRunning else { return }
             withAnimation(.easeInOut(duration: 0.4)) { page = (page + 1) % 3 }
         }
     }

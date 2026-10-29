@@ -31,6 +31,18 @@ struct LiftOffset: ViewModifier {
     }
 }
 
+// 最低段往上拉：清單、站卡跟著手指淡入淡出（只有這層讀 lift，面板不用每幀重算）
+struct PullFade: ViewModifier {
+    let lift: Lift
+    let on: Bool          // 跟著手指（清單：最低段；站卡：還沒換成清單）
+    let out: Bool         // true 越拉越淡（站卡），false 越拉越清楚（清單）
+    let range: CGFloat    // 拉多少點走完
+    func body(content: Content) -> some View {
+        let k = min(1, max(0, lift.y / range))
+        content.opacity(on ? (out ? 1 - k : k) : (out ? 0 : 1))
+    }
+}
+
 // 清單的 pan 正在拉面板（站卡的長按看這個，慢慢往下拉、停一下不算拿起）。
 // 不要再在清單內容上掛 SwiftUI 拖曳當備案：iOS 18 它會讓清單的 pan 開不了，手指放在站卡上整份清單捲不動
 @MainActor final class PullBox {
@@ -256,3 +268,42 @@ final class TouchSpy: UIGestureRecognizer, UIGestureRecognizerDelegate {
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith o: UIGestureRecognizer) -> Bool { true }
 }
 #endif
+
+// 最低段在站卡、按鈕上往上推也能拉面板（規格 A2：面板上緣 44pt 都能拉）。
+// 橫向 ScrollView 遇到直的拖曳不會開始捲，ListPullDown 接不到，所以自己掛一個 UIKit pan，只在偏直的方向開始。
+// 跟 RowHold 一樣不同時辨識：pan 一成立，還在等的長按、點一下都會失敗
+struct PanelPan: UIGestureRecognizerRepresentable {
+    var canBegin: () -> Bool
+    var changed: (CGFloat) -> Void      // 往上為正
+    var ended: (CGFloat) -> Void        // 預測會停的位移，往上為正
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let g = UIPanGestureRecognizer()
+        g.delegate = context.coordinator
+        context.coordinator.canBegin = canBegin
+        return g
+    }
+
+    func updateUIGestureRecognizer(_ g: UIPanGestureRecognizer, context: Context) { context.coordinator.canBegin = canBegin }
+
+    func handleUIGestureRecognizerAction(_ g: UIPanGestureRecognizer, context: Context) {
+        let dy = g.translation(in: nil).y
+        switch g.state {
+        case .began, .changed: changed(-dy)
+        case .ended: ended(-(dy + g.velocity(in: nil).y * 0.2))
+        case .cancelled, .failed: ended(0)
+        default: break
+        }
+    }
+
+    @MainActor final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var canBegin: () -> Bool = { true }
+        func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+            guard let p = g as? UIPanGestureRecognizer, canBegin() else { return false }
+            let v = p.velocity(in: nil)
+            return abs(v.y) > abs(v.x) * 1.3
+        }
+    }
+}

@@ -39,6 +39,8 @@ struct Snapshot: Codable {
     // 訊息條停多久（nil = 照預設）；手指按著時不倒數
     var toastSeconds: Double?
     @ObservationIgnored var toastHeld = false
+    var toastFading = false          // 訊息條時間到正在淡掉：Root 和 sheet 裡那條都看這個（原本是 Root 的 @State）
+    var toastSheets = 0              // 掛了訊息條的 sheet 開著幾個：大於 0 時 Root 那條先藏起來
     // 模擬器自動測試用（只有 Debug 版）：啟動參數 -uitestSlowToasts 讓訊息條停 20 秒，按得到「復原」
     static let slowToasts: Bool = {
         #if DEBUG

@@ -295,7 +295,7 @@ enum TripSort {
     // 刪掉但還能復原（4 秒後才真的刪）
     @ObservationIgnored private var hiddenTrips: Set<String> = []
     @ObservationIgnored private var hiddenStops: Set<String> = []
-    @ObservationIgnored private var loading: Task<Void, Never>?
+    @ObservationIgnored private var loading: Task<Bool, Never>?
     // 這台手機剛建的行程、剛加的站（id → 什麼時候）：一分鐘內伺服器那份沒有也先留著，
     // 免得讀到存之前的舊資料就讓它從畫面上消失
     @ObservationIgnored private var recent: [String: Date] = [:]
@@ -346,26 +346,28 @@ enum TripSort {
     }
 
     // fresh：剛存完東西，正在讀的那份可能是存之前開始讀的（舊的），讀完再讀一次新的
-    func load(fresh: Bool = false) async {
+    // 回傳有沒有讀到（下拉更新失敗時說一聲）
+    @discardableResult func load(fresh: Bool = false) async -> Bool {
         if let t = loading {
-            await t.value
-            if !fresh { return }
+            let ok = await t.value
+            if !fresh { return ok }
             if let t2 = loading { return await t2.value }
         }
         let t = Task { await loadNow() }
         loading = t
-        await t.value
+        let ok = await t.value
         loading = nil
+        return ok
     }
 
-    private func loadNow() async {
-        guard Supa.session != nil else { return }
+    private func loadNow() async -> Bool {
+        guard Supa.session != nil else { return true }
         struct All: Decodable { var trips: [Trip]?; var stops: [TripStop]? }
         let r = rev
         do {
             let a = try await Supa.rpc("load_trips", [:], as: All.self)
             // 讀的途中自己又改了東西，這份是舊的，丟掉（存完會再讀一次）
-            guard r == rev, inflight == 0, Supa.session != nil else { return }
+            guard r == rev, inflight == 0, Supa.session != nil else { return true }
             var nt = (a.trips ?? []).filter { !hiddenTrips.contains($0.id) }
             var ns = (a.stops ?? []).filter { !hiddenStops.contains($0.id) && !hiddenTrips.contains($0.trip_id) }
             // 剛建、剛加還沒出現在伺服器那份的：留著本機的
@@ -383,8 +385,10 @@ enum TripSort {
                 saveCache()
             }
             loaded = true
+            return true
         } catch {
             print("[trips] load_trips 失敗：\(error)")
+            return false
         }
     }
 
@@ -615,15 +619,46 @@ enum TripSort {
         add(p, to: t, made: true, store: store)
     }
 
-    // 加到指定的行程：今天在這個行程裡就加到今天那天，不然最後一天；插在多走最少的地方（多繞超過 10 分鐘就放最後）
+    // 挑加到第幾天：進行中的行程照今天；還沒開始或沒排日期時才跨天挑
+    func pickDay(_ t: Trip, near c: CLLocationCoordinate2D?) -> Int {
+        let today = TripDate.today
+        if let st = t.start, st <= today, let n = Calendar.current.dateComponents([.day], from: st, to: today).day, n < t.days { return n + 1 }
+        guard t.days > 1 else { return 1 }
+        let days = Array(1...t.days)
+        if let c {
+            // 多繞 10 分鐘內、最順的那天。沒有任何座標的天要跳過：TripInsert.best 遇到這種天會回 0 公尺，空天會直接勝出
+            var best: (day: Int, min: Int)?
+            for d in days {
+                let o = stops(t.id, day: d)
+                guard o.contains(where: { $0.coord != nil }) else { continue }
+                let m = TripInsert.minutes(TripInsert.best(o, c).extra, TripMath.dayMode(t, o))
+                if m <= 10, m < (best?.min ?? .max) { best = (d, m) }
+            }
+            if let best { return best.day }
+            // 都不順路：離新店最近的那站在 1.5 公里內，就放那天
+            let here = CLLocation(latitude: c.latitude, longitude: c.longitude)
+            let near = stops(t.id)
+                .compactMap { s in s.coord.map { (day: s.day, m: here.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))) } }
+                .min { $0.m < $1.m }
+            if let near, near.m <= 1500, days.contains(near.day) { return near.day }
+        }
+        // 再不行放第一個空的天，沒有空天才放最後一天
+        return days.first { stops(t.id, day: $0).isEmpty } ?? t.days
+    }
+
+    // 給「加到哪個行程？」用：TripChooser 只 import SwiftUI，不用自己組座標
+    func pickDay(_ t: Trip, place p: Place) -> Int {
+        pickDay(t, near: p.lat.flatMap { la in p.lng.map { CLLocationCoordinate2D(latitude: la, longitude: $0) } })
+    }
+
+    // 加到指定的行程：今天在這個行程裡就加到今天那天，不然挑最順路的那天（pickDay）；插在多走最少的地方（多繞超過 10 分鐘就放最後）
     func add(_ p: Place, to t: Trip, made: Bool, store: Store) {
         choosing = nil
         lastOpened = t.id
-        let today = TripDate.today
-        var day = t.days
-        if let st = t.start, st <= today, let n = Calendar.current.dateComponents([.day], from: st, to: today).day, n < t.days { day = n + 1 }
+        var s = makeStop(t.id, day: 1, place: p)
+        let day = pickDay(t, near: s.coord)
+        s.day = day
         let order = stops(t.id, day: day)
-        var s = makeStop(t.id, day: day, place: p)
         var at = order.count
         var smooth = false
         if let c = s.coord, !order.isEmpty {
@@ -636,7 +671,8 @@ enum TripSort {
         Haptic.success()
         let n = at + 1
         // 停 6 秒：從店家頁加完按返回，回到地圖還看得到、點得到「打開行程」
-        let msg = smooth ? "加到 \(t.title) 第 \(n) 站・順路" : order.isEmpty ? "加到 \(t.title)・第 1 站" : "加到 \(t.title) 最後・第 \(n) 站"
+        let dest = t.days > 1 ? "\(t.title) 第 \(day) 天" : t.title
+        let msg = smooth ? "加到 \(dest) 第 \(n) 站・順路" : order.isEmpty ? "加到 \(dest)・第 1 站" : "加到 \(dest) 最後・第 \(n) 站"
         store.say(msg, icon: .check, action: ("復原", { [weak self] in
             self?.remove(s, dropTrip: made, store: store)
             store.toast = nil
@@ -660,15 +696,6 @@ enum TripSort {
                 if x != cur { update(x, store: store) }
             }
         }
-    }
-
-    // 換到別的行程（訊息條點下去選的）
-    func move(_ sid: String, to t: Trip, store: Store) {
-        guard var s = stops.first(where: { $0.id == sid }) else { return }
-        s.trip_id = t.id; s.day = t.days; s.pos = nextPos(t.id, t.days)
-        update(s, store: store)
-        lastOpened = t.id
-        store.say("改到 \(t.title)・第 \(stops(t.id, day: t.days).count) 站", icon: .check)
     }
 
     private func touch(_ tid: String) {

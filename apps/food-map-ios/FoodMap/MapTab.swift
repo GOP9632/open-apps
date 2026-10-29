@@ -140,14 +140,14 @@ struct MapTab: View {
                             MapPolyline(coordinates: s.coords).stroke(Color.white.opacity(s.routed ? (s.faded ? 0.5 : 1) : 0), style: s.under)
                             MapPolyline(coordinates: s.coords).stroke(s.color.opacity(s.faded ? 0.3 : s.routed ? 1 : 0.85), style: s.style)
                         }
-                        // 加站卡：前一站 → 這間 → 後一站 的虛線
-                        if let pv = trip.preview {
+                        // 加站卡：前一站、這間、後一站的虛線
+                        if let pv = trip.preview?.line {
                             MapPolyline(coordinates: pv.coords).stroke(pv.color, style: StrokeStyle(lineWidth: 5, lineCap: .round, dash: [9, 9]))
                         }
                         // 倒過來畫：好幾站疊在一起時，號碼小的在最上面
                         ForEach(Array(trip.marks.reversed())) { m in
                             Annotation("", coordinate: m.coord, anchor: .center) {
-                                Button { tapMark(m.id) } label: { MarkView(m: m, hot: trip.hot == m.id) }
+                                Button { tapMark(m.id) } label: { MarkView(m: m) }
                                     .buttonStyle(PressStyle())
                                     .accessibilityLabel("第 \(m.n) 站")
                             }
@@ -155,20 +155,20 @@ struct MapTab: View {
                         }
                         ForEach(hits) { h in
                             Annotation(h.name, coordinate: h.coord, anchor: .top) {
-                                HitPin(hit: h, on: trip.cand?.id == h.id) { pins.tap("hit:" + h.id) }
+                                HitPin(hit: h) { pins.tap("hit:" + h.id) }
                                     .offset(y: -15)
                             }
                             .tag("hit:" + h.id)
                             .annotationTitles(.hidden)
                         }
-                        if let n = trip.previewN, let c = trip.cand?.coord {
-                            Annotation("", coordinate: c, anchor: .bottom) {
-                                Text("新的第 \(n) 站").font(.system(size: 12, weight: .heavy)).foregroundStyle(.white)
+                        if let pv = trip.preview {
+                            Annotation("", coordinate: pv.at, anchor: .bottom) {
+                                Text("新的第 \(pv.n) 站").font(.system(size: 12, weight: .heavy)).foregroundStyle(.white)
                                     .padding(.horizontal, 9).frame(height: 24)
-                                    .background(trip.preview?.color ?? Color.accent, in: .capsule)
+                                    .background(pv.color, in: .capsule)
                                     .overlay(Capsule().strokeBorder(.white, lineWidth: 2))
                                     .fixedSize()
-                                    .offset(y: trip.cand?.place != nil ? -70 : -22)
+                                    .offset(y: pv.onPin ? -70 : -22)
                                     .transition(.scale(scale: 0.5).combined(with: .opacity))
                                     .allowsHitTesting(false)
                             }
@@ -200,6 +200,8 @@ struct MapTab: View {
                         seenBox.zoomed = nil
                         if seenBox.only != nil { withAnimation(.snappy) { seenBox.only = nil } }
                     }
+                    // 出發中：拖過地圖就亮「跟著我」，鏡頭被設回 region 就收掉
+                    if trip.going, trip.offFollow != pos.positionedByUser { trip.offFollow = pos.positionedByUser }
                     dot.refresh()
                     pinFrame(proxy)
                     if let c = spot.coord, Date() < spot.until { spot.at = proxy.convert(c, to: .global) }
@@ -309,15 +311,6 @@ struct MapTab: View {
                     pins.dimAll = trip.on
                     pins.bright = foundIds
                 }
-                .onChange(of: trip.cand?.id) { old, now in
-                    // 量測浮層：加站卡關掉時記離最後點圖釘多久（太快關掉＝被誤關）
-                    if old != nil, now == nil {
-                        let dt = CACurrentMediaTime() - pins.tapAt
-                        Perf.shared.mark(dt < 10 ? "加站卡關掉 距點 \(Int(dt * 1000))ms" : "加站卡關掉")
-                    }
-                    // 正在看要不要加的那間：圖釘放大（收藏用店的 id，搜到的地點用 hit: 開頭）
-                    pins.select(trip.cand.map { $0.place != nil ? $0.id : "hit:" + $0.id })
-                }
             }
             // 量在 ignoresSafeArea 裡面才是地圖真正鋪開的範圍（整個螢幕）；量在外面只拿到 safe area 那塊，上下邊距會各少算 62、34
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { r in
@@ -407,7 +400,7 @@ struct MapTab: View {
                                 }
                                 Spacer()
                                 VStack(spacing: 10) {
-                                    // 行程：上次打開的行程直接進行程模式；沒有就開「我的行程」
+                                    // 行程：上次打開的行程還沒過期就直接進行程模式；過期或沒有就開「我的行程」
                                     Button { openTrip() } label: {
                                         VStack(spacing: 1) {
                                             Image(systemName: "point.topleft.down.to.point.bottomright.curvepath.fill").font(.system(size: 17, weight: .bold))
@@ -472,7 +465,7 @@ struct MapTab: View {
                 .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $adding) { AddSheet() }
-        .sheet(isPresented: $trip.listing) { TripsList().presentationDetents([.medium, .large]) }
+        .sheet(isPresented: $trip.listing) { TripsList().toastHost(bottom: 16).presentationDetents([.medium, .large]) }
         // 刪除行程：按下確定就回一般地圖，刪除在背景做（有復原）
         .confirmationDialog("刪除「\(trip.deleting?.title ?? "")」？每一站都會一起刪掉", isPresented: Binding(get: { trip.deleting != nil }, set: { if !$0 { trip.deleting = nil } }), titleVisibility: .visible, presenting: trip.deleting) { t in
             Button("刪除行程", role: .destructive) {
@@ -498,8 +491,17 @@ struct MapTab: View {
         .background { FilterSync(tab: 0, live: true, applied: $applied) }
         .onChange(of: list.count) { fit() }
         .onChange(of: store.loading) { _, l in if !l { centerIfEmpty() } }
+        // 進出行程：「只列這幾間」一律退出。
+        // 進行程：首頁選著的圖釘取消，不然那根維持放大帶店名、像一個站；
         // 離開行程：下面的附近面板補算一次地圖現在看的範圍（行程模式時沒跟著算）
-        .onChange(of: trip.on) { _, on in seenBox.only = nil; seenBox.zoomed = nil; if !on { seenBox.set(seenBox.peek, publish: true) } }
+        .onChange(of: trip.on) { _, on in
+            seenBox.only = nil; seenBox.zoomed = nil
+            if on {
+                if trip.cand == nil { pins.select(nil); pins.drawn = nil }
+            } else {
+                seenBox.set(seenBox.peek, publish: true)
+            }
+        }
         // 拿到一次目前位置就好（剛允許定位也會馬上更新「附近」），不一直開著 GPS
         .task {
             do { for try await u in CLLocationUpdate.liveUpdates() { if let l = u.location { store.here = l; centerIfEmpty(); break } } } catch {}
@@ -755,6 +757,10 @@ struct MapTab: View {
         UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow?.bounds.height }.first ?? 844
     }
 
+    static var safeBottom: CGFloat {
+        UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow?.safeAreaInsets.bottom }.first ?? 0
+    }
+
     private var currentList: [Place] {
         let hide = tripHidden
         return withExtra(store.shown(applied, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil }).filter { !hide.contains($0.id) }
@@ -767,12 +773,16 @@ struct MapTab: View {
         return Set(tripStore.stops(tid, day: min(trip.day, days)).compactMap(\.place_id))
     }
 
-    // 右邊「行程」：上次打開的行程直接進行程模式；沒有就開「我的行程」
+    // 右邊「行程」：上次打開的行程還沒過期就直接進行程模式；過期或沒有就開「我的行程」
     // 上次的行程已經被刪掉：當成沒有上次，直接開「我的行程」
     private func openTrip() {
         if let last = tripStore.lastOpened {
-            if tripStore.trip(last) != nil { trip.open(last, store: store); return }
-            tripStore.lastOpened = nil
+            if let t = tripStore.trip(last) {
+                // 上次打開的還沒結束：直接進；已經過期（上個月的）就打開「我的行程」讓人挑或開新的
+                if (t.end ?? .distantFuture) >= TripDate.today { trip.open(last, store: store); return }
+            } else {
+                tripStore.lastOpened = nil
+            }
         }
         Perf.shared.mark("我的行程")
         trip.listing = true
@@ -1300,6 +1310,17 @@ struct NearbySheet: View {
             Capsule().fill(Color.ink.opacity(0.15)).frame(width: 38, height: 5)
                 .frame(maxWidth: .infinity).padding(.top, 8).padding(.bottom, 10)
                 .modifier(grip)
+                // VoiceOver：上下滑就能換段
+                .accessibilityElement()
+                .accessibilityLabel("附近清單")
+                .accessibilityValue(mp.stage == .low ? "收起" : mp.stage == .mid ? "一排卡片" : "整份清單")
+                .accessibilityAdjustableAction { d in
+                    switch d {
+                    case .increment: mp.go(mp.stage == .low ? .mid : .high)
+                    case .decrement: mp.go(mp.stage == .high ? .mid : .low)
+                    @unknown default: break
+                    }
+                }
             ZStack(alignment: .top) {
                 mid(picked, drawn)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1415,6 +1436,7 @@ struct NearbySheet: View {
                             cards.finger = f
                         }
                         .frame(height: 112)
+                        .accessibilityHidden(mp.stage == .low)   // 最低段被裁掉的卡片列不唸
                         // 手指捲停在某張 0.25 秒：那根圖釘跳一下、地圖移過去
                         .task(id: scrolled) {
                             guard let id = scrolled, id != cards.focused else { return }
@@ -1481,6 +1503,10 @@ struct NearbySheet: View {
             // 標題（群組名稱可能很長）先拿位置，小字不夠放就先截掉小字
             title.font(.system(size: 19, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1).minimumScaleFactor(0.8)
                 .layoutPriority(1)
+                .accessibilityActions {
+                    if mp.stage != .high { Button("展開附近清單") { mp.go(mp.stage == .low ? .mid : .high) } }
+                    if mp.stage != .low { Button("收起") { mp.go(.low) } }
+                }
             // 整句放得下就整句，放不下換短句，連短句都放不下（群組名很長）就不顯示
             ViewThatFits(in: .horizontal) {
                 Text(near.subtitle).lineLimit(1)
@@ -1891,10 +1917,17 @@ private struct SelWatcher: View {
     var body: some View {
         Color.clear.onChange(of: pins.sel) { _, id in act(id) }
             .onChange(of: pins.again) { act(pins.sel) }
-            // 行程模式的加站卡關掉了（往下拖、✕、加好了、按「完成」離開行程）：圖釘也取消選取，再點同一根才會重新打開；
-            // 離開行程時不取消的話，回到首頁會冒出那間的大卡片
-            .onChange(of: TripMode.shared.cand == nil) { _, gone in
-                if gone, pins.sel != nil { pins.select(nil) }
+            // 行程模式的加站卡換了一間：那根圖釘放大（收藏用店的 id，搜到的地點用 hit: 開頭）。
+            // 加站卡關掉了（往下拖、✕、加好了、按「完成」離開行程）：圖釘也取消選取，再點同一根才會重新打開；
+            // 離開行程時不取消的話，回到首頁會冒出那間的大卡片。放在這裡，MapTab 本身不用追蹤 cand
+            .onChange(of: TripMode.shared.cand?.id) { old, now in
+                // 量測浮層：加站卡關掉時記離最後點圖釘多久（太快關掉就是被誤關）
+                if old != nil, now == nil {
+                    let dt = CACurrentMediaTime() - pins.tapAt
+                    Perf.shared.mark(dt < 10 ? "加站卡關掉 距點 \(Int(dt * 1000))ms" : "加站卡關掉")
+                }
+                let c = TripMode.shared.cand
+                pins.select(c.map { $0.place != nil ? $0.id : "hit:" + $0.id })
             }
     }
 }
