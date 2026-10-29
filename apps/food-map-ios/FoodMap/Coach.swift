@@ -27,8 +27,8 @@ extension Store {
 
     // 第一次打開才自動跑；略過或看完都記住
     @MainActor func maybeStartCoach() {
-        // 點邀請連結進來的：先讓他看到群組，教學下次打開 App 再跑（coachDone 還沒寫，下次的 .task 會補）
-        guard pendingJoin == nil, !inviteOpened else { return }
+        // 登入後的兩個問題答完才教；點邀請連結進來的這一輪先看群組，教學下次打開 App 再跑（coachDone 還沒寫，下次的 .task 會補）
+        guard askOld == nil, !askName, !authSettling, pendingJoin == nil, !inviteOpened else { return }
         if coach.isEmpty && !UserDefaults.standard.bool(forKey: "coachDone") { startCoach() }
     }
 
@@ -45,7 +45,8 @@ extension Store {
         // 回到地圖、清掉篩選，圖釘才一定看得到
         mapF = Filter(); mapGroup = nil
         mapPath = NavigationPath(); tab = 0
-        coachFrames = [:]
+        // 只清會變的兩個：加號和分頁列一直掛著，位置沒變就不會再量，清掉的話第一步可能一直圈不到
+        coachFrames[.pin] = nil; coachFrames[.been] = nil
         withAnimation(.snappy) { coachIndex = 0; coach = s }
     }
 
@@ -98,13 +99,26 @@ struct CoachOverlay: View {
     var body: some View {
         if let step = store.coachStep, !store.showIG {
             let t = step.text
-            Spotlight(rect: ready == step ? store.coachFrames[step] : nil, title: t.title, message: t.body,
+            // 同一頁、目標已經量好：直接用，跟 advanceCoach 同一個 withAnimation，洞和對話框從舊目標滑過去
+            // （去過那步推進店家頁、群組那步退回地圖時分頁列會滑回來，算換頁）
+            let moves = step == .been || step == .groups
+            let direct = !moves && store.coachFrames[step] != nil
+            let rect = (direct || ready == step) ? store.coachFrames[step] : nil
+            Spotlight(rect: rect, waiting: rect == nil && ready != step, title: t.title, message: t.body,
                       counter: "\(store.coachIndex + 1) / \(store.coach.count)", button: t.button, hint: t.hint,
                       onTarget: { tapTarget(step) }, onButton: { tapButton(step) }, onSkip: { store.endCoach() })
-            // 換步驟（換頁、推進店家頁）時等畫面停好才圈，框才不會圈在半路
             .task(id: step) {
+                if direct { ready = step; return }
                 ready = nil
-                try? await Task.sleep(for: .milliseconds(step == .been ? 650 : 350))
+                // 換頁：新位置連續兩次一樣才圈（每 50ms 看一次），最多等 800ms；量不到就照舊置中
+                var last: CGRect?
+                for _ in 0..<16 {
+                    try? await Task.sleep(for: .milliseconds(50))
+                    if Task.isCancelled { return }
+                    let r = store.coachFrames[step]
+                    if let r, r == last { break }
+                    last = r
+                }
                 withAnimation(.snappy) { ready = step }
             }
             .transition(.opacity)
@@ -127,6 +141,7 @@ struct CoachOverlay: View {
 // 變暗、挖一個洞、黃框一閃一閃、手指、對話框。rect 是螢幕座標（.global）；nil 就先只顯示對話框在中間
 struct Spotlight: View {
     let rect: CGRect?
+    var waiting = false     // 換頁中、目標還沒停好：只留暗底，對話框先藏起來（不會先跑到正中間）
     let title: String, message: String, counter: String
     var button: String?
     var hint: String?
@@ -140,7 +155,8 @@ struct Spotlight: View {
             let r = hole.map { min(22, min($0.width, $0.height) / 2) } ?? 0
             ZStack(alignment: .topLeading) {
                 // 暗色底挖一個洞：用一個「外框減掉洞」的形狀直接畫，不用遮罩合成，每一格都很省
-                Dim(hole: hole, radius: r)
+                // 沒有洞時給中間一個 0 大小的洞：洞的大小、位置可以動畫（nil 當 .zero 的話洞會從左上角飛出來）
+                Dim(hole: hole ?? CGRect(x: g.size.width / 2, y: g.size.height / 2, width: 0, height: 0), radius: r)
                     .fill(Color.black.opacity(0.62), style: FillStyle(eoFill: true))
                     .contentShape(.rect)
                     .onTapGesture {}
@@ -195,6 +211,7 @@ struct Spotlight: View {
         }
         .offset(x: left)
         .animation(.snappy, value: hole)
+        .opacity(waiting ? 0 : 1).scaleEffect(waiting ? 0.96 : 1).animation(.snappy(duration: 0.2), value: waiting)
     }
 
     private func arrow(x: CGFloat, up: Bool) -> some View {
@@ -228,11 +245,16 @@ struct Spotlight: View {
 
 // 整個螢幕減掉洞（奇偶填色就會空出洞）
 struct Dim: Shape {
-    let hole: CGRect?
-    let radius: CGFloat
+    var hole: CGRect
+    var radius: CGFloat
+    // 換步驟時洞從舊目標滑到新目標
+    var animatableData: AnimatablePair<CGRect.AnimatableData, CGFloat> {
+        get { AnimatablePair(hole.animatableData, radius) }
+        set { hole.animatableData = newValue.first; radius = newValue.second }
+    }
     func path(in r: CGRect) -> Path {
         var p = Path(r)
-        if let hole { p.addRoundedRect(in: hole, cornerSize: CGSize(width: radius, height: radius), style: .continuous) }
+        if hole.width > 0 && hole.height > 0 { p.addRoundedRect(in: hole, cornerSize: CGSize(width: radius, height: radius), style: .continuous) }
         return p
     }
 }
@@ -271,10 +293,9 @@ struct IGTutorial: View {
             if step >= 1 { igSheet.transition(.move(edge: .bottom)) }
             if step >= 2 { iosSheet.transition(.move(edge: .bottom)) }
             let t = texts[step]
-            Spotlight(rect: ready == step ? frames[step] : nil, title: t.0, message: t.1, counter: "IG 收藏 \(step + 1)/3",
+            Spotlight(rect: ready == step ? frames[step] : nil, waiting: ready != step, title: t.0, message: t.1, counter: "IG 收藏 \(step + 1)/3",
                       button: step == 2 ? "我學會了" : nil, hint: step == 2 ? nil : "點圈起來的地方",
                       onTarget: next, onButton: { finish(done: true) }, onSkip: { finish(done: false) })
-                .id(step)
         }
         .background(.white)
         // 面板滑上來停好才圈

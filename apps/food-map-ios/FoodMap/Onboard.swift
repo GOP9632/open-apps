@@ -9,7 +9,8 @@ import UserNotifications
 
 extension Store {
     @MainActor func maybeAskNotify(after: Double = 0.6) {
-        guard !UserDefaults.standard.bool(forKey: "notifyAsked"), !askNotify else { return }
+        // 點過旁邊收起的：3 天內不再跳（回前景的 askNotifyAfterShare 也走這裡）
+        guard !UserDefaults.standard.bool(forKey: "notifyAsked"), !askNotify, Date().timeIntervalSince1970 >= UserDefaults.standard.double(forKey: "notifyLater") else { return }
         Task {
             let s = await UNUserNotificationCenter.current().notificationSettings()
             guard s.authorizationStatus == .notDetermined else { return }
@@ -22,6 +23,12 @@ extension Store {
     @MainActor func askNotifyAfterShare() {
         guard Store.shared?.bool(forKey: "sharedOnce") == true else { return }
         maybeAskNotify(after: 1.0)
+    }
+
+    // 點旁邊：只是現在不想看，3 天內不再跳（不算「先不要」，不寫 notifyAsked）
+    @MainActor func snoozeNotify() {
+        UserDefaults.standard.set(Date().timeIntervalSince1970 + 3 * 86400, forKey: "notifyLater")
+        withAnimation(.snappy) { askNotify = false }
     }
 
     @MainActor func answerNotify(_ yes: Bool) {
@@ -78,6 +85,7 @@ struct NotifyCard: View {
         let pb = UIPasteboard.general
         let n = pb.changeCount
         guard store.loggedIn, store.coach.isEmpty, !store.showIG, !store.askNotify, !TripMode.shared.on,
+              !store.authSettling, store.askOld == nil, !store.askName,   // 登入後的兩個問題還沒答完：不跟 alert 疊在一起
               n != seen, Date().timeIntervalSince1970 >= muteUntil, !Self.sheetOpen, pb.hasURLs || pb.hasStrings else { return }
         Task {
             guard await Self.hasLink(), UIPasteboard.general.changeCount == n else { return }

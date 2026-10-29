@@ -18,30 +18,62 @@ struct ChunkyStyle: ButtonStyle {
     var radius: CGFloat = 14
     var haptic = false   // 手指一按下就輕震
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.headline)
-            .foregroundStyle(fg)
-            .padding(.horizontal, 16)
-            .frame(minHeight: 44)
-            .background(RoundedRectangle(cornerRadius: radius).fill(color).shadow(color: edge, radius: 0, y: configuration.isPressed ? 1 : 4))
-            .offset(y: configuration.isPressed ? 3 : 0)
-            .animation(.spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
-            .onChange(of: configuration.isPressed) { _, down in if down && haptic { Haptic.light() } }
+        ChunkyBody(c: configuration, color: color, edge: edge, fg: fg, radius: radius, haptic: haptic)
+    }
+
+    // 停用時自己變灰變淡（自訂樣式 disabled 時不會自動變淡，看起來像壞掉）
+    private struct ChunkyBody: View {
+        let c: ButtonStyleConfiguration
+        let color: Color, edge: Color, fg: Color
+        let radius: CGFloat
+        let haptic: Bool
+        @Environment(\.isEnabled) private var on
+        var body: some View {
+            let down = c.isPressed && on
+            c.label
+                .font(.headline).foregroundStyle(fg)
+                .padding(.horizontal, 16).frame(minHeight: 44)
+                .background(RoundedRectangle(cornerRadius: radius).fill(color).shadow(color: edge, radius: 0, y: on && !down ? 4 : 1))
+                .offset(y: down ? 3 : 0)
+                .saturation(on ? 1 : 0.2).opacity(on ? 1 : 0.5)
+                .animation(.spring(response: 0.2, dampingFraction: 0.7), value: c.isPressed)
+                .animation(.easeOut(duration: 0.15), value: on)
+                .onChange(of: c.isPressed) { _, d in if d && haptic && on { Haptic.light() } }
+        }
     }
 }
 
 struct PressStyle: ButtonStyle {
-    var haptic = false   // 手指一按下就輕震（不等放開）
-    var onPress: (() -> Void)? = nil   // 手指一按下就先做的事（例如先拿影片網址）
+    var haptic = false                   // 手指一按下就輕震（不等放開）
+    var scale: CGFloat = 0.96            // 按住時縮多少；1＝自己不縮，交給外面一起縮
+    var onPress: (() -> Void)? = nil     // 手指一按下就先做的事（例如先拿影片網址）
+    var dim = false                      // 停用時變淡（自己用灰底、刪除線表示停用，或外面包著會暫時 disabled 的東西，就不要淡）
+    var pressed: Binding<Bool>? = nil    // 按住、放開都回報，給外面整組一起縮用
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(configuration.isPressed ? .easeOut(duration: 0.08) : .spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
-            .onChange(of: configuration.isPressed) { _, down in
-                guard down else { return }
-                if haptic { Haptic.light() }
-                onPress?()
-            }
+        PressBody(c: configuration, haptic: haptic, scale: scale, onPress: onPress, dim: dim, pressed: pressed)
+    }
+
+    private struct PressBody: View {
+        let c: ButtonStyleConfiguration
+        let haptic: Bool
+        let scale: CGFloat
+        let onPress: (() -> Void)?
+        let dim: Bool
+        let pressed: Binding<Bool>?
+        @Environment(\.isEnabled) private var on
+        var body: some View {
+            c.label
+                .scaleEffect(c.isPressed ? scale : 1)
+                .opacity(dim && !on ? 0.45 : 1)
+                .animation(c.isPressed ? .easeOut(duration: 0.08) : .spring(response: 0.25, dampingFraction: 0.7), value: c.isPressed)
+                .animation(.easeOut(duration: 0.15), value: on)
+                .onChange(of: c.isPressed) { _, down in
+                    pressed?.wrappedValue = down
+                    guard down else { return }
+                    if haptic { Haptic.light() }
+                    onPress?()
+                }
+        }
     }
 }
 
@@ -123,6 +155,7 @@ struct SearchField<Trailing: View>: View {
         HStack(spacing: 10) {
             if let lead { lead(busy) } else { Image(systemName: "magnifyingglass").foregroundStyle(.secondary) }
             TextField(prompt, text: $text).font(.body).submitLabel(.search)
+                .textInputAutocapitalization(.never)   // 打英文店名開頭不要自動變大寫（zzq 變 Zzq）
                 // 同一個點擊做兩件事：膠囊收小、地圖面板降段
                 .simultaneousGesture(TapGesture().onEnded {
                     if !typing { withAnimation(.snappy) { typing = true } }

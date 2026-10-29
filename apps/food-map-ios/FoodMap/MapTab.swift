@@ -19,6 +19,7 @@ struct MapTab: View {
     @State private var seenBox = SeenBox()
     private var shownRegion: MKCoordinateRegion? { seenBox.peek }
     @State private var selfMoved = false
+    @State private var applied = Filter()   // 地圖畫的篩選，由 FilterSync 同步（body 不直接讀 store.mapF，收藏頁打字時背景地圖不重算）
     @State private var nearTask: Task<Void, Never>?   // 量測用 -landDefer：降落後晚 0.6 秒再換附近清單
     @Environment(\.displayScale) private var displayScale
     @State private var spot = BurstSpot()
@@ -56,14 +57,14 @@ struct MapTab: View {
         return l + [p]
     }
 
-    private var points: [Place] { store.shown(store.mapF, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil } }
+    private var points: [Place] { store.shown(applied, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil } }
 
     var body: some View {
         let _ = Perf.shared.count("地圖")
         @Bindable var store = store
         // 篩選結果只算一次；有座標的店下面每個地方共用
         let base = store.mapBase
-        let all = store.shown(store.mapF, in: base)
+        let all = store.shown(applied, in: base)
         // 行程模式：這天已經排進去的店畫成號碼，不再畫一次圖釘
         let tripHide = tripHidden
         let list = withExtra(all.filter { $0.lat != nil && $0.lng != nil }).filter { !tripHide.contains($0.id) }
@@ -186,6 +187,7 @@ struct MapTab: View {
                     // 手指拖地圖：下面那塊降到一行（停下來不自動彈回）
                     let now = CACurrentMediaTime()
                     if pos.positionedByUser { pins.camAt = now }
+                    if !quiet.touched, pos.positionedByUser, now > quiet.until { quiet.touched = true }
                     // 新帳號的「收藏第一間店」卡不降（跟 NearbySheet 裡那張卡同一個條件）
                     let empty = store.mapGroup == nil && store.mine.isEmpty && !store.loading
                     if !trip.on, !empty, pos.positionedByUser, now > quiet.until, now > MapPanel.shared.calmUntil, !MapPanel.shared.dragging {
@@ -371,7 +373,7 @@ struct MapTab: View {
                 // 下面那塊（三段）：行程模式時收起來但不拿掉（拿掉再建一次很慢）
                 // 行程、定位兩顆浮在面板上緣，跟著面板上下；地圖邊距只在面板停在中間段時才跟著量
                 // 「附近 N 間」在 NearbyHost 裡算：地圖停下來、面板上緣變了，只有這一塊重算
-                NearbyHost(seen: seenBox, list: list, total: total, base: base.count, inGroup: store.mapGroup != nil, filter: store.mapF, headY: headY, mapRect: mapRect) { near in
+                NearbyHost(seen: seenBox, list: list, total: total, base: base.count, inGroup: store.mapGroup != nil, filter: applied, headY: headY, mapRect: mapRect) { near in
                     let missing = total - list.count
                 NearbySheet(near: near, pins: pins, list: list, group: store.mapGroupName, draw: draw, panel: openPanel, choose: choose, dropKey: pins.dropKey, focus: focus,
                             endOnly: { withAnimation(.snappy) { seenBox.only = nil } }, frameAll: frameShown,
@@ -418,6 +420,7 @@ struct MapTab: View {
                                         Haptic.light()
                                         // 移到目前位置一次就好。不用 .userLocation：那會一直跟著走，位置一動整張地圖就每幀重畫，手機會燙
                                         if let l = loc.location ?? store.here {
+                                            quiet.centered = true   // 以定位鈕為準，同步做完不再拉去 3 公里
                                             // 拉近到街道（已經比這更近就不動縮放）
                                             let near = MKCoordinateRegion(center: l.coordinate, latitudinalMeters: 1200, longitudinalMeters: 1200)
                                             let span = store.mapRegion.map { $0.span.latitudeDelta < near.span.latitudeDelta ? $0.span : near.span } ?? near.span
@@ -488,20 +491,19 @@ struct MapTab: View {
             // 第一次打開先把所有收藏的店框進畫面
             fit()
         }
+        .background { FilterSync(tab: 0, live: true, applied: $applied) }
         .onChange(of: list.count) { fit() }
+        .onChange(of: store.loading) { _, l in if !l { centerIfEmpty() } }
         // 離開行程：下面的附近面板補算一次地圖現在看的範圍（行程模式時沒跟著算）
         .onChange(of: trip.on) { _, on in seenBox.only = nil; seenBox.zoomed = nil; if !on { seenBox.set(seenBox.peek, publish: true) } }
         // 拿到一次目前位置就好（剛允許定位也會馬上更新「附近」），不一直開著 GPS
         .task {
-            do { for try await u in CLLocationUpdate.liveUpdates() { if let l = u.location { store.here = l; break } } } catch {}
+            do { for try await u in CLLocationUpdate.liveUpdates() { if let l = u.location { store.here = l; centerIfEmpty(); break } } } catch {}
         }
         // 鍵盤收起來（按搜尋、點地圖、捲面板）：首頁搜尋不算在打字了，面板回到打字前那段
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in endTyping() }
-        // 藍點只在看地圖（或出發中）時更新
-        .task(id: store.tab == 0 || trip.going) {
-            guard store.tab == 0 || trip.going else { return }
-            await dot.track()
-        }
+        // 藍點只在看地圖（或出發中）時更新；分頁交給 DotTracker 自己讀，換分頁時 MapTab 不用跟著重算
+        .background { DotTracker() }
     }
 
     // 抽一間：照存好的設定抽（範圍、分類、價位…長按 🎲 改）。同一家的分店只算一次、抽中離你最近的那間；再抽一次不會抽到同一家
@@ -604,7 +606,7 @@ struct MapTab: View {
 
     // 被篩選篩掉的店也要能畫出那根圖釘
     private func reveal(_ p: Place) {
-        if !store.shown(store.mapF, in: store.mapBase).contains(where: { $0.id == p.id }) { pins.extra = p.id }
+        if !store.shown(applied, in: store.mapBase).contains(where: { $0.id == p.id }) { pins.extra = p.id }
     }
 
     private func openPanel() {
@@ -749,7 +751,7 @@ struct MapTab: View {
 
     private var currentList: [Place] {
         let hide = tripHidden
-        return withExtra(store.shown(store.mapF, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil }).filter { !hide.contains($0.id) }
+        return withExtra(store.shown(applied, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil }).filter { !hide.contains($0.id) }
     }
 
     // 行程模式：這天已經排進行程的店（畫成號碼）
@@ -1064,11 +1066,19 @@ struct MapTab: View {
             guard !fitted else { return }
             quiet.hush()
             if let b = bounds { fitted = true; pos = .region(b); return }
-            // 新帳號一間都沒有：有定位就看目前位置附近約 3 公里（沒有就停在預設的台北市）；之後有店了再框收藏
-            if store.mine.isEmpty, store.mapGroup == nil, let h = store.here {
-                pos = .region(aim(MKCoordinateRegion(center: h.coordinate, latitudinalMeters: 3000, longitudinalMeters: 3000), grow: false))
-            }
+            centerIfEmpty(animated: false)
         }
+    }
+
+    // 新帳號一間都沒有：拿到位置（或同步做完）時看目前位置附近約 3 公里（沒有就停在預設的台北市）；之後有店了再框收藏。
+    // 只做一次，使用者自己動過鏡頭或按過定位鈕就不做
+    private func centerIfEmpty(animated: Bool = true) {
+        guard !fitted, !quiet.centered, !quiet.touched, footY > 0, !store.loading, bounds == nil,
+              store.mine.isEmpty, store.mapGroup == nil, let h = store.here else { return }
+        quiet.centered = true
+        quiet.hush()
+        let r = aim(MKCoordinateRegion(center: h.coordinate, latitudinalMeters: 3000, longitudinalMeters: 3000), grow: false)
+        if animated { withAnimation(.smooth(duration: 0.5)) { pos = .region(r) } } else { pos = .region(r) }
     }
 
     // 框住所有收藏：落在搜尋列和中段面板之間（上下多留一點給圖釘的高度）
@@ -2323,6 +2333,19 @@ private struct GonePin: View {
                 refresh()
             }
         } catch {}
+    }
+}
+
+// 藍點只在看地圖（或出發中）時追蹤。自己一個小 view 讀分頁，換分頁時 MapTab 不用跟著重算
+private struct DotTracker: View {
+    @Environment(Store.self) private var store
+    @State private var trip = TripMode.shared
+    var body: some View {
+        let on = store.tab == 0 || trip.going
+        Color.clear.task(id: on) {
+            guard on else { return }
+            await MyDot.shared.track()
+        }
     }
 }
 

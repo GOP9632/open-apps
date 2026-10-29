@@ -6,7 +6,6 @@ struct AddSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var input = ""
     @State private var busy = false
-    @State private var result: String?
     @State private var manual = false
     @State private var been = false
     @State private var rating: Int?
@@ -15,59 +14,65 @@ struct AddSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("貼上 IG／Threads／Google 地圖連結，或直接打店名，AI 會找出店家幫你存好。").font(.subheadline).foregroundStyle(.secondary)
-                TextField("連結或店名", text: $input, axis: .vertical)
-                    .lineLimit(3...6).focused($focus)
-                    .padding(14).background(Color.panel, in: .rect(cornerRadius: 14))
-                HStack {
-                    PasteButton(payloadType: String.self) { s in
-                        if let t = s.first { input = t }
-                        Task { @MainActor in ClipWatch.shared.markSeen(); ClipWatch.shared.dismiss() }
-                        withAnimation(.snappy) { clip = false }
-                    }
-                    .buttonBorderShape(.capsule).labelStyle(.titleAndIcon)
-                    if clip {
-                        Text("剛複製的連結，按「貼上」就填好").font(.footnote.weight(.bold)).foregroundStyle(Color.accentDeep)
-                            .lineLimit(2).transition(.opacity)
-                    }
-                    Spacer()
-                    Button("自己填") { manual = true }.font(.subheadline.weight(.semibold))
-                }
-                // 已經吃過的店也能收：選「去過」，順手給星星（跟店家頁一樣的粉紅／薄荷切換）
-                StatusSwitch(been: $been.animation(.snappy))
-                if been {
+            // 內容可以捲、主按鈕釘在下面：鍵盤出來時按鈕跟著在鍵盤上方（SE 切到「去過」多一列星星也看得到）
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("貼上 IG／Threads／Google 地圖連結，或直接打店名，AI 會找出店家幫你存好。").font(.subheadline).foregroundStyle(.secondary)
+                    TextField("連結或店名", text: $input, axis: .vertical)
+                        .lineLimit(3...6).focused($focus)
+                        .submitLabel(.done)
+                        // 手打 Return：只多了一個字而且是換行，就還原並收鍵盤；貼上的多行文字不動
+                        .onChange(of: input) { old, new in
+                            if new.count == old.count + 1, new.filter({ $0 == "\n" }).count == old.filter({ $0 == "\n" }).count + 1 {
+                                input = old; focus = false
+                            }
+                        }
+                        .padding(14).background(Color.panel, in: .rect(cornerRadius: 14))
                     HStack {
-                        Text("好吃嗎？").font(.subheadline).foregroundStyle(.secondary)
+                        PasteButton(payloadType: String.self) { s in
+                            if let t = s.first { input = t }
+                            Task { @MainActor in ClipWatch.shared.markSeen(); ClipWatch.shared.dismiss() }
+                            withAnimation(.snappy) { clip = false }
+                        }
+                        .buttonBorderShape(.capsule).labelStyle(.titleAndIcon)
+                        if clip {
+                            Text("剛複製的連結，按「貼上」就填好").font(.footnote.weight(.bold)).foregroundStyle(Color.accentDeep)
+                                .lineLimit(2).transition(.opacity)
+                        }
                         Spacer()
-                        Stars(value: rating, size: 22) { rating = $0 }
+                        Button("自己填") { manual = true }.font(.subheadline.weight(.semibold))
                     }
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    // 已經吃過的店也能收：選「去過」，順手給星星（跟店家頁一樣的粉紅／薄荷切換）
+                    StatusSwitch(been: $been.animation(.snappy))
+                    if been {
+                        HStack {
+                            Text("好吃嗎？").font(.subheadline).foregroundStyle(.secondary)
+                            Spacer()
+                            Stars(value: rating, size: 22) { rating = $0 }
+                        }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
-                // 還沒輸入：按鈕變淡（自己畫的底色 disabled 時不會自己變淡，看起來像壞掉）
+                .padding(16)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .background(Color.bg)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                // 還沒輸入：按鈕變淡、字改成提示（變淡交給 PressBody，不要再加 .opacity、.animation）
                 let empty = input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 Button(action: go) {
                     HStack(spacing: 8) {
                         if busy { ProgressView().tint(.white) }
-                        Text(busy ? "找店家中…" : "AI 找店家並收藏")
+                        Text(busy ? "找店家中…" : empty ? "先貼上連結或打店名" : "AI 找店家並收藏")
                     }
                     .font(.headline).frame(maxWidth: .infinity).frame(height: 54)
                     .background(Color.grad, in: .rect(cornerRadius: 16)).foregroundStyle(.white)
                 }
-                .buttonStyle(PressStyle())
+                .buttonStyle(PressStyle(dim: true))
                 .disabled(busy || empty)
-                .opacity(empty && !busy ? 0.45 : 1)
-                .animation(.easeOut(duration: 0.15), value: empty)
-                if let result {
-                    Text(result).font(.body.weight(.semibold))
-                        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.accent.opacity(0.1), in: .rect(cornerRadius: 14))
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-                Spacer()
+                .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 12)
+                .background(Color.bg)
             }
-            .padding(16)
-            .background(Color.bg)
             // 等視窗彈上來（約 0.35 秒）再叫鍵盤，兩個動畫不搶。
             // 在視窗裡 SwiftUI 的 focus 有時不生效，就直接叫最上層畫面裡的輸入框接手
             .task {
@@ -85,15 +90,20 @@ struct AddSheet: View {
                 }
             }
             .navigationTitle("新增店家").navigationBarTitleDisplayMode(.inline)
-            .toolbar { Button(result == nil ? "取消" : "完成") { dismiss() } }
+            .toolbar { Button("取消") { dismiss() } }
             .sheet(isPresented: $manual) {
                 EditSheet(place: {
-                    var p = Place(id: UUID().uuidString, name: input.hasPrefix("http") ? "" : input)
+                    // 貼的網址放來源連結，其他字當店名
+                    let (u, rest) = splitLink(input)
+                    var p = Place(id: UUID().uuidString, name: rest)
+                    p.source_url = u
                     if been { p.status = "been"; p.rating = rating }
                     return p
                 }(), isNew: true) { dismiss() }
             }
         }
+        // 打了字就不能往下一拉就關（取消照常）
+        .interactiveDismissDisabled(!input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     // 按下去視窗就關：AI 在背景找，收藏頁上面有一張「找店中」卡、地圖上有一個膠囊，找到會翻成真的卡
@@ -122,10 +132,30 @@ struct EditSheet: View {
     @State private var dishes = ""
     @State private var tags = ""
     @State private var busy = false
+    @State private var err: String?
+    @State private var base: (Place, String, String)?
+    @State private var quitting = false
+    // 打開時的樣子：dishes、tags 是 onAppear 才填的，要跟填好的字串比，不能拿 split 後的陣列比
+    private var dirty: Bool {
+        guard let base else { return false }
+        return place != base.0 || dishes != base.1 || tags != base.2
+    }
 
     var body: some View {
         NavigationStack {
             Form {
+                // 存檔失敗：訊息條在 sheet 底下看不到，直接寫在表單最上面
+                if let err {
+                    Section {
+                        Label { Text("沒存到：\(err)。資料還在，可以再按一次存檔") } icon: { Image(systemName: "exclamationmark.triangle.fill") }
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                            .padding(.horizontal, 16).padding(.vertical, 11)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.ink.opacity(0.92), in: .rect(cornerRadius: 18))
+                            .listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 Section {
                     TextField("店名（必填）", text: $place.name)
                     TextField("分店", text: str(\.branch))
@@ -177,21 +207,35 @@ struct EditSheet: View {
                     TextField("必點（用、隔開）", text: $dishes)
                     TextField("標籤（用、隔開）", text: $tags)
                     TextField("筆記", text: str(\.note), axis: .vertical)
+                    TextField("來源連結（IG、網址）", text: str(\.source_url))
+                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
+            }
+            .confirmationDialog("放棄這次的修改？", isPresented: $quitting, titleVisibility: .visible) {
+                Button("放棄", role: .destructive) { dismiss() }
+                Button("繼續編輯", role: .cancel) {}
             }
             .scrollContentBackground(.hidden).background(Color.bg)
             .navigationTitle(isNew ? "自己填" : "編輯").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { if dirty { quitting = true } else { dismiss() } } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(busy ? "存檔中…" : "存檔", action: save).disabled(busy || place.name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
+        // 改任何欄位就收掉錯誤列
+        .onChange(of: place) { if err != nil { withAnimation(.snappy) { err = nil } } }
+        .onChange(of: dishes) { if err != nil { withAnimation(.snappy) { err = nil } } }
+        .onChange(of: tags) { if err != nil { withAnimation(.snappy) { err = nil } } }
         .onAppear {
             dishes = (place.dishes ?? []).joined(separator: "、")
             tags = (place.tags ?? []).joined(separator: "、")
+            // onAppear 可能跑兩次：第二次不能把改過的內容當成新的起點
+            if base == nil { base = (place, dishes, tags) }
         }
+        // 改過（或正在存）就不能往下一拉就關，要按取消、確認放棄
+        .interactiveDismissDisabled(dirty || busy)
     }
 
     private func str(_ kp: WritableKeyPath<Place, String?>) -> Binding<String> {
@@ -204,8 +248,10 @@ struct EditSheet: View {
 
     private func save() {
         busy = true
+        withAnimation(.snappy) { err = nil }
         var p = place
         p.name = p.name.trimmingCharacters(in: .whitespaces)
+        if p.source_url?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true { p.source_url = nil }   // 清空時存 null
         p.dishes = split(dishes); p.tags = split(tags)
         let old = store.place(p.id)
         Task { [p] in
@@ -215,12 +261,30 @@ struct EditSheet: View {
             if (p.lat == nil || old?.address != p.address || old?.city != p.city), let g = await Store.locate(p) {
                 p.lat = g.coord.latitude; p.lng = g.coord.longitude; p.approx = g.approx
             }
+            var why: String?
             let ok: Bool
-            if isNew { ok = await store.add(p) } else { ok = await store.save(p) }
+            if isNew { ok = await store.add(p, err: { why = $0 }) } else { ok = await store.save(p, err: { why = $0 }) }
             busy = false
             if ok { Haptic.success(); dismiss(); done() }
+            else {
+                let msg = why ?? "請再試一次"
+                Haptic.warning()
+                withAnimation(.snappy) { err = msg }
+                AccessibilityNotification.Announcement("沒存到：\(msg)").post()
+            }
         }
     }
+}
+
+// 貼進來的字拆成第一個網址和其他文字：自己填時網址放來源連結，其他字當店名
+func splitLink(_ s: String) -> (url: String?, rest: String) {
+    let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let d = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue),
+          let m = d.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)),
+          let r = Range(m.range, in: t),
+          t[r].lowercased().hasPrefix("http") else { return (nil, t) }   // 只認 http(s) 開頭的，店名裡的「xx.tw」不算
+    var rest = t; rest.removeSubrange(r)
+    return (String(t[r]), rest.trimmingCharacters(in: .whitespacesAndNewlines))
 }
 
 extension Place {

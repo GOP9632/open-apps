@@ -1,5 +1,6 @@
 import SwiftUI
 import AuthenticationServices
+import UserNotifications
 
 struct MeTab: View {
     static let version: String = {
@@ -59,6 +60,8 @@ struct MeTab: View {
                             }
                             .padding(.horizontal, 12).padding(.vertical, 11)
                         }
+                        Divider().padding(.leading, 58)
+                        NotifyRow()
                     }
                     // 很少用到的收在「進階」（登出也在這）
                     DisclosureGroup(isExpanded: $advanced.animation(.snappy)) {
@@ -364,7 +367,6 @@ struct LoginView: View {
             }
             .buttonStyle(ChunkyStyle(radius: 16))
             .disabled(busy || !ready)
-            .opacity(busy || !ready ? 0.5 : 1)
             Button {
                 store.error = nil
                 store.pendingLink = nil
@@ -388,5 +390,40 @@ struct LoginView: View {
             }
             busy = false
         }
+    }
+}
+
+// 「找好時通知我」：按過「先不要」或點旁邊收起的人，在這裡還打得開；自己讀權限，MeTab 不用跟著重算
+private struct NotifyRow: View {
+    @State private var status: UNAuthorizationStatus?
+    @Environment(\.scenePhase) private var phase
+    @Environment(\.openURL) private var openURL
+    var body: some View {
+        Button(action: tap) {
+            HStack(spacing: 12) {
+                Image(systemName: "bell.fill").font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
+                    .frame(width: 34, height: 34).background(Color.sprPink, in: .rect(cornerRadius: 10))
+                Text("找好時通知我").font(.system(size: 16, weight: .bold)).foregroundStyle(Color.ink)
+                Spacer()
+                Text(label).font(.subheadline.weight(.semibold)).foregroundStyle(on ? Color.ink.opacity(0.5) : Color.accent)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 11).contentShape(.rect)
+        }
+        .buttonStyle(PressStyle())
+        .disabled(on)
+        .task { await load() }
+        // 從 iOS 設定打開後切回來：那列自己更新
+        .onChange(of: phase) { _, p in if p == .active { Task { await load() } } }
+    }
+    private var on: Bool { status == .authorized || status == .provisional || status == .ephemeral }
+    private var label: String { on ? "已打開 ✓" : status == .denied ? "到設定打開" : "打開" }
+    private func load() async { status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
+    private func tap() {
+        if status == .denied {
+            if let u = URL(string: UIApplication.openNotificationSettingsURLString) { openURL(u) }
+            return
+        }
+        UserDefaults.standard.set(true, forKey: "notifyAsked")
+        Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]); await load() }
     }
 }

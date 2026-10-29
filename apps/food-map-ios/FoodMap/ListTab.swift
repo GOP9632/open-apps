@@ -10,13 +10,15 @@ struct ListTab: View {
     @State private var paneling = false
     @State private var pull = PullState()
     @State private var manual: PendingAdd?
+    @State private var pos = ScrollPosition(edge: .top)
+    @State private var applied = Filter()   // 收藏頁在背景時畫的篩選，由 FilterSync 同步（地圖打字時這頁不用每個字重算）
     @Environment(\.accessibilityReduceMotion) private var reduce
 
     var body: some View {
         let _ = Perf.shared.count("收藏")
         @Bindable var store = store
         // 篩選結果一次算好（每打一個字只算一次）
-        let visible = store.shown(store.listF)
+        let visible = store.shown(store.tab == 1 ? store.listF : applied)
         // 同一家的分店合成一張卡（最近的那間當封面）
         let groups = store.brands(visible)
         // 同一家用品牌當 id：換封面分店時卡片不會整張重建
@@ -58,7 +60,7 @@ struct ListTab: View {
                             let g = c.g, p = g[0]
                             NavigationLink(value: p) { PlaceCard(place: p, branches: g, del: true, fresh: store.freshIds.contains(p.id)) }
                                 .buttonStyle(PressStyle { ReelCache.warm(p) })
-                                .contextMenu { if store.isMine(p) { menu(p) } }
+                                .contextMenu { if store.isMine(p) { menu(p, g.filter(store.isMine)) } }
                                 .transition(reduce ? .opacity : .asymmetric(insertion: .push(from: .top), removal: .scale(scale: 0.8).combined(with: .opacity)))
                         }
                     }
@@ -78,17 +80,21 @@ struct ListTab: View {
                 .padding(.top, 8).padding(.bottom, 24)
             }
             .scrollDismissesKeyboard(.immediately)
+            .scrollPosition($pos)
             .tabBarRoom()
             .background(Color.bg)
             .toolbarVisibility(.hidden, for: .navigationBar)
             // 自己做的下拉更新（甜甜圈照拉的距離轉，拉過 70 輕震，放開就同步）
             .onScrollGeometryChange(for: CGFloat.self) { -($0.contentOffset.y + $0.contentInsets.top) } action: { _, y in pull.moved(y) }
             .onScrollPhaseChange { _, ph in
-                if ph != .interacting, pull.armed { pull.go { await store.sync() } }
+                if ph != .interacting, pull.armed { pull.go({ await store.sync() }, failed: { store.saySyncFailed() }) }
             }
             .sheet(item: $manual) { a in
                 EditSheet(place: {
-                    var p = Place(id: UUID().uuidString, name: a.text.hasPrefix("http") ? "" : a.text)
+                    // 貼的網址放來源連結，其他字當店名
+                    let (u, rest) = splitLink(a.text)
+                    var p = Place(id: UUID().uuidString, name: rest)
+                    p.source_url = u
                     if a.been { p.status = "been"; p.rating = a.rating }
                     return p
                 }(), isNew: true) { store.dropAdd(a.id) }
@@ -114,6 +120,12 @@ struct ListTab: View {
         }
         // 推頁、返回只讓 DepthReport 重算（body 裡讀 path 的話整個收藏頁都會跟著重算）
         .background { DepthReport(path: $path, tab: 1) }
+        .background { FilterSync(tab: 1, applied: $applied) }
+        // 點「收藏好了」通知：回到清單頂層、捲到最上面
+        .onChange(of: store.listTop) {
+            path = NavigationPath()
+            withAnimation(reduce ? nil : .snappy) { pos.scrollTo(edge: .top) }
+        }
         .onAppear(perform: markPaint)
         .onChange(of: store.places.count) { markPaint() }
     }
@@ -148,13 +160,17 @@ struct ListTab: View {
         }
     }
 
-    // 長按卡片：直接改想去／去過、刪除
-    @ViewBuilder private func menu(_ p: Place) -> some View {
-        Button(p.been ? "改成想去" : "改成去過", systemImage: p.been ? "heart" : "checkmark.circle") {
+    // 長按卡片：直接改想去／去過、刪除；有分店時寫出是哪一間，另外可以整家刪掉（g 是篩選後看得到的分店，跟卡片上「N 間分店」一致）
+    @ViewBuilder private func menu(_ p: Place, _ g: [Place]) -> some View {
+        let label = g.count > 1 ? branchLabel(p) : p.name
+        Button(p.been ? "「\(label)」改成想去" : "「\(label)」改成去過", systemImage: p.been ? "heart" : "checkmark.circle") {
             var n = p; n.status = p.been ? "want" : "been"; if !n.been { n.rating = nil }
             Task { await store.save(n) }
         }
-        Button("刪除", systemImage: "trash", role: .destructive) { store.deleteWithUndo(p) }
+        Button("刪除「\(label)」", systemImage: "trash", role: .destructive) { store.deleteWithUndo(p) }
+        if g.count > 1 {
+            Button("刪除整家（\(g.count) 間分店）", systemImage: "trash.fill", role: .destructive) { store.deleteManyWithUndo(g) }
+        }
     }
 
     // 還沒有收藏：教他怎麼開始
@@ -240,13 +256,15 @@ extension EnvironmentValues {
         if !busy, !armed, y > 70 { armed = true; Haptic.light() }
     }
 
-    func go(_ work: @escaping () async -> Void) {
+    func go(_ work: @escaping () async -> Bool, failed: @escaping () -> Void = {}) {
         armed = false
         guard !busy else { return }
         withAnimation(.snappy) { busy = true }
         Task {
-            await work()
+            let ok = await work()
             withAnimation(.easeIn(duration: 0.25)) { busy = false }
+            // 等甜甜圈收完再說，不然訊息條和甜甜圈同時動
+            if !ok { try? await Task.sleep(for: .seconds(0.25)); failed() }
         }
     }
 }
@@ -430,5 +448,36 @@ struct DepthReport: View {
     @Binding var path: NavigationPath
     let tab: Int
     @Environment(Store.self) private var store
-    var body: some View { Color.clear.onChange(of: path.count) { _, n in store.depth[tab] = n } }
+    var body: some View { Color.clear.onChange(of: path.count) { _, n in store.depth[tab] = n; if n == 0 { store.flushFresh() } } }
+}
+
+// 共用篩選的同步：只有這一小塊讀 store.mapF 和 store.tab。
+// 分頁在背景時停字 350ms 才同步一次、不帶動畫；live 的那頁（地圖）在前景時也由這裡即時同步，body 就不用讀 store.mapF
+struct FilterSync: View {
+    let tab: Int
+    var live = false
+    @Binding var applied: Filter
+    @Environment(Store.self) private var store
+    var body: some View {
+        Color.clear
+            .onAppear { applied = store.mapF }
+            .onChange(of: store.mapF) { old, f in
+                guard live, store.tab == tab else { return }
+                // 點分類、想去去過（chips 本來就包 withAnimation(.snappy)）照舊有動畫；打字不帶動畫
+                if old.q == f.q { withAnimation(.snappy) { applied = f } } else { applied = f }
+            }
+            .onChange(of: store.tab) { old, new in
+                // 離開這頁：停在離開當下的篩選；切回 live 的那頁：馬上對齊
+                guard old == tab || (live && new == tab), applied != store.mapF else { return }
+                var t = Transaction(); t.disablesAnimations = true
+                withTransaction(t) { applied = store.mapF }
+            }
+            .task(id: store.mapF) {
+                guard store.tab != tab, applied != store.mapF else { return }
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled, store.tab != tab else { return }
+                var t = Transaction(); t.disablesAnimations = true
+                withTransaction(t) { applied = store.mapF }
+            }
+    }
 }

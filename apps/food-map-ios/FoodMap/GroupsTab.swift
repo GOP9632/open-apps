@@ -45,7 +45,7 @@ struct GroupsTab: View {
             .tabBarRoom()
             .background(Color.bg)
             .toolbarVisibility(.hidden, for: .navigationBar)
-            .refreshable { await store.sync() }
+            .refreshable { if !(await store.sync()) { store.saySyncFailed() } }
             .navigationDestination(for: FoodGroup.self) { GroupView(gid: $0.id, path: $path) }
             .navigationDestination(for: Round.self) { RoundView(rid: $0.id) }
             .navigationDestination(for: Place.self) { PlaceDetail(place: $0) }
@@ -173,9 +173,8 @@ struct GroupCard: View {
                 .background(Capsule().fill(Color.accent).shadow(color: .accentDeep, radius: 0, y: 3))
                 .frame(minHeight: 44).contentShape(.rect)
             }
-            .buttonStyle(PressStyle())
+            .buttonStyle(PressStyle(dim: true))           // 停用時變淡交給 PressBody
             .disabled((count == 0 && isNew) || starting)
-            .opacity(count == 0 && isNew ? 0.45 : 1)
             .padding(.trailing, 14).padding(.bottom, 12)
             .accessibilityLabel("在「\(group.name)」" + Self.label(act))
         }
@@ -280,7 +279,7 @@ struct GroupView: View {
                             .fixedSize()
                             .frame(minHeight: 44).contentShape(.rect)
                     }
-                    .buttonStyle(PressStyle(haptic: true))
+                    .buttonStyle(PressStyle(haptic: true, dim: true))
                     .disabled(list.isEmpty)
                     .accessibilityLabel("在地圖上看這個群組的店")
                 }
@@ -300,7 +299,7 @@ struct GroupView: View {
                     Button("調整條件") { newRound = true }
                         .font(.subheadline.weight(.heavy)).foregroundStyle(Color.accentDeep)
                         .frame(minWidth: 44, minHeight: 44).contentShape(.rect)
-                        .buttonStyle(PressStyle())
+                        .buttonStyle(PressStyle(dim: true))
                         .disabled(list.isEmpty)
                     ShareLink(item: g.inviteText) {
                         Label("邀請", systemImage: "person.badge.plus").frame(height: 44)
@@ -388,7 +387,7 @@ struct GroupView: View {
         .confirmationDialog(g.owner == store.me ? "刪除「\(g.name)」？所有成員都會看不到這個群組。" : "退出「\(g.name)」？", isPresented: $leaving, titleVisibility: .visible) {
             Button(g.owner == store.me ? "刪除" : "退出", role: .destructive) { Task { await store.leave(g); dismiss() } }
         }
-        .refreshable { await store.sync() }
+        .refreshable { if !(await store.sync()) { store.saySyncFailed() } }
         .confirmationDialog("刪除「\(dropping?.title ?? "")」？大家滑的紀錄和配對結果都會一起刪掉。", isPresented: Binding(get: { dropping != nil }, set: { if !$0 { dropping = nil } }), titleVisibility: .visible) {
             Button("刪除", role: .destructive) { if let r = dropping { Task { await store.deleteRound(r) } } }
         }

@@ -302,14 +302,12 @@ struct TripPanel: View {
             }
             .buttonStyle(ChunkyStyle(color: .sprPurple, edge: Color.sprPurple.mix(with: .black, by: 0.25), radius: 18))
             .disabled(!canSort)
-            .opacity(canSort ? 1 : 0.5)
             .accessibilityLabel("幫我排順序")
             Button { startGo(base, again: allDone) } label: {
                 Label(allDone ? "重新出發" : "出發", systemImage: "location.north.fill").font(.headline).frame(maxWidth: .infinity)
             }
             .buttonStyle(ChunkyStyle(radius: 18))
             .disabled(base.isEmpty)
-            .opacity(base.isEmpty ? 0.5 : 1)
         }
         .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
         .opacity(drag.id == nil ? 1 : 0)

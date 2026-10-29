@@ -67,6 +67,7 @@ final class ShareUpload: NSObject, URLSessionDataDelegate {
         let c = UNMutableNotificationContent()
         c.title = v == .saved ? "收藏好了 🍩" : v == .dup ? "之前收藏過了" : "Bitemap 沒收藏到"
         c.body = v != .failed ? line : error.map { "網路有問題：\($0.localizedDescription)" } ?? (code == 200 ? Self.say(line) : "雲端暫時出錯（\(code)），請再分享一次")
+        c.userInfo = ["kind": v == .saved ? "saved" : v == .dup ? "dup" : "failed"]   // 點通知時 App 看這個決定要不要帶去收藏頁
         c.sound = .default
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
         DispatchQueue.main.async { NotificationCenter.default.post(name: .shareSaved, object: nil) }

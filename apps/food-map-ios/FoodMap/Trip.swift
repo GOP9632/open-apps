@@ -444,8 +444,10 @@ enum TripSort {
             stops.removeAll { $0.trip_id == t.id }
         }
         saveCache()
-        store.say("已刪除「\(t.title)」", icon: .trash, action: ("復原", { [weak self] in
-            guard let self, self.hiddenTrips.remove(t.id) != nil else { return }
+        let msg = "已刪除「\(t.title)」"
+        store.say(msg, icon: .trash, action: ("復原", { [weak self] in
+            guard let self else { return }
+            guard self.hiddenTrips.remove(t.id) != nil else { Haptic.warning(); store.say("已經刪掉了"); return }
             LaterDelete.remove("trips", t.id)
             withAnimation(.snappy(duration: 0.35)) {
                 self.trips.insert(t, at: min(at, self.trips.count))
@@ -455,9 +457,8 @@ enum TripSort {
             self.saveCache()
         }), seconds: 6)
         Task {
-            // 等訊息條收起來才真的刪（按著訊息條時繼續等）
-            try? await Task.sleep(for: .seconds(Store.slowToasts ? 20.5 : 6.5))
-            while store.toastHeld && store.toast?.hasPrefix("已刪除") == true { try? await Task.sleep(for: .milliseconds(200)) }
+            // 等訊息條真的收起來才刪：「復原」還看得到就一定有用
+            await store.waitToastGone(msg)
             guard hiddenTrips.contains(t.id) else { return }
             do { try await Supa.write("DELETE", "trips", query: "id=eq.\(t.id)"); hiddenTrips.remove(t.id) }
             catch {
@@ -531,23 +532,24 @@ enum TripSort {
         }
     }
 
-    // 刪一站：先拿掉，4 秒內可以復原
+    // 刪一站：先拿掉，6 秒內可以復原
     func deleteWithUndo(_ s: TripStop, store: Store) {
         Perf.shared.mark("拿掉一站")
         hiddenStops.insert(s.id); rev += 1
         LaterDelete.add("trip_stops", s.id)
         withAnimation(.snappy(duration: 0.3)) { stops.removeAll { $0.id == s.id } }
         saveCache()
-        store.say("已拿掉 \(s.name)", icon: .trash, action: ("復原", { [weak self] in
-            guard let self, self.hiddenStops.remove(s.id) != nil else { return }
+        let msg = "已拿掉 \(s.name)"
+        store.say(msg, icon: .trash, action: ("復原", { [weak self] in
+            guard let self else { return }
+            guard self.hiddenStops.remove(s.id) != nil else { Haptic.warning(); store.say("已經刪掉了"); return }
             LaterDelete.remove("trip_stops", s.id)
             withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { self.stops.append(s); store.toast = nil }
             self.saveCache()
         }), seconds: 6)
         Task {
-            // 等訊息條收起來才真的刪（按著訊息條時繼續等），跟刪行程一樣：「復原」還看得到就一定有用
-            try? await Task.sleep(for: .seconds(Store.slowToasts ? 20.5 : 6.5))
-            while store.toastHeld && store.toast?.hasPrefix("已拿掉") == true { try? await Task.sleep(for: .milliseconds(200)) }
+            // 等訊息條真的收起來才刪，跟刪行程一樣：「復原」還看得到就一定有用
+            await store.waitToastGone(msg)
             guard hiddenStops.contains(s.id) else { return }
             do { try await Supa.write("DELETE", "trip_stops", query: "id=eq.\(s.id)"); hiddenStops.remove(s.id) }
             catch {

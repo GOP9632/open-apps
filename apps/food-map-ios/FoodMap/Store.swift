@@ -58,6 +58,12 @@ struct Snapshot: Codable {
     var pendingAdds: [PendingAdd] = []
     // 剛出現的新店（回到前景同步到的、AI 剛找到的）：卡片亮框 1 秒
     var freshIds: Set<String> = []
+    // 點通知要回收藏頁頂端時 +1（ListTab 看到就清 path、捲到最上面）
+    var listTop = 0
+    // 等著亮框的新店：前景、在收藏頁清單這一層才播
+    @ObservationIgnored var pendingFresh: Set<String> = []
+    // 冷啟動時 Root 還沒訂閱通知，先記著
+    static var openSavedPending = false
     // 看過哪些店（存在手機裡），同步回來多出來的就是新的
     @ObservationIgnored private var seenIds: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "seenIds") ?? [])
     var loading = false
@@ -145,7 +151,7 @@ struct Snapshot: Codable {
     @ObservationIgnored private var fakeRounds: [Round] = []
     @ObservationIgnored private var fakeSwipes: [SwipeRow] = []
     // 同時只跑一次同步（打開 App 和切回前景常常一起來）
-    @ObservationIgnored private var syncing: Task<Void, Never>?
+    @ObservationIgnored private var syncing: Task<Bool, Never>?
 
     private var cacheFile: URL { FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("snapshot.json") }
 
@@ -198,16 +204,18 @@ struct Snapshot: Codable {
     }
 
     // 跟網頁版 loadAll 一樣：收藏、群組、成員、分享、滑卡輪次一起讀，再讀名字和滑卡紀錄
-    @MainActor func sync() async {
+    // 回傳有沒有同步到（只有使用者自己下拉時才拿來提示，背景同步不說話）
+    @discardableResult @MainActor func sync() async -> Bool {
         if let t = syncing { return await t.value }
         let t = Task { await syncNow() }
         syncing = t
-        await t.value
+        let ok = await t.value
         syncing = nil
+        return ok
     }
 
-    private func syncNow() async {
-        guard loggedIn, let me else { return }
+    private func syncNow() async -> Bool {
+        guard loggedIn, let me else { return true }
         loading = true; defer { loading = false }
         let t = Date()
         do {
@@ -228,7 +236,7 @@ struct Snapshot: Codable {
                 (s.profiles, s.swipes) = try await (pr, sw)
             }
             // 同步途中登出或換帳號，就不要把舊資料寫回來
-            guard loggedIn, Supa.session?.user.id == me else { return }
+            guard loggedIn, Supa.session?.user.id == me else { return true }
             apply(s)
             if profiles[me] == nil {
                 // 帳號比美食收藏早建（和其他 app 共用的 Supabase），補一筆名字
@@ -243,9 +251,11 @@ struct Snapshot: Codable {
             if quickKey == nil { await loadQuickKey() }
             syncMs = Int(Date().timeIntervalSince(t) * 1000)
             error = nil
+            return true
         } catch {
             self.error = error.localizedDescription
-            if Supa.session == nil { loggedIn = false }
+            if Supa.session == nil { loggedIn = false; return true }
+            return false
         }
     }
 
@@ -435,9 +445,10 @@ struct Snapshot: Codable {
     }
 
     @MainActor func signOut() {
+        error = nil
         LaterDelete.clear()
         Supa.signOut(); loggedIn = false
-        undoable = []; pendingSwipes = []; fakeRounds = []; fakeSwipes = []; geoTried = []; pendingAdds = []; freshIds = []
+        undoable = []; pendingSwipes = []; fakeRounds = []; fakeSwipes = []; geoTried = []; pendingAdds = []; freshIds = []; pendingFresh = []
         apply(Snapshot()); quickKey = nil
         mapPath = NavigationPath(); depth = [0, 0, 0, 0]; tab = 0; coach = []; listF = Filter(); mapF = Filter()
         try? FileManager.default.removeItem(at: cacheFile)
@@ -449,6 +460,19 @@ struct Snapshot: Codable {
     @MainActor func say(_ s: String, icon: ToastIcon? = nil, place: Place? = nil, action: (label: String, run: () -> Void)? = nil, tap: (() -> Void)? = nil, seconds: Double? = nil) {
         toastHeld = false
         withAnimation(.snappy(duration: 0.35)) { toast = s; toastAction = action; toastIcon = icon; toastPlace = place; toastTap = tap; toastSeconds = seconds }
+    }
+
+    // 等這條訊息條真的收起來（倒數完並淡出、被別的訊息換掉、被點掉，或切到背景被 LaterDelete.flush 收掉）再多等 0.3 秒
+    func waitToastGone(_ msg: String) async {
+        try? await Task.sleep(for: .seconds(1))
+        while toast == msg { try? await Task.sleep(for: .milliseconds(200)) }
+        try? await Task.sleep(for: .milliseconds(300))
+    }
+
+    // 使用者自己下拉更新卻沒同步到（背景同步失敗不說）
+    @MainActor func saySyncFailed() {
+        Haptic.warning()
+        say("沒連上網路，看的是上次存的資料")
     }
 
     // 回上一頁：地圖分頁的頁面記在 mapPath，直接從那裡退一頁（dismiss 在地圖那邊沒反應）
@@ -468,9 +492,18 @@ struct Snapshot: Codable {
     func markFresh(_ ids: Set<String>) {
         seenIds.formUnion(ids)
         UserDefaults.standard.set(Array(seenIds), forKey: "seenIds")
-        PinState.fresh.formUnion(ids)
-        withAnimation(.snappy) { freshIds.formUnion(ids) }
+        PinState.fresh.formUnion(ids)   // 地圖的落下動畫照舊
+        pendingFresh.formUnion(ids)
+        flushFresh()
+    }
+
+    // 前景、在收藏頁、而且在清單這一層（沒推進店家頁）才播亮框（背景存好的、從地圖新增的，切到收藏頁時才亮）
+    func flushFresh() {
+        guard !pendingFresh.isEmpty, UIApplication.shared.applicationState == .active, tab == 1, depth[1] == 0 else { return }
+        let ids = pendingFresh; pendingFresh = []
         Task {
+            try? await Task.sleep(for: .milliseconds(350))   // 等換頁動畫和捲到頂
+            withAnimation(.snappy) { freshIds.formUnion(ids) }
             try? await Task.sleep(for: .seconds(1.2))
             withAnimation(.easeOut(duration: 0.4)) { freshIds.subtract(ids) }
         }
@@ -556,8 +589,9 @@ struct Snapshot: Codable {
     // ----- 收藏 -----
 
     // 改一間店（想去／去過、星等、編輯都走這裡）
-    @discardableResult @MainActor func save(_ p: Place) async -> Bool {
-        guard let i = places.firstIndex(where: { $0.id == p.id }) else { return false }
+    // err：叫的地方自己顯示錯誤（EditSheet 在 sheet 裡，訊息條會被蓋住），給了就不發訊息條
+    @discardableResult @MainActor func save(_ p: Place, err: ((String) -> Void)? = nil) async -> Bool {
+        guard let i = places.firstIndex(where: { $0.id == p.id }) else { err?("這間店已經不在收藏裡"); return false }
         let old = places[i]
         var p = p
         p.updated_at = ISO8601DateFormatter().string(from: Date())
@@ -573,26 +607,26 @@ struct Snapshot: Codable {
             return true
         } catch {
             if let j = places.firstIndex(where: { $0.id == p.id }) { places[j] = old }
-            say("沒存到：" + error.localizedDescription)
+            if let err { err(error.localizedDescription) } else { say("沒存到：" + error.localizedDescription) }
             return false
         }
     }
 
     // 手動新增一間（沒有連結時用）
-    @MainActor func add(_ p: Place) async -> Bool { await create(p) != nil }
+    @MainActor func add(_ p: Place, err: ((String) -> Void)? = nil) async -> Bool { await create(p, err: err) != nil }
 
     // 新增並拿回存好的那筆（行程「♥ 收藏」要知道新店的 id）
-    @MainActor func create(_ p: Place) async -> Place? {
+    @MainActor func create(_ p: Place, err: ((String) -> Void)? = nil) async -> Place? {
         do {
             let d = try await Supa.write("POST", "places", body: p.row)
             let back = try JSONDecoder().decode([Place].self, from: d).first
             if let back { withAnimation(.snappy) { places.insert(back, at: 0) } }
             saveCache()
             return back ?? p
-        } catch { say("新增失敗：" + error.localizedDescription); return nil }
+        } catch { if let err { err(error.localizedDescription) } else { say("新增失敗：" + error.localizedDescription) }; return nil }
     }
 
-    // 先從畫面拿掉，4 秒內按「復原」就放回去，沒按才真的刪
+    // 先從畫面拿掉，6 秒內按「復原」就放回去，沒按才真的刪
     @MainActor func deleteWithUndo(_ p: Place) {
         let at = places.firstIndex { $0.id == p.id } ?? 0
         let shares = groupPlaces.filter { $0.place_id == p.id }
@@ -602,8 +636,10 @@ struct Snapshot: Codable {
             places.removeAll { $0.id == p.id }
             groupPlaces.removeAll { $0.place_id == p.id }
         }
-        say("已刪除 \(p.name)", icon: .trash, place: p, action: ("復原", { [weak self] in
-            guard let self, self.undoable.remove(p.id) != nil else { return }
+        let msg = "已刪除 \(p.name)"
+        say(msg, icon: .trash, place: p, action: ("復原", { [weak self] in
+            guard let self else { return }
+            guard self.undoable.remove(p.id) != nil else { Haptic.warning(); self.say("已經刪掉了"); return }
             LaterDelete.remove("places", p.id)
             // 從訊息條左邊的小照片彈回原位
             withAnimation(.snappy(duration: 0.35)) {
@@ -613,9 +649,8 @@ struct Snapshot: Codable {
             }
         }), seconds: 6)
         Task {
-            // 等訊息條收起來才真的刪（按著訊息條時繼續等）：「復原」還看得到就一定有用
-            try? await Task.sleep(for: .seconds(Store.slowToasts ? 20.5 : 6.5))
-            while toastHeld && toast?.hasPrefix("已刪除") == true { try? await Task.sleep(for: .milliseconds(200)) }
+            // 等訊息條真的收起來才刪：「復原」還看得到就一定有用
+            await waitToastGone(msg)
             guard undoable.remove(p.id) != nil, loggedIn else { return }
             do { try await Supa.write("DELETE", "places", query: "id=eq.\(p.id)"); saveCache() }
             catch {
@@ -623,6 +658,45 @@ struct Snapshot: Codable {
                 say("刪除失敗：" + error.localizedDescription)
             }
             LaterDelete.remove("places", p.id)
+        }
+    }
+
+    // 有分店的卡片「刪除整家」：一次移除、一條訊息條、一次復原、一個 DELETE（用迴圈叫 deleteWithUndo 的話訊息條互相蓋掉，只救得回最後一間）
+    @MainActor func deleteManyWithUndo(_ ps: [Place]) {
+        guard ps.count > 1 else { if let p = ps.first { deleteWithUndo(p) }; return }
+        let ids = Set(ps.map(\.id))
+        let at = ps.map { p in (p, places.firstIndex { $0.id == p.id } ?? 0) }.sorted { $0.1 < $1.1 }
+        let shares = groupPlaces.filter { ids.contains($0.place_id) }
+        undoable.formUnion(ids)
+        ids.forEach { LaterDelete.add("places", $0) }
+        withAnimation(.snappy(duration: 0.35)) {
+            places.removeAll { ids.contains($0.id) }
+            groupPlaces.removeAll { ids.contains($0.place_id) }
+        }
+        let brand = ps[0].name.replacingOccurrences(of: branchLabel(ps[0]), with: "").trimmingCharacters(in: .whitespaces)
+        let msg = "已刪除 \(brand)（\(ps.count) 間分店）"
+        // place 給 ps[0]：卡片封面就是 g[0]，刪除時卡片會縮小飛到訊息條（DeleteMatch 用 place.id 配對）
+        say(msg, icon: .trash, place: ps[0], action: ("復原", { [weak self] in
+            guard let self else { return }
+            guard ids.allSatisfy({ self.undoable.contains($0) }) else { Haptic.warning(); self.say("已經刪掉了"); return }
+            self.undoable.subtract(ids)
+            ids.forEach { LaterDelete.remove("places", $0) }
+            withAnimation(.snappy(duration: 0.35)) {
+                for (p, i) in at { self.places.insert(p, at: min(i, self.places.count)) }
+                self.groupPlaces += shares
+                self.toast = nil; self.toastPlace = nil
+            }
+        }), seconds: 6)
+        Task {
+            await waitToastGone(msg)
+            let go = ids.filter { undoable.remove($0) != nil }
+            guard !go.isEmpty, loggedIn else { return }
+            do { try await Supa.write("DELETE", "places", query: "id=in.(\(go.joined(separator: ",")))"); saveCache() }
+            catch {
+                withAnimation(.snappy) { for (p, i) in at where go.contains(p.id) { places.insert(p, at: min(i, places.count)) }; groupPlaces += shares }
+                say("刪除失敗：" + error.localizedDescription)
+            }
+            go.forEach { LaterDelete.remove("places", $0) }
         }
     }
 

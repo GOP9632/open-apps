@@ -372,7 +372,6 @@ struct DrawPanel: View {
                 } label: { Text("抽！").font(.system(size: 18, weight: .heavy)).frame(width: 120, height: 48) }
                 .buttonStyle(ChunkyStyle(radius: 16))
                 .disabled(n == 0)
-                .opacity(n == 0 ? 0.4 : 1)
             }
         }
         .padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 8)

@@ -43,5 +43,7 @@ final class CamQuiet {
     var flyTo: (lat: Double, lng: Double)?      // 飛去遠的店的終點（停在那裡時在量測浮層記一筆「飛完」）
     var flyStart: CFTimeInterval = 0            // 量測：開始飛、第二段（降落）開始的時間
     var leg2: CFTimeInterval = 0
+    var touched = false     // 使用者自己動過鏡頭
+    var centered = false    // 已經對準過目前位置（自動的 3 公里或使用者按了定位鈕）
     func hush(_ s: Double = 1.0) { until = max(until, CACurrentMediaTime() + s) }
 }

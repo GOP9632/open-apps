@@ -52,9 +52,11 @@ struct Root: View {
                 .animation(.spring(response: 0.3, dampingFraction: 0.85), value: store.menuCover || store.drawCover)
                 // 加進行程：兩個以上的行程時問加到哪個
                 .tripChooser()
-                .onChange(of: store.tab) { _, t in opened.insert(t) }
+                .onChange(of: store.tab) { _, t in opened.insert(t); store.flushFresh() }
                 .task {
                     if Flag.on("-shareVerdictTest") { ShareUpload.selfTest() }
+                    // 點「收藏好了」通知冷啟動：先到收藏頁
+                    if Store.openSavedPending { openSaved() }
                     // 上次刪了、還沒送出就被關掉的：先補送完再同步（不然同步回來那筆又出現）
                     await LaterDelete.flush(store)?.value
                     await store.sync()
@@ -66,19 +68,21 @@ struct Root: View {
                     try? await Task.sleep(for: .seconds(1))
                     opened.formUnion([1, 2, 3])
                 }
-                // Apple／Google 登入：流程跑完、兩個問題都答完的那一刻才接邀請連結
+                // Apple／Google 登入：流程跑完、兩個問題都答完的那一刻，才接邀請連結、開教學、看剪貼簿（不跟 alert 疊在一起）
                 .onChange(of: store.askOld == nil && !store.askName && !store.authSettling) { _, free in
                     guard free else { return }
-                    Task { await store.takePendingJoin() }
+                    Task { await store.takePendingJoin(); store.maybeStartCoach(); ClipWatch.shared.check(store) }
                 }
                 // 分享選單存好了：重新同步，剛存的店馬上出現
                 .onReceive(NotificationCenter.default.publisher(for: .shareSaved)) { _ in Task { await store.sync() } }
+                // 點了「收藏好了」「之前收藏過了」通知：到收藏頁最上面
+                .onReceive(NotificationCenter.default.publisher(for: .openSaved)) { _ in openSaved() }
                 .overlay { CoachOverlay().ignoresSafeArea() }
                 // 問通知前的小卡（教學跑完才出來）
                 .overlay {
                     if store.askNotify && store.coach.isEmpty {
                         Color.black.opacity(0.25).ignoresSafeArea()
-                            .onTapGesture { store.answerNotify(false) }
+                            .onTapGesture { store.snoozeNotify() }
                             .transition(.opacity)
                     }
                 }
@@ -218,6 +222,7 @@ struct Root: View {
             // 切走：等著復原的刪除馬上送出（不然被關掉就漏送，下次打開又跑回來）
             if p == .background { LaterDelete.flush(store) }
             if p == .active {
+                store.flushFresh()
                 store.askNotifyAfterShare()
                 ClipWatch.shared.check(store)
                 Task { _ = try? await Supa.fresh(); await store.sync() }
@@ -236,6 +241,12 @@ struct Root: View {
                 .allowsHitTesting(store.tab == i)
                 .accessibilityHidden(store.tab != i)
         }
+    }
+
+    private func openSaved() {
+        Store.openSavedPending = false
+        withAnimation(.snappy) { store.tab = 1 }
+        store.listTop &+= 1
     }
 }
 
@@ -389,4 +400,18 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 
     func userNotificationCenter(_ c: UNUserNotificationCenter, willPresent n: UNNotification) async -> UNNotificationPresentationOptions { [.banner, .sound] }
+
+    func userNotificationCenter(_ c: UNUserNotificationCenter, didReceive r: UNNotificationResponse) async {
+        // 「收藏好了」「之前收藏過了」都在收藏裡，點了帶去收藏頁；「沒收藏到」照舊打開原本的畫面
+        let kind = r.notification.request.content.userInfo["kind"] as? String
+        guard kind == "saved" || kind == "dup" else { return }
+        await MainActor.run {
+            Store.openSavedPending = true
+            NotificationCenter.default.post(name: .openSaved, object: nil)
+        }
+    }
+}
+
+extension Notification.Name {
+    static let openSaved = Notification.Name("bitemap.openSaved")
 }
