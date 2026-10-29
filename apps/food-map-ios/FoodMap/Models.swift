@@ -39,6 +39,10 @@ struct Place: Codable, Identifiable, Hashable {
 
 struct Cat {
     let key: String, name: String, emoji: String, color: Color
+    init(key: String, name: String, emoji: String, color: Color) {
+        // 量測用：-noEmoji 把分類 emoji 拿掉，看字形重畫是不是來自它
+        self.key = key; self.name = name; self.emoji = Flag.on("-noEmoji") ? "" : emoji; self.color = color
+    }
     // 跟網頁版 CATS 一樣的分類、圖示和顏色
     static let order = ["restaurant", "cafe", "bakery", "dessert", "snack", "brunch", "bar", "drink", "other"]
     static let all: [String: Cat] = [

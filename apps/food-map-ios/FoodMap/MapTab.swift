@@ -19,6 +19,8 @@ struct MapTab: View {
     @State private var seenBox = SeenBox()
     private var shownRegion: MKCoordinateRegion? { seenBox.peek }
     @State private var selfMoved = false
+    @State private var nearTask: Task<Void, Never>?   // 量測用 -landDefer：降落後晚 0.6 秒再換附近清單
+    @Environment(\.displayScale) private var displayScale
     @State private var spot = BurstSpot()
     @State private var drawer = Drawer.shared
     @State private var show: DrawShow?
@@ -191,16 +193,25 @@ struct MapTab: View {
                     if let c = spot.coord, Date() < spot.until { spot.at = proxy.convert(c, to: .global) }
                 }
                 .onMapCameraChange { c in
+                    let sp = Perf.begin("鏡頭停下"); defer { Perf.end("鏡頭停下", sp) }
                     trip.toScreen = { proxy.convert($0, to: .global) }
                     // 飛去遠的店降落了：記一筆，附近清單也換成這裡（不然卡片列還是原本那一帶，捲一下就把鏡頭拉回去）
+                    let flying = quiet.flyTo != nil
                     var landed = false
                     if let t = quiet.flyTo, abs(c.region.center.latitude - t.lat) < c.region.span.latitudeDelta * 0.15,
                        abs(c.region.center.longitude - t.lng) < c.region.span.longitudeDelta * 0.15 {
                         quiet.flyTo = nil; landed = true
-                        Perf.shared.mark("飛完")
+                    }
+                    // 第二段還沒開始、或開始不到 0.4 秒的停下才算半空停下；手指拖的不算
+                    let now = CACurrentMediaTime()
+                    let midAir = flying && !landed && !pos.positionedByUser && (quiet.leg2 == 0 || now - quiet.leg2 < 0.4)
+                    if flying {
+                        let ms = Int((now - quiet.flyStart) * 1000)
+                        Perf.shared.mark(landed ? "飛完（第 \(ms) ms）" : midAir ? "飛行中停下（第 \(ms) ms）" : "停下但沒對上終點（第 \(ms) ms）")
                     }
                     store.mapRegion = c.region
                     settleTask?.cancel()
+                    if midAir && Flag.on("-noMidStop") { return }
                     // 行程框地圖停好量了一次、要再修正：這次先不重組泡泡，等修正完停好再做（只做一次、在最後的鏡頭上做）；
                     // 修正沒再停下來（幾乎沒動、被打斷）也會在 0.6 秒後補做
                     if let f = trip.afterFit {
@@ -209,6 +220,20 @@ struct MapTab: View {
                             settleTask = Task { try? await Task.sleep(for: .milliseconds(600)); if !Task.isCancelled { recluster(proxy) } }
                             return
                         }
+                    }
+                    // 量測用 -landDefer：降落後的附近清單和泡泡重組晚 0.6 秒，看降落的長幀是不是它們
+                    if landed && Flag.on("-landDefer") {
+                        selfMoved = false
+                        seenBox.set(c.region, publish: false)
+                        nearTask?.cancel()
+                        nearTask = Task {
+                            try? await Task.sleep(for: .milliseconds(600))
+                            guard !Task.isCancelled else { return }
+                            Perf.shared.mark("降落後補做")
+                            seenBox.set(seenBox.peek, publish: !trip.on)
+                            recluster(proxy)
+                        }
+                        return
                     }
                     // 行程模式時下面的附近面板收著，不用跟著重算（離開行程時補一次）
                     if selfMoved && !landed { selfMoved = false } else { selfMoved = false; seenBox.set(c.region, publish: !trip.on) }
@@ -225,6 +250,23 @@ struct MapTab: View {
                     pins.locate = { c in proxy.convert(c, to: .global) }
                     dot.locate = { c in proxy.convert(c, to: .global) }
                     dot.refresh()
+                }
+                // 量測用：emoji 先畫成圖（-emojiImg）或只預熱（-emojiWarm）；沒加參數直接結束
+                .task {
+                    guard !EmojiArt.parts.isEmpty || EmojiArt.warmOnly else { return }
+                    // 等落下播完（約 1.8 秒）；沒有店不會落下，最多等 10 秒
+                    let t0 = CACurrentMediaTime()
+                    while CACurrentMediaTime() - t0 < 10, pins.dropStart == 0 || CACurrentMediaTime() - pins.dropStart < 2 {
+                        try? await Task.sleep(for: .milliseconds(250))
+                        if Task.isCancelled { return }
+                    }
+                    EmojiArt.scale = displayScale
+                    let es = Cat.order.compactMap { Cat.all[$0]?.emoji }
+                    var list: [(String, CGFloat, EmojiArt.Part)] = []
+                    for e in es { list.append((e, 21, .pin)) }
+                    for e in es { list.append((e, 15, .bubble)) }
+                    list.append(("🎲", UIFontMetrics(forTextStyle: .subheadline).scaledValue(for: 15), .dice))
+                    await EmojiArt.warm(list)
                 }
                 // 行程模式：其他收藏縮小變淡（搜到的、正在看要不要加的那間照常）。
                 // 地圖上的圖釘不會跟著 MapTab 重畫，所以交給 PinState，每根自己看
@@ -455,13 +497,20 @@ struct MapTab: View {
             Haptic.light()
             show = DrawShow(mode: .wheel, places: drawer.pick(store, pool, k: 8, avoid: avoid))
         case .one:
-            guard let win = drawer.pick(store, pool, k: 1, avoid: avoid).first else { return }
+            let drawnOne = drawer.pick(store, pool, k: 1, avoid: avoid).first
+            // 量測用 -drawWin id1,id2：輪流抽中這幾間（在 store.mapBase 找：範圍是「地圖上看到的」時遠的店不在 pool 裡）
+            let wins = Flag.value("-drawWin")?.split(separator: ",").map(String.init) ?? []
+            let want = wins.isEmpty ? nil : wins[Flag.draws % wins.count]
+            if want != nil { Flag.draws += 1 }
+            guard let win = want.flatMap({ id in store.mapBase.first { $0.id == id && $0.lat != nil && $0.lng != nil } }) ?? drawnOne else { return }
             drawer.record(store, win)
             pins.drawn = win.id
             reveal(win)
             // 先讓地圖上 6–8 根圖釘輪流跳一下（按下去的那一刻第一根就跳），最後選中抽到的那根
             let shown = shownRegion.map { r in pool.filter { abs($0.lat! - r.center.latitude) <= r.span.latitudeDelta / 2 && abs($0.lng! - r.center.longitude) <= r.span.longitudeDelta / 2 } } ?? pool
-            let hoppers = shown.filter { $0.id != win.id && $0.id != pins.sel && !hidden.contains($0.id) }.shuffled().prefix(Int.random(in: 6...8))
+            let canHop = shown.filter { $0.id != win.id && $0.id != pins.sel && !hidden.contains($0.id) }
+            // -drawWin 時跳的固定成前 7 根，兩次量測一樣
+            let hoppers = wins.isEmpty ? Array(canHop.shuffled().prefix(Int.random(in: 6...8))) : Array(canHop.sorted { $0.id < $1.id }.prefix(7))
             guard !reduce, !hoppers.isEmpty else {
                 Haptic.success()
                 pins.select(win.id)
@@ -574,13 +623,16 @@ struct MapTab: View {
             return
         }
         Perf.shared.mark(pins.drawn == id ? "抽一間（抽中）" : "點圖釘")
+        if Flag.on("-perfOverlay") { print("[perf] 選中 \(p.name) \(p.id)") }
         // 下面那塊升到中間段顯示大卡片；接下來地圖移過去不算拖地圖
         quiet.hush()
         MapPanel.shared.go(.mid)
         // 先把大卡片和店家頁要用的照片載好，點進去時第一幀就有
         if let u = p.photoURL { Task { _ = await PhotoLoader.shared.load(u, 400); _ = await PhotoLoader.shared.load(u, 1200) } }
         // 影片預載等地圖移完再開始（拿網址、建播放器在主執行緒，跟移地圖、飛過去搶會掉幀）；還選著這間才載
-        Task { try? await Task.sleep(for: .milliseconds(850)); if pins.sel == p.id { ReelCache.warm(p) } }
+        if Flag.on("-noReelWarm") {
+        } else if Flag.on("-reelNow") { ReelCache.warm(p) }
+        else { Task { try? await Task.sleep(for: .milliseconds(850)); if pins.sel == p.id { ReelCache.warm(p) } } }
         let c = CLLocationCoordinate2D(latitude: p.lat!, longitude: p.lng!)
         if !reduce {
             spot.coord = c; spot.color = p.cat.color
@@ -605,11 +657,12 @@ struct MapTab: View {
             let out = MKCoordinateRegion(center: .init(latitude: (from.latitude + to.center.latitude) / 2, longitude: (from.longitude + to.center.longitude) / 2),
                                          span: .init(latitudeDelta: min(max(span.latitudeDelta * 1.6, dLat * 1.3), 8), longitudeDelta: min(max(span.longitudeDelta * 1.6, dLng * 1.3), 8)))
             quiet.flyTo = (to.center.latitude, to.center.longitude)
+            quiet.flyStart = CACurrentMediaTime(); quiet.leg2 = 0
             withAnimation(.easeIn(duration: 0.32)) { pos = .region(out) }
             flyTask = Task {
                 try? await Task.sleep(for: .milliseconds(300))
                 guard !Task.isCancelled, pins.sel == id else { quiet.flyTo = nil; return }
-                selfMoved = true
+                selfMoved = true; quiet.leg2 = CACurrentMediaTime()
                 withAnimation(.easeOut(duration: 0.5)) { pos = .region(to) }
             }
         } else {
@@ -740,6 +793,7 @@ struct MapTab: View {
 
     // 擠在一起的圖釘合成泡泡（選到的、抽中被篩掉的那根不合）：拆開的從泡泡飛回自己的位置，合起來的先飛進泡泡再收掉
     private func recluster(_ proxy: MapProxy) {
+        let sp = Perf.begin("recluster"); defer { Perf.end("recluster", sp) }
         if pins.dropping {
             // 落下播完再算，不然一邊掉一邊合
             clusterTask?.cancel()
@@ -830,6 +884,7 @@ struct MapTab: View {
         if to.isEmpty {
             // 上一輪還沒合完就被這輪取代：飛到一半的圖釘用同一個彈簧回原位
             pins.setMerge([:])
+            Perf.shared.mark("泡泡直接換")
             hidden = nextHidden; clusters = next
         } else {
             // 先拆開的馬上出來、沒變的泡泡留著；要合的先飛過去，0.33 秒後再換成泡泡
@@ -839,6 +894,7 @@ struct MapTab: View {
             clusterTask = Task {
                 try? await Task.sleep(for: .milliseconds(reduce ? 200 : 330))
                 guard !Task.isCancelled else { return }
+                Perf.shared.mark("泡泡換上")
                 hidden = nextHidden; clusters = next; pins.setMerge([:])
             }
         }
@@ -986,6 +1042,7 @@ struct NearbyHost<C: View>: View, Equatable {
     }
 
     var body: some View {
+        let _ = Perf.signposter.emitEvent("附近重算")
         content(Nearby(list: list, here: store.here, region: visible, total: total))
     }
 
@@ -1135,7 +1192,8 @@ struct NearbySheet: View {
         }
         // 底下留位置給浮著的分頁列，底色一路鋪到螢幕最下面
         .padding(.bottom, 82)
-        .background(UnevenRoundedRectangle(topLeadingRadius: 26, topTrailingRadius: 26).fill(Color.bg).shadow(color: .black.opacity(0.12), radius: 12, y: -2).ignoresSafeArea(edges: .bottom))
+        .background(UnevenRoundedRectangle(topLeadingRadius: 26, topTrailingRadius: 26).fill(Color.bg)
+            .shadow(color: .black.opacity(Flag.on("-noPanelShadow") ? 0 : 0.12), radius: Flag.on("-noPanelShadow") ? 0 : 12, y: -2).ignoresSafeArea(edges: .bottom))
         // 行程、定位兩顆：底邊貼著面板上緣再上去 10pt，跟著面板動（不佔面板的高度）
         // 先量出那排的高度，再整排往上推「高度＋10」（alignmentGuide 在這裡沒作用，按鈕會蓋在面板上）
         .overlay(alignment: .top) {
@@ -1731,6 +1789,7 @@ struct FoodPin: View {
             .opacity(dOp * (merge == nil ? 1 : 0))
             .animation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.85), value: merge)
             .onAppear {
+                Perf.signposter.emitEvent("圖釘出現")
                 if on { up = true; sx = 1.35; sy = 1.35; lift = -10 }
                 arrive()
             }
@@ -1765,10 +1824,11 @@ struct FoodPin: View {
 
     private func pin(_ on: Bool) -> some View {
         let c = place.cat.color
+        let hs: CGFloat = hopping && !Flag.on("-noHopScale") ? 1.3 : 1
         return VStack(spacing: -3) {
             ZStack {
                 Circle().fill(c)
-                Text(place.cat.emoji).font(.system(size: 21))
+                EmojiGlyph(e: place.cat.emoji, size: 21, part: .pin, use: !Flag.on("-emojiImgSel") || on)
                 if on, place.photoURL != nil { PinPhoto(place: place) }
             }
             .frame(width: 44, height: 44)
@@ -1778,7 +1838,7 @@ struct FoodPin: View {
             }
             Triangle().fill(.white).frame(width: 14, height: 10).rotationEffect(.degrees(180))
         }
-        .scaleEffect(x: sx * (hopping ? 1.3 : 1), y: sy * (hopping ? 1.3 : 1), anchor: .bottom)
+        .scaleEffect(x: sx * hs, y: sy * hs, anchor: .bottom)
         .offset(y: lift)
         .contentShape(.rect)
     }
@@ -1842,7 +1902,14 @@ private struct PinBurst: View {
                         if t >= 0, t < 1, let at {
                             // 圓頭的中心：一開始離尖端 29（還沒彈起），圖釘彈高放大後約 49（39＋抬高 10），跟著一起升上去
                             let rise = 29 + 20 * (1 - pow(1 - min(t / 0.36, 1), 3))
-                            Canvas { ctx, _ in Self.draw(ctx, CGPoint(x: at.x - o.x, y: at.y - o.y - rise), t, color) }
+                            if Flag.on("-smallBurst") {
+                                // 量測用：只畫 220×240 的小框（光圈、糖粒都在框內）
+                                Canvas { ctx, _ in Self.draw(ctx, CGPoint(x: 110, y: 150 - rise), t, color) }
+                                    .frame(width: 220, height: 240)
+                                    .position(x: at.x - o.x, y: at.y - o.y - 30)
+                            } else {
+                                Canvas { ctx, _ in Self.draw(ctx, CGPoint(x: at.x - o.x, y: at.y - o.y - rise), t, color) }
+                            }
                         }
                     }
                 } keyframes: { _ in
@@ -2017,14 +2084,14 @@ private struct ClusterBubble: View {
                     .contentShape(.circle)
             } else {
                 HStack(spacing: 2) {
-                    if !c.emoji.isEmpty { Text(c.emoji).font(.system(size: 15)) }
+                    if !c.emoji.isEmpty { EmojiGlyph(e: c.emoji, size: 15, part: .bubble) }
                     Text("\(c.ids.count)").font(.system(size: 17, weight: .black)).foregroundStyle(.white)
                 }
                 .padding(.horizontal, 9)
                 .frame(minWidth: 46, minHeight: 46)
                 .background(LinearGradient(colors: c.colors, startPoint: .topLeading, endPoint: .bottomTrailing), in: .capsule)
                 .overlay(Capsule().strokeBorder(.white, lineWidth: 3))
-                .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
+                .shadow(color: .black.opacity(Flag.on("-noBubbleShadow") ? 0 : 0.25), radius: Flag.on("-noBubbleShadow") ? 0 : 4, y: 2)
                 .contentShape(.capsule)
             }
         }
@@ -2032,7 +2099,10 @@ private struct ClusterBubble: View {
         .scaleEffect(on || reduce ? 1 : 0.6)
         .opacity(on ? 1 : 0)
         .animation(.easeInOut(duration: 0.25), value: small)
-        .onAppear { withAnimation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.6)) { on = true } }
+        .onAppear {
+            Perf.signposter.emitEvent("泡泡出現")
+            withAnimation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.6)) { on = true }
+        }
         .accessibilityLabel("\(c.ids.count) 間店，點了放大")
     }
 }
@@ -2104,5 +2174,59 @@ private struct MyDotView: View {
             .background(Circle().fill(blue.opacity(0.16)).frame(width: 44, height: 44))
             .allowsHitTesting(false)
             .accessibilityLabel("你的位置")
+    }
+}
+
+// 量測用：emoji 先畫成圖，縮放旋轉時不用從字型重組字形（-emojiImg pin,bubble,dice 或 all；-emojiImgSel 只換選中那根；
+// -emojiWarm 只預熱不換圖）。沒加參數時 parts 是空的，畫面一律走原本的文字。body 只查表，畫圖只在 warm()
+@MainActor @Observable final class EmojiSlot { var img: UIImage? }
+
+@MainActor enum EmojiArt {
+    enum Part: String { case pin, bubble, dice }
+    static let parts: Set<String> = {
+        guard let v = Flag.value("-emojiImg") else { return Flag.on("-emojiImgSel") ? ["pin"] : [] }
+        return v == "all" ? ["pin", "bubble", "dice"] : Set(v.split(separator: ",").map(String.init))
+    }()
+    static let warmOnly = Flag.on("-emojiWarm")
+    static var scale: CGFloat = 3        // warm 前由 MapTab 用 displayScale 蓋掉
+    static let pad: CGFloat = 4          // 四邊多畫一點，不切到
+    private static var slots: [String: EmojiSlot] = [:]
+    // 最大放大倍率：圖釘選中彈起約 1.43、泡泡彈出約 1.07、🎲 只旋轉
+    static func zoom(_ p: Part) -> CGFloat { p == .pin ? 1.5 : p == .bubble ? 1.1 : 1 }
+
+    static func slot(_ e: String, _ size: CGFloat) -> EmojiSlot {
+        let k = "\(e)@\(Int((size * 100).rounded()))"
+        if let s = slots[k] { return s }
+        let s = EmojiSlot(); slots[k] = s; return s
+    }
+    static func img(_ e: String, _ size: CGFloat, _ p: Part) -> UIImage? { parts.contains(p.rawValue) ? slot(e, size).img : nil }
+    static func render(_ e: String, _ size: CGFloat, _ p: Part) {
+        let s = slot(e, size)
+        guard !e.isEmpty, s.img == nil else { return }
+        let r = ImageRenderer(content: Text(e).font(.system(size: size)).padding(pad))
+        r.scale = scale * (warmOnly ? 1 : zoom(p))
+        let i = r.uiImage
+        if !warmOnly { s.img = i }
+    }
+    // 畫一張睡 50ms（超過一幀），不擠在同一幀
+    static func warm(_ list: [(String, CGFloat, Part)]) async {
+        for (e, size, p) in list where warmOnly || parts.contains(p.rawValue) {
+            if Task.isCancelled { return }
+            render(e, size, p)
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        print("[emoji] 預熱完成")
+    }
+}
+
+struct EmojiGlyph: View {
+    let e: String, size: CGFloat, part: EmojiArt.Part
+    var use = true
+    var body: some View {
+        if use, let i = EmojiArt.img(e, size, part) {
+            Image(uiImage: i).interpolation(.high).padding(-EmojiArt.pad)
+        } else {
+            Text(e).font(.system(size: size))
+        }
     }
 }

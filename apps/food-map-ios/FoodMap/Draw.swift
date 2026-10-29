@@ -188,15 +188,24 @@ struct DiceChip: View {
     @State private var drawer = Drawer.shared
     @State private var long = false
     @Environment(\.accessibilityReduceMotion) private var reduce
+    @ScaledMetric(relativeTo: .subheadline) private var dice: CGFloat = 15
 
     var body: some View {
         HStack(spacing: 6) {
             Button {
                 if long { long = false; return }
+                Perf.shared.mark("抽一間：骰子")
                 draw()
             } label: {
                 HStack(spacing: 5) {
-                    Text("🎲").rotationEffect(.degrees(reduce ? 0 : Double(drawer.spin) * 720))
+                    Group {
+                        if let i = EmojiArt.img("🎲", dice, .dice) {
+                            Image(uiImage: i).interpolation(.high).padding(-EmojiArt.pad).accessibilityLabel(Text("🎲"))
+                        } else {
+                            Text(Flag.on("-noEmoji") ? "" : "🎲")
+                        }
+                    }
+                    .rotationEffect(.degrees(reduce || Flag.on("-noSpin") ? 0 : Double(drawer.spin) * 720))
                         .animation(.easeOut(duration: 0.5), value: drawer.spin)
                     Text(text)
                 }
@@ -222,6 +231,8 @@ struct DiceChip: View {
             .accessibilityLabel("抽一間的設定")
         }
         .fixedSize()
+        // 量測用 -emojiImg dice：換字級時補畫
+        .onChange(of: dice) { EmojiArt.render("🎲", dice, .dice) }
     }
 }
 
@@ -355,6 +366,7 @@ struct DrawPanel: View {
                     .animation(.snappy, value: n)
                 Spacer()
                 Button {
+                    Perf.shared.mark("抽一間：面板")
                     dismiss()
                     go()
                 } label: { Text("抽！").font(.system(size: 18, weight: .heavy)).frame(width: 120, height: 48) }

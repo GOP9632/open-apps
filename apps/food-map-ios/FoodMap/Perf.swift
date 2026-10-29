@@ -9,6 +9,8 @@ import os
 @MainActor @Observable final class Perf {
     static let shared = Perf()
     static let signposter = OSSignposter(subsystem: "io.github.gop9632.foodmap", category: "tap")
+    static func begin(_ n: StaticString) -> OSSignpostIntervalState { signposter.beginInterval(n, id: signposter.makeSignpostID()) }
+    static func end(_ n: StaticString, _ s: OSSignpostIntervalState) { signposter.endInterval(n, s) }
 
     var on = false { didSet { on ? start() : stop() } }
     private(set) var lines: [String] = []
@@ -164,4 +166,20 @@ struct PerfHUD: View {
             .accessibilityHidden(true)
         }
     }
+}
+
+// 量測用的啟動參數：只有開發版和模擬器讀得到（正式版一律沒有）
+enum Flag {
+    #if DEBUG || targetEnvironment(simulator)
+    static let args = ProcessInfo.processInfo.arguments
+    #else
+    static let args: [String] = []
+    #endif
+    private static let set = Set(args)
+    static func on(_ name: String) -> Bool { set.contains(name) }
+    static func value(_ name: String) -> String? {      // 帶值的，例如 -drawWin id1,id2
+        guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
+        return args[i + 1]
+    }
+    @MainActor static var draws = 0                       // -drawWin 輪流用
 }

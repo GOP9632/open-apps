@@ -38,5 +38,7 @@ enum MapStage { case low, mid, high }
 final class CamQuiet {
     var until: CFTimeInterval = 0
     var flyTo: (lat: Double, lng: Double)?      // 飛去遠的店的終點（停在那裡時在量測浮層記一筆「飛完」）
+    var flyStart: CFTimeInterval = 0            // 量測：開始飛、第二段（降落）開始的時間
+    var leg2: CFTimeInterval = 0
     func hush(_ s: Double = 1.0) { until = max(until, CACurrentMediaTime() + s) }
 }

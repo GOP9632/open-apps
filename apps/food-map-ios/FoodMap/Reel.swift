@@ -185,7 +185,13 @@ struct PlaceMedia: View {
 
     // 在背景建播放器（店家頁沒預載到時也一樣，不在推頁動畫尾巴卡主執行緒）
     static func build(_ u: URL, _ pr: TaskPriority = .utility) async -> AVPlayer {
-        await Task.detached(priority: pr) { Made(player(u)) }.value.player
+        if Flag.on("-reelMain") { return player(u) }       // 量測用：照舊在主執行緒建
+        return await Task.detached(priority: pr) { () -> Made in
+            let t = Date()
+            let m = Made(player(u))
+            print("[reel] 建播放器 \(Int(Date().timeIntervalSince(t) * 1000)) ms，在主執行緒：\(pthread_main_np() != 0)")
+            return m
+        }.value.player
     }
 
     static func take(_ src: String) -> (URL, AVPlayer)? {
