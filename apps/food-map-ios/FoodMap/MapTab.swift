@@ -235,6 +235,22 @@ struct MapTab: View {
                         }
                         return
                     }
+                    // 量測用：只延後清單（-landDeferList）或只延後泡泡重組（-landDeferCluster）
+                    if landed && (Flag.on("-landDeferList") || Flag.on("-landDeferCluster")) {
+                        let lateList = Flag.on("-landDeferList"), lateCluster = Flag.on("-landDeferCluster")
+                        selfMoved = false
+                        seenBox.set(c.region, publish: !lateList && !trip.on)
+                        if !lateCluster { recluster(proxy) }
+                        nearTask?.cancel()
+                        nearTask = Task {
+                            try? await Task.sleep(for: .milliseconds(600))
+                            guard !Task.isCancelled else { return }
+                            Perf.shared.mark("降落後補做")
+                            if lateList { seenBox.set(seenBox.peek, publish: !trip.on) }
+                            if lateCluster { recluster(proxy) }
+                        }
+                        return
+                    }
                     // 行程模式時下面的附近面板收著，不用跟著重算（離開行程時補一次）
                     if selfMoved && !landed { selfMoved = false } else { selfMoved = false; seenBox.set(c.region, publish: !trip.on) }
                     recluster(proxy)
@@ -1043,6 +1059,7 @@ struct NearbyHost<C: View>: View, Equatable {
 
     var body: some View {
         let _ = Perf.signposter.emitEvent("附近重算")
+        let _ = Perf.shared.note("附近重算")
         content(Nearby(list: list, here: store.here, region: visible, total: total))
     }
 
@@ -1874,7 +1891,7 @@ private struct PinPhoto: View {
             guard let u = place.photoURL else { return }
             if let c = PhotoLoader.shared.cached(u, 160) ?? PhotoLoader.shared.anySize(u) { img = c; return }
             let i = await PhotoLoader.shared.load(u, 160)
-            withAnimation(.easeOut(duration: 0.25)) { img = i }
+            Perf.shared.note("圖釘封面到"); withAnimation(.easeOut(duration: 0.25)) { img = i }
         }
     }
 }
@@ -2203,9 +2220,11 @@ private struct MyDotView: View {
     static func render(_ e: String, _ size: CGFloat, _ p: Part) {
         let s = slot(e, size)
         guard !e.isEmpty, s.img == nil else { return }
+        let t = CACurrentMediaTime()
         let r = ImageRenderer(content: Text(e).font(.system(size: size)).padding(pad))
         r.scale = scale * (warmOnly ? 1 : zoom(p))
         let i = r.uiImage
+        if Flag.on("-perfOverlay") { print("[emoji] 畫 \(e) \(p.rawValue) " + String(format: "%.1f ms", (CACurrentMediaTime() - t) * 1000)) }
         if !warmOnly { s.img = i }
     }
     // 畫一張睡 50ms（超過一幀），不擠在同一幀

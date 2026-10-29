@@ -23,7 +23,9 @@ struct PlaceMedia: View {
                     muted.toggle()
                     player?.isMuted = muted
                     // 開聲音才佔用喇叭；靜音播放不會把你正在聽的音樂停掉
+                    let t = CACurrentMediaTime()
                     try? AVAudioSession.sharedInstance().setCategory(muted ? .ambient : .playback)
+                    if Flag.on("-perfOverlay") { print("[reel] 喇叭設聲音類別 \(Int((CACurrentMediaTime() - t) * 1000)) ms") }
                 } label: {
                     Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
                         .font(.system(size: 15, weight: .bold)).foregroundStyle(.white)
@@ -121,7 +123,9 @@ struct PlaceMedia: View {
         if let loop { NotificationCenter.default.removeObserver(loop) }
         player = nil; loop = nil
         muted = true
+        let t = CACurrentMediaTime()
         try? AVAudioSession.sharedInstance().setCategory(.ambient)
+        if Flag.on("-perfOverlay") { print("[reel] stop 設聲音類別 \(Int((CACurrentMediaTime() - t) * 1000)) ms") }
     }
 }
 
@@ -171,7 +175,11 @@ struct PlaceMedia: View {
             guard let u = await url(src), !ready.contains(where: { $0.src == src }) else { return }
             // 建播放器不在主執行緒（建 asset、item 會占掉一兩幀，地圖還在動、大卡還在彈）
             let pl = await build(u)
-            guard !ready.contains(where: { $0.src == src }) else { pl.replaceCurrentItem(with: nil); return }
+            guard !ready.contains(where: { $0.src == src }) else {
+                if Flag.on("-perfOverlay") { print("[reel] 重複建的，丟掉") }
+                pl.replaceCurrentItem(with: nil); return
+            }
+            Perf.shared.note("影片預載好")
             ready.append((src, u, pl))
             if ready.count > 2 { ready.removeFirst().player.replaceCurrentItem(with: nil) }
         }

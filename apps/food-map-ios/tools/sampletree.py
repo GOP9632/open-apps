@@ -3,6 +3,7 @@
 # 用法（模擬器裡的 App 就是 Mac 上的一般行程）：
 #   sample $(pgrep -x FoodMap) 4 1 -mayDie -file /tmp/s1.txt   # 開始後 4 秒內做動作
 #   python3 sampletree.py /tmp/s1.txt
+#   python3 sampletree.py /tmp/s1.txt --all   # 每個執行緒在提交 CA（Core Animation）上花了幾個樣本、執行緒名字
 import re, sys, collections
 
 IDLE = ('mach_msg', '__CFRunLoopServiceMachPort', 'semaphore_wait', '__psynch_cvwait', 'kevent')
@@ -58,7 +59,31 @@ def idle(n):
     return s
 
 
-threads = parse(sys.argv[1])
+args = [a for a in sys.argv[1:] if a != '--all']
+if not args:
+    sys.exit('用法：python3 sampletree.py sample輸出.txt [--all]')
+threads = parse(args[0])
+
+# --all：每個執行緒在 CA 提交底下的樣本數（同一條鏈上重複出現只算最上面那層）
+CA = ('CA::Transaction::commit', 'CA::Context::commit_transaction', 'CA::Layer')
+if '--all' in sys.argv[1:]:
+    def under(n, key):
+        if key in n.name:
+            return n.count
+        return sum(under(k, key) for k in n.kids)
+    print(f'每個執行緒在 CA 底下的樣本數（每個樣本約 1 ms）：')
+    print(f'{"commit":>7} {"ctx":>7} {"Layer":>7} {"全部":>7}  執行緒')
+    rows = []
+    for t in threads:
+        c = [under(t, k) for k in CA]
+        if any(c):
+            rows.append((c, t))
+    for c, t in sorted(rows, key=lambda r: -max(r[0])):
+        print(f'{c[0]:7d} {c[1]:7d} {c[2]:7d} {t.count:7d}  {t.name[:120]}')
+    if not rows:
+        print('  （沒有執行緒在 CA 底下）')
+    sys.exit(0)
+
 main = next((t for t in threads if 'main-thread' in t.name), threads[0] if threads else None)
 if not main:
     sys.exit('沒有執行緒資料')

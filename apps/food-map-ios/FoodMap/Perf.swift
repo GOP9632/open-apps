@@ -27,6 +27,13 @@ import os
     @ObservationIgnored private var drops: [CFTimeInterval] = []
     @ObservationIgnored private var bodies: [String: [CFTimeInterval]] = [:]
     @ObservationIgnored private var shownAt: CFTimeInterval = 0
+    @ObservationIgnored private var firstAfter: (name: String, at: CFTimeInterval)?   // 量測：手指按下或放開後主執行緒送出的第一幀
+
+    // 量測用：只印到 Console、不上浮層（body 裡寫 let _ = Perf.shared.note("附近重算")）
+    func note(_ s: String) {
+        guard on else { return }
+        print(String(format: "[perf] %.3f 記號 ", CACurrentMediaTime()) + s)
+    }
 
     // 只在開發版、模擬器和 TestFlight 出現，App Store 版不會有
     static var allowed: Bool {
@@ -40,12 +47,16 @@ import os
     func touched(_ down: Bool) {
         let t = CACurrentMediaTime()
         if down { touchDown = t } else { touchUp = t }
+        guard on else { return }
+        firstAfter = (down ? "按下" : "放開", t)
+        print(String(format: "[perf] %.3f 手指", t) + (down ? "按下" : "放開"))
     }
 
     // 狀態改變的地方呼叫（點圖釘、換分頁、推店家頁、想去/去過、篩選），等下一幀畫出來再算時間
     func mark(_ name: String) {
         Self.signposter.emitEvent("tap", "\(name, privacy: .public)")
         guard on else { return }
+        note(name)
         pending.append((name, CACurrentMediaTime()))
     }
 
@@ -66,13 +77,21 @@ import os
     }
 
     private func stop() {
-        link?.invalidate(); link = nil; pending = []
+        link?.invalidate(); link = nil; pending = []; firstAfter = nil
     }
 
     fileprivate func tick(_ l: CADisplayLink) {
         let now = l.timestamp
         let frame = max(l.targetTimestamp - l.timestamp, 1.0 / 120)
-        if last > 0, now - last > frame * 1.5 { drops.append(now) }
+        if last > 0, now - last > frame * 1.5 {
+            drops.append(now)
+            print(String(format: "[perf] 掉幀 %.0f ms（%.3f 到 %.3f）", (now - last) * 1000, last, now))
+        }
+        if let f = firstAfter {
+            firstAfter = nil
+            // 用現在的時間算，不用 l.timestamp（那是這一幀開始的時間，可能比手指還早）
+            print("[perf] 手指" + f.name + String(format: "後第一幀 %.0f ms", (CACurrentMediaTime() - f.at) * 1000))
+        }
         last = now
         drops.removeAll { now - $0 > 2 }
         if hitches != drops.count { hitches = drops.count }
@@ -96,6 +115,7 @@ import os
             let ms = Int((CACurrentMediaTime() - from) * 1000)
             let press = touchUp > touchDown && touchDown > 0 && p.at - touchUp < 1 ? "，按住 \(Int((touchUp - touchDown) * 1000))" : ""
             lines.insert("\(p.name) \(ms) ms\(press)", at: 0)
+            print("[perf] " + lines[0])
             if lines.count > 6 { lines.removeLast() }
         }
     }
