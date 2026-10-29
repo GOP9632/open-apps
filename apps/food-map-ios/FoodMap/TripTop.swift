@@ -14,6 +14,7 @@ struct TripTop: View {
     @State private var renaming = false
     @State private var newTitle = ""
     @State private var setting = false
+    @State private var dropDay: Int?            // 要拿掉的那天（這天有站時先問）
 
     var body: some View {
         let _ = Perf.shared.count("行程標題")
@@ -62,6 +63,14 @@ struct TripTop: View {
             }
         }
         .sheet(isPresented: $setting) { if let t { TripForm(trip: t) } }
+        .confirmationDialog(dropDay.map { "拿掉第 \($0) 天？" } ?? "", isPresented: Binding(get: { dropDay != nil }, set: { if !$0 { dropDay = nil } }),
+                            titleVisibility: .visible, presenting: dropDay) { n in
+            if let t { Button("拿掉這天", role: .destructive) { removeDay(t, n) } }
+            Button("取消", role: .cancel) {}
+        } message: { n in
+            let k = t.map { trips.stops($0.id, day: n).count } ?? 0
+            Text(n > 1 ? "這天的 \(k) 站會移到第 \(n - 1) 天，不會刪掉" : "這天的 \(k) 站會移到下一天的後面（變成新的第 1 天），不會刪掉")
+        }
     }
 
     private var searchKey: String {
@@ -135,6 +144,12 @@ struct TripTop: View {
             if t.days < 14 {
                 Button("＋ 加一天") { addDay(t) }
             }
+            if t.days > 1 {
+                Button("拿掉第 \(d) 天", systemImage: "minus.circle", role: .destructive) {
+                    // 空的一天直接拿掉；有站先問（站會移到隔壁那天，不會刪掉）
+                    if trips.stops(t.id, day: d).isEmpty { removeDay(t, d) } else { dropDay = d }
+                }
+            }
         } label: {
             HStack(spacing: 3) {
                 Text("第 \(d) 天").font(.footnote.weight(.heavy))
@@ -154,6 +169,32 @@ struct TripTop: View {
         Haptic.light()
         Perf.shared.mark("換天")
         withAnimation(.snappy) { mode.day = n; mode.cand = nil; mode.hot = nil }
+    }
+
+    // 拿掉第 n 天：這天的站接到前一天後面（第 1 天就接到下一天後面），後面的天往前遞補
+    private func removeDay(_ t: Trip, _ n: Int) {
+        guard t.days > 1, let cur = trips.trip(t.id) else { return }
+        Haptic.light()
+        Perf.shared.mark("拿掉一天")
+        let all = trips.stops(t.id)
+        let moving = trips.stops(t.id, day: n)
+        let into = n > 1 ? n - 1 : 2              // 移去哪天（重新編號前）
+        let landed = into > n ? into - 1 : into   // 重新編號後是第幾天
+        var next = trips.nextPos(t.id, into)
+        withAnimation(.snappy) {
+            for var s in moving {
+                s.day = landed; s.pos = next; next += 1
+                trips.update(s, store: store)
+            }
+            for var s in all where s.day > n {
+                s.day -= 1
+                trips.update(s, store: store)
+            }
+            var x = cur; x.days -= 1
+            trips.update(x, store: store)
+            mode.day = min(landed, x.days); mode.cand = nil; mode.hot = nil
+        }
+        store.say(moving.isEmpty ? "已拿掉第 \(n) 天" : "已拿掉第 \(n) 天，\(moving.count) 站移到第 \(landed) 天", icon: .check)
     }
 
     private func addDay(_ t: Trip) {

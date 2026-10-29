@@ -611,7 +611,7 @@ struct MapTab: View {
             if id.hasPrefix("hit:") { c = trip.search.hits.first { "hit:" + $0.id == id }.map { TripCand(hit: $0) } }
             else { c = store.place(id).map { TripCand(place: $0) } }
             guard let c, c != trip.cand else { return }
-            Perf.shared.mark("點收藏加站")
+            Perf.shared.mark(id.hasPrefix("hit:") ? "點搜尋加站" : "點收藏加站")
             trip.endTyping()
             withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) { trip.cand = c }
             return

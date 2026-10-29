@@ -26,6 +26,8 @@ struct Root: View {
     @State private var myName = ""
     // 刪除時卡片縮小飛到訊息條（卡片和訊息條左邊的小照片共用）
     @Namespace private var toastNS
+    // 訊息條時間到：先淡掉、原地多擋 0.45 秒點擊（想按「復原」剛好消失時，不會按到底下的按鈕）
+    @State private var toastFading = false
     // 冷啟動：啟動畫面的甜甜圈咬一口再放大淡掉（減少動態時不播）
     @State private var bite = !UIAccessibility.isReduceMotionEnabled
     @State private var clip = ClipWatch.shared
@@ -130,10 +132,17 @@ struct Root: View {
                     }
                     .padding(.trailing, act == nil ? 0 : 4)
                     if let act {
-                        Button(act.label) { act.run() }.font(.subheadline.weight(.heavy)).foregroundStyle(Color.sprYellow)
+                        // 有「復原」的訊息條撐滿寬度、按鈕固定在最右邊：店名長短不同，按鈕位置也不跑
+                        Spacer(minLength: 0)
+                        Button { if !toastFading { act.run() } } label: {
+                            Text(act.label).font(.subheadline.weight(.heavy)).foregroundStyle(Color.sprYellow)
+                                .padding(.horizontal, 10).frame(minWidth: 56, minHeight: 44).contentShape(.rect)
+                        }
+                        .padding(.trailing, -10)
                     }
                 }
-                .padding(.horizontal, 16).padding(.vertical, 11)
+                .frame(maxWidth: act == nil ? nil : .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.vertical, act == nil ? 11 : 3)
                 .background(Color.ink.opacity(0.92), in: .capsule)
                 .padding(.bottom, pad).padding(.horizontal, 24).padding(.trailing, onMap ? 52 : 0)
                 // 返回時從按鈕列上方滑到面板上緣，不是一格跳過去
@@ -143,18 +152,27 @@ struct Root: View {
                 .onAppear { AccessibilityNotification.Announcement(t).post() }
                 // 時間到自己收起來；手指按著訊息條時暫停倒數
                 .task(id: t) {
+                    toastFading = false
                     var left: Double = Store.slowToasts ? 20 : (store.toastSeconds ?? (act == nil ? 2.6 : store.toastTap != nil ? 5 : 4))
                     while left > 0 {
                         try? await Task.sleep(for: .milliseconds(100))
                         if Task.isCancelled { return }
                         if !store.toastHeld { left -= 0.1 }
                     }
+                    if act != nil {
+                        withAnimation(.easeOut(duration: 0.2)) { toastFading = true }
+                        try? await Task.sleep(for: .milliseconds(450))
+                        if Task.isCancelled { return }
+                    }
                     withAnimation(.snappy) { if store.toast == t { store.toast = nil; store.toastAction = nil } }
+                    toastFading = false
                 }
                 .simultaneousGesture(DragGesture(minimumDistance: 0)
                     .onChanged { _ in if !store.toastHeld { store.toastHeld = true } }
                     .onEnded { _ in store.toastHeld = false })
+                .opacity(toastFading ? 0.011 : 1)
                 .onTapGesture {
+                    guard !toastFading else { return }
                     let tap = store.toastTap
                     withAnimation(.snappy) { store.toast = nil; store.toastTap = nil }
                     tap?()
