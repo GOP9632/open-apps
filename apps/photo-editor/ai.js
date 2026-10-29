@@ -56,7 +56,8 @@ function shrink(src, max) {
   if (k === 1) return src;
   const c = document.createElement('canvas');
   c.width = Math.round(src.width * k); c.height = Math.round(src.height * k);
-  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  // 縮在記憶體裡（不經過 GPU）：照片本身在記憶體，畫到 GPU 的 canvas 要先整張 1200 萬像素傳上去，再讀回來給模型，開照片、消除後都會停一下
+  c.getContext('2d', { willReadFrequently: true }).drawImage(src, 0, 0, c.width, c.height);
   return c;
 }
 
@@ -76,7 +77,7 @@ export async function detectFaces(src) {
     const k = Math.min(1, 1024 / Math.max(w, h));
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
-    c.getContext('2d').drawImage(src, x, y, w, h, 0, 0, c.width, c.height);
+    c.getContext('2d', { willReadFrequently: true }).drawImage(src, x, y, w, h, 0, 0, c.width, c.height);  // 同 shrink：縮在記憶體裡
     for (const lm of await faceLms(c)) {
       const pts = lm.map(p => ({ x: x + p.x * w, y: y + p.y * h, z: p.z * w }));
       const fw = Math.hypot(pts[454].x - pts[234].x, pts[454].y - pts[234].y);
@@ -129,7 +130,8 @@ export async function segment(src) {
   const skin = new Float32Array(w * h);
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  const ctx = c.getContext('2d'), out = ctx.createImageData(w, h);
+  // 人像遮罩放記憶體：之後模糊、組貼圖、找路人都要讀回來，放 GPU 每讀一次都要等 GPU 畫完
+  const ctx = c.getContext('2d', { willReadFrequently: true }), out = ctx.createImageData(w, h);
   for (let i = 0; i < bg.length; i++) {
     // 稍微拉高對比，邊緣比較俐落
     const f = Math.min(1, Math.max(0, (1 - bg[i] - 0.15) / 0.7));
@@ -169,7 +171,7 @@ export function skinMask(faces, w, h, seg, img) {
   const kx = mw / w, ky = mh / h, r = Math.max(2, Math.round(mw / 110));
   const layer = (bgColor, draw) => {
     const c = mkCanvas(mw, mh);
-    const ctx = c.getContext('2d');
+    const ctx = c.getContext('2d', { willReadFrequently: true });
     ctx.fillStyle = bgColor; ctx.fillRect(0, 0, mw, mh);
     const poly = (pts, ids, v, grow = 1) => {
       const ctr = avg(pts, ids);
@@ -275,7 +277,8 @@ export function featureMask(faces, w, h) {
   const k = Math.min(1, 512 / Math.max(w, h));
   const mw = Math.max(1, Math.round(w * k)), mh = Math.max(1, Math.round(h * k));
   const c = document.createElement('canvas'); c.width = mw; c.height = mh;
-  const ctx = c.getContext('2d');
+  // 畫完要讀回來模糊：放記憶體，不然讀的那下要等 GPU（找到臉時停一下）
+  const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, mw, mh);
   ctx.globalCompositeOperation = 'lighter';
   const P = p => [p.x * k, p.y * k];

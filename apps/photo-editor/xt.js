@@ -8,6 +8,7 @@
 // filters.json 的 hide 是暫時不列出的濾鏡：擬合時拿錯醒圖共用的輔助 LUT、跟別的濾鏡顏色一模一樣，或是同一個濾鏡換名字的重複項。
 // 醒圖很多濾鏡對皮膚另外調一套顏色，那套的權重在 xt/skin.bin（同樣的模型）；一鍵出片的風格頭髮也另外一套，同樣放在 skin.bin。
 // 柔光類濾鏡（燭光晚餐、失樂園…）醒圖還加了柔焦和光暈，參數在 filters.json 的 glow（濾鏡編號 → 7 個數，見 gl.js setGlow）。
+// 底片類濾鏡醒圖還有顆粒，參數在 filters.json 的 grain（濾鏡編號 → [亮度顆粒, 彩色顆粒]，有的再加 p、q：顆粒照亮度 L^p·(1−L)^q 分布，偏亮部或偏暗部；照醒圖答案平坦處比我們多的細紋擬合）。
 // 少數像熱感應、只留膚色那種顏色會突然跳的濾鏡（像素黃、數字彩虹、鎏金…），上面的模型跟不上，
 // 另外加一張「色相 × 亮度 × 鮮豔度」的格子（12×9×5，格子之間線性內插），權重在 xt/special.bin。
 
@@ -28,9 +29,12 @@ export function loadXT() {
       return w;
     };
     const sp = meta.sp, n = meta.items.length, hide = new Set(meta.hide || []);
+    // 柔焦光暈跟著濾鏡本身（p），不是跟著清單位置：同一款放在好幾個分類（柔光白在閃光、人像、精選都有）都要有（評審 L65）
+    const glowP = new Map(Object.entries(meta.glow || {}).map(([i, g]) => [meta.items[i][2], g]));
+    const grainP = new Map(Object.entries(meta.grain || {}).map(([i, g]) => [meta.items[i][2], g]));
     data = {
       cats: meta.cats,
-      items: [...meta.items.map(([name, cat, p, def, skin, hair], i) => ({ id: 'xt' + i, name, cat, p, def, skin, hair, hide: hide.has(i), glow: meta.glow?.[i] || null })),
+      items: [...meta.items.map(([name, cat, p, def, skin, hair], i) => ({ id: 'xt' + i, name, cat, p, def, skin, hair, hide: hide.has(i), glow: glowP.get(p) || null, grain: grainP.get(p) || null })),
         ...(sp?.items || []).map(([name, cat, p, def, skin], i) => ({ id: 'xt' + (n + i), name, cat, p, def, skin, sp: true }))],
       w: deq(buf, meta.scale), ws: deq(sbuf, meta.skinScale),
       wx: sp ? deq(xbuf, sp.scale, sp.feat) : null, nfx: sp?.feat, grid: sp?.grid,
