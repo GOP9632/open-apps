@@ -130,19 +130,27 @@ export function bakeGrid(fn, n = 64, q = false) {
 }
 
 // 濾鏡縮圖：直接在小圖上用 CPU 套顏色函式
-export function thumb(src, fn, size = 124) {
+export function thumb(src, fn, size = 124) { return thumbMaker(src, fn, size)(Infinity); }
+// 分段做的縮圖：回傳 step(deadline)，做到 performance.now() 超過 deadline 就先停、回傳 null，做完回傳圖的網址。
+// 醒圖風格濾鏡一張縮圖要 20～30ms，整張一次做完會掉格（評審 L71）。canvas 放記憶體，讀回不用等 GPU
+export function thumbMaker(src, fn, size = 124) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
-  const ctx = c.getContext('2d');
+  const ctx = c.getContext('2d', { willReadFrequently: true });
   const s = Math.min(src.width, src.height);
   ctx.drawImage(src, (src.width - s) / 2, (src.height - s) / 2, s, s, 0, 0, size, size);
-  if (fn) {
-    const img = ctx.getImageData(0, 0, size, size), d = img.data;
-    for (let i = 0; i < d.length; i += 4) {
-      const o = fn(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255);
-      d[i] = o[0] * 255; d[i + 1] = o[1] * 255; d[i + 2] = o[2] * 255;
+  if (!fn) return () => c.toDataURL('image/jpeg', 0.8);
+  const img = ctx.getImageData(0, 0, size, size), d = img.data;
+  let y = 0;
+  return deadline => {
+    while (y < size) {
+      for (let i = y++ * size * 4, e = i + size * 4; i < e; i += 4) {
+        const o = fn(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255);
+        d[i] = o[0] * 255; d[i + 1] = o[1] * 255; d[i + 2] = o[2] * 255;
+      }
+      if (y < size && performance.now() > deadline) return null;
     }
     ctx.putImageData(img, 0, 0);
-  }
-  return c.toDataURL('image/jpeg', 0.8);
+    return c.toDataURL('image/jpeg', 0.8);
+  };
 }

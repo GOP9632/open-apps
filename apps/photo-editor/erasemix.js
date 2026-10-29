@@ -1,4 +1,4 @@
-// 消除的選區外擴、羽化、疊回（erase.js 用；iPhone、iPad 連補洞一起在背景執行緒做，評審 M51）。
+// 消除的選區外擴、羽化、疊回、補洞（erase.js 用，平常在消除的背景執行緒 erasework.js 算，評審 M51）。
 // 以前這幾步在主執行緒用 canvas 畫：選區往 12 個方向平移各畫一次、模糊、疊回去，再整張照片換掉，
 // 按「立即消除」畫面停 0.6 秒以上。這裡照同樣的畫法直接算陣列，結果跟以前一樣，不用等 GPU。
 import { patchFill } from './patchfill.js';
@@ -83,4 +83,32 @@ export function fillErase(a) {
   const f = patchFill(a.d, hole, w, h);
   for (let i = 0; i < w * h; i++) f[i * 4 + 3] = 255;
   return softPatch(f, g, w, h, a.cw, a.ch, a.feather);
+}
+
+// 電腦、Android：MI-GAN 修補模型（Picsart，MIT 授權）補洞，第一次用時下載約 28MB，之後瀏覽器會快取。
+// 平常在 erasework.js 跑，開不了背景執行緒才在主執行緒跑（評審 M51：以前在主執行緒，按「立即消除」畫面停 1 秒）
+const ORT = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+const MODEL = 'https://huggingface.co/andraniksargsyan/migan/resolve/main/migan_pipeline_v2.onnx';
+let sessP;
+export function ortSession() {
+  sessP ||= import(ORT + 'ort.wasm.min.mjs').then(async ort => {
+    ort.env.wasm.wasmPaths = ORT;
+    ort.env.wasm.numThreads = 1; // GitHub Pages 沒有跨來源隔離，不能開多執行緒
+    return { ort, s: await ort.InferenceSession.create(MODEL, { executionProviders: ['wasm'] }) };
+  }).catch(e => { sessP = null; throw e; });
+  return sessP;
+}
+// a：跟 fillErase 一樣；session：ortSession
+export async function miganErase(a, session) {
+  const { w, h } = a, n = w * h, id = a.d, { ort, s } = await session();
+  const g = growAlpha(a.m, w, h, a.px), img = new Uint8Array(3 * n), m = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    img[i] = id[i * 4]; img[n + i] = id[i * 4 + 1]; img[2 * n + i] = id[i * 4 + 2];
+    m[i] = g[i] * 255 > 10 ? 0 : 255; // MI-GAN：0 = 要補的洞，255 = 保留
+  }
+  const r = (await s.run({ image: new ort.Tensor('uint8', img, [1, 3, h, w]), mask: new ort.Tensor('uint8', m, [1, 1, h, w]) })).result.data;
+  const out = new Uint8ClampedArray(n * 4);
+  for (let i = 0; i < n; i++) { out[i * 4] = r[i]; out[i * 4 + 1] = r[n + i]; out[i * 4 + 2] = r[2 * n + i]; out[i * 4 + 3] = 255; }
+  // 只把選區（邊緣羽化）貼回原圖，其他地方保持原本的清晰度
+  return softPatch(out, g, w, h, a.cw, a.ch, a.feather);
 }

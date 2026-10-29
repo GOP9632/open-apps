@@ -14,7 +14,8 @@ export const POP_BGS = [['blur', '模糊'], ['#ffffff', '白'], ['#111111', '黑
 export const POP_P0 = { pop: '', popY: 30, popM: 8, popBg: 'blur', popText: 'HELLO', popTC: '#ffffff', popSt: { t: 'solid', c: '#ffffff', w: 30, o: 100 } };
 
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
-function canvas(w, h) { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; }
+// mem：放記憶體（第一次拿 context 就決定），縮圖用：GPU 上的讀回要等 GPU 畫完（評審 L71）
+function canvas(w, h, mem) { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); if (mem) c.getContext('2d', { willReadFrequently: true }); return c; }
 
 // 框的位置：上緣跟著人的位置走，人的頭肩會露在框外
 export function popRect(W, H, P, box) {
@@ -25,10 +26,10 @@ export function popRect(W, H, P, box) {
 
 function blurred(photo, W, H) {
   // 縮很小再放大兩次，等於很強的模糊，又快
-  const s1 = canvas(Math.max(4, W / 12), Math.max(4, H / 12)), s2 = canvas(Math.max(2, W / 40), Math.max(2, H / 40));
+  const mem = W * H <= 512 * 512, s1 = canvas(Math.max(4, W / 12), Math.max(4, H / 12), mem), s2 = canvas(Math.max(2, W / 40), Math.max(2, H / 40), mem);
   s1.getContext('2d').drawImage(photo, 0, 0, s1.width, s1.height);
   s2.getContext('2d').drawImage(s1, 0, 0, s2.width, s2.height);
-  const c = canvas(W, H), ctx = c.getContext('2d'); ctx.imageSmoothingQuality = 'high';
+  const c = canvas(W, H, mem), ctx = c.getContext('2d'); ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(s2, 0, 0, W, H);
   ctx.fillStyle = 'rgba(0,0,0,.12)'; ctx.fillRect(0, 0, W, H);
   return c;

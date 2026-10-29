@@ -111,8 +111,9 @@ function kill(ses) { Object.assign(ses, { dead: true, canvas: null, ctx: null, O
 function shrink(src, w, h) {
   let c = src;
   while (c.width / 2 >= w && c.height / 2 >= h) {
+    // 中間那幾張也放記憶體：照片在記憶體，畫進 GPU canvas 再讀回要等 GPU（評審 L71：點開美顏筆停 134ms，大半在等）
     const t = newCanvas(Math.ceil(c.width / 2), Math.ceil(c.height / 2));
-    t.getContext('2d').drawImage(c, 0, 0, t.width, t.height);
+    t.getContext('2d', { willReadFrequently: true }).drawImage(c, 0, 0, t.width, t.height);
     if (c !== src) c.width = 0;
     c = t;
   }
@@ -637,15 +638,16 @@ export function tabBeautyBrush(box, app) {
     sliderRow({ label: '大小', min: 1, max: 100, val: st.size, def: 30, onInput: v => { st.size = v; } }),
     ...st.erase ? [] : [sliderRow({ label: '強度', min: 0, max: 100, val: st.str[st.tool], def: b.str, onInput: v => { st.str[st.tool] = v; } })]);
   document.querySelector('#note').textContent = st.erase ? `擦掉${b.name}塗過的地方，回到原本的樣子。` : `塗抹要${b.name}的地方。同一處多塗幾次，到上限就停，不會越塗越假。`;
-  // 點開美顏筆、換筆時先在背景把縮圖和這支筆要用的資料算好，第一筆放開才不會頓一下
+  // 點開美顏筆、換筆時先在背景把縮圖和這支筆要用的資料算好，第一筆放開才不會頓一下。
+  // 縮圖、GPU 暖機、這支筆的資料分三次做，中間讓畫面走一格（以前擠在同一下，停 134ms，評審 L71）
   clearTimeout(warmT);
-  warmT = setTimeout(() => {
-    if (app.tab() !== 'bbrush') return;
-    const S = app.surf();
-    if (!valid(S.bbSes, S)) { bbRelease(S); S.bbSes = session(S.canvas, S.ver); }
-    gpuWarm(st.tool, !!RAD[st.tool]);
-    if (MASKED.includes(st.tool)) gpuPrime(S.bbSes, mkJob(S.bbSes, st.tool));
-  }, 250);
+  const steps = [
+    () => { const S = app.surf(); if (!valid(S.bbSes, S)) { bbRelease(S); S.bbSes = session(S.canvas, S.ver); } },
+    () => gpuWarm(st.tool, !!RAD[st.tool]),
+    () => { const S = app.surf(); if (MASKED.includes(st.tool) && valid(S.bbSes, S)) gpuPrime(S.bbSes, mkJob(S.bbSes, st.tool)); },
+  ];
+  const next = () => { if (app.tab() !== 'bbrush' || !steps.length) return; steps.shift()(); if (steps.length) warmT = setTimeout(next, 30); };
+  warmT = setTimeout(next, 250);
 }
 let warmT = 0;
 
