@@ -27,6 +27,8 @@ extension Store {
 
     // 第一次打開才自動跑；略過或看完都記住
     @MainActor func maybeStartCoach() {
+        // 點邀請連結進來的：先讓他看到群組，教學下次打開 App 再跑（coachDone 還沒寫，下次的 .task 會補）
+        guard pendingJoin == nil, !inviteOpened else { return }
         if coach.isEmpty && !UserDefaults.standard.bool(forKey: "coachDone") { startCoach() }
     }
 

@@ -276,7 +276,7 @@ struct LoginView: View {
     // 三個登入方式：Apple、Google、Email
     private var choices: some View {
         VStack(spacing: 12) {
-            Text("登入後開始收藏想吃的店").foregroundStyle(.secondary).padding(.bottom, 4)
+            Text(store.pendingJoin != nil ? "登入後會幫你加入朋友的群組" : "登入後開始收藏想吃的店").foregroundStyle(.secondary).padding(.bottom, 4)
             if store.providers.contains("apple") { apple }
             if store.providers.contains("google") {
                 GoogleButton(busy: oauth == "google") {

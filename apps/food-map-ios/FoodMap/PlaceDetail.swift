@@ -95,6 +95,13 @@ struct PlaceDetail: View {
             Color.clear.aspectRatio(4 / 3, contentMode: .fit)
                 .overlay { PlaceMedia(place: place) }
                 .clipShape(.rect(cornerRadius: 28))
+                // 分類標籤跟喇叭放在同一層：往上捲的半速視差、往下拉的放大都一起動，兩個的間距不會變
+                .overlay(alignment: .bottomTrailing) {
+                    Text("\(place.cat.emoji) \(place.cat.name)").font(.footnote.weight(.heavy)).foregroundStyle(.white)
+                        .padding(.horizontal, 11).frame(height: 30).background(place.cat.color, in: .capsule)
+                        .overlay(Capsule().strokeBorder(.white, lineWidth: 2)).padding(14)
+                        .allowsHitTesting(false)
+                }
         }
             // 看影片／看貼文：照片左下的黑色膠囊
             .overlay(alignment: .bottomLeading) {
@@ -110,12 +117,6 @@ struct PlaceDetail: View {
                     .buttonStyle(PressStyle())
                     .padding(10)
                 }
-            }
-            .overlay(alignment: .bottomTrailing) {
-                Text("\(place.cat.emoji) \(place.cat.name)").font(.footnote.weight(.heavy)).foregroundStyle(.white)
-                    .padding(.horizontal, 11).frame(height: 30).background(place.cat.color, in: .capsule)
-                    .overlay(Capsule().strokeBorder(.white, lineWidth: 2)).padding(14)
-                    .allowsHitTesting(false)
             }
     }
 

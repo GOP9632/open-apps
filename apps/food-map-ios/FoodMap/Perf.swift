@@ -203,3 +203,17 @@ enum Flag {
     }
     @MainActor static var draws = 0                       // -drawWin 輪流用
 }
+
+// 量測／驗收用 -shareVerdictTest：把雲端會回的幾種字串餵給分享結果的判斷，印出通知標題和內文
+extension ShareUpload {
+    static func selfTest() {
+        let cases = ["這篇貼文沒找到店家，可以打開美食收藏貼上店名", "已收藏：A\n之前收藏過：B", "之前收藏過：X",
+                     "收藏碼已失效，請到美食收藏「我的」重新加入分享捷徑", "沒有收到連結，請從 IG 貼文按分享再選這個捷徑", "收藏失敗：boom", ""]
+        for line in cases {
+            let v = verdict(line)
+            let title = v == .saved ? "收藏好了 🍩" : v == .dup ? "之前收藏過了" : "Bitemap 沒收藏到"
+            let body = v != .failed ? line : say(line)
+            print("[share] 「\(line.replacingOccurrences(of: "\n", with: "⏎"))」→ \(title)｜\(body.replacingOccurrences(of: "\n", with: "⏎"))｜App 內：\(say(line, inApp: true))")
+        }
+    }
+}

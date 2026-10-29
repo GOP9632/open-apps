@@ -53,9 +53,11 @@ struct Root: View {
                 .tripChooser()
                 .onChange(of: store.tab) { _, t in opened.insert(t) }
                 .task {
+                    if Flag.on("-shareVerdictTest") { ShareUpload.selfTest() }
                     // 上次刪了、還沒送出就被關掉的：先補送完再同步（不然同步回來那筆又出現）
                     await LaterDelete.flush(store)?.value
                     await store.sync()
+                    await store.takePendingJoin()
                     store.maybeStartCoach()
                     store.askNotifyAfterShare()
                     ClipWatch.shared.check(store)
@@ -63,13 +65,13 @@ struct Root: View {
                     try? await Task.sleep(for: .seconds(1))
                     opened.formUnion([1, 2, 3])
                 }
+                // Apple／Google 登入：流程跑完、兩個問題都答完的那一刻才接邀請連結
+                .onChange(of: store.askOld == nil && !store.askName && !store.authSettling) { _, free in
+                    guard free else { return }
+                    Task { await store.takePendingJoin() }
+                }
                 // 分享選單存好了：重新同步，剛存的店馬上出現
                 .onReceive(NotificationCenter.default.publisher(for: .shareSaved)) { _ in Task { await store.sync() } }
-                // 朋友傳來的邀請連結 https://anthony-apps.netlify.app/join?code=XXXX 直接在 App 裡加入
-                .onOpenURL { url in
-                    guard url.path.hasPrefix("/join"), let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "code" })?.value else { return }
-                    Task { if await store.join(code) != nil { withAnimation(.snappy) { store.tab = 2 } } }
-                }
                 .overlay { CoachOverlay().ignoresSafeArea() }
                 // 問通知前的小卡（教學跑完才出來）
                 .overlay {
@@ -106,6 +108,12 @@ struct Root: View {
             } else {
                 LoginView()
             }
+        }
+        // 朋友傳來的邀請連結 https://anthony-apps.netlify.app/join?code=XXXX：沒登入也先記著，登入、問完問題才加入
+        .onOpenURL { url in
+            guard url.path.hasPrefix("/join"), let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "code" })?.value else { return }
+            store.setPendingJoin(code)
+            Task { await store.takePendingJoin() }
         }
         // 存檔失敗之類的訊息，從下面浮出來，幾秒後自己消失
         .overlay(alignment: .bottom) {

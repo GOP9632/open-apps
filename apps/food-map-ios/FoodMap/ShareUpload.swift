@@ -63,10 +63,10 @@ final class ShareUpload: NSObject, URLSessionDataDelegate {
         if let p = task.taskDescription { try? FileManager.default.removeItem(atPath: p) }
         let code = (task.response as? HTTPURLResponse)?.statusCode ?? 0
         let line = String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let ok = error == nil && code == 200 && !line.isEmpty
+        let v: Verdict = error == nil && code == 200 ? Self.verdict(line) : .failed
         let c = UNMutableNotificationContent()
-        c.title = ok ? "Bitemap 收藏好了 🍩" : "Bitemap 沒收藏到"
-        c.body = ok ? line : (error.map { "網路有問題：\($0.localizedDescription)" } ?? "雲端暫時出錯（\(code)），請再分享一次")
+        c.title = v == .saved ? "收藏好了 🍩" : v == .dup ? "之前收藏過了" : "Bitemap 沒收藏到"
+        c.body = v != .failed ? line : error.map { "網路有問題：\($0.localizedDescription)" } ?? (code == 200 ? Self.say(line) : "雲端暫時出錯（\(code)），請再分享一次")
         c.sound = .default
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
         DispatchQueue.main.async { NotificationCenter.default.post(name: .shareSaved, object: nil) }
@@ -82,4 +82,21 @@ final class ShareUpload: NSObject, URLSessionDataDelegate {
 
 extension Notification.Name {
     static let shareSaved = Notification.Name("bitemap.shareSaved")
+}
+
+extension ShareUpload {
+    enum Verdict { case saved, dup, failed }
+    // 雲端回的那一行是寫給網頁版捷徑的，開頭是「已收藏」才算存到（含「已收藏：A\n之前收藏過：B」）
+    static func verdict(_ line: String) -> Verdict {
+        if line.hasPrefix("已收藏") { return .saved }
+        if line.hasPrefix("之前收藏過") { return .dup }
+        return .failed
+    }
+    // 失敗訊息換成 Bitemap 的說法；雲端字串不改，網頁版捷徑還在用
+    static func say(_ m: String, inApp: Bool = false) -> String {
+        if m.isEmpty || m.contains("沒找到店家") { return inApp ? "找不到這間店，加上地區再試，或自己填" : "這篇貼文沒找到店家，打開 Bitemap 貼上店名試試" }
+        if m.contains("收藏碼") { return inApp ? "收藏碼失效了，請到「我的」重新產生後再試" : "收藏碼失效了，打開 Bitemap 登入一次再分享" }
+        if m.contains("沒有收到連結") { return "沒有收到連結，請從 IG 貼文按分享再選 Bitemap" }
+        return m
+    }
 }

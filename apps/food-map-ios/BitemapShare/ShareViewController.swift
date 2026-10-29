@@ -43,7 +43,8 @@ final class ShareViewController: UIViewController {
             model.tapToClose = { [weak self] in self?.extensionContext?.completeRequest(returningItems: nil) }
             do {
                 let line = try await quickAdd(key: key, input: input)
-                await finish(line.isEmpty ? "收藏失敗，請再試一次" : line, ok: !line.isEmpty, delay: 1.5)
+                let v = ShareUpload.verdict(line)
+                await finish(v == .failed ? ShareUpload.say(line) : line, ok: v != .failed, delay: v == .failed ? 2.5 : 1.5)
             } catch {
                 await finish("收藏失敗：\(error.localizedDescription)", ok: false, delay: 2.5)
             }

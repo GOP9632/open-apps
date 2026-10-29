@@ -3,7 +3,7 @@ import AVFoundation
 import Combine
 import Network
 
-// 店家頁上面那張大圖：IG Reel 就直接在這裡播（靜音、重複播放），右下角喇叭開聲音；不是影片就是照片
+// 店家頁上面那張大圖：IG Reel 就直接在這裡播（靜音、重複播放），右下分類標籤上面的喇叭開聲音；不是影片就是照片
 struct PlaceMedia: View {
     let place: Place
     @State private var muted = true
@@ -33,7 +33,9 @@ struct PlaceMedia: View {
                         .frame(width: 44, height: 44).contentShape(.rect)
                 }
                 .accessibilityLabel(muted ? "開聲音" : "關聲音")
-                .padding(10)
+                // 疊在店家頁照片右下的分類標籤（高 30、離邊 14）正上方：黑圓右緣跟標籤對齊，中間留約 7pt
+                .padding(.trailing, 11).padding(.bottom, 48)
+                .transition(.opacity)
             }
         }
         // 選圖釘、抽中、按下卡片時已經先拿網址並開始緩衝的話直接用；沒有就現在拿。拿不到就留著照片

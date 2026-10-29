@@ -89,6 +89,12 @@ struct Snapshot: Codable {
     // 新帳號沒有名字（Apple 沒給）：請他填
     var askName = false
     @ObservationIgnored private var needsName = false
+    // 邀請連結的碼：還沒登入、或登入後的問題還沒答完時先記著（存在手機裡，App 被關掉也不會丟）
+    var pendingJoin: String? = UserDefaults.standard.string(forKey: "pendingJoin")
+    // Apple／Google 登入後的流程還沒走完（afterOAuth 還在跑，或按了「有，登入舊帳號」正要登出）：不接邀請，教學也看這個
+    var authSettling = false
+    // 這次啟動處理過邀請：這一輪不自動開教學，下次打開 App 再教
+    @ObservationIgnored var inviteOpened = false
     // 這個帳號連了哪些登入方式
     var logins: [(provider: String, email: String?)] = []
     // 後台開了哪些登入方式（記在手機裡，下次打開按鈕不會晚一拍才冒出來）
@@ -330,6 +336,7 @@ struct Snapshot: Codable {
 
     // Apple／Google 登入好了：同步，空的新帳號補名字、問一次是不是以前用 Email 註冊過
     private func afterOAuth(_ provider: String, name: String?) async {
+        authSettling = true; defer { authSettling = false }
         loggedIn = true; error = nil
         await sync()
         guard let me, error == nil, mine.isEmpty, groups.isEmpty else { return }
@@ -356,6 +363,8 @@ struct Snapshot: Codable {
 
     // 「以前用 Email 註冊過嗎？」→ 有：清掉剛建的空帳號（不然 Apple／Google 連不到舊帳號），登出，回到 Email 登入
     @MainActor func useOld() async {
+        // askOld 一清掉、還沒登出前，Root 的 onChange 會以為問題答完了，把空帳號加進群組
+        authSettling = true; defer { authSettling = false }
         guard let p = askOld else { return }
         askOld = nil
         pendingLink = p
@@ -424,6 +433,7 @@ struct Snapshot: Codable {
         try? FileManager.default.removeItem(at: cacheFile)
         TripStore.shared.reset()
         logins = []; askOld = nil; askName = false
+        inviteOpened = false
     }
 
     @MainActor func say(_ s: String, icon: ToastIcon? = nil, place: Place? = nil, action: (label: String, run: () -> Void)? = nil, tap: (() -> Void)? = nil, seconds: Double? = nil) {
@@ -515,11 +525,7 @@ struct Snapshot: Codable {
     }
 
     // 雲端的訊息是寫給分享捷徑的（「打開美食收藏貼上店名」），在 App 裡新增時換成 App 裡的說法
-    private static func inApp(_ m: String) -> String {
-        if m.isEmpty || m.contains("沒找到店家") { return "找不到這間店，加上地區再試，或自己填" }
-        if m.contains("收藏碼") { return "收藏碼失效了，請到「我的」重新產生後再試" }
-        return m
-    }
+    private static func inApp(_ m: String) -> String { ShareUpload.say(m, inApp: true) }
 
     // 忘記密碼：寄重設密碼的信
     @MainActor func recover(_ email: String) async {
@@ -834,9 +840,33 @@ struct Snapshot: Codable {
         } catch { say("建立失敗：" + error.localizedDescription); return nil }
     }
 
+    @MainActor func setPendingJoin(_ c: String?) {
+        pendingJoin = c
+        if let c { UserDefaults.standard.set(c, forKey: "pendingJoin") } else { UserDefaults.standard.removeObject(forKey: "pendingJoin") }
+    }
+
+    // 邀請連結：登入好、Apple／Google 的流程跑完、「以前用 Email 註冊過嗎？」和「你的名字」都答完才加入
+    // （不然按「有，登入舊帳號」時，空帳號已經進了群組，清不掉，舊帳號也連不過去）
+    @MainActor func takePendingJoin() async {
+        guard loggedIn, !authSettling, askOld == nil, !askName, let code = pendingJoin else { return }
+        setPendingJoin(nil)
+        inviteOpened = true
+        await openInvite(code)
+    }
+
+    // 加入（已經在群組就不打雲端）後切到群組分頁並打開那個群組
+    @MainActor func openInvite(_ code: String) async {
+        guard let gid = await join(code) else { return }
+        groupJump = GroupJump(gid: gid, rid: nil)
+        withAnimation(.snappy) { tab = 2 }
+    }
+
     @MainActor func join(_ code: String) async -> String? {
+        // 雲端用 lower(trim(code)) 查，這裡也一樣，貼成大寫的碼才比得到
+        let c = code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let g = groups.first(where: { $0.invite_code.lowercased() == c }) { say("你已經在「\(g.name)」裡了"); return g.id }
         do {
-            let gid = try await Supa.rpc("join_group", ["code": .s(code)], as: String.self)
+            let gid = try await Supa.rpc("join_group", ["code": .s(c)], as: String.self)
             await sync()
             say("加入「\(groups.first { $0.id == gid }?.name ?? "群組")」了 🎉")
             return gid
