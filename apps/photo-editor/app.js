@@ -596,7 +596,8 @@ async function prep(op, args, local) {
     const a = await args(), id = ++prepN;
     r = await new Promise(res => {
       prepWait.set(id, res); setTimeout(() => prepWait.delete(id) && res({ err: 'timeout' }), 20000);
-      w.postMessage({ id, op, a }, [a.img, a.bimg].filter(Boolean));
+      // 圖都是這次新做的、背景執行緒用完就關：直接轉過去，不要複製一份
+      w.postMessage({ id, op, a }, [a.img, a.bimg, a.person, a.mask].filter(v => v instanceof ImageBitmap));
     });
   } catch (e) { r = { err: e }; }
   if (r.err) { console.warn(op, r.err); return local(); }
@@ -629,15 +630,23 @@ function getFlashNet(b = base) {
   if (performance.now() - (b.fnetErr ?? -1e9) < 30000) return null;  // 失敗（沒網路下載不到權重）過 30 秒再試，不要每畫一格就試一次
   const W = b.canvas.width, H = b.canvas.height, [fw] = fullSize(W, H), k = Math.min(1, 2 * fw / W), geom = b.geoms[0], seg = b.seg, mask = b.mask;
   const small = () => {
-    const c = newCanvas(Math.max(1, Math.round(W * k)), Math.max(1, Math.round(H * k))), x = c.getContext('2d');
+    // 縮到記憶體裡的 canvas（跟照片一樣）：縮到 GPU canvas 要先把 1200 萬像素照片整張傳上去，進光影那下主執行緒多卡 130ms
+    const c = newCanvas(Math.max(1, Math.round(W * k)), Math.max(1, Math.round(H * k))), x = c.getContext('2d', { willReadFrequently: true });
     x.imageSmoothingQuality = 'high'; x.drawImage(b.canvas, 0, 0, c.width, c.height);
     return c;
   };
-  b.fnetP = prep('flashnet', async () => ({ W, H, geom, seg: segPart(seg, 'skin', 'hair'), img: await createImageBitmap(small()), person: await createImageBitmap(seg.person), mask: await createImageBitmap(mask) }),
+  // 背景執行緒做得到：照片整張複製過去在那邊縮（主執行緒 6ms）；記憶體小的裝置先在這裡縮（多 25ms，但不多一份 1200 萬像素）
+  b.fnetP = prep('flashnet', async () => ({ W, H, geom, seg: segPart(seg, 'skin', 'hair'), img: await createImageBitmap(LOW_MEM ? small() : b.canvas), person: await createImageBitmap(seg.person), mask: await createImageBitmap(mask) }),
     () => flashGrid({ W, H, geom, seg, img: small(), person: seg.person, mask }))
     .then(r => { b.fnet = r; if (share(b, 'fnetP', ['fnet'])) { R.setFlashGrid(r.grid); render(); } return r; })
     .catch(e => { console.warn('flashnet', e); b.fnetP = null; b.fnetErr = performance.now(); return null; });
   return b.fnetP;
+}
+// 畫完這一格再開始準備（縮照片、傳到背景執行緒要 15～20ms，不要算在點分頁那一下）
+let fnetSoon = 0;
+function flashNetSoon() {
+  if (fnetSoon || base.fnetP) return;
+  fnetSoon = requestAnimationFrame(() => setTimeout(() => { fnetSoon = 0; if (base) getFlashNet(); }, 0));
 }
 function findFaces() {
   const b = base;
@@ -1116,7 +1125,7 @@ function syncTex() {
 function effects() {
   const fx = { faces: base.geoms };
   if (P.flashFill > 0 && !base.segP) getSeg(base);
-  if (tab === 'light' || FLASHES.find(F => F.id === P.flash)?.cam) getFlashNet();
+  if (tab === 'light' || FLASHES.find(F => F.id === P.flash)?.cam) flashNetSoon();
   if (P.light || P.flash || P.flashFill > 0) Object.assign(fx, litParams(P, base, ensureGeo()));
   const e = fxById(P.fx);
   if (e) { fx.fxMode = e.mode; fx.fxAmt = P.fxAmt / 100; }
@@ -2203,7 +2212,7 @@ function ensureGeo() {
 }
 function tabLight(box) {
   if (!base.faces) findFaces();
-  getFlashNet();
+  flashNetSoon();
   const need = () => { if (!base.seg) findPerson(true); };
   const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
   [...LIGHT_CATS.map(c => [c.id, c.name, c.items.some(x => x.id === P.light)]), ['flash', '閃光燈', !!P.flash]].forEach(([id, name, set]) => cats.append(item({
