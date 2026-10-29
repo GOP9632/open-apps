@@ -477,7 +477,8 @@ private struct ToastHostLayer: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .onAppear { store.toastSheets += 1 }
-        .onDisappear { store.toastSheets -= 1 }
+        // 帶動畫：Root 那條照它的轉場從下面滑進、滑出，不會在 sheet 收完時一下子冒出來
+        .onAppear { withAnimation(.snappy(duration: 0.3)) { store.toastSheets += 1 } }
+        .onDisappear { withAnimation(.snappy(duration: 0.3)) { store.toastSheets -= 1 } }
     }
 }

@@ -1385,7 +1385,7 @@ struct TripPanel: View {
             .padding(.horizontal, 14).padding(.bottom, 8)
             .transition(.move(edge: .bottom).combined(with: .opacity))
             // 訊息條貼在評分卡上面，不壓到星星和 ✕（Root 的訊息條從安全區底往上算）
-            .onGeometryChange(for: CGFloat.self) { MapTab.windowHeight - $0.frame(in: .global).minY } action: { mode.goInset = max(0, $0 - MapTab.safeBottom) }
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in mode.goInset = max(0, MapTab.windowHeight - y - MapTab.safeBottom) }
             .onDisappear { mode.goInset = 0 }
         }
     }
