@@ -349,17 +349,25 @@ export function flashStats(canvas, seg, mask, geom) {
   };
 }
 
+// 相機閃光燈的 AI 模型（flashnet.js，第 2 版）：調色表算好了、臉上皮膚的顏色又在訓練照見過的範圍裡，就整個用模型、不用公式。
+// 留下來驗收的 20 張和評審的 8 張，平均差 Hypic 全圖 22.9 → 19.4、皮膚 24.7 → 18.6（plans/修圖/閃光燈評審/AI模型_第2版）。
+// 只有評審 05 變差：滿臉藍紫色的光，膚色比例（flashStats 的 cs）離一般膚色 0.74，訓練的 139 張最遠才 0.45，
+// 模型沒學過要把這種色光洗掉，所以超過 NET_CAST 的照舊用公式（公式有往標準膚色拉）
+const NET_CS = [1.3, 0.94, 0.7], NET_CAST = 0.55;
+export const flashNetOk = base => !!base.fnet && !!base.flashSt && Math.max(...base.flashSt.cs.map((v, i) => Math.abs(Math.log(Math.max(v, 1e-3) / NET_CS[i])))) < NET_CAST;
+
 // 參數 → gl.js 要的 fx.lit、fx.flash
 export function litParams(P, base, geo) {
   const L = LIGHTS.find(x => x.id === P.light), F0 = FLASHES.find(x => x.id === P.flash);
+  const net = F0?.cam && flashNetOk(base) ? base.fnet : null;
   // wo：舊版佔多少（見 FLASH_EVEN、FLASH_BG）。同時開打光時不混（混合要用打光前的顏色），照中間值二選一
   const st = base.flashSt, ss = (v, [a, b]) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
   const w = st ? ss(st.even, FLASH_EVEN) * ss(st.Lb / st.Lh, FLASH_BG) : 0;
   const wo = L ? (w >= 0.5 ? 1 : 0) : w, old = wo > 0, neu = wo < 1;
   // adj：這個樣式就是調整 › 閃光燈換個強度（舊版、公式各自的倍數）
-  const Fl = F0?.adj ? null : F0, adjF = m => Math.max(0, P.flashFill || 0, F0?.adj ? Math.min(100, P.flashAmt * m) : 0) / 100;
+  const Fl = F0?.adj || net ? null : F0, adjF = m => Math.max(0, P.flashFill || 0, F0?.adj ? Math.min(100, P.flashAmt * m) : 0) / 100;
   const ff = adjF(F0?.adjOld), ffN = adjF(F0?.adj);
-  if (!L && !Fl && !ff && !ffN) return {};
+  if (!L && !Fl && !ff && !ffN && !net) return {};
   const A = lightAnchor(base, geo), W = base.canvas.width, H = base.canvas.height;
   const gw = geo?.w || W, gh = geo?.h || H, hFace = geo ? geo.max * 0.8 : 0;
   const lights = [];
@@ -439,5 +447,7 @@ export function litParams(P, base, geo) {
   const flashF = neu && (camOn || ffN) ? [famt, camOn ? 1 : 0, 0, wo] : null;
   const flashP = camOn ? FLASH_CAM : FLASH_ADJ, flashS = [fs.Lh, fs.Lb, fs.Lm ?? 0.45, st ? ss(st.even, FLASH_FLAT) : 0], flashCs = fs.cs, flashCast = fs.cast;
   const flashR = [FLASH_R * A.Fpx / W, FLASH_R * A.Fpx / H];
-  return { lit: { lights, ambS, ambB, bgDepth, thick: 1.3 * A.F, flashF, flashR, flashP, flashS, flashCs, flashCast, flashO, flashG, flashC, flashT, flashX, cap: L && LIGHT_CAP[L.id] }, flash };
+  // 模型：滑桿在 Hypic 預設那格就是成品（混合 1），超過再往外推一點（跟公式一樣）
+  const flashM = net ? { amt: Math.min(1, P.flashAmt / F0.def) * (1 + 0.6 * Math.max(0, P.flashAmt / F0.def - 1)), g: net.g } : null;
+  return { lit: { lights, ambS, ambB, bgDepth, thick: 1.3 * A.F, flashF, flashR, flashP, flashS, flashCs, flashCast, flashO, flashG, flashC, flashT, flashX, flashM, cap: L && LIGHT_CAP[L.id] }, flash };
 }

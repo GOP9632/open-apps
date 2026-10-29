@@ -150,7 +150,12 @@ void main(){
 const FS_MAIN = `#version 300 es
 precision highp float;
 in vec2 vUV;
-uniform sampler2D uImg, uSmooth, uMask, uSeg, uLut, uMask2, uSegB, uBlurS, uBgA, uBgB, uOver, uEx, uBgImg, uBgMid, uBgFar, uMakeup;
+uniform sampler2D uImg, uSmooth, uMask, uSeg, uLut, uMask2, uSegB, uBlurS, uBgA, uBgB, uOver, uEx, uBgImg, uBgMF, uMakeup;
+// 換背景照片的中等模糊、很糊兩份放在同一張貼圖（uBgMF）：中等的在左邊 uBgM.xy 大小、很糊的接在右邊 uBgM.zw 大小，uBgMT = 1 ÷ 貼圖大小。
+// 貼圖單元用滿 16 個（iPhone 的上限），這樣才空得出一個給相機閃光燈的調色表（uFGrid）
+uniform vec4 uBgM; uniform vec2 uBgMT;
+// 相機閃光燈 AI 模型（flashnet.js）：uFGrid 調色表、uFG1／uFG2 引導值的小網路、uFlashM 跟原圖混合的比例（0 = 不用模型）
+uniform highp sampler3D uFGrid; uniform vec4 uFG1[16], uFG2[3]; uniform float uFlashM;
 uniform vec2 uSize, uOut;  // 照片大小、畫面大小（照片像素）。增高拉的時候畫面比照片高，平常一樣
 uniform int uWn, uWm;  // uWm：最前面幾個是手動塑身（不受背景保護，照 Hypic）
 uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）；骨架收窄是 A、B 兩端；拉長是 y0、y1、強度、照片高
@@ -664,6 +669,25 @@ void main(){
     if (uFlashF.w > 0.0) col = mix(col, cOld, uFlashF.w);
   }
 
+  // 光影 › 相機閃光燈的 AI 模型（flashnet.js，我們自己練的）：調色表 uFGrid 是照片切 32×32 格 × 8 層引導值，
+  // 每格 R、G、B 三列，每列一個 RGBA = 三個乘數＋一個加數（新顏色 = A × 舊顏色 + b）。
+  // 引導值：這一點的 RGB、皮膚、頭髮、人、臉遮罩 R 過一層 8 個的小網路（uFG1、uFG2）；查表時位置、引導值都內插（三線性）。
+  // 皮膚、頭髮從分類圖還原（見下面 uSeg 的說明）：頭髮 = 2G − 1、五官 = 1 − 2G，皮膚 = 挖掉五官的皮膚 B ＋ 五官（人像分割把牙齒也算皮膚）
+  if (uFlashM > 0.0) {
+    vec4 sg = texture(uSeg, uv);
+    float hr = max(2.0 * sg.g - 1.0, 0.0), sk = min(sg.b + max(1.0 - 2.0 * sg.g, 0.0), 1.0);
+    vec4 ga = vec4(col, sk), gb = vec4(hr, sg.r, texture(uMask, uv).r, 1.0);
+    float z = uFG2[2].x;
+    for (int j = 0; j < 8; j++) z += max(dot(uFG1[j], ga) + dot(uFG1[j + 8], gb), 0.0) * uFG2[j / 4][j % 4];
+    z = 1.0 / (1.0 + exp(-z));
+    // 格子座標照 PyTorch 的 grid_sample（align_corners）：第一個、最後一個像素對到第一格、最後一格的中心
+    vec2 gi = (uv * uSize - 0.5) / max(uSize - 1.0, vec2(1.0)) * 31.0 + 0.5;
+    vec3 t = vec3(gi.x / 32.0, gi.y / 96.0, (z * 7.0 + 0.5) / 8.0);
+    vec4 a0 = texture(uFGrid, t), a1 = texture(uFGrid, t + vec3(0.0, 1.0 / 3.0, 0.0)), a2 = texture(uFGrid, t + vec3(0.0, 2.0 / 3.0, 0.0));
+    vec3 m = clamp(vec3(dot(a0.rgb, col) + a0.a, dot(a1.rgb, col) + a1.a, dot(a2.rgb, col) + a2.a), 0.0, 1.0);
+    col = clamp(mix(col, m, uFlashM), 0.0, 1.0);
+  }
+
   if (uFAmt > 0.0) {
     float k = uFAmt;
     // 閃光燈：偏冷白，亮的地方微微暈開
@@ -811,7 +835,9 @@ void main(){
     if (uBgMode < 1.5) { o = vec4(col * a, a); return; }
     vec3 B = uBgColor;
     if (uBgMode > 2.5) {
-      vec3 Bs = texture(uBgImg, vUV).rgb, Bm = texture(uBgMid, vUV).rgb, Bf = texture(uBgFar, vUV).rgb;
+      // 中等、很糊兩份在同一張貼圖：各自的範圍裡取樣，邊上一格以外夾住（跟分開兩張貼圖時 CLAMP_TO_EDGE 一樣）
+      vec2 cm = uBgM.xy, cf = uBgM.zw;
+      vec3 Bs = texture(uBgImg, vUV).rgb, Bm = texture(uBgMF, clamp(vUV * cm, vec2(0.5), cm - 0.5) * uBgMT).rgb, Bf = texture(uBgMF, (vec2(cm.x, 0.0) + clamp(vUV * cf, vec2(0.5), cf - 0.5)) * uBgMT).rgb;
       B = uBgBlurAmt < 0.5 ? mix(Bs, Bm, uBgBlurAmt * 2.0) : mix(Bm, Bf, uBgBlurAmt * 2.0 - 1.0);
       // 人的色調和亮度往新背景靠，看起來像在同一個光線下拍的
       col = clamp(col * mix(vec3(1.0), uHarm, uHarmAmt), 0.0, 1.0);
@@ -937,7 +963,9 @@ export class Renderer {
     this.blank(this.tMask2, 0); this.blank(this.tSegB, 255);
     this.tOver = this.tex(); this.tEx = this.tex(); this.tBgImg = this.tex();
     this.blank(this.tOver, 0); this.blank(this.tEx, 255); this.blank(this.tBgImg, 255);
-    this.fbBm = [this.fbo(), this.fbo()]; this.fbBf = [this.fbo(), this.fbo()];
+    this.fbBm = [this.fbo(), this.fbo()]; this.fbBf = [this.fbo(), this.fbo()]; this.fbBmf = this.fbo();
+    // 相機閃光燈的調色表（3D 貼圖，見 setFlashGrid）；還沒有的時候放一格 0
+    this.tFGrid = gl.createTexture(); this.setFlashGrid(null);
     this.fbA = this.fbo(); this.fbB = this.fbo();
     this.fbS = [this.fbo(), this.fbo()]; this.fbM = [this.fbo(), this.fbo()]; this.fbL = [this.fbo(), this.fbo()];
     this.fbGs = [this.fbo(), this.fbo()]; this.fbGb = [this.fbo(), this.fbo()]; this.glow = null;
@@ -1149,6 +1177,20 @@ export class Renderer {
     this.size(this.fbBf, 64, src.width, src.height);
     this.pass(this.pCopy, this.fbBf[0], this.fbBf[0].w, this.fbBf[0].h, this.fbBm[0].t); gl.drawArrays(gl.TRIANGLES, 0, 3);
     this.gauss(this.fbBf, 3);
+    // 兩份照原樣（一格對一格）抄進同一張貼圖：中等的在左、很糊的接在右邊（主 shader 的 uBgMF）
+    const m = this.fbBm[0], f = this.fbBf[0];
+    this.sizeFbo(this.fbBmf, m.w + f.w, Math.max(m.h, f.h));
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.fbBmf.f);
+    for (const [s, x] of [[m, 0], [f, m.w]]) { gl.bindFramebuffer(gl.READ_FRAMEBUFFER, s.f); gl.blitFramebuffer(0, 0, s.w, s.h, x, 0, x + s.w, s.h, gl.COLOR_BUFFER_BIT, gl.NEAREST); }
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+  }
+  // 相機閃光燈的調色表（flashnet.js forward 的結果：寬 32、高 96、深 8，每格 RGBA）。半精度浮點，硬體做三線性內插
+  setFlashGrid(d) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_3D, this.tFGrid);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_3D, k, v);
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, d ? 32 : 1, d ? 96 : 1, d ? 8 : 1, 0, gl.RGBA, gl.FLOAT, d || new Float32Array(4));
+    this.fGrid = d || null;
   }
   setMask2(src) { src ? this.upload(this.tMask2, src) : this.blank(this.tMask2, 0); }
   setSegB(src) { src ? this.upload(this.tSegB, src) : this.blank(this.tSegB, 255); this.geo = null; }
@@ -1231,8 +1273,10 @@ export class Renderer {
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     const texs = [[this.tImg, 'uImg'], [this.tSmooth, 'uSmooth'], [this.tMask, 'uMask'], [this.tSeg, 'uSeg'], [this.tLut, 'uLut'], [this.tMask2, 'uMask2'], [this.tSegB, 'uSegB'],
       [this.fbS[0].t, 'uBlurS'], [this.fbM[0].t, 'uBgA'], [fx.bokeh ? this.fbK.t : this.fbL[0].t, 'uBgB'], [this.tOver, 'uOver'], [this.tEx, 'uEx'], [this.tBgImg, 'uBgImg'],
-      [this.fbBm[0].t, 'uBgMid'], [this.fbBf[0].t, 'uBgFar'], [this.tMakeup, 'uMakeup']];
+      [this.fbBmf.t, 'uBgMF'], [this.tMakeup, 'uMakeup']];
     texs.forEach(([t, name], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(u[name], i); });
+    gl.activeTexture(gl.TEXTURE0 + texs.length); gl.bindTexture(gl.TEXTURE_3D, this.tFGrid); gl.uniform1i(u.uFGrid, texs.length);
+    { const m = this.fbBm[0], f = this.fbBf[0], b = this.fbBmf; gl.uniform4f(u.uBgM, m.w, m.h, f.w, f.h); gl.uniform2f(u.uBgMT, 1 / (b.w || 1), 1 / (b.h || 1)); }
     gl.uniform2f(u.uSize, this.w, this.h); gl.uniform2f(u.uOut, this.w, ho);
     const n = Math.min(warps.length, MAX_WARPS), w1 = new Float32Array(MAX_WARPS * 4), w2 = new Float32Array(MAX_WARPS * 4), w3 = new Float32Array(MAX_WARPS * 2);
     for (let i = 0; i < n; i++) {
@@ -1252,6 +1296,10 @@ export class Renderer {
     gl.uniform1i(u.uLn, ls.length); gl.uniform4fv(u.uLPos, lp); gl.uniform4fv(u.uLPar, lr); gl.uniform4fv(u.uLExt, le); gl.uniform4fv(u.uLDir, ld); gl.uniform3fv(u.uLCol, lc);
     gl.uniform1f(u.uLAmbS, L?.ambS ?? 1); gl.uniform1f(u.uLAmbB, L?.ambB ?? 1); gl.uniform1f(u.uBgDepth, L?.bgDepth ?? 0); gl.uniform1f(u.uThick, L?.thick ?? 1e4); const ff = L?.flashF;
     gl.uniform4fv(u.uFlashF, ff ? [ff[0], ff[1], this.hasCls ? 1 : 0, ff[3] || 0] : [0, 0, 0, 0]); gl.uniform2fv(u.uFlashR, L?.flashR || [0, 0]);
+    // 相機閃光燈 AI 模型：fx.lit.flashM 是跟原圖混合的比例，引導值網路的權重（flashM.g）沒換就不重傳
+    const fm = L?.flashM && this.fGrid ? L.flashM : null;
+    gl.uniform1f(u.uFlashM, fm ? fm.amt : 0);
+    if (fm && this.fgFor !== fm.g) { gl.uniform4fv(u.uFG1, fm.g.g1); gl.uniform4fv(u.uFG2, fm.g.g2); this.fgFor = fm.g; }
     gl.uniform4fv(u.uFlashO, L?.flashO || [0, 0, 0, 0]); gl.uniform2fv(u.uFlashG, L?.flashG || [0, 1]); gl.uniform4fv(u.uFlashC, L?.flashC || [0, 0, 1, 1]); gl.uniform3fv(u.uFlashT, L?.flashT || [1, 1, 1]); gl.uniform4fv(u.uFlashX, L?.flashX || [0, 0, 0, 0]);
     if (ff) { gl.uniform4fv(u.uFP, L.flashP); gl.uniform4fv(u.uFS, L.flashS); gl.uniform3fv(u.uFCs, L.flashCs); gl.uniform3fv(u.uFCast, L.flashCast); }
      gl.uniform2fv(u.uLCap, L?.cap || [0, 0]);

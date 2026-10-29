@@ -6,10 +6,11 @@ import { skinMask } from './ai.js';
 import { flashStats } from './relight.js';
 import { prepSkin } from './skin.js';
 import { prepHair } from './hair.js';
+import { flashGrid } from './flashnet.js';
 
 const bitmap = c => c && typeof c.transferToImageBitmap === 'function' ? c.transferToImageBitmap() : c;
 
-onmessage = e => {
+onmessage = async e => {
   const { id, op, a } = e.data;
   try {
     // a.img：縮成分割圖大小的照片；照片原尺寸是 a.W × a.H
@@ -26,6 +27,11 @@ onmessage = e => {
     } else if (op === 'hair') {
       out = prepHair(photo, a.seg, a.faces);
       for (const k of ['M', 'F', 'HF', 'BF']) tr.push(out[k] = bitmap(out[k]));
+    } else if (op === 'flashnet') {
+      // 相機閃光燈 AI 模型的調色表（flashnet.js）：千萬像素的照片也要將近一秒，所以在這裡算
+      out = await flashGrid(a);
+      tr = [out.grid.buffer];
+      a.person?.close?.(); a.mask?.close?.();
     } else throw new Error('不認得 ' + op);
     a.img?.close?.(); a.bimg?.close?.();
     postMessage({ id, out }, tr.filter(Boolean));

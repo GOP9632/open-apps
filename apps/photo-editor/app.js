@@ -21,6 +21,7 @@ import { FONTS, T0, TEXT_COLORS, TEXT_FX, TEMPLATES, applyTemplate, upgradeText,
 import { initCollage, openCollage } from './collage.js';
 import { CATS as TPL_CATS } from './templates.js';
 import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightPosOf, lightGrad, flashStats } from './relight.js';
+import { flashGrid, fullSize } from './flashnet.js';
 import { enhanceRanges, paintRange, setGrad, nudge, canvasZoom, pinch } from './ui.js';
 import { tabLooks } from './looks.js';
 import { perfReq, perfDrawn, perfBase, perfSkip } from './perf.js';
@@ -525,7 +526,7 @@ function alphaNow(c) {
 function applyBase() {
   R.setImage(base.canvas);
   R.setMask(base.mask); R.setMask2(base.mask2);
-  R.setSeg(base.matte || base.seg?.person); R.setSegB(base.segB);
+  R.setSeg(base.matte || base.seg?.person); R.setSegB(base.segB); R.setFlashGrid(base.fnet?.grid || null);
   layout(); render();
   if (!base.faces) findFaces();
   if (needSeg() && !base.seg) findPerson(P.bg === 'keep');
@@ -620,6 +621,24 @@ const idle = f => (window.requestIdleCallback || (g => setTimeout(g, 300)))(f, {
 let lastInput = 0;
 for (const ev of ['pointerdown', 'pointermove', 'wheel', 'keydown']) addEventListener(ev, e => { if (ev !== 'pointermove' || e.buttons) lastInput = performance.now(); }, { capture: true, passive: true });
 const whenStill = f => { const w = 1000 - (performance.now() - lastInput); if (w > 0) setTimeout(() => whenStill(f), w + 50); else idle(f); };
+// 光影 › 相機閃光燈的 AI 模型（flashnet.js）：調色表每張照片算一次，在背景執行緒算（千萬像素的照片要將近一秒）。
+// 一進光影分頁就先算（要等找到臉、人像、美顏遮罩），點到相機閃光燈時通常已經好了；還沒好的那一下先用公式（relight.js）。
+// 照片先縮到長邊 1024 再傳過去（模型看的是長邊 512），縮法用瀏覽器的高品質縮小
+function getFlashNet(b = base) {
+  if (b.fnetP || !b.faces?.length || !b.seg || !b.mask || !b.geoms?.[0]) return b.fnetP || null;
+  if (performance.now() - (b.fnetErr ?? -1e9) < 30000) return null;  // 失敗（沒網路下載不到權重）過 30 秒再試，不要每畫一格就試一次
+  const W = b.canvas.width, H = b.canvas.height, [fw] = fullSize(W, H), k = Math.min(1, 2 * fw / W), geom = b.geoms[0], seg = b.seg, mask = b.mask;
+  const small = () => {
+    const c = newCanvas(Math.max(1, Math.round(W * k)), Math.max(1, Math.round(H * k))), x = c.getContext('2d');
+    x.imageSmoothingQuality = 'high'; x.drawImage(b.canvas, 0, 0, c.width, c.height);
+    return c;
+  };
+  b.fnetP = prep('flashnet', async () => ({ W, H, geom, seg: segPart(seg, 'skin', 'hair'), img: await createImageBitmap(small()), person: await createImageBitmap(seg.person), mask: await createImageBitmap(mask) }),
+    () => flashGrid({ W, H, geom, seg, img: small(), person: seg.person, mask }))
+    .then(r => { b.fnet = r; if (share(b, 'fnetP', ['fnet'])) { R.setFlashGrid(r.grid); render(); } return r; })
+    .catch(e => { console.warn('flashnet', e); b.fnetP = null; b.fnetErr = performance.now(); return null; });
+  return b.fnetP;
+}
 function findFaces() {
   const b = base;
   if (b.facesP) return b.facesP;
@@ -1097,6 +1116,7 @@ function syncTex() {
 function effects() {
   const fx = { faces: base.geoms };
   if (P.flashFill > 0 && !base.segP) getSeg(base);
+  if (tab === 'light' || FLASHES.find(F => F.id === P.flash)?.cam) getFlashNet();
   if (P.light || P.flash || P.flashFill > 0) Object.assign(fx, litParams(P, base, ensureGeo()));
   const e = fxById(P.fx);
   if (e) { fx.fxMode = e.mode; fx.fxAmt = P.fxAmt / 100; }
@@ -1628,7 +1648,7 @@ async function mergeFilter() {
     P = { ...now, filter: 'none', filterAmt: P0.filterAmt, ...pre(P0) };
     // 臉、人像這些偵測結果還是同一張照片，留著不用重算；濾鏡縮圖要照新照片重算
     const keep = { ...base };
-    for (const k of ['canvas', 'thumbs', 'thumbSrc', 'harm', 'small', 'lookThumbs', 'lookSrc', 'autoSet']) delete keep[k];
+    for (const k of ['canvas', 'thumbs', 'thumbSrc', 'harm', 'small', 'lookThumbs', 'lookSrc', 'autoSet', 'fnet', 'fnetP']) delete keep[k];
     setBase(out, keep); commit(); showTab(tab);
     const parts = ['濾鏡', PRE_LUT.some(k => now[k]) && '調整', (now.light || now.flash) && '打光'].filter(Boolean);
     toast(parts.length > 1 ? `已合併（${parts.join('、')}都畫進照片了），可以再選一個濾鏡疊上去` : '已合併，可以再選一個濾鏡疊上去');
@@ -2183,6 +2203,7 @@ function ensureGeo() {
 }
 function tabLight(box) {
   if (!base.faces) findFaces();
+  getFlashNet();
   const need = () => { if (!base.seg) findPerson(true); };
   const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
   [...LIGHT_CATS.map(c => [c.id, c.name, c.items.some(x => x.id === P.light)]), ['flash', '閃光燈', !!P.flash]].forEach(([id, name, set]) => cats.append(item({
@@ -2197,7 +2218,7 @@ function tabLight(box) {
     })));
     if (P.flash) setSlider('閃光', 0, 100, P.flashAmt, v => { P.flashAmt = v; render(); }, FLASHES.find(F => F.id === P.flash)?.def ?? 60);
     else hideSlider();
-    $('#note').textContent = '模擬開閃光燈拍的照片：臉亮、背景暗、後面有影子。醒圖的閃光燈是上傳到雲端用 AI 算，這裡全部在手機上算。';
+    $('#note').textContent = '模擬開閃光燈拍的照片：臉亮、背景暗、後面有影子。醒圖的閃光燈是上傳到雲端用 AI 算；這裡的相機閃光燈是我們自己練的小 AI 模型，全部在手機上算。';
     return;
   }
   const cat = LIGHT_CATS.find(c => c.id === lightSec);
@@ -3701,4 +3722,4 @@ addEventListener('keyup', e => { if (e.key === ' ' && spaceCmp) { spaceCmp = fal
 addEventListener('blur', () => { if (spaceCmp) { spaceCmp = false; cmp(false); } });
 
 // 給自動測試用
-window.__editor = { toSrc: () => srcMapper(), loadFile, get P() { return P; }, get base() { return base; }, get stickers() { return stickers; }, get texts() { return texts; }, redraw: () => { drawTexts(); drawStickers(); }, showTab, save, render, thumb: () => draftThumb(), get R() { return R; } };
+window.__editor = { toSrc: () => srcMapper(), loadFile, get P() { return P; }, get base() { return base; }, get stickers() { return stickers; }, get texts() { return texts; }, redraw: () => { drawTexts(); drawStickers(); }, showTab, save, compose, render, thumb: () => draftThumb(), get R() { return R; } };
