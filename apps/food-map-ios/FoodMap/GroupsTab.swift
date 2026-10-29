@@ -590,7 +590,7 @@ struct RoundView: View {
     @State private var detail: Place?
     @State private var match: Store.Match?
     @State private var held: Store.Match?      // 群組分頁藏著時來的配對：回到群組分頁再跳
-    @Environment(\.tabActive) private var tabActive
+    @Environment(\.tabActive) private var tabActive   // 只拿來觸發下面的 onChange；.task 裡讀到的是舊值，要不要跳看 store.tab
     @State private var dropping = false
     @State private var history: [String] = []
     @State private var finishing = false      // 最後一張正在飛走：飛完才換結果頁
@@ -611,18 +611,26 @@ struct RoundView: View {
             .presentationBackground(.clear)
         }
         .onChange(of: tabActive) { _, on in
-            if on, match == nil, let m = held { held = nil; celebrate(m) }
+            if on, match == nil, let m = held { Flag.log("[R3-1] 回到群組，放出留著的配對"); held = nil; celebrate(m) }
         }
         // 驗收用 -fakeMatch：進來就跳一次配對畫面（沒有配對就拿第一張當配對）
+        // -fakeMatchAfter 12：進來 12 秒才跳，留時間點通知離開群組分頁（驗 R3-1）；-fakeMatchAway：1 秒後自己走「點了收藏好了通知」那條路
         .task {
             guard Flag.on("-fakeMatch"), let r = store.rounds.first(where: { $0.id == rid }) else { return }
-            try? await Task.sleep(for: .seconds(1))
+            let wait = Flag.value("-fakeMatchAfter").flatMap { Double($0) } ?? 1
+            Flag.log("[R3-1] 假配對 \(wait) 秒後跳")
+            if Flag.on("-fakeMatchAway") {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                NotificationCenter.default.post(name: .openSaved, object: nil)
+            }
+            do { try await Task.sleep(for: .seconds(wait)) } catch { Flag.log("[R3-1] 假配對取消"); return }
             if let m = store.matches(r).first ?? store.todo(r).first.map({ Store.Match(place: $0, who: store.membersOf(r.group_id), all: true) }) { celebrate(m) }
         }
         // 朋友滑的結果每幾秒拿一次，有新配對就跳出來
         .task {
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(5))
+                // 離開這輪（task 被取消）就停：用 try? 的話 sleep 一被取消就往下跑，會再震一下、多打一次雲端
+                do { try await Task.sleep(for: .seconds(5)) } catch { return }
                 guard let r = store.rounds.first(where: { $0.id == rid }) else { continue }
                 let before = Set(store.matches(r).filter(\.all).map(\.id))
                 await store.syncRound(r)
@@ -764,8 +772,12 @@ struct RoundView: View {
     }
 
     private func celebrate(_ m: Store.Match) {
-        // 群組分頁藏著（Root.page 用 opacity 藏）：fullScreenCover 會蓋到別的分頁上，先留著，回到群組分頁再跳
-        guard tabActive else { held = m; return }
+        // 群組分頁藏著（Root.page 用 opacity 藏）：fullScreenCover 會蓋到別的分頁上，先留著，回到群組分頁再跳。
+        // 讀 store.tab、不讀 tabActive：輪詢和 -fakeMatch 的 .task 用的是進這頁那一刻的 self，
+        // @Environment 的值存在 struct 裡，那份複本之後不會更新；store 是 class，讀到的是現在的分頁。
+        // 2 = 群組分頁，RoundView 只在群組分頁推進來
+        guard store.tab == 2 else { held = m; Flag.log("[R3-1] 先留著 \(m.place.name) tab=\(store.tab) env=\(tabActive)"); return }
+        Flag.log("[R3-1] 跳出 \(m.place.name) tab=\(store.tab) env=\(tabActive)")
         Haptic.success()
         var t = Transaction(); t.disablesAnimations = true
         withTransaction(t) { match = m }   // 關掉系統往上滑的轉場，由 MatchView 自己淡入
@@ -819,6 +831,7 @@ struct MatchView: View {
         }
         .opacity(shown ? 1 : 0)
         .onAppear {
+            Flag.log("[R3-1] 配對畫面出現 tab=\(store.tab)")
             withAnimation(.easeOut(duration: 0.2)) { shown = true }
             if reduce { withAnimation(.easeOut(duration: 0.2)) { pop = true; heart = true }; Haptic.success(); return }
             withAnimation(.easeIn(duration: 0.45)) { met = true } completion: {

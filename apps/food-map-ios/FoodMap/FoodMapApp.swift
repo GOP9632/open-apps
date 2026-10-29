@@ -396,6 +396,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     func userNotificationCenter(_ c: UNUserNotificationCenter, didReceive r: UNNotificationResponse) async {
         // 「收藏好了」「之前收藏過了」都在收藏裡，點了帶去收藏頁；「沒收藏到」照舊打開原本的畫面
         let kind = r.notification.request.content.userInfo["kind"] as? String
+        Flag.log("[notify] 點了通知 kind=\(kind ?? "nil")")
         guard kind == "saved" || kind == "dup" else { return }
         await MainActor.run {
             Store.openSavedPending = true
