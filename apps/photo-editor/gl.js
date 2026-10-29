@@ -28,17 +28,18 @@ vec2 liq(sampler2D t, vec2 uv, float s){
 }`;
 const FS_DISP = `#version 300 es
 precision highp float; precision highp int;
-in vec2 vUV; uniform sampler2D uTex, uDisp, uSegB, uLiq; uniform vec2 uSize; uniform float uStep, uProtect, uLiqStep; out vec4 o;
+in vec2 vUV; uniform sampler2D uTex, uDisp, uSegB, uLiq; uniform vec2 uSize, uOut; uniform float uStep, uProtect, uLiqStep; out vec4 o;
 vec2 dec(vec4 e, float s){ e *= 255.0; return (vec2(e.r * 256.0 + e.b, e.g * 256.0 + e.a) - 32768.0) * s; }${LIQ_GLSL}
 void main(){
-  // 推臉（重新塑形）在最上層：先照推臉的位移找到「臉型變形後的圖」上的哪一點，再照臉型的位移回原圖
-  vec2 q = vUV;
-  if (uLiqStep > 0.0) q += liq(uLiq, vUV, uLiqStep) / uSize;
-  vec2 d = (q - vUV) * uSize;
+  // 推臉（重新塑形）在最上層：先照推臉的位移找到「臉型變形後的圖」上的哪一點，再照臉型的位移回原圖。
+  // v：這一點在照片上的位置（增高拉的時候畫面比照片高，uOut 是畫面大小；平常兩個一樣）
+  vec2 v = vUV * uOut / uSize, q = v;
+  if (uLiqStep > 0.0) q += liq(uLiq, v, uLiqStep) / uSize;
+  vec2 d = (q - v) * uSize;
   if (uStep > 0.0) d += dec(texture(uDisp, q), uStep);
   // 背景保護（同主 shader）：位移乘上擴張羽化過的人像遮罩
-  if (uProtect > 0.5) d *= smoothstep(0.02, 0.3, texture(uSegB, vUV).r);
-  o = texture(uTex, vUV + d / uSize);
+  if (uProtect > 0.5) d *= smoothstep(0.02, 0.3, texture(uSegB, v).r);
+  o = texture(uTex, vUV + d / uOut);
 }`;
 
 // 推臉的位移場：每個像素記「要回（臉型變形後的）圖上哪裡取」，跟 warpfield 一樣用 RGBA8 存 16 位元。
@@ -140,7 +141,7 @@ const FS_MAIN = `#version 300 es
 precision highp float;
 in vec2 vUV;
 uniform sampler2D uImg, uSmooth, uMask, uSeg, uLut, uMask2, uSegB, uBlurS, uBgA, uBgB, uOver, uEx, uBgImg, uBgMid, uBgFar, uMakeup;
-uniform vec2 uSize;
+uniform vec2 uSize, uOut;  // 照片大小、畫面大小（照片像素）。增高拉的時候畫面比照片高，平常一樣
 uniform int uWn, uWm;  // uWm：最前面幾個是手動塑身（不受背景保護，照 Hypic）
 uniform vec4 uW1[${MAX_WARPS}]; // 中心 xy、位移 xy（像素）；骨架收窄是 A、B 兩端；拉長是 y0、y1、強度、照片高
 uniform vec4 uW2[${MAX_WARPS}]; // 半徑、種類(0 推移 1 放大 2 骨架收窄 3 往下拉長 4 整段拉長 5 手動瘦身)、強度、橢圓比（收窄：只收一點的那側）
@@ -222,7 +223,7 @@ vec3 lut(vec3 c, float side){
 
 void main(){
   // 變形：輸出的每個像素往回找要取原圖哪一點
-  vec2 p = vUV * uSize, pM = p;
+  vec2 p = vUV * uOut, pM = p, vP = p / uSize;  // vP：這一點在照片上的位置（打光、霧照照片的位置算）
   for (int i = 0; i < ${MAX_WARPS}; i++) {
     if (i >= uWn) break;
     if (i == uWm) pM = p;
@@ -236,11 +237,11 @@ void main(){
       continue;
     }
     if (kind > 3.5) {
-      // 手動增高：y0~y1 這一段整段拉長 1+s 倍（s 負的是縮短），下面的部分壓回照片裡
-      float y0 = uW1[i].x, y1 = uW1[i].y, s = uW1[i].z, H = uW1[i].w, y1o = y0 + (y1 - y0) * (1.0 + s);
+      // 手動增高：y0~y1 這一段整段拉長 1+s 倍（s 負的是縮短），下面的部分往下移（畫面高 Ho 跟著變高；Ho = H 時壓回照片裡）
+      float y0 = uW1[i].x, y1 = uW1[i].y, s = uW1[i].z, H = uW1[i].w, Ho = uW2[i].z, y1o = y0 + (y1 - y0) * (1.0 + s);
       if (p.y > y0) {
         if (p.y < y1o) p.y = y0 + (p.y - y0) / (1.0 + s);
-        else p.y = y1 + (p.y - y1o) * (H - y1) / max(H - y1o, 1.0);
+        else p.y = y1 + (p.y - y1o) * (H - y1) / max(Ho - y1o, 1.0);
       }
       continue;
     }
@@ -451,7 +452,7 @@ void main(){
         spec += c * uLDir[i].y * pow(max(dot(N, Hv), 0.0), uLExt[i].x) * G * pw;
         // 光點（彩虹光點）：背景上看得到的發光小球
         if (uLExt[i].z > 1.5) {
-          vec2 dv = (vUV - uLPos[i].xy) * vec2(uSize.x / uSize.y, 1.0);
+          vec2 dv = (vP - uLPos[i].xy) * vec2(uSize.x / uSize.y, 1.0);
           orb += normalize(c + 1e-4) * exp(-dot(dv, dv) / 0.0012) * (1.0 - pw);
         }
         continue;
@@ -481,7 +482,7 @@ void main(){
     lit = 1.0 - (1.0 - lit) * (1.0 - min(orb, vec3(1.0)) * 0.9);
     // 逆光光暈：燈後面一團暖光，人的輪廓邊緣透光
     if (uHaze.w > 0.0) {
-      vec2 dh = (vUV - uHaze.xy) * vec2(uSize.x / uSize.y, 1.0);
+      vec2 dh = (vP - uHaze.xy) * vec2(uSize.x / uSize.y, 1.0);
       float g = exp(-dot(dh, dh) / (uHaze.z * uHaze.z));
       float edge = clamp(1.0 - abs(pw - 0.5) * 2.0, 0.0, 1.0);
       lit = 1.0 - (1.0 - lit) * (1.0 - uHazeCol * uHaze.w * (g * (1.0 - 0.6 * pw) + edge * g * 0.8));
@@ -778,7 +779,7 @@ void main(){
   if (uOAmt > 0.0) col = 1.0 - (1.0 - col) * (1.0 - texture(uOver, vUV).rgb * uOAmt);
 
   if (uVig != 0.0) {
-    vec2 d = (vUV - 0.5) * vec2(uSize.x / max(uSize.x, uSize.y), uSize.y / max(uSize.x, uSize.y)) * 2.0;
+    vec2 d = (vUV - 0.5) * vec2(uOut.x / max(uOut.x, uOut.y), uOut.y / max(uOut.x, uOut.y)) * 2.0;
     float v = smoothstep(0.35, 1.25, length(d));
     col = uVig > 0.0 ? col * (1.0 - uVig * v * 0.85) : mix(col, vec3(1.0), -uVig * v * 0.8);
   }
@@ -859,6 +860,7 @@ export class Renderer {
     this.tMakeup = this.tex(); this.setMakeup(null);
     this.hasLut = false;
     this.view = 1;  // 預覽的解析度（相對原圖），見 render
+    this.ext = 0;  // 畫面比照片多出來的列數（照片像素）：手動增高拉的時候照片跟著變高（app.js bmBake）
     this.fast = 1;  // 拖的時候先畫小一點：小圖的解析度（相對預覽），畫完再放大到畫布
     this.fbFast = this.fbo();
     // 推臉那一頁：主 shader 一律先畫到 fbPost，推的時候只重畫推到的那一塊（liqFrame）。mainFb：fbPost 裡現在是哪一次的結果
@@ -1057,7 +1059,7 @@ export class Renderer {
   // full：畫原尺寸（存檔用）；平常只畫到螢幕看得到的解析度（this.view），手機才不會每動一下就算整張千萬像素
   render(p, warps, fx = {}, full = false) {
     const gl = this.gl, u = this.pMain.u;
-    const s = full ? 1 : this.view, ow = Math.max(1, Math.round(this.w * s)), oh = Math.max(1, Math.round(this.h * s));
+    const s = full ? 1 : this.view, ho = this.h + this.ext, ow = Math.max(1, Math.round(this.w * s)), oh = Math.max(1, Math.round(ho * s));
     if (this.canvas.width !== ow || this.canvas.height !== oh) { this.canvas.width = ow; this.canvas.height = oh; }
     if (fx.bokeh) this.bokeh(fx.bokeh);
     // 有臉型變形時先畫到暫存，最後再變形一次畫到畫面
@@ -1070,11 +1072,11 @@ export class Renderer {
       [this.fbS[0].t, 'uBlurS'], [this.fbM[0].t, 'uBgA'], [fx.bokeh ? this.fbK.t : this.fbL[0].t, 'uBgB'], [this.tOver, 'uOver'], [this.tEx, 'uEx'], [this.tBgImg, 'uBgImg'],
       [this.fbBm[0].t, 'uBgMid'], [this.fbBf[0].t, 'uBgFar'], [this.tMakeup, 'uMakeup']];
     texs.forEach(([t, name], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(u[name], i); });
-    gl.uniform2f(u.uSize, this.w, this.h);
+    gl.uniform2f(u.uSize, this.w, this.h); gl.uniform2f(u.uOut, this.w, ho);
     const n = Math.min(warps.length, MAX_WARPS), w1 = new Float32Array(MAX_WARPS * 4), w2 = new Float32Array(MAX_WARPS * 4), w3 = new Float32Array(MAX_WARPS * 2);
     for (let i = 0; i < n; i++) {
       const w = warps[i];
-      if (w.type === 'stretch' || w.type === 'band') { w1.set([w.y0, w.y1, w.s, w.H], i * 4); w2.set([1, w.type === 'band' ? 4 : 3, 0, 0], i * 4); continue; }
+      if (w.type === 'stretch' || w.type === 'band') { w1.set([w.y0, w.y1, w.s, w.H], i * 4); w2.set([1, w.type === 'band' ? 4 : 3, w.Ho ?? w.H, 0], i * 4); continue; }
       if (w.type === 'seg') { w1.set([w.ax, w.ay, w.bx, w.by], i * 4); w2.set([w.r, 2, w.k, w.inner || 0], i * 4); w3.set([w.tc, w.ts], i * 2); continue; }
       if (w.type === 'slim') { w1.set([w.cx, w.cy, -Math.sin(w.a), Math.cos(w.a)], i * 4); w2.set([w.R, 5, w.k, w.Hh], i * 4); continue; }
       w1.set([w.cx, w.cy, w.dx || 0, w.dy || 0], i * 4);
@@ -1146,7 +1148,7 @@ export class Renderer {
     const gl = this.gl, d = this.pDisp;
     this.pass(d, null, ow, oh, fb.t);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.disp?.step > 0 ? this.disp.tex : null); gl.uniform1i(d.u.uDisp, 1);
-    gl.uniform2f(d.u.uSize, this.w, this.h); gl.uniform1f(d.u.uStep, this.disp?.step > 0 ? this.disp.step : 0);
+    gl.uniform2f(d.u.uSize, this.w, this.h); gl.uniform2f(d.u.uOut, this.w, this.h + this.ext); gl.uniform1f(d.u.uStep, this.disp?.step > 0 ? this.disp.step : 0);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, lq ? lq.A.t : null); gl.uniform1i(d.u.uLiq, 3);
     gl.uniform1f(d.u.uLiqStep, lq ? lq.step : 0);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.tSegB); gl.uniform1i(d.u.uSegB, 2);
@@ -1160,7 +1162,7 @@ export class Renderer {
   // 不用重畫（以前每一格都重畫，佔一格九成以上的時間，女友說推臉很卡），只把位移場改到的那一塊重新取樣到畫面上。
   // 畫不了（還沒有主 shader 的結果、預覽大小變了）回傳 false，app.js 就整張照常畫
   liqFrame(p) {
-    const m = this.mainFb, lq = this.lq, ow = Math.max(1, Math.round(this.w * this.view)), oh = Math.max(1, Math.round(this.h * this.view));
+    const m = this.mainFb, lq = this.lq, ow = Math.max(1, Math.round(this.w * this.view)), oh = Math.max(1, Math.round((this.h + this.ext) * this.view));
     if (!m || !lq?.n || m.ow !== ow || m.oh !== oh || this.canvas.width !== ow || this.canvas.height !== oh || m.fast !== (this.fast < 1 ? this.fast : 1)) return false;
     const d = lq.dirty;
     if (!d) return true;
@@ -1231,12 +1233,14 @@ export class Renderer {
   }
   // 看原圖：在同一張畫布上直接畫原圖（跟修好的圖一樣大小、一樣位置，放大時一樣清楚）。原圖貼圖放開就丟掉，不多佔記憶體
   drawOrig(src) {
-    const gl = this.gl, ow = Math.max(1, Math.round(this.w * this.view)), oh = Math.max(1, Math.round(this.h * this.view));
+    // 增高拉著（ext）：畫面比照片高，原圖畫在上面照片那麼高，下面留空
+    const gl = this.gl, ow = Math.max(1, Math.round(this.w * this.view)), oh = Math.max(1, Math.round((this.h + this.ext) * this.view)), ph = Math.max(1, Math.round(this.h * this.view));
     if (this.canvas.width !== ow || this.canvas.height !== oh) { this.canvas.width = ow; this.canvas.height = oh; }
     if (!this.tOrig) this.tOrig = this.tex();
     if (this.origSrc !== src) { this.upload(this.tOrig, src); this.origSrc = src; }
     this.pass(this.pCopy, null, ow, oh, this.tOrig); this.canvasOk = false;
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.viewport(0, oh - ph, ow, ph);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
   dropOrig() { if (this.tOrig) { this.gl.deleteTexture(this.tOrig); this.tOrig = null; this.origSrc = null; } }

@@ -37,7 +37,10 @@ export const BODY_MAN = [
 const MAN_REG = { bmRegH: null, bmRegS: null, bmRegZ: null };
 export const BODY_P0 = { ...Object.fromEntries([...BODY, ...BODY_MAN].map(b => [b[0], 0])), ...MAN_REG };
 export const REG_OF = { bmHeight: 'bmRegH', bmSlim: 'bmRegS', bmZoom: 'bmRegZ' };
-// 預設：找得到人就放在腿（增高）、腰（瘦身）、胸口（重塑），找不到就放照片中間。
+// 預設照 Hypic（兩張照片量的，plans/修圖/瘦身與手動塑身.md）：增高兩條線固定在照片高的 0.75、0.90；
+// 重塑的圓在照片中間偏上（0.5, 0.49），半徑是照片高的 9.2%；瘦身框高（中心到上下端）是照片高的 7.8%、不斜，
+// 找得到人就放在腰上（肩到髖 0.655 那列、左右照那列身體的實際範圍置中），弧線在腰寬的 1.62 倍（Hypic 全身照的框）；
+// 找不到人跟 Hypic 一樣放照片中間、寬高一樣。
 // 以前的草稿存的是方框 { x0, x1, y0, y1 }，換成現在的樣子
 export function manualRegion(key, body, p, W, H) {
   const r = p[REG_OF[key]];
@@ -47,21 +50,12 @@ export function manualRegion(key, body, p, W, H) {
     const cx = (r.x0 + r.x1) / 2, cy = (r.y0 + r.y1) / 2, hw = (r.x1 - r.x0) / 2;
     return key === 'bmSlim' ? { cx, cy, hw, hh: (r.y1 - r.y0) / 2 * H / W, a: 0 } : { cx, cy, r: hw };
   } else if (r) return r;
-  const ok = body?.ok && body.vis[LS] && body.vis[RS] && body.vis[LH] && body.vis[RH], m = Math.min(W, H) / W;
-  if (key === 'bmHeight') {
-    if (!ok) return { y0: 0.55, y1: 0.85 };
-    const hy = mid(body.pts[LH], body.pts[RH]).y / H, ay = [LA, RA].filter(i => body.vis[i]).map(i => body.pts[i].y / H);
-    return { y0: Math.min(0.9, hy), y1: Math.min(0.97, ay.length ? Math.max(...ay) : hy + 0.3) };
-  }
-  if (!ok) return key === 'bmSlim' ? { cx: 0.5, cy: 0.5, hw: 0.16 * m, hh: 0.16 * m, a: 0 } : { cx: 0.5, cy: 0.5, r: 0.15 * m };
-  const S = mid(body.pts[LS], body.pts[RS]), Hm = mid(body.pts[LH], body.pts[RH]), d = sub(Hm, S), sh = body.sh;
-  if (key === 'bmSlim') {
-    // 腰：肩到髖六成的地方，順著身體斜。收最多的地方在弧線往內一半，所以弧線放在腰寬的兩倍（Hypic 框在腰上也是這樣）
-    const c = lerp(S, Hm, 0.6), hw = Math.max((body.waistHW || 0) * 2, sh * 0.55);
-    return { cx: c.x / W, cy: c.y / H, hw: hw / W, hh: Math.max(Math.hypot(d.x, d.y) * 0.35, hw * 0.6) / W, a: Math.atan2(-d.x, d.y) };
-  }
-  const c = lerp(S, Hm, 0.3);
-  return { cx: c.x / W, cy: c.y / H, r: sh * 0.4 / W };
+  if (key === 'bmHeight') return { y0: 0.75, y1: 0.9 };
+  if (key === 'bmZoom') return { cx: 0.5, cy: 0.49, r: 0.092 * H / W };
+  const hh = 0.078 * H / W, ok = body?.ok && body.vis[LS] && body.vis[RS] && body.vis[LH] && body.vis[RH] && body.slimC;
+  if (!ok) return { cx: 0.5, cy: 0.49, hw: hh, hh, a: 0 };
+  const c = body.slimC;
+  return { cx: c.x / W, cy: c.y / H, hw: Math.min(0.45, Math.max(hh * 0.6, body.waistHW * 1.62 / W)), hh, a: 0 };
 }
 // 手動塑身的變形（W、H 是照片的像素大小）。強度照 Hypic 截圖量的（半身、全身兩張照片光流擬合取中間，見 plans/修圖/瘦身與手動塑身.md）
 export function manualWarps(body, p, W, H) {
@@ -69,11 +63,12 @@ export function manualWarps(body, p, W, H) {
   const h = (p.bmHeight || 0) / 100, sl = (p.bmSlim || 0) / 100, z = (p.bmZoom || 0) / 100;
   if (h) {
     // 兩條線之間整段一樣拉長（往左縮短）。Hypic 拉到底多出照片高的 4.8%，不管框多大（兩張照片量的：框佔 15%、26% 都是），
-    // 框越小拉得越多。Hypic 是照片變高，這裡照片大小不變，下面的壓回照片裡
-    const r = manualRegion('bmHeight', body, p, W, H), y0 = Math.min(r.y0, r.y1) * H, y1 = Math.max(r.y0, r.y1) * H;
-    let s = Math.max(-0.5, Math.min(1, 0.048 * H * h / Math.max(y1 - y0, 1)));
-    s = Math.min(s, (H - 4 - y1) / Math.max(y1 - y0, 1) * 0.7);
-    if (y1 - y0 > 4 && Math.abs(s) > 0.002) out.push({ type: 'band', y0, y1, s, H });
+    // 框越小拉得越多（最多拉成兩倍、壓成一半）。跟 Hypic 一樣照片跟著變高，框下面整段往下移、不壓（評審 M47）。
+    // ext：照片多出來幾列；拉的時候畫面上先這樣畫，離開增高才真的改照片（app.js bmBake）
+    // 線和多出來的列數都取整數：畫面上看到的跟真的拉長的照片一模一樣
+    const r = manualRegion('bmHeight', body, p, W, H), y0 = Math.round(Math.min(r.y0, r.y1) * H), y1 = Math.round(Math.max(r.y0, r.y1) * H), L = Math.max(y1 - y0, 1);
+    const ext = Math.round(Math.max(-0.5 * L, Math.min(L, 0.048 * H * h)));
+    if (y1 - y0 > 4 && ext) { out.push({ type: 'band', y0, y1, s: ext / L, H, Ho: H + ext }); out.ext = ext; }
   }
   if (sl) {
     // 兩條弧線之間往中軸收（往左撐開）：影響範圍比弧線寬一點、比上下兩端長一成
@@ -156,7 +151,7 @@ export async function detectBody(src) {
 export function measureBody(body, seg) {
   if (!body?.ok) return;
   const { pts } = body;
-  const half = (c, dir, fallback) => {
+  const half = (c, dir, fallback, c2) => {
     if (!seg) return fallback;
     const sx = seg.w / body.W, sy = seg.h / body.H, lim = fallback * 2.2;
     const walk = s => {
@@ -168,6 +163,8 @@ export function measureBody(body, seg) {
       return lim;
     };
     const a = walk(1), b = walk(-1);
+    // c2：兩邊走到的正中間（身體不一定在骨架線正中，手動瘦身的預設框放這裡才左右對稱）
+    if (c2) { const o = Math.max(-fallback * 0.5, Math.min(fallback * 0.5, (a - b) / 2)); c2.x = c.x + dir.x * o; c2.y = c.y + dir.y * o; }
     // 太窄或太寬都不太可信（手貼著身體、背景跟衣服分不開），夾在估計值附近
     return Math.min(fallback * 1.6, Math.max(fallback * 0.6, (a + b) / 2));
   };
@@ -176,6 +173,7 @@ export function measureBody(body, seg) {
   const ax = unit(sub(Hm, S)), perp = { x: -ax.y, y: ax.x };
   body.sh = sh;
   body.waistHW = half(lerp(S, Hm, 0.72), perp, sh * 0.36);
+  const sc = lerp(S, Hm, 0.655); body.slimC = { ...sc }; half(sc, perp, sh * 0.36, body.slimC);
   body.chestHW = half(lerp(S, Hm, 0.3), perp, sh * 0.45);
   const limb = (a, b, f, t) => { const d = unit(sub(pts[b], pts[a])); return half(lerp(pts[a], pts[b], t), { x: -d.y, y: d.x }, sh * f); };
   body.thighHW = [limb(LH, LK, 0.2, 0.35), limb(RH, RK, 0.2, 0.35)];

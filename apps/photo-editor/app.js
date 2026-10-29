@@ -16,7 +16,7 @@ import { SHAPE_CATS, setShape, getShape, shapeIsSet, shapeMoves, resetShape, eva
 import { WarpField } from './warpfield.js';
 import { RESHAPE, liqDab, liqRadius } from './reshape.js';
 import { tabDoodle, doodleInput } from './doodle.js';
-import { tabBeautyBrush, beautyBrushInput, bbRelease, bbWait } from './beautybrush.js';
+import { tabBeautyBrush, beautyBrushInput, bbRelease, bbWait, bbLeave } from './beautybrush.js';
 import { FONTS, T0, TEXT_COLORS, TEXT_FX, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
 import { initCollage, openCollage } from './collage.js';
 import { CATS as TPL_CATS } from './templates.js';
@@ -453,7 +453,7 @@ function shelveSurf(S) {
     shelving.delete(S);
     if (!blob || S === base.surf || S.canvas !== c) return;
     Object.assign(S, { canvas: null, blob, blobVer: S.ver, w: c.width, h: c.height });
-    bbRelease(S); S.ddSes = null;
+    bbRelease(S); S.dd = null;  // 塗鴉那層也放掉（回來這張以後之前的塗鴉就擦不到了）
     hist.forEach(h => { if (h.base.surf === S) h.base.canvas = null; });
   }, hasAlpha(c) ? 'image/png' : 'image/jpeg', 0.95);
 }
@@ -638,18 +638,20 @@ async function findPerson(quiet) {
 }
 
 // ---------- 畫面 ----------
+let layoutExt = 0;  // 上次排版時畫面比照片多幾列（R.ext）
 function layout() {
   if (!base) return;
   if (hold?.b === base) { layoutLater = true; return; }
   const st = $('#stage').getBoundingClientRect();
   // 裁切時照片往上讓出底下一排（復原、重做），按鈕不會壓在裁切框的把手上（評審 M25；#stage.crop 底下留 52px）
-  const pad = 12, w = base.canvas.width, h = base.canvas.height, low = cropState ? 52 : 0;
+  // h：增高拉的時候畫面比照片高（growPx），離開增高才真的把照片拉長（bmBake）
+  const pad = 12, w = base.canvas.width, h = base.canvas.height + growPx(), low = cropState ? 52 : 0;
   const f = curFrame(), g = f ? f.geom(w, h) : { W: w, H: h, x: 0, y: 0 };
   const k = Math.min((st.width - pad * 2) / g.W, (st.height - pad * 2 - low) / g.H);
   const fb = $('#fbox');
   fb.style.width = Math.round(g.W * k) + 'px'; fb.style.height = Math.round(g.H * k) + 'px';
   Object.assign($('#wrap').style, { left: Math.round(g.x * k) + 'px', top: Math.round(g.y * k) + 'px', width: Math.round(w * k) + 'px', height: Math.round(h * k) + 'px' });
-  frameK = k; syncView(); paintFrame();
+  frameK = k; layoutExt = R?.ext ?? 0; syncView(); paintFrame();
   drawTexts(); drawStickers(); if (cropState) drawCrop();
   view.apply();
 }
@@ -659,7 +661,7 @@ function paintFrame() {
   const fc = $('#frame'), f = curFrame();
   fc.hidden = !f;
   if (!f) return;
-  const w = base.canvas.width, h = base.canvas.height, g = f.geom(w, h), k = frameK * Math.min(2, devicePixelRatio || 1);
+  const w = base.canvas.width, h = base.canvas.height + growPx(), g = f.geom(w, h), k = frameK * Math.min(2, devicePixelRatio || 1);
   fc.width = Math.max(1, Math.round(g.W * k)); fc.height = Math.max(1, Math.round(g.H * k));
   const ctx = fc.getContext('2d'); ctx.setTransform(k, 0, 0, k, 0, 0);
   drawFrame(ctx, f, w, h, $('#gl'));
@@ -715,18 +717,21 @@ function render(liqOnly) {
 let hold = null, layoutLater = false;
 const DATA_TABS = ['beauty', 'shape', 'makeup', 'skin', 'aiskin', 'hair', 'light'];
 // t0：按下復原的時間（解壓照片已經等了一段，「復原中」不要先收再蓋）
-function holdFrame(t0) {
+function holdFrame(t0, msg = '復原中…') {
   if (hold) { clearTimeout(hold.bt); clearTimeout(hold.tt); }
-  const h = hold = { b: base, t: performance.now() + 3000, tt: setTimeout(render, 3020) }, show = () => { if (hold === h) { h.shown = true; busy('復原中…'); } };
+  const h = hold = { b: base, t: performance.now() + 3000, tt: setTimeout(render, 3020) }, show = () => { if (hold === h) { h.shown = true; busy(msg); } };
   const wait = 300 - (performance.now() - t0);
   if (wait > 0) h.bt = setTimeout(show, wait); else show();
 }
 // 這張還缺資料（順便開始算膚質、頭髮：平常是畫的時候才開始）
+// 自動塑身開著也要等找到人（增高把照片拉長以後要重找，不然腿、腰先變回去一下）
 function needsData(b) {
-  if (!DATA_TABS.some(t => TAB_RESET[t]?.on())) return false;
+  const bd = bodyOn(P) && !b.body;
+  if (bd) getBody(b);
+  if (!DATA_TABS.some(t => TAB_RESET[t]?.on())) return bd;
   const sk = skinOn(P) && !b.skin, hr = hairNeedsSeg(P) && !b.hair;
   if (sk) getSkin(b); if (hr) getHair(b);
-  return !b.faces || (b.faces.length > 0 && !b.mask) || sk || hr;
+  return !b.faces || (b.faces.length > 0 && !b.mask) || sk || hr || bd;
 }
 function held() {
   if (!hold) return false;
@@ -747,6 +752,8 @@ function draw(full) {
   const pf = perFace();
   const fw = !base.faces ? [] : pf ? base.faces.flatMap((f, i) => faceWarps([f], PF(i))) : faceWarps(base.faces, P);
   const man = manualWarps(base.body, P, base.canvas.width, base.canvas.height);
+  R.ext = man.ext || 0;
+  if (R.ext !== layoutExt) layout();
   const warps = [...man, ...(base.body ? bodyWarps(base.body, base.faces, P) : []), ...(base.faces ? [...fw, ...hairWarps(base.faces, P, base.hair)] : [])];
   warps.manual = man.length;  // 手動塑身不受背景保護（gl.js uWm）
   // 背景保護要知道人在哪；有臉的照片開圖時就算好了，沒有臉的照片推的時候才算
@@ -804,9 +811,9 @@ function liqSample(L, x, y, o) {
 function warpBack(x, y, warps) {
   for (const w of warps) {
     if (w.type === 'stretch' || w.type === 'band') {
-      const { y0, y1, s, H } = w, y1o = y0 + (y1 - y0) * (1 + s);
+      const { y0, y1, s, H } = w, y1o = y0 + (y1 - y0) * (1 + s), Ho = w.Ho ?? H;
       if (y > y0) {
-        if (y >= y1o) y = y1 + (y - y1o) * (H - y1) / Math.max(H - y1o, 1);
+        if (y >= y1o) y = y1 + (y - y1o) * (H - y1) / Math.max(Ho - y1o, 1);
         else if (w.type === 'band') y = y0 + (y - y0) / (1 + s);
         else { const u = (y - y0) / (y1o - y0); y = y0 + (y1 - y0) * (u + s * u * (1 - u) * (1 - u)); }
       }
@@ -1107,6 +1114,8 @@ function snap(b, p, t, s) {
 function commit() {
   // 評審 M24、M26：跟現在這一步一模一樣就不記（調筆刷大小、強度只改筆，推臉輕點一下沒推動）：
   // 以前會多一步，第一下復原沒反應，還把可以重做的步驟砍掉、吃掉 50 步上限
+  // 增高拉著還沒離開（照片還沒真的拉長）：先不記，離開增高 bmBake 拉長照片時才記一步；復原就是不拉
+  if (P.bmHeight) { syncHist(); return; }
   const cur = hist[hi], e = snap(base, P, texts, stickers);
   if (cur && cur.base === base && cur.sP === e.sP && cur.sT === e.sT && cur.sS === e.sS && sameLiq(cur.P.liq, e.P.liq)) return;
   resetFrom = null;
@@ -1143,10 +1152,10 @@ async function restore(i) {
   showTab(tab); drawTexts(); drawStickers(); syncHist();
   draftSoon();  // 復原、重做也要進草稿（不然被收掉，重開會回到復原前）
 }
-function syncHist() { $('#bUndo').disabled = hi <= 0 && resetFrom == null; $('#bRedo').disabled = hi >= hist.length - 1; }
+function syncHist() { $('#bUndo').disabled = hi <= 0 && resetFrom == null && !P.bmHeight; $('#bRedo').disabled = hi >= hist.length - 1 || !!P.bmHeight; }
 // 美顏筆放開的那幾筆還在算：先等它們畫進照片、記進復原，再往回一步（連點兩下就退兩步）
-$('#bUndo').onclick = async () => { await bbWait(); if (resetFrom != null && hi === 0) restore(Math.min(resetFrom, hist.length - 1)); else if (hi > 0) restore(hi - 1); };
-$('#bRedo').onclick = async () => { await bbWait(); hi < hist.length - 1 && restore(hi + 1); };
+$('#bUndo').onclick = async () => { await bbWait(); if (P.bmHeight && hist[hi]) restore(hi); else if (resetFrom != null && hi === 0) restore(Math.min(resetFrom, hist.length - 1)); else if (hi > 0) restore(hi - 1); };
+$('#bRedo').onclick = async () => { await bbWait(); hi < hist.length - 1 && !P.bmHeight && restore(hi + 1); };
 
 // 按住看原圖
 // 看原圖：畫在同一張 WebGL 畫布上（以前疊一張 2D 畫布，iPhone 放大時會糊、位置也會跳）
@@ -1294,6 +1303,7 @@ function sliderRow({ label, min, max, val, def, onInput }) {
   if (def !== undefined) inp.dataset.def = def;
   setGrad(inp, label);
   const sync = () => { paintRange(inp, out); row.classList.toggle('set', +inp.value !== Math.min(max, Math.max(min, 0))); };
+  row.set = v => { inp.value = v; sync(); };
   inp.addEventListener('input', () => { sync(); onInput(+inp.value); });
   inp.addEventListener('change', () => { commit(); syncNav(); });
   // 點數字回到預設（閃光燈 60 照 Hypic，其他 0）
@@ -1313,9 +1323,11 @@ function item({ label, icon, on, set, onclick, cls = '', style = '' }) {
 function showTab(t) {
   if (t !== 'crop' && cropState) endCrop();
   if (t !== 'erase') eraseLeave();
+  if (t !== 'bbrush') bbLeave();
   // 同一個分頁重畫（點選項）時，兩排選項留在原來捲到的位置
   const same = t === tab, sl = same ? [$('#items').scrollLeft, $('#cats').scrollLeft] : [0, 0];
   tab = t;
+  if (P.bmHeight && manKey() !== 'bmHeight') bmBake();  // 離開增高：照片真的拉長
   // 進出推臉：主 shader 要不要先畫到暫存（gl.js keepPost），進來就先畫好，第一下推不用等
   if (R && R.keepPost !== (t === 'reshape')) render();
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
@@ -1437,7 +1449,10 @@ function paramRows(box, list) {
   for (const [k, label, , min, d, max] of list) {
     rows.append(sliderRow({
       label, min: min ?? -100, max: max ?? 100, val: T[k], def: d,
-      onInput: v => { T[k] = v; cur = k; if (list === BEAUTY) T.oneTap = -1; render(); bmBox(); },
+      onInput: v => {
+        if (k !== 'bmHeight' && P.bmHeight && bmBake()) rows.children[list.findIndex(x => x[0] === 'bmHeight')]?.set(0);
+        T[k] = v; cur = k; if (list === BEAUTY) T.oneTap = -1; render(); bmBox();
+      },
     }));
   }
 }
@@ -1446,7 +1461,7 @@ function paramRows(box, list) {
 const eraseApp = { get base() { return base; }, setBase, commit, item, hideSlider, showTab, toast, busy, toSrc: srcMapper };
 doodleInput($('#wrap'), { get base() { return base; }, tab: () => tab, surf: ensureSurf, paint: paintPatch, commit, toSrc: srcMapper });
 // queued：放開了一筆、還在算：復原先亮起來（按下去會等它算完再退回）；settled：都算完了，照實際的復原步數
-beautyBrushInput($('#wrap'), { get base() { return base; }, tab: () => tab, surf: ensureSurf, paint: paintPatch, commit, toSrc: srcMapper, queued: () => { $('#bUndo').disabled = false; }, settled: syncHist });
+beautyBrushInput($('#wrap'), { get base() { return base; }, tab: () => tab, surf: ensureSurf, paint: paintPatch, commit, toSrc: srcMapper, toast, queued: () => { $('#bUndo').disabled = false; }, settled: syncHist });
 function tabEraseHere(box) { tabErase(box, eraseApp); }
 
 function tabAdjust(box) { paramItems(box, ADJUST, 'brightness'); }
@@ -1503,9 +1518,12 @@ $('#bMerge').onclick = () => P.filter === 'none' ? toast('先在「濾鏡」選�
 const PRE_LUT = ['backlight', 'exposure', 'brightness', 'lightSense', 'shadows', 'highlights', 'contrast', 'temp', 'tint', 'saturation', 'vibrance', 'fade'];
 async function mergeFilter() {
   if (P.filter === 'none') return;
+  const baked = bmBake();
+  if (baked) showTab(tab);
   busy('合併中…');
   try {
     await bbWait();
+    if (baked) await dataReady(base);
     // 濾鏡裡皮膚、頭髮另外一套顏色要等臉找完
     await findFaces();
     const now = P, f = liveFilter(), lut = getLut(f), pre = k => Object.fromEntries([...PRE_LUT, ...tabKeys.light].map(x => [x, clone(k[x] ?? null)]));
@@ -1719,7 +1737,7 @@ function tabBody(box) {
   if (bodySec === 'man') {
     // 手動塑身沒有背景保護（跟 Hypic 一樣，保護只在自動塑身）
     paramItems(box, BODY_MAN, 'bmHeight');
-    $('#note').textContent = { bmHeight: '拖兩條線選要拉長的那一段。', bmSlim: '拖中間移動，上下兩端調長短、左右調寬窄，右下角旋轉。', bmZoom: '拖圓圈移動，右下角調大小。' }[manKey()];
+    $('#note').textContent = { bmHeight: '拖兩條線選要拉長的那一段。', bmSlim: '中間移動，兩端調長短寬窄，右下角旋轉。', bmZoom: '拖圓圈移動，右下角調大小。' }[manKey()];
     return;
   }
   protSw();
@@ -1729,14 +1747,48 @@ function tabBody(box) {
 // 手動塑身的控制（照 Hypic）：增高是兩條橫線（右邊有把手），瘦身是兩條腰身弧線加中軸
 // （中間移動、上下兩端調長短、左右對稱調寬窄、右下角旋轉和縮放），重塑是圓（中間移動、右下角調大小）
 const manKey = () => base && tab === 'body' && bodySec === 'man' ? (BODY_MAN.some(x => x[0] === cur) ? cur : 'bmHeight') : null;
+// 增高（評審 M47）：跟 Hypic 一樣照片變高。拉滑桿的時候先在畫面上畫高（gl.js ext，照片還是原本那張），
+// 離開增高（換工具、換分頁、拖線、存檔、合併、回首頁）才把照片真的拉長：兩條線中間那段拉長、下面整段往下移，
+// 增高歸 0，線框住拉長後的那段，記一步復原。還沒離開時按復原就是不拉
+const growPx = () => base && P.bmHeight ? manualWarps(null, { bmHeight: P.bmHeight, bmRegH: P.bmRegH }, base.canvas.width, base.canvas.height).ext || 0 : 0;
+// 增高剛把照片拉長：開著的效果要的臉、膚質、頭髮、人像、人體資料在新照片上算好（存檔、合併要等）
+async function dataReady(b) {
+  needsData(b);
+  await Promise.all([b.facesP, b.skinP, b.hairP, b.bodyP, (needSeg() || P.bgProtect) && getSeg(b), needMatte() && getMatte(b)]);
+}
+function bmBake() {
+  if (!P.bmHeight || !base) return false;
+  const W = base.canvas.width, H = base.canvas.height, w = manualWarps(null, { bmHeight: P.bmHeight, bmRegH: P.bmRegH }, W, H)[0];
+  P.bmHeight = 0;
+  if (!w) { render(); syncHist(); return true; }
+  const { y0, y1 } = w, ext = w.Ho - H, H2 = H + ext, s = ext / (y1 - y0);
+  const out = photoCanvas(W, H2), ctx = out.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(base.canvas, 0, 0, W, y0, 0, 0, W, y0);
+  ctx.drawImage(base.canvas, 0, y0, W, y1 - y0, 0, y0, W, y1 - y0 + ext);
+  if (H > y1) ctx.drawImage(base.canvas, 0, y1, W, H - y1, 0, y1 + ext, W, H - y1);
+  const f = (x, y) => [x, y <= y0 ? y : y < y1 ? y0 + (y - y0) * (1 + s) : y + ext];
+  [...texts, ...stickers].forEach(t => { t.y = f(0, t.y * H)[1] / H2; });
+  // 手動框先記下現在的位置（預設的會照新照片重算，跑掉），再跟著移；增高的線框住拉長後那段
+  for (const [key, k] of Object.entries(REG_OF)) if (key === 'bmHeight' || P[key]) P[k] = manualRegion(key, base.body, P, W, H);
+  movePositions(W, H, W, H2, f, (a, b) => [a, b], false);
+  // 看原圖：最初的照片整張跟著拉到新照片的高（只拉中間一段的話看原圖對不起來）
+  const om = base.om && (([a, b, c, d, e, g]) => [a, b, c * H / H2, d * H / H2, e, g])(base.om);
+  setBase(out, { om });
+  holdFrame(performance.now(), '處理中…');
+  commit();
+  return true;
+}
 // 控制在照片上的樣子（照片像素）：線、把手（id、位置、圖示、轉幾度）
 function bmGeom(k) {
   const W = base.canvas.width, H = base.canvas.height, r = manualRegion(k, base.body, P, W, H);
   if (k === 'bmHeight') {
     // 跟 Hypic 一樣兩條線橫過整個畫面，把手在畫面右邊（不擋照片）
     const wr = $('#wrap').getBoundingClientRect(), sr = $('#stage').getBoundingClientRect(), u = W / Math.max(1, wr.width);
-    const xl = (sr.left - wr.left) * u, xr = (sr.right - wr.left) * u, hx = xr - 22 * u, y0 = r.y0 * H, y1 = r.y1 * H;
-    return { r, lines: [`M${xl} ${y0}H${xr}`, `M${xl} ${y1}H${xr}`], hs: [{ id: 'y0', x: hx, y: y0, ic: 'ud' }, { id: 'y1', x: hx, y: y1, ic: 'ud' }] };
+    const xl = (sr.left - wr.left) * u, xr = (sr.right - wr.left) * u, hx = xr - 22 * u, y0 = r.y0 * H, y1 = r.y1 * H + growPx();
+    // 線拖到底時把手會疊在右下的看原圖鈕上：那一段把手移到鈕的左邊（評審 L59）
+    const cb = $('#bCmp').getBoundingClientRect(), hxAt = y => { const sy = wr.top + y / u; return cb.width && sy > cb.top - 14 && sy < cb.bottom + 14 ? (cb.left - wr.left - 16) * u : hx; };
+    return { r, ys: { y0, y1 }, lines: [`M${xl} ${y0}H${xr}`, `M${xl} ${y1}H${xr}`], hs: [{ id: 'y0', x: hxAt(y0), y: y0, ic: 'ud' }, { id: 'y1', x: hxAt(y1), y: y1, ic: 'ud' }] };
   }
   const c = { x: r.cx * W, y: r.cy * H };
   if (k === 'bmZoom') {
@@ -1763,13 +1815,16 @@ function bmBox() {
   s.style.display = k ? '' : 'none';
   if (!k) return;
   const W = base.canvas.width, H = base.canvas.height, g = bmGeom(k), u = W / Math.max(1, $('#wrap').getBoundingClientRect().width);
-  s.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  s.setAttribute('viewBox', `0 0 ${W} ${H + growPx()}`);
   const line = g.lines.map(d => `<path d="${d}" class="sh"/><path d="${d}"/>`).join('');
-  const hs = g.hs.map(h => `<g transform="translate(${h.x} ${h.y}) scale(${u}) rotate(${h.deg || 0})"><circle r="12"/><path d="${BM_IC[h.ic]}"/></g>`).join('');
+  // 把手：螢幕上半徑 9px，框小的時候跟著縮（最小 6px）。窄的直式照片腰只有幾十 px 寬，以前 12px 的把手蓋住腰、
+  // 蓋掉重塑四分之一圓（評審 L59）。手指點的範圍照舊（bmHit 26px 內最近的那顆）
+  const rs = k === 'bmSlim' ? Math.min(9, Math.max(6, Math.min(g.hw, g.hh) / u * 0.3)) : k === 'bmZoom' ? Math.min(9, Math.max(6, g.R / u * 0.28)) : 9;
+  const hs = g.hs.map(h => `<g transform="translate(${h.x} ${h.y}) scale(${u * rs / 12}) rotate(${h.deg || 0})"><circle r="12"/><path d="${BM_IC[h.ic]}"/></g>`).join('');
   s.innerHTML = line + hs;
 }
 // 手指在照片上的哪一點（照片像素）；u：螢幕 1px 是照片幾像素
-const bmPos = e => { const r = $('#wrap').getBoundingClientRect(), W = base.canvas.width, H = base.canvas.height; return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H, u: W / r.width }; };
+const bmPos = e => { const r = $('#wrap').getBoundingClientRect(), W = base.canvas.width, H = base.canvas.height + growPx(); return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H, u: W / r.width }; };
 // 點到手動塑身控制的哪裡：最近的把手，沒點到把手、在範圍裡面就是整個移動
 function bmHit(e) {
   const k = manKey();
@@ -1777,7 +1832,7 @@ function bmHit(e) {
   const q = bmPos(e), g = bmGeom(k);
   let id = null, best = 26 * q.u;
   for (const h of g.hs) { const d = Math.hypot(q.x - h.x, q.y - h.y); if (d < best) { best = d; id = h.id; } }
-  if (!id && k === 'bmHeight') for (const y of ['y0', 'y1']) { const d = Math.abs(q.y - g.r[y] * base.canvas.height); if (d < best) { best = d; id = y; } }
+  if (!id && k === 'bmHeight') for (const y of ['y0', 'y1']) { const d = Math.abs(q.y - g.ys[y]); if (d < best) { best = d; id = y; } }
   if (!id && k === 'bmSlim') { const d = { x: q.x - g.c.x, y: q.y - g.c.y }; if (Math.abs(d.x * g.n.x + d.y * g.n.y) < g.hw * 1.1 && Math.abs(d.x * g.ax.x + d.y * g.ax.y) < g.hh) id = 'move'; }
   if (!id && k === 'bmZoom' && Math.hypot(q.x - g.c.x, q.y - g.c.y) < g.R) id = 'move';
   return id && { k, q, g, id, h: g.hs.find(h => h.id === id) };
@@ -1787,8 +1842,10 @@ function bmHit(e) {
   // 聽整個畫面（不只照片）：增高的把手在照片外面
   $('#stage').addEventListener('pointerdown', e => {
     if (e.button > 0 || pinch.on) return;
-    const hit = bmHit(e);
+    let hit = bmHit(e);
     if (!hit) return;
+    // 增高拉著又拖線：先把照片拉長（跟 Hypic 一樣，線框住拉長後那段，再拉是從新的照片拉）
+    if (hit.k === 'bmHeight' && bmBake()) { showTab(tab); hit = bmHit(e); if (!hit) return; }
     e.preventDefault(); $('#stage').setPointerCapture(e.pointerId);
     drag = hit;
   });
@@ -3239,6 +3296,7 @@ $('#stage').addEventListener('pointerdown', e => {
 // ---------- 儲存 ----------
 // 把目前的成品（含邊框、貼紙、文字）畫成一張 canvas，存檔和「拼貼／範本」共用
 async function compose() {
+  if (bmBake()) { showTab(tab); await dataReady(base); }
   holdFull = true;
   try { return await composeFull(); } finally { holdFull = false; render(); }
 }
@@ -3315,7 +3373,7 @@ function tabTpl(box) {
 // ---------- 開啟照片 ----------
 $('#bPick').onclick = () => $('#file').click();
 // 換照片：回到首頁（草稿、選照片、拍照、拼貼）。修到一半的這張已經存成草稿，不會不見
-$('#bOpen').onclick = () => { saveDraft(true); showHome(true); };
+$('#bOpen').onclick = () => { if (bmBake()) showTab(tab); saveDraft(true); showHome(true); };
 $('#bHome').onclick = () => showHome(false);
 $('#bCam').onclick = () => $('#cam').click();
 // 拼貼、範本：一次選多張照片
@@ -3404,7 +3462,8 @@ function saveDraft(mode) {
   if (slow || photo || !d.thumb) d.thumb = draftThumb();
   // 草稿裡的照片是不是原檔；不是的話原檔另外存一次（評審 #144 中 1）
   const p0 = d.p0 = plan?.base ? true : photo ? false : d.p0, file = !p0 && !d.fSaved && d.src;
-  const meta = { id: d.id, t: Date.now(), P: cloneP(P), texts: clone(texts), stickers: clone(stickers), tab, thumb: d.thumb, ptr: plan ? plan.ptr : d.ptr, om: base.om, p0 };
+  // 增高拉著還沒離開：照片還沒拉長，草稿先存不拉的（照片跟參數對得上）
+  const meta = { id: d.id, t: Date.now(), P: { ...cloneP(P), bmHeight: 0 }, texts: clone(texts), stickers: clone(stickers), tab, thumb: d.thumb, ptr: plan ? plan.ptr : d.ptr, om: base.om, p0 };
   const assets = draftAssets(meta.stickers, meta.P), orig = !d.origSaved && base.orig;
   if (plan) { d.ph = plan.ph; d.ptr = plan.ptr; d.pc = c; }
   const puts = plan?.puts || [], blob = photo || (plan?.base ? Promise.resolve(plan.base) : null);
