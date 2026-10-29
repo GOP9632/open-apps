@@ -262,7 +262,7 @@ struct TripFind: View {
     private var field: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("搜尋景點、收藏，或直接點地圖上的店", text: $mode.q).font(.body).submitLabel(.search)
+            TextField("搜尋景點、收藏", text: $mode.q).font(.body).submitLabel(.search)
                 .autocorrectionDisabled()
                 .onSubmit { mode.endTyping() }
                 // 焦點變化有時晚到：手指一點就先換畫面（只接在輸入框上，✕ 不算）
@@ -276,7 +276,7 @@ struct TripFind: View {
                     mode.cand = nil
                     mode.level = .mid
                 }
-            } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary).frame(width: 44, height: 44).contentShape(.rect) }
+            } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Color.ink.opacity(0.35)).frame(width: 44, height: 44).contentShape(.rect) }
                 .accessibilityLabel("關掉搜尋")
         }
         .padding(.leading, 16).padding(.trailing, 6)
@@ -357,7 +357,7 @@ struct TripResults: View {
         if !q.isEmpty { return "找不到「\(q)」，換個字試試看" }
         if mode.filter == .route { return "路線附近 400 公尺內沒有你的收藏" }
         if mode.filter != nil { return "附近沒有找到" }
-        return "打字搜尋，或選上面的分類"
+        return "打字搜尋、選分類，或直接點地圖上的店"
     }
 
     private func pick(_ c: TripCand) {

@@ -901,6 +901,7 @@ struct NearbyHost<C: View>: View, Equatable {
 
 struct Nearby {
     let title: String, subtitle: String, places: [Place]
+    var short = ""                     // 小字放不下整句時的短句（放不下就不顯示，不出現「…」）
     var lead: String?                  // 「附近 」「這一帶 」：後面接間數（數字會滾動）
 
     init(list: [Place], here: CLLocation?, region: MKCoordinateRegion?, total: Int) {
@@ -927,6 +928,7 @@ struct Nearby {
             lead = here != nil ? "附近 " : "這一帶 "
             title = lead! + "\(l.count) 間"
             subtitle = here != nil ? "由近到遠" : "打開定位就會從你的位置排"
+            short = here != nil ? "由近到遠" : "從地圖中心排"
         }
     }
 }
@@ -1150,7 +1152,13 @@ struct NearbySheet: View {
             // 標題（群組名稱可能很長）先拿位置，小字不夠放就先截掉小字
             title.font(.system(size: 19, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1).minimumScaleFactor(0.8)
                 .layoutPriority(1)
-            Text(near.subtitle).font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.45)).lineLimit(1)
+            // 整句放得下就整句，放不下換短句，連短句都放不下（群組名很長）就不顯示
+            ViewThatFits(in: .horizontal) {
+                Text(near.subtitle).lineLimit(1)
+                Text(near.short).lineLimit(1)
+                Color.clear.frame(width: 1, height: 1)
+            }
+            .font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.45))
             Spacer(minLength: 0)
             if let draw, !list.isEmpty {
                 DiceChip(draw: draw, panel: panel)

@@ -193,11 +193,13 @@ struct PlaceCard: View {
                 }
                 .clipShape(.rect(cornerRadius: 16))
                 .padding(.bottom, 4)
-            Text(branches.count > 1 ? place.name.replacingOccurrences(of: branchLabel(place), with: "").trimmingCharacters(in: .whitespaces) : place.name + (place.branch?.isEmpty == false ? " \(place.branch!)" : ""))
-                .font(.system(size: 15, weight: .heavy)).lineLimit(1).foregroundStyle(Color.ink)
+            // 店名一行（分店不接在後面，常被截成「…市民8…」）；分店放第二行，沒有分店才放地區
+            Text(branches.count > 1 ? place.name.replacingOccurrences(of: branchLabel(place), with: "").trimmingCharacters(in: .whitespaces) : place.name)
+                .font(.system(size: 15, weight: .heavy)).lineLimit(1).minimumScaleFactor(0.85).foregroundStyle(Color.ink)
+            let spot = place.branch?.isEmpty == false ? place.branch! : place.area
             Text(branches.count > 1
                  ? "📍 " + branches.map(branchLabel).joined(separator: "・")
-                 : "\(place.cat.emoji) \(place.cuisine?.isEmpty == false ? place.cuisine! : place.cat.name)\(place.area.isEmpty ? "" : " · " + place.area)")
+                 : "\(place.cat.emoji) \(place.cuisine?.isEmpty == false ? place.cuisine! : place.cat.name)\(spot.isEmpty ? "" : " · " + spot)")
                 .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.ink.opacity(0.5)).lineLimit(1)
         }
         .padding(8).padding(.bottom, 4)

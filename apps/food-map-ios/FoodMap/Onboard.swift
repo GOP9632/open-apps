@@ -18,6 +18,12 @@ extension Store {
         }
     }
 
+    // 用分享選單收藏過（那時通知還沒開，分享卡說「打開 Bitemap 就看得到」）：打開 App 時問一次要不要開通知
+    @MainActor func askNotifyAfterShare() {
+        guard Store.shared?.bool(forKey: "sharedOnce") == true else { return }
+        maybeAskNotify(after: 1.0)
+    }
+
     @MainActor func answerNotify(_ yes: Bool) {
         UserDefaults.standard.set(true, forKey: "notifyAsked")
         withAnimation(.snappy) { askNotify = false }

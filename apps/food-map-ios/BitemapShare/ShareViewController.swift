@@ -1,6 +1,7 @@
 import UIKit
 import SwiftUI
 import UniformTypeIdentifiers
+import UserNotifications
 
 // 分享選單裡的 Bitemap：拿到 IG／網頁連結或一段文字，直接丟給雲端 AI 收藏，不用打開 App
 final class ShareViewController: UIViewController {
@@ -33,7 +34,10 @@ final class ShareViewController: UIViewController {
         // 交給背景上傳，馬上關掉分享選單；存好了會跳通知（ShareUpload.swift）
         do {
             try ShareUpload.shared.send(key: key, input: input)
-            await finish("收到了，存好會通知你", ok: true, delay: 0.8)
+            // 通知還沒開：存好了也跳不出通知，改說打開 App 就看得到；記一筆，下次打開 App 問要不要開通知
+            let st = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+            UserDefaults(suiteName: ShareUpload.group)?.set(true, forKey: "sharedOnce")
+            await finish(st == .authorized || st == .provisional ? "收到了，存好會通知你" : "收到了，打開 Bitemap 就看得到", ok: true, delay: 0.8)
         } catch {
             // 背景上傳開不起來才在這裡等，最多 15 秒，點一下就關
             model.tapToClose = { [weak self] in self?.extensionContext?.completeRequest(returningItems: nil) }

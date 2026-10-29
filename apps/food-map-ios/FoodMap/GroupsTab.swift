@@ -135,9 +135,11 @@ struct GroupCard: View {
         Button(action: open) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
+                    // 固定寬度（最多 4 個，每個多露 24）：群組名在每張卡都從同一個位置開始
                     HStack(spacing: -10) {
                         ForEach(Array(mem.prefix(4)), id: \.self) { Avatar(name: store.name($0), id: $0, size: 34) }
                     }
+                    .frame(width: 34 + 3 * 24, alignment: .leading)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(group.name).font(.system(size: 18, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1)
                         Text("\(mem.count) 人・\(count) 間店").font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
@@ -207,11 +209,14 @@ struct Avatar: View {
     // 每個人固定一個顏色（頭像、地圖上的「誰收的」標籤都用這個）
     static func color(_ id: String) -> Color { Color(hex: colors[id.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xffff } % colors.count]) }
     var body: some View {
-        Text(String(name.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased())
-            .font(.system(size: size * 0.42, weight: .bold)).foregroundStyle(.white)
+        let first = name.trimmingCharacters(in: .whitespaces).first
+        // 名字是 emoji（🪡）：白底放大 emoji、外圈用那個人的顏色（縮在深色小圓裡會像一條斜線）
+        let emoji = first.map { c in c.unicodeScalars.contains { $0.properties.isEmojiPresentation } || (c.unicodeScalars.count > 1 && c.unicodeScalars.first?.properties.isEmoji == true) } ?? false
+        Text(first.map { String($0).uppercased() } ?? "?")
+            .font(.system(size: size * (emoji ? 0.6 : 0.42), weight: .bold)).foregroundStyle(.white)
             .frame(width: size, height: size)
-            .background(Avatar.color(id), in: .circle)
-            .overlay(Circle().strokeBorder(Color.bg, lineWidth: 2))
+            .background(emoji ? Color.white : Avatar.color(id), in: .circle)
+            .overlay(Circle().strokeBorder(emoji ? Avatar.color(id) : Color.bg, lineWidth: 2))
     }
 }
 
@@ -346,7 +351,7 @@ struct GroupView: View {
             Menu {
                 Text("邀請碼 \(g.invite_code)")
                 Button(g.owner == store.me ? "刪除群組" : "退出群組", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) { leaving = true }
-            } label: { Image(systemName: "ellipsis.circle") }
+            } label: { MoreIcon() }
                 .accessibilityLabel("更多")
         }
         .confirmationDialog(g.owner == store.me ? "刪除「\(g.name)」？所有成員都會看不到這個群組。" : "退出「\(g.name)」？", isPresented: $leaving, titleVisibility: .visible) {
@@ -601,7 +606,7 @@ struct RoundView: View {
             if store.canDelete(r) {
                 Menu {
                     Button("刪除這輪", systemImage: "trash", role: .destructive) { dropping = true }
-                } label: { Image(systemName: "ellipsis.circle") }
+                } label: { MoreIcon() }
                 .accessibilityLabel("更多")
             }
         }
@@ -814,5 +819,13 @@ extension Store {
         guard !l.isEmpty else { say("群組裡還沒有店"); return nil }
         let f: [String: AnyCodable] = ["cities": .a([]), "cats": .a([]), "meal": .s(used ?? ""), "price": .i(0)]
         return await startRound(gid, title: "一起決定吃什麼", pool: Array(l.prefix(10)), filters: f)
+    }
+}
+
+// 群組頁、配對結果頁右上的「⋯」：跟左上返回鍵同一套（深色、44pt），不吃橘色 tint
+private struct MoreIcon: View {
+    var body: some View {
+        Image(systemName: "ellipsis").font(.system(size: 17, weight: .bold)).foregroundStyle(Color.ink)
+            .frame(width: 44, height: 44).contentShape(.rect)
     }
 }

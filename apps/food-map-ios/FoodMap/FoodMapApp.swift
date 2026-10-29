@@ -55,6 +55,7 @@ struct Root: View {
                     await LaterDelete.flush(store)?.value
                     await store.sync()
                     store.maybeStartCoach()
+                    store.askNotifyAfterShare()
                     ClipWatch.shared.check(store)
                     // 第一個畫面出來、空閒一下之後，先把另外三頁建好，第一次點過去不會頓
                     try? await Task.sleep(for: .seconds(1))
@@ -162,7 +163,7 @@ struct Root: View {
         }
         // 剛複製了連結：在面板上緣（其他分頁在分頁列上方）浮一條膠囊問要不要收。訊息條優先，有訊息條時先藏著
         .overlay(alignment: .bottom) {
-            if clip.showing && store.loggedIn && store.coach.isEmpty && store.toast == nil && !TripMode.shared.on {
+            if clip.showing && store.loggedIn && store.coach.isEmpty && store.toast == nil && !store.askNotify && !TripMode.shared.on {
                 ClipCapsule()
             }
         }
@@ -188,6 +189,7 @@ struct Root: View {
             // 切走：等著復原的刪除馬上送出（不然被關掉就漏送，下次打開又跑回來）
             if p == .background { LaterDelete.flush(store) }
             if p == .active {
+                store.askNotifyAfterShare()
                 ClipWatch.shared.check(store)
                 Task { _ = try? await Supa.fresh(); await store.sync() }
             }

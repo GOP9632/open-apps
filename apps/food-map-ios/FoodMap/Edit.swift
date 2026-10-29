@@ -44,6 +44,8 @@ struct AddSheet: View {
                     }
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
+                // 還沒輸入：按鈕變淡（自己畫的底色 disabled 時不會自己變淡，看起來像壞掉）
+                let empty = input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 Button(action: go) {
                     HStack(spacing: 8) {
                         if busy { ProgressView().tint(.white) }
@@ -53,7 +55,9 @@ struct AddSheet: View {
                     .background(Color.grad, in: .rect(cornerRadius: 16)).foregroundStyle(.white)
                 }
                 .buttonStyle(PressStyle())
-                .disabled(busy || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(busy || empty)
+                .opacity(empty && !busy ? 0.45 : 1)
+                .animation(.easeOut(duration: 0.15), value: empty)
                 if let result {
                     Text(result).font(.body.weight(.semibold))
                         .padding(14).frame(maxWidth: .infinity, alignment: .leading)
