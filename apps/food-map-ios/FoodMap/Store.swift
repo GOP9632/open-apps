@@ -140,6 +140,10 @@ struct Snapshot: Codable {
 
     // 剛滑的卡還在存的時候，同步回來的舊資料不能把它蓋掉（不然卡片會跳回來）
     @ObservationIgnored private var pendingSwipes: [SwipeRow] = []
+    // 驗收用 -fakeRound：開輪、滑卡、收回、刪輪都只改手機上的資料，不寫雲端（模擬器才能試滑卡手感，不留紀錄）
+    static let fakeRound = Flag.on("-fakeRound")
+    @ObservationIgnored private var fakeRounds: [Round] = []
+    @ObservationIgnored private var fakeSwipes: [SwipeRow] = []
     // 同時只跑一次同步（打開 App 和切回前景常常一起來）
     @ObservationIgnored private var syncing: Task<Void, Never>?
 
@@ -178,15 +182,17 @@ struct Snapshot: Codable {
         if s.groups != groups { groups = s.groups }
         if s.members != members { members = s.members }
         if s.groupPlaces != groupPlaces { groupPlaces = s.groupPlaces }
-        if s.rounds != rounds { rounds = s.rounds }
-        let sw = s.swipes + pendingSwipes.filter { p in !s.swipes.contains { $0.round_id == p.round_id && $0.user_id == p.user_id && $0.place_id == p.place_id } }
+        let rs = fakeRounds + s.rounds
+        if rs != rounds { rounds = rs }
+        let sw = s.swipes + (pendingSwipes + fakeSwipes).filter { p in !s.swipes.contains { $0.round_id == p.round_id && $0.user_id == p.user_id && $0.place_id == p.place_id } }
         if sw != swipes { swipes = sw }
         let pr = Dictionary(s.profiles.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         if pr != profiles { profiles = pr }
     }
 
     private func saveCache() {
-        let s = Snapshot(places: places, groups: groups, members: members, groupPlaces: groupPlaces, rounds: rounds, swipes: swipes, profiles: Array(profiles.values))
+        let fake = Set(fakeRounds.map(\.id)), fakeSw = Set(fakeSwipes)
+        let s = Snapshot(places: places, groups: groups, members: members, groupPlaces: groupPlaces, rounds: rounds.filter { !fake.contains($0.id) }, swipes: swipes.filter { !fakeSw.contains($0) }, profiles: Array(profiles.values))
         let f = cacheFile
         DispatchQueue.global(qos: .utility).async { try? JSONEncoder().encode(s).write(to: f, options: .atomic) }
     }
@@ -296,11 +302,12 @@ struct Snapshot: Codable {
 
     // 滑卡頁每幾秒只拿這一輪的滑卡紀錄和成員（不用整份重抓），有新朋友加入才整份同步
     @MainActor func syncRound(_ r: Round) async {
+        if fakeRounds.contains(where: { $0.id == r.id }) { return }
         do {
             async let sw = Supa.select("swipes", "select=round_id,user_id,place_id,liked,created_at&round_id=eq.\(r.id)&order=user_id,place_id", as: [SwipeRow].self)
             async let gm = Supa.select("group_members", "select=group_id,user_id&group_id=eq.\(r.group_id)&order=user_id", as: [Member].self)
             let (s, m) = try await (sw, gm)
-            let keep = pendingSwipes.filter { p in p.round_id == r.id && !s.contains { $0.user_id == p.user_id && $0.place_id == p.place_id } }
+            let keep = (pendingSwipes + fakeSwipes).filter { p in p.round_id == r.id && !s.contains { $0.user_id == p.user_id && $0.place_id == p.place_id } }
             let nsw = (swipes.filter { $0.round_id != r.id } + s + keep).sorted { ($0.round_id, $0.user_id, $0.place_id) < ($1.round_id, $1.user_id, $1.place_id) }
             if nsw != swipes { swipes = nsw }
             let nm = (members.filter { $0.group_id != r.group_id } + m).sorted { ($0.group_id, $0.user_id) < ($1.group_id, $1.user_id) }
@@ -430,7 +437,7 @@ struct Snapshot: Codable {
     @MainActor func signOut() {
         LaterDelete.clear()
         Supa.signOut(); loggedIn = false
-        undoable = []; pendingSwipes = []; geoTried = []; pendingAdds = []; freshIds = []
+        undoable = []; pendingSwipes = []; fakeRounds = []; fakeSwipes = []; geoTried = []; pendingAdds = []; freshIds = []
         apply(Snapshot()); quickKey = nil
         mapPath = NavigationPath(); depth = [0, 0, 0, 0]; tab = 0; coach = []; listF = Filter(); mapF = Filter()
         try? FileManager.default.removeItem(at: cacheFile)
@@ -919,6 +926,11 @@ struct Snapshot: Codable {
     // ----- 滑卡 -----
 
     @MainActor func startRound(_ gid: String, title: String, pool: [Place], filters: [String: AnyCodable]) async -> Round? {
+        if Self.fakeRound {
+            let r = Round(id: "fake-" + UUID().uuidString.lowercased(), group_id: gid, created_by: me, title: title, place_ids: pool.map(\.id), created_at: nil)
+            fakeRounds.insert(r, at: 0); rounds.insert(r, at: 0)
+            return r
+        }
         do {
             let d = try await Supa.write("POST", "swipe_rounds", body: ["group_id": AnyCodable.s(gid), "title": .s(title), "filters": .o(filters), "place_ids": .a(pool.map(\.id))])
             guard let r = try JSONDecoder().decode([Round].self, from: d).first else { return nil }
@@ -936,6 +948,7 @@ struct Snapshot: Codable {
             rounds.removeAll { $0.id == r.id }
             swipes.removeAll { $0.round_id == r.id }
         }
+        if Self.fakeRound { fakeRounds.removeAll { $0.id == r.id }; fakeSwipes.removeAll { $0.round_id == r.id }; return }
         do { try await Supa.write("DELETE", "swipe_rounds", query: "id=eq.\(r.id)"); saveCache() }
         catch { rounds = before; swipes = sw; say("刪除失敗：" + error.localizedDescription) }
     }
@@ -944,6 +957,7 @@ struct Snapshot: Codable {
     @MainActor func swipe(_ r: Round, _ pid: String, liked: Bool) {
         guard let me else { return }
         let row = SwipeRow(round_id: r.id, user_id: me, place_id: pid, liked: liked)
+        if Self.fakeRound { swipes.append(row); fakeSwipes.append(row); return }
         swipes.append(row); pendingSwipes.append(row)
         Task {
             do { try await Supa.write("POST", "swipes", body: row, upsert: true) }
@@ -957,6 +971,7 @@ struct Snapshot: Codable {
     @MainActor func unswipe(_ r: Round, _ pid: String) async {
         guard let me, let row = swipes.first(where: { $0.round_id == r.id && $0.user_id == me && $0.place_id == pid }) else { return }
         withAnimation(.snappy) { swipes.removeAll { $0 == row } }
+        if Self.fakeRound { fakeSwipes.removeAll { $0 == row }; return }
         do { try await Supa.write("DELETE", "swipes", query: "round_id=eq.\(r.id)&user_id=eq.\(me)&place_id=eq.\(pid)"); saveCache() }
         catch { swipes.append(row); say("收回失敗：" + error.localizedDescription) }
     }
