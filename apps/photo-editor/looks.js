@@ -188,11 +188,20 @@ export function tabLooks(box, api) {
   };
   box.append(api.item({ label: '原圖', icon: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>', on: !P.look, onclick: () => pick(null) }));
   // 「全部」不放醒圖同款（美食暖調跟生活風景的同名）
+  // 縮圖都從同一張 124 的小圖畫（以前每張都從原尺寸照片縮），沒畫過的之後分批畫，按鈕先出來（評審 L6）
+  const src = base.lookSrc ||= (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 124;
+    const s = base.canvas, m = Math.min(s.width, s.height);
+    c.getContext('2d', { willReadFrequently: true }).drawImage(s, (s.width - m) / 2, (s.height - m) / 2, m, m, 0, 0, 124, 124);
+    return c;
+  })();
   LOOKS.filter(L => cat === 'all' ? L.cat !== 'xt' : L.cat === cat || L.cat === 'all').forEach(L => {
-    // 醒圖同款的濾鏡還沒載入時先不存縮圖
-    const t = base.lookThumbs[L.id] || lookThumb(base.canvas, fullSet(L, base));
-    if (!L.xt || xtData()) base.lookThumbs[L.id] = t;
-    box.append(api.item({ label: L.name, cls: 'ft', on: P.look === L.id, style: `background-image:url(${t})`, onclick: () => pick(L) }));
+    box.append(api.lazyThumb(api.item({ label: L.name, cls: 'ft', on: P.look === L.id, onclick: () => pick(L) }), !!base.lookThumbs[L.id], () => {
+      const t = base.lookThumbs[L.id] || lookThumb(src, fullSet(L, base));
+      // 醒圖同款的濾鏡還沒載入時先不存縮圖
+      if (!L.xt || xtData()) base.lookThumbs[L.id] = t;
+      return t;
+    }));
   });
   const L = LOOKS.find(x => x.id === P.look);
   if (L) api.setSlider('強度', 0, 100, P.lookAmt ?? 100, v => { applyLook(api.P(), api.P0, L, v, base); api.render(); });

@@ -317,13 +317,12 @@ function origIdle() {
   clearTimeout(origT);
   origT = setTimeout(() => { if (cmpOn) return; dropOrigView(); for (const h of [base, ...hist.map(h => h.base)]) { const o = h?.orig; if (o?.bmp) { o.bmp.close?.(); o.bmp = null; } } }, 10000);
 }
-const later = f => setTimeout(f, 1200);
-// 壓縮舊照片要讀整張圖，放到畫完、畫面更新以後再做，手指放開才不會卡。
+// 壓縮舊照片要讀整張圖，放到畫完、手指停下來以後再做，接著塗下一筆才不會卡（評審 M33：以前固定 1.2 秒後壓，剛好在塗的時候頓一下）。
 // 但最多只等一張：連續換照片時前一張馬上壓，不然好幾張原尺寸照片同時留著，iPhone 記憶體不夠會整頁重開
-let shelveT = 0, shelveB = null;
+let shelveB = null;
 function shelveLater(b) {
-  if (shelveB) { clearTimeout(shelveT); shelve(shelveB); }
-  shelveB = b; shelveT = later(() => { shelveB = null; shelve(b); });
+  if (shelveB) shelve(shelveB);
+  shelveB = b; setTimeout(() => whenStill(() => { if (shelveB !== b) return; shelveB = null; shelve(b); }), 1200);
 }
 
 // ---------- 美顏筆、塗鴉：直接改在同一張照片上，復原只存改到的那一塊 ----------
@@ -372,7 +371,9 @@ function seekSurf(S, v) {
 // 有 e（美顏筆、塗鴉那一筆的復原紀錄）的：預覽那一塊改之前的樣子存在 e.pv，復原、重做直接對調，
 // 不重縮（只縮一塊跟整張縮的取樣不一樣，膚質開著時復原會差到 9 階，評審 L56）
 function pixelsChanged(c, rects) {
-  const v = pvCache.get(c);
+  // 預覽那張只補改到的；拖的時候的小圖（previewOf 的 f）丟掉，下次要用再從預覽縮
+  const pc = pvCache.get(c), v = pc?.v;
+  if (pc) pc.f = null;
   // 頭髮、膚質用的那份照片貼圖（R.srcTex）是這張或它的預覽：只補改到的那幾塊，不然下次整張重傳
   const keep = rects && R?.srcOf && (R.srcOf === c || R.srcOf === v?.p);
   if (R && !keep) R.srcOf = null;
@@ -1383,6 +1384,19 @@ function item({ label, icon, on, set, onclick, cls = '', style = '' }) {
   b.onclick = onclick;
   return b;
 }
+// 縮圖還沒畫過的：按鈕先出來，縮圖排隊之後分批畫（每批最多 12ms），換分頁、按鈕不在了就不畫（評審 L6：第一次進一鍵出片、光效、邊框、範本要等整排畫完才出現）
+// ready：已經畫過（有快取）就直接貼；make() 回傳圖的網址
+const thumbQ = []; let thumbQT = 0;
+function lazyThumb(el, ready, make) {
+  const put = () => { el.querySelector('.ic').style.backgroundImage = `url(${make()})`; };
+  if (ready) put(); else { thumbQ.push(() => el.isConnected && put()); thumbQT ||= setTimeout(thumbRun); }
+  return el;
+}
+function thumbRun() {
+  const t0 = performance.now();
+  while (thumbQ.length && performance.now() - t0 < 12) thumbQ.shift()();
+  thumbQT = thumbQ.length ? setTimeout(thumbRun) : 0;
+}
 
 function showTab(t) {
   if (t !== 'crop' && cropState) endCrop();
@@ -1614,7 +1628,7 @@ async function mergeFilter() {
     P = { ...now, filter: 'none', filterAmt: P0.filterAmt, ...pre(P0) };
     // 臉、人像這些偵測結果還是同一張照片，留著不用重算；濾鏡縮圖要照新照片重算
     const keep = { ...base };
-    for (const k of ['canvas', 'thumbs', 'thumbSrc', 'harm', 'small', 'lookThumbs', 'autoSet']) delete keep[k];
+    for (const k of ['canvas', 'thumbs', 'thumbSrc', 'harm', 'small', 'lookThumbs', 'lookSrc', 'autoSet']) delete keep[k];
     setBase(out, keep); commit(); showTab(tab);
     const parts = ['濾鏡', PRE_LUT.some(k => now[k]) && '調整', (now.light || now.flash) && '打光'].filter(Boolean);
     toast(parts.length > 1 ? `已合併（${parts.join('、')}都畫進照片了），可以再選一個濾鏡疊上去` : '已合併，可以再選一個濾鏡疊上去');
@@ -2062,8 +2076,9 @@ function rsRing(p) {
     const p = at(e), r = liqRadius(rsVal[rsTool].size, base.canvas.width, base.canvas.height);
     rsRing(p);
     if (Math.hypot(p.x - last.x, p.y - last.y) < r * 0.12) return;
-    if (rsTool === 'push' || rsTool === 'restore') dab(last, p); else dab(p, p);
-    if (allBg && !onBg(p)) allBg = false;
+    dab(last, p);
+    // 一次走很遠時沿路都點了：沿路看有沒有碰到人
+    if (allBg) { const n = Math.ceil(Math.hypot(p.x - last.x, p.y - last.y) / (r * 0.5)); for (let i = 1; i <= n && allBg; i++) if (!onBg({ x: last.x + (p.x - last.x) * i / n, y: last.y + (p.y - last.y) * i / n })) allBg = false; }
     last = p;
   });
   const up = () => {
@@ -2093,7 +2108,7 @@ function protSw() {
 // ---------- 一鍵出片（looks.js） ----------
 function tabLooksHere(box) {
   tabLooks(box, {
-    P: () => P, P0, base: () => base, item, setSlider, hideSlider, render, commit, needSeg, toast,
+    P: () => P, P0, base: () => base, item, lazyThumb, setSlider, hideSlider, render, commit, needSeg, toast,
     findPerson: () => findPerson(true).then(() => render()),
     cats: () => $('#cats'), refresh: () => showTab('looks'), note: t => { $('#note').textContent = t; },
   });
@@ -2851,8 +2866,8 @@ function tabPop(box) {
     return;
   }
   box.append(item({ label: '無', icon: I.off, on: !P.pop, onclick: () => { P.pop = ''; render(); commit(); showTab('fun'); } }));
-  POPS.forEach(p => box.append(item({ label: p.name, cls: 'ft', on: P.pop === p.id, style: `background-image:url(${popThumb(p.id)})`,
-    onclick: () => { P.pop = p.id; if (POP_CLASH.includes(P.fx)) P.fx = ''; render(); commit(); showTab('fun'); } })));
+  POPS.forEach(p => box.append(lazyThumb(item({ label: p.name, cls: 'ft', on: P.pop === p.id,
+    onclick: () => { P.pop = p.id; if (POP_CLASH.includes(P.fx)) P.fx = ''; render(); commit(); showTab('fun'); } }), hasThumb('pop' + p.id + (base.matte ? 'm' : '')), () => popThumb(p.id))));
   if (!P.pop) return hideSlider();
   if (popK === 'm') setSlider('邊距', 0, 25, P.popM, v => { P.popM = v; ch(); });
   else setSlider(P.pop === 'behind' ? '位置' : '高度', 0, 100, P.popY, v => { P.popY = v; ch(); });
@@ -2869,11 +2884,13 @@ function small() {
   return base.small;
 }
 const thumbCache = new Map();
+const thumbKey = key => key + '|' + base.canvas.width + 'x' + base.canvas.height;
 function thumbOf(key, make) {
-  const k = key + '|' + base.canvas.width + 'x' + base.canvas.height;
+  const k = thumbKey(key);
   if (!thumbCache.has(k)) { if (thumbCache.size > 80) thumbCache.clear(); thumbCache.set(k, make()); }
   return thumbCache.get(k);
 }
+const hasThumb = key => thumbCache.has(thumbKey(key));
 function squareThumb(draw) {
   const c = newCanvas(124, 124), ctx = c.getContext('2d'), s = small();
   const k = Math.max(124 / s.width, 124 / s.height);
@@ -2926,10 +2943,10 @@ function tabFun(box) {
     return;
   }
   box.append(item({ label: '無', icon: I.off, on: !P.ov, onclick: () => { P.ov = ''; render(); commit(); showTab('fun'); } }));
-  OVERLAYS.forEach(o => box.append(item({
-    label: o.name, cls: 'ft', on: P.ov === o.id, style: `background-image:url(${ovThumb(o)})`,
+  OVERLAYS.forEach(o => box.append(lazyThumb(item({
+    label: o.name, cls: 'ft', on: P.ov === o.id,
     onclick: () => { if (P.ov !== o.id) P.ovAmt = 80; P.ov = o.id; render(); commit(); showTab('fun'); },
-  })));
+  }), hasThumb('ov' + o.id), () => ovThumb(o))));
   if (P.ov) setSlider('強度', 0, 100, P.ovAmt, v => { P.ovAmt = v; render(); });
   else hideSlider();
   $('#note').textContent = '漏光、光斑、星光這些光效，可以跟特效一起用。';
@@ -2974,10 +2991,10 @@ function tabFrame(box) {
     openCollage('tpl', [c]);
   } }));
   box.append(item({ label: '無', icon: I.off, on: !P.frame, onclick: () => { P.frame = ''; layout(); commit(); showTab('frame'); } }));
-  FRAMES.forEach(f => box.append(item({
-    label: f.name, cls: 'ft', on: P.frame === f.id, style: `background-image:url(${frameThumb(f)});background-size:contain;background-repeat:no-repeat`,
+  FRAMES.forEach(f => box.append(lazyThumb(item({
+    label: f.name, cls: 'ft', on: P.frame === f.id, style: 'background-size:contain;background-repeat:no-repeat',
     onclick: () => { P.frame = f.id; layout(); commit(); showTab('frame'); },
-  })));
+  }), hasThumb('f' + f.id), () => frameThumb(f))));
   $('#note').textContent = P.frame ? '存檔時邊框會一起存進去。' : '拍立得、底片、模糊背景這些邊框，存檔會一起存進去。';
 }
 
@@ -3230,7 +3247,7 @@ function tabText(box) {
     hideSlider();
     cats.hidden = true;
     box.append(item({ label: '加文字', icon: I.plus, onclick: () => addText() }));
-    TEMPLATES.forEach(tp => box.append(item({ label: tp.name, cls: 'ft', style: `background-image:url(${tplThumb(tp)});background-color:#3a3a42`, onclick: () => addText(tp) })));
+    TEMPLATES.forEach(tp => box.append(lazyThumb(item({ label: tp.name, cls: 'ft', style: 'background-color:#3a3a42', onclick: () => addText(tp) }), tplThumbs.has(tp.id), () => tplThumb(tp))));
     $('#note').textContent = texts.length ? '點一下照片上的文字來編輯，拖曳移動，兩指縮放旋轉。' : '點「加文字」，或直接選一個範本。';
     return;
   }
@@ -3251,10 +3268,10 @@ function tabText(box) {
   if (txSec === 'tpl') {
     sizeSlider();
     box.append(item({ label: '無', icon: I.off, on: !t.tpl, onclick: () => { applyTemplate(t, null); redo(); } }));
-    TEMPLATES.forEach(tp => box.append(item({
-      label: tp.name, cls: 'ft tt', on: t.tpl === tp.id, style: `background-image:url(${tplThumb(tp)});background-color:#3a3a42`,
+    TEMPLATES.forEach(tp => box.append(lazyThumb(item({
+      label: tp.name, cls: 'ft tt', on: t.tpl === tp.id, style: 'background-color:#3a3a42',
       onclick: () => { applyTemplate(t, tp); loadFont(t.font, t.text).then(drawTexts); redo(); },
-    })));
+    }), tplThumbs.has(tp.id), () => tplThumb(tp))));
   } else if (txSec === 'font') {
     sizeSlider();
     FONTS.forEach((f, i) => box.append(item({

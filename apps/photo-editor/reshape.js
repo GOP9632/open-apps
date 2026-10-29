@@ -31,10 +31,11 @@ export function liqDab(liq, tool, a, b, size, str, W, H) {
     // 被推的地方跟著手指走的比例 = 強度：100 整個跟著走，20 走兩成，1 只走百分之一
     const n = Math.ceil(d / (r * 0.25));
     for (let i = 0; i < n; i++) add(0, a.x + dx * i / n, a.y + dy * i / n, dx / n * k / M, dy / n * k / M);
-  } else if (tool === 'cw' || tool === 'ccw') {
-    add(2, b.x, b.y, (tool === 'cw' ? 1 : -1) * 0.1 * k);
-  } else if (tool === 'bloat' || tool === 'pucker') {
-    add(1, b.x, b.y, (tool === 'bloat' ? 1 : -1) * 0.1 * k);
+  } else if (tool === 'cw' || tool === 'ccw' || tool === 'bloat' || tool === 'pucker') {
+    // 慢慢拖時手指每走 0.12 個半徑點一下；手指一次走很遠就沿路補點（點距一樣 0.12～0.24 個半徑），小筆刷快拖才不會斷成一顆一顆（評審 L31）
+    const t = tool === 'cw' || tool === 'ccw' ? 2 : 1, v = (tool === 'cw' || tool === 'bloat' ? 1 : -1) * 0.1 * k;
+    const dx = b.x - a.x, dy = b.y - a.y, n = Math.max(1, Math.floor(Math.hypot(dx, dy) / (r * 0.12)));
+    for (let i = 1; i <= n; i++) add(t, a.x + dx * i / n, a.y + dy * i / n, v);
   } else if (tool === 'restore') {
     // 畫一筆還原一點：沿著手指每走 0.12 個半徑點一下（點的量照走的距離），按住不動不會一直還原。
     // 一筆劃過的地方大約還原「強度 × 50%」：直線劃過時每點的權重加起來約 8.9（(1−t²)² 積分 ÷ 0.12）
