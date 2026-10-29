@@ -29,8 +29,9 @@ struct MapTab: View {
     @State private var clusterTask: Task<Void, Never>?
     // 選到很遠的店：先拉遠再降落
     @State private var flight: Flight?
-    // 地圖鋪滿整個畫面，鏡頭框的那塊（上面搜尋列下緣、下面卡片列上緣，螢幕座標）只在一般地圖時跟著量；
-    // 進出行程時地圖大小、邊距都不變，不然整張地圖要重排（每次 0.5 秒左右的卡頓）
+    // 地圖鋪滿整個畫面，鏡頭框的那塊：上面到搜尋列下緣，下面到「最低段面板上緣再上去 56」（Apple 標誌貼在這，HIG 要它停在
+    // 可拉卡片最低位置上方、不跟著介面動）。開 App 量一次就不再變；進出行程、選圖釘都不改，不然整張地圖要重排（每次約 0.5 秒）
+    // 面板停在中段時下面一截被蓋住：鏡頭動作都經過 aim()，把店放在看得到的那塊
     @State private var mapRect: CGRect = .zero
     @State private var dot = MyDot.shared
     @State private var headY: CGFloat = 0
@@ -204,8 +205,9 @@ struct MapTab: View {
                     pins.select(trip.cand.map { $0.place != nil ? $0.id : "hit:" + $0.id })
                 }
             }
-            .ignoresSafeArea()
+            // 量在 ignoresSafeArea 裡面才是地圖真正鋪開的範圍（整個螢幕）；量在外面只拿到 safe area 那塊，上下邊距會各少算 62、34
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { mapRect = $0; trip.mapBottom = footY > 0 ? footY : $0.maxY }
+            .ignoresSafeArea()
             // 自己的位置：畫在地圖上面一層（地圖的標註會被南邊的圖釘蓋住）
             MyDotLayer(dot: dot)
             // 搜尋列、卡片列、行程面板放在地圖上面另一層：它們的高度變了不會動到地圖
@@ -299,7 +301,7 @@ struct MapTab: View {
                                             // 拉近到街道（已經比這更近就不動縮放）
                                             let near = MKCoordinateRegion(center: l.coordinate, latitudinalMeters: 1200, longitudinalMeters: 1200)
                                             let span = store.mapRegion.map { $0.span.latitudeDelta < near.span.latitudeDelta ? $0.span : near.span } ?? near.span
-                                            withAnimation(.smooth(duration: 0.5)) { pos = .region(MKCoordinateRegion(center: l.coordinate, span: span)) }
+                                            withAnimation(.smooth(duration: 0.5)) { pos = .region(aim(MKCoordinateRegion(center: l.coordinate, span: span), grow: false)) }
                                         } else {
                                             withAnimation(.smooth(duration: 0.5)) { pos = .userLocation(fallback: pos) }
                                         }
@@ -531,15 +533,33 @@ struct MapTab: View {
         let span = cur?.span ?? MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
         // 離畫面中心超過可見範圍的 60%：拉遠再降落；近的直接平移
         let far = cur.map { abs(c.latitude - $0.center.latitude) > $0.span.latitudeDelta * 0.6 || abs(c.longitude - $0.center.longitude) > $0.span.longitudeDelta * 0.6 } ?? false
-        if far && !reduce { flight = Flight(lat: c.latitude, lng: c.longitude) }
-        else { withAnimation(.smooth(duration: 0.55)) { pos = .region(MKCoordinateRegion(center: c, span: span)) } }
+        // 圖釘放在中段面板上面看得到那塊的中間（大卡比卡片列高一點，還是在大卡上面）
+        let to = aim(MKCoordinateRegion(center: c, span: span), grow: false)
+        if far && !reduce { flight = Flight(lat: to.center.latitude, lng: to.center.longitude) }
+        else { withAnimation(.smooth(duration: 0.55)) { pos = .region(to) } }
     }
 
-    // 面板停在中間段時才把上緣（含行程、定位兩顆）當地圖下面的邊距；拉的時候、最低和最高段都不動，地圖不用重排
-    private func setFoot(_ y: CGFloat) {
-        guard !trip.on, MapPanel.shared.stage == .mid, !MapPanel.shared.dragging, abs(y - footY) > 0.5 else { return }
+    // Apple 標誌、法律資訊：最低段面板上緣再往上 10pt（HIG），左下固定再讓出 46pt 給「N 間還沒有地址」膠囊。
+    // 面板只回報變大的值（鍵盤推高面板時不算），所以開 App 量到一次之後就不再變，地圖不會重排
+    private func setFoot(_ lowTop: CGFloat) {
+        let y = lowTop - 10 - 46
+        guard !trip.on, abs(y - footY) > 0.5 else { return }
         quiet.hush()
         footY = y; trip.mapBottom = y
+        if !fitted { fit() }
+    }
+
+    // 鏡頭框的是 headY…footY；面板停在中段時下面一截被蓋住。把 r 換算成要交給地圖的區域，
+    // 讓 r 落在看得到的那塊（headY…中段上緣）：中心往南挪，grow 時緯度範圍跟著放大，整塊都塞得進去
+    private func aim(_ r: MKCoordinateRegion, grow: Bool = true) -> MKCoordinateRegion {
+        let mp = MapPanel.shared
+        let vb = mp.stage != .low && mp.midTop > headY + 50 ? min(mp.midTop, footY) : footY
+        let hf = footY - headY, hv = vb - headY
+        guard hf > 50, hv > 50 else { return r }
+        let lat = grow ? r.span.latitudeDelta * Double(hf / hv) : r.span.latitudeDelta
+        let shift = Double((footY - vb) / 2 / hf) * lat
+        return MKCoordinateRegion(center: .init(latitude: r.center.latitude - shift, longitude: r.center.longitude),
+                                  span: .init(latitudeDelta: lat, longitudeDelta: r.span.longitudeDelta))
     }
 
     static var mapWidth: CGFloat {
@@ -672,8 +692,8 @@ struct MapTab: View {
         guard !ps.isEmpty else { return }
         let la = ps.map { $0.lat! }, lo = ps.map { $0.lng! }
         withAnimation(.smooth(duration: 0.5)) {
-            pos = .region(MKCoordinateRegion(center: .init(latitude: (la.min()! + la.max()!) / 2, longitude: (lo.min()! + lo.max()!) / 2),
-                                             span: .init(latitudeDelta: max(0.003, (la.max()! - la.min()!) * 2.6), longitudeDelta: max(0.003, (lo.max()! - lo.min()!) * 2.2))))
+            pos = .region(aim(MKCoordinateRegion(center: .init(latitude: (la.min()! + la.max()!) / 2, longitude: (lo.min()! + lo.max()!) / 2),
+                                                 span: .init(latitudeDelta: max(0.003, (la.max()! - la.min()!) * 2.6), longitudeDelta: max(0.003, (lo.max()! - lo.min()!) * 2.2)))))
         }
     }
 
@@ -682,13 +702,14 @@ struct MapTab: View {
         guard let p = currentList.first(where: { $0.id == id }), let la = p.lat, let lo = p.lng else { return }
         if !hidden.contains(id) { pins.hops[id, default: 0] += 1 }
         guard let r = store.mapRegion ?? shownRegion else { return }
-        let dy = (la - r.center.latitude) / r.span.latitudeDelta, dx = (lo - r.center.longitude) / r.span.longitudeDelta
-        // 上面有搜尋列、下面有卡片蓋住，只算中間那塊
-        guard dy > 0.38 || dy < -0.12 || abs(dx) > 0.42 else { return }
+        // 圖釘在螢幕上哪裡：在搜尋列下面、面板上面、左右沒出界就不用動
+        guard let pt = pins.locate?(.init(latitude: la, longitude: lo)) else { return }
+        let bottom = MapPanel.shared.top > 0 ? MapPanel.shared.top : footY
+        guard pt.y < headY + 50 || pt.y > bottom - 20 || pt.x < 30 || pt.x > Self.mapWidth - 30 else { return }
         selfMoved = true
         quiet.hush()
         withAnimation(.smooth(duration: 0.45)) {
-            pos = .region(MKCoordinateRegion(center: .init(latitude: la - r.span.latitudeDelta * 0.12, longitude: lo), span: r.span))
+            pos = .region(aim(MKCoordinateRegion(center: .init(latitude: la, longitude: lo), span: r.span), grow: false))
         }
     }
 
@@ -741,20 +762,27 @@ struct MapTab: View {
     }
 
     private func fit() {
-        quiet.hush()
-        if !fitted, let b = bounds { fitted = true; pos = .region(b); return }
-        // 新帳號一間都沒有：有定位就看目前位置附近約 3 公里（沒有就停在預設的台北市）；之後有店了再框收藏
-        if !fitted, bounds == nil, store.mine.isEmpty, store.mapGroup == nil, let h = store.here {
-            pos = .region(MKCoordinateRegion(center: h.coordinate, latitudinalMeters: 3000, longitudinalMeters: 3000))
+        // 地圖下緣還沒量到：等面板回報（setFoot 會再叫一次），不然框好又因為換邊距重排一次
+        guard footY > 0, !fitted else { return }
+        // 等這一輪版面排好（收藏剛載完時卡片列才出來，中段變高）再框，鏡頭才知道中段面板蓋到哪
+        Task {
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !fitted else { return }
+            quiet.hush()
+            if let b = bounds { fitted = true; pos = .region(b); return }
+            // 新帳號一間都沒有：有定位就看目前位置附近約 3 公里（沒有就停在預設的台北市）；之後有店了再框收藏
+            if store.mine.isEmpty, store.mapGroup == nil, let h = store.here {
+                pos = .region(aim(MKCoordinateRegion(center: h.coordinate, latitudinalMeters: 3000, longitudinalMeters: 3000), grow: false))
+            }
         }
     }
 
+    // 框住所有收藏：落在搜尋列和中段面板之間（上下多留一點給圖釘的高度）
     private var bounds: MKCoordinateRegion? {
         let ps = points; guard !ps.isEmpty else { return nil }
         let la = ps.map { $0.lat! }, lo = ps.map { $0.lng! }
-        // 下面有一排卡片蓋住，框的時候往下多留一點
-        return MKCoordinateRegion(center: .init(latitude: (la.min()! + la.max()!) / 2 - (la.max()! - la.min()!) * 0.15, longitude: (lo.min()! + lo.max()!) / 2),
-                                  span: .init(latitudeDelta: max(0.02, (la.max()! - la.min()!) * 1.9), longitudeDelta: max(0.02, (lo.max()! - lo.min()!) * 1.3)))
+        return aim(MKCoordinateRegion(center: .init(latitude: (la.min()! + la.max()!) / 2, longitude: (lo.min()! + lo.max()!) / 2),
+                                      span: .init(latitudeDelta: max(0.02, (la.max()! - la.min()!) * 1.3), longitudeDelta: max(0.02, (lo.max()! - lo.min()!) * 1.3))))
     }
 }
 
@@ -849,7 +877,7 @@ struct NearbySheet: View {
     var focus: (String) -> Void = { _ in }
     var ceiling: CGFloat = 0                    // 拉到最高時面板上緣停在這（搜尋列下緣再下面一點，螢幕座標）
     var top: AnyView? = nil                     // 浮在面板上緣的東西（行程、定位兩顆），跟著面板上下
-    var foot: (CGFloat) -> Void = { _ in }      // 停好時回報上緣（含上面那排按鈕）給地圖當邊距
+    var foot: (CGFloat) -> Void = { _ in }      // 回報最低段停好時的面板上緣（只報變大的），地圖拿來定下緣
     @State private var counted: Int?          // 圖釘落下時「附近 N 間」從 0 數上去
     @State private var scrolled: String?      // 卡片列停在哪一間
     @State private var skip: String?          // 自己捲過去的（關掉大卡），不用再移地圖
@@ -942,7 +970,6 @@ struct NearbySheet: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { v in if abs(v - topH) > 0.5 { topH = v } }
                     .offset(y: -(topH + 10))
-                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in probe.foot = y; report() }
                     // 快到最高時淡掉（跟著手指算，只有這層每幀重畫）
                     .modifier(TopFade(lift: lift, base: target(mp.stage), lo: Self.lowH, hi: highT, shown: topH > 0))
             }
@@ -1095,7 +1122,12 @@ struct NearbySheet: View {
 
     private func report() {
         guard !mp.dragging, !TripMode.shared.on else { return }
-        if probe.foot > 0 { foot(probe.foot) }
+        // 最低段上緣：只取最大值。鍵盤把面板往上推時值會變小，不採用，地圖就不會因為鍵盤重排
+        let grew = bottomY > 0 && bottomY - Self.lowH > mp.lowTop + 0.5
+        if grew { mp.lowTop = bottomY - Self.lowH }
+        // 中段上緣用算的（最低段下緣 − 中段高度），不受大卡、鍵盤影響（鏡頭 aim() 用）；先算好再通知地圖
+        if mp.lowTop > 0 { mp.midTop = mp.lowTop + Self.lowH - midT }
+        if grew { foot(mp.lowTop) }
         if mp.stage != .high, probe.top > 0, abs(mp.top - probe.top) > 0.5 { mp.top = probe.top }
     }
 }
@@ -1131,7 +1163,6 @@ private struct TopFade: ViewModifier {
 
 private final class PanelProbe {
     var top: CGFloat = 0
-    var foot: CGFloat = 0
 }
 
 // 面板頂部（橫條、標題那行、大卡片最上面那行）的拖曳：往上拉為正；手勢被中斷時 released 收尾

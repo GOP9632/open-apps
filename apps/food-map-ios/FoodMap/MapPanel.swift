@@ -10,6 +10,9 @@ enum MapStage { case low, mid, high }
     var stage: MapStage = .mid
     // 停好時面板上緣的螢幕位置（最高段不更新）：「附近」只算面板上面看得到的那塊
     var top: CGFloat = 0
+    // 最低段停好時的面板上緣（只增不減，地圖下緣跟著它）、中段上緣（用算的）：鏡頭對準看得到的那塊用
+    @ObservationIgnored var lowTop: CGFloat = 0
+    @ObservationIgnored var midTop: CGFloat = 0
     // 手指正在拉：這時候不量地圖邊距（不然地圖每幀重排）
     @ObservationIgnored var dragging = false
     // 剛換過段：地圖還在滑（甩過的慣性）也不要馬上又降到一行
