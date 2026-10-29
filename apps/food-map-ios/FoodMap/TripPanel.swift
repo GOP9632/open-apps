@@ -39,6 +39,7 @@ struct TripPanel: View {
     @GestureState private var holding = false
     @GestureState private var pulling = false   // 拉面板的手勢還在（被系統取消時把面板放回一段）
     @State private var lowering = false         // 清單捲到頂又往下拉過頭：放開就降一段
+    @State private var pickingStart = false     // 起點選單（按鈕＋底部選單：用 Menu 的話從這顆拉面板拉不動）
     @State private var listTouch = false        // 手指正在拉清單（甩過頭的回彈不算）
     // 出發
     @State private var me: CLLocation?          // 出發時的目前位置（只在 App 開著時更新）
@@ -332,13 +333,8 @@ struct TripPanel: View {
         else { label = "📍 從第 1 站出發" }
         var names: Set<String> = []
         let stays = trips.stops(t.id).filter { $0.kind == "stay" && names.insert($0.name).inserted }
-        return Menu {
-            Button("🏠 從目前位置出發") { startHere(base) }
-            ForEach(stays) { st in
-                Button("🏨 " + st.name) { startAt(st, t, d: d, base: base) }
-            }
-            Button("🔍 搜尋飯店…") { mode.startSearch(.stay, slot: .first) }
-        } label: {
+        // 一般按鈕：手指按在這顆往下拉，面板照樣跟著走（系統 Menu 會把手指吃掉）
+        return Button { pickingStart = true } label: {
             HStack(spacing: 4) {
                 Text(label).lineLimit(1)
                 Image(systemName: "chevron.down").font(.system(size: 10, weight: .heavy)).foregroundStyle(Color.ink.opacity(0.4))
@@ -348,7 +344,15 @@ struct TripPanel: View {
             .background(Color.ink.opacity(0.06), in: .capsule)
             .frame(minHeight: 40).contentShape(.rect)
         }
+        .buttonStyle(PressStyle(haptic: true))
         .accessibilityLabel("起點：" + label)
+        .confirmationDialog("從哪裡出發？", isPresented: $pickingStart, titleVisibility: .visible) {
+            Button("🏠 從目前位置出發") { startHere(base) }
+            ForEach(stays) { st in
+                Button("🏨 " + st.name) { startAt(st, t, d: d, base: base) }
+            }
+            Button("🔍 搜尋飯店…") { mode.startSearch(.stay, slot: .first) }
+        }
     }
 
     // 改從目前位置出發：第一站的住宿移到最後（晚上回飯店）

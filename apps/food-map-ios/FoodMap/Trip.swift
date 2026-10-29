@@ -437,6 +437,7 @@ enum TripSort {
         let at = trips.firstIndex { $0.id == t.id } ?? 0
         let ss = stops(t.id)
         hiddenTrips.insert(t.id); rev += 1
+        LaterDelete.add("trips", t.id)
         if lastOpened == t.id { lastOpened = nil }
         withAnimation(.snappy(duration: 0.35)) {
             trips.removeAll { $0.id == t.id }
@@ -445,6 +446,7 @@ enum TripSort {
         saveCache()
         store.say("已刪除「\(t.title)」", icon: .trash, action: ("復原", { [weak self] in
             guard let self, self.hiddenTrips.remove(t.id) != nil else { return }
+            LaterDelete.remove("trips", t.id)
             withAnimation(.snappy(duration: 0.35)) {
                 self.trips.insert(t, at: min(at, self.trips.count))
                 self.stops += ss
@@ -463,6 +465,7 @@ enum TripSort {
                 withAnimation(.snappy) { trips.insert(t, at: min(at, trips.count)); stops += ss }
                 store.say("刪除失敗：" + error.localizedDescription)
             }
+            LaterDelete.remove("trips", t.id)
             saveCache()
         }
     }
@@ -531,10 +534,12 @@ enum TripSort {
     // 刪一站：先拿掉，4 秒內可以復原
     func deleteWithUndo(_ s: TripStop, store: Store) {
         hiddenStops.insert(s.id); rev += 1
+        LaterDelete.add("trip_stops", s.id)
         withAnimation(.snappy(duration: 0.3)) { stops.removeAll { $0.id == s.id } }
         saveCache()
         store.say("已拿掉 \(s.name)", icon: .trash, action: ("復原", { [weak self] in
             guard let self, self.hiddenStops.remove(s.id) != nil else { return }
+            LaterDelete.remove("trip_stops", s.id)
             withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { self.stops.append(s); store.toast = nil }
             self.saveCache()
         }))
@@ -547,6 +552,7 @@ enum TripSort {
                 withAnimation(.snappy) { stops.append(s) }
                 store.say("刪除失敗：" + error.localizedDescription)
             }
+            LaterDelete.remove("trip_stops", s.id)
             saveCache()
         }
     }

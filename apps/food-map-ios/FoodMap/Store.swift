@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import Observation
 import CoreLocation
 import MapKit
@@ -415,6 +416,7 @@ struct Snapshot: Codable {
     }
 
     @MainActor func signOut() {
+        LaterDelete.clear()
         Supa.signOut(); loggedIn = false
         undoable = []; pendingSwipes = []; geoTried = []; pendingAdds = []; freshIds = []
         apply(Snapshot()); quickKey = nil
@@ -579,12 +581,14 @@ struct Snapshot: Codable {
         let at = places.firstIndex { $0.id == p.id } ?? 0
         let shares = groupPlaces.filter { $0.place_id == p.id }
         undoable.insert(p.id)
+        LaterDelete.add("places", p.id)
         withAnimation(.snappy(duration: 0.35)) {
             places.removeAll { $0.id == p.id }
             groupPlaces.removeAll { $0.place_id == p.id }
         }
         say("已刪除 \(p.name)", icon: .trash, place: p, action: ("復原", { [weak self] in
             guard let self, self.undoable.remove(p.id) != nil else { return }
+            LaterDelete.remove("places", p.id)
             // 從訊息條左邊的小照片彈回原位
             withAnimation(.snappy(duration: 0.35)) {
                 self.places.insert(p, at: min(at, self.places.count))
@@ -600,6 +604,7 @@ struct Snapshot: Codable {
                 withAnimation(.snappy) { places.insert(p, at: min(at, places.count)); groupPlaces += shares }
                 say("刪除失敗：" + error.localizedDescription)
             }
+            LaterDelete.remove("places", p.id)
         }
     }
 
@@ -973,3 +978,45 @@ func branchLabel(_ p: Place) -> String {
 }
 
 func fmtDistance(_ m: Double) -> String { m < 1000 ? "\(Int(m)) m" : String(format: m < 10000 ? "%.1f km" : "%.0f km", m / 1000) }
+
+// 刪除先從畫面拿掉、幾秒後才真的送出（這段時間可以復原）。等的時候 App 被切走或關掉也不能漏送，
+// 不然下次打開那筆又跑回來：等著送的記在手機裡，切到背景就馬上送，下次打開還沒送到的補送
+@MainActor enum LaterDelete {
+    private static let key = "laterDeletes"
+    private static var all: [String] { UserDefaults.standard.stringArray(forKey: key) ?? [] }
+
+    static func add(_ table: String, _ id: String) {
+        let k = table + "|" + id
+        var a = all
+        if !a.contains(k) { a.append(k); UserDefaults.standard.set(a, forKey: key) }
+    }
+
+    static func remove(_ table: String, _ id: String) {
+        let k = table + "|" + id
+        let a = all
+        if a.contains(k) { UserDefaults.standard.set(a.filter { $0 != k }, forKey: key) }
+    }
+
+    static func clear() { UserDefaults.standard.removeObject(forKey: key) }
+
+    // 切到背景、剛打開 App：還沒送的全部送出（復原期間也一起結束；訊息條上的「復原」收掉）
+    @discardableResult static func flush(_ store: Store) -> Task<Void, Never>? {
+        let items = all
+        guard !items.isEmpty, Supa.session != nil else { return nil }
+        if let t = store.toast, t.hasPrefix("已刪除") || t.hasPrefix("已拿掉") { store.toast = nil; store.toastAction = nil }
+        let bg = UIApplication.shared.beginBackgroundTask(withName: "laterDeletes")
+        return Task {
+            for k in items {
+                let parts = k.split(separator: "|", maxSplits: 1).map(String.init)
+                guard parts.count == 2 else { UserDefaults.standard.set(Self.all.filter { $0 != k }, forKey: Self.key); continue }
+                do {
+                    _ = try await Supa.write("DELETE", parts[0], query: "id=eq.\(parts[1])")
+                    Self.remove(parts[0], parts[1])
+                } catch {
+                    print("[delete] 補送失敗 \(k)：\(error)")
+                }
+            }
+            UIApplication.shared.endBackgroundTask(bg)
+        }
+    }
+}

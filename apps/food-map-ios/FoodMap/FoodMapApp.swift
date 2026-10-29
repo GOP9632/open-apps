@@ -51,6 +51,8 @@ struct Root: View {
                 .tripChooser()
                 .onChange(of: store.tab) { _, t in opened.insert(t) }
                 .task {
+                    // 上次刪了、還沒送出就被關掉的：先補送完再同步（不然同步回來那筆又出現）
+                    await LaterDelete.flush(store)?.value
                     await store.sync()
                     store.maybeStartCoach()
                     ClipWatch.shared.check(store)
@@ -183,6 +185,8 @@ struct Root: View {
         // 切回 App 時跟網頁版一樣重新同步一次
         // 憑證快到期就先在背景換好，接下來的請求不用等
         .onChange(of: phase) { _, p in
+            // 切走：等著復原的刪除馬上送出（不然被關掉就漏送，下次打開又跑回來）
+            if p == .background { LaterDelete.flush(store) }
             if p == .active {
                 ClipWatch.shared.check(store)
                 Task { _ = try? await Supa.fresh(); await store.sync() }

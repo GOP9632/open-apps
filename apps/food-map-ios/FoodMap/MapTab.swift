@@ -28,8 +28,8 @@ struct MapTab: View {
     @State private var hidden: Set<String> = []
     @State private var clusterTask: Task<Void, Never>?
     @State private var settleTask: Task<Void, Never>?      // 框地圖要修正時，泡泡晚一點重組的保險
-    // 選到很遠的店：先拉遠再降落
-    @State private var flight: Flight?
+    // 選到很遠的店：先拉遠再降落（第二段等第一段跑一陣子再開始）
+    @State private var flyTask: Task<Void, Never>?
     // 地圖鋪滿整個畫面，鏡頭框的那塊：上面到搜尋列下緣，下面到「最低段面板上緣再上去 56」（Apple 標誌貼在這，HIG 要它停在
     // 可拉卡片最低位置上方、不跟著介面動）。開 App 量一次就不再變；進出行程、選圖釘都不改，不然整張地圖要重排（每次約 0.5 秒）
     // 面板停在中段時下面一截被蓋住：鏡頭動作都經過 aim()，把店放在看得到的那塊
@@ -169,7 +169,13 @@ struct MapTab: View {
                 }
                 .onMapCameraChange { c in
                     trip.toScreen = { proxy.convert($0, to: .global) }
-                    if quiet.flying { quiet.flying = false; Perf.shared.mark("飛完") }
+                    // 飛去遠的店降落了：記一筆，附近清單也換成這裡（不然卡片列還是原本那一帶，捲一下就把鏡頭拉回去）
+                    var landed = false
+                    if let t = quiet.flyTo, abs(c.region.center.latitude - t.lat) < c.region.span.latitudeDelta * 0.15,
+                       abs(c.region.center.longitude - t.lng) < c.region.span.longitudeDelta * 0.15 {
+                        quiet.flyTo = nil; landed = true
+                        Perf.shared.mark("飛完")
+                    }
                     store.mapRegion = c.region
                     settleTask?.cancel()
                     // 行程框地圖停好量了一次、要再修正：這次先不重組泡泡，等修正完停好再做（只做一次、在最後的鏡頭上做）；
@@ -182,21 +188,8 @@ struct MapTab: View {
                         }
                     }
                     // 行程模式時下面的附近面板收著，不用跟著重算（離開行程時補一次）
-                    if selfMoved { selfMoved = false } else { seenBox.set(c.region, publish: !trip.on) }
+                    if selfMoved && !landed { selfMoved = false } else { selfMoved = false; seenBox.set(c.region, publish: !trip.on) }
                     recluster(proxy)
-                }
-                // 很遠的店：前 40% 時間拉遠到 1.6 倍，再降落到那間（共 0.8 秒）
-                .mapCameraKeyframeAnimator(trigger: flight) { cam in
-                    let to = flight.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) } ?? cam.centerCoordinate
-                    let mid = CLLocationCoordinate2D(latitude: (cam.centerCoordinate.latitude + to.latitude) / 2, longitude: (cam.centerCoordinate.longitude + to.longitude) / 2)
-                    KeyframeTrack(\MapCamera.centerCoordinate) {
-                        CubicKeyframe(mid, duration: 0.32)
-                        CubicKeyframe(to, duration: 0.48)
-                    }
-                    KeyframeTrack(\MapCamera.distance) {
-                        CubicKeyframe(cam.distance * 1.6, duration: 0.32)
-                        CubicKeyframe(cam.distance, duration: 0.48)
-                    }
                 }
                 .onChange(of: list.map(\.id)) { recluster(proxy) }
                 .onChange(of: store.coachStep) { pinFrame(proxy) }
@@ -549,7 +542,8 @@ struct MapTab: View {
         MapPanel.shared.go(.mid)
         // 先把大卡片和店家頁要用的照片載好，點進去時第一幀就有
         if let u = p.photoURL { Task { _ = await PhotoLoader.shared.load(u, 400); _ = await PhotoLoader.shared.load(u, 1200) } }
-        ReelCache.warm(p)
+        // 影片預載等地圖移完再開始（拿網址、建播放器在主執行緒，跟移地圖、飛過去搶會掉幀）；還選著這間才載
+        Task { try? await Task.sleep(for: .milliseconds(850)); if pins.sel == p.id { ReelCache.warm(p) } }
         let c = CLLocationCoordinate2D(latitude: p.lat!, longitude: p.lng!)
         if !reduce {
             spot.coord = c; spot.color = p.cat.color
@@ -564,8 +558,24 @@ struct MapTab: View {
         let far = cur.map { abs(c.latitude - $0.center.latitude) > $0.span.latitudeDelta * 0.6 || abs(c.longitude - $0.center.longitude) > $0.span.longitudeDelta * 0.6 } ?? false
         // 圖釘放在中段面板上面看得到那塊的中間（大卡比卡片列高一點，還是在大卡上面）
         let to = aim(MKCoordinateRegion(center: c, span: span), grow: false)
-        if far && !reduce { quiet.flying = true; flight = Flight(lat: to.center.latitude, lng: to.center.longitude) }
-        else { withAnimation(.smooth(duration: 0.55)) { pos = .region(to) } }
+        flyTask?.cancel(); quiet.flyTo = nil
+        if far && !reduce, let from = cur?.center {
+            // 很遠的店：先拉遠到看得到兩地（至少 1.6 倍），再降落到那間（共約 0.8 秒）。
+            // 兩段都寫進 pos（之前用鏡頭關鍵格動畫，抽中遠處的店時飛完鏡頭還停在原地）
+            let dLat = abs(from.latitude - to.center.latitude), dLng = abs(from.longitude - to.center.longitude)
+            let out = MKCoordinateRegion(center: .init(latitude: (from.latitude + to.center.latitude) / 2, longitude: (from.longitude + to.center.longitude) / 2),
+                                         span: .init(latitudeDelta: min(max(span.latitudeDelta * 1.6, dLat * 1.3), 8), longitudeDelta: min(max(span.longitudeDelta * 1.6, dLng * 1.3), 8)))
+            quiet.flyTo = (to.center.latitude, to.center.longitude)
+            withAnimation(.easeIn(duration: 0.32)) { pos = .region(out) }
+            flyTask = Task {
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled, pins.sel == id else { quiet.flyTo = nil; return }
+                selfMoved = true
+                withAnimation(.easeOut(duration: 0.5)) { pos = .region(to) }
+            }
+        } else {
+            withAnimation(.smooth(duration: 0.55)) { pos = .region(to) }
+        }
     }
 
     // Apple 標誌、法律資訊：最低段面板上緣再往上 10pt（HIG），左下固定再讓出 46pt 給「N 間還沒有地址」膠囊。
@@ -1859,12 +1869,6 @@ struct ScopeSheet: View {
         .buttonStyle(PressStyle())
         .accessibilityAddTraits(on ? .isSelected : [])
     }
-}
-
-// 很遠的店要飛過去的目的地（每次選都是新的一趟）
-struct Flight: Equatable {
-    let id = UUID()
-    let lat: Double, lng: Double
 }
 
 // 擠在一起的幾根圖釘合成的泡泡

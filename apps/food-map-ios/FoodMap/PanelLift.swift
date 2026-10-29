@@ -53,6 +53,8 @@ struct ListPullDown: UIViewRepresentable {
         context.coordinator.on = on
         context.coordinator.changed = changed
         context.coordinator.ended = ended
+        // 底下的捲動區可能被 SwiftUI 換過：每次更新都重新對一次（換了才重新掛）
+        v.find()
     }
 
     static func dismantleUIView(_ v: Finder, coordinator: Coordinator) { coordinator.detach() }
@@ -61,12 +63,14 @@ struct ListPullDown: UIViewRepresentable {
         var found: ((UIScrollView) -> Void)?
         override func didMoveToWindow() { super.didMoveToWindow(); find() }
         override func didMoveToSuperview() { super.didMoveToSuperview(); find() }
-        // 往上找第一個直的 UIScrollView（最多 12 層，不會掛到別的捲動區）
-        private func find() {
+        override func layoutSubviews() { super.layoutSubviews(); find() }
+        // 往上找第一個直的 UIScrollView（最多 12 層，不會掛到別的捲動區）。
+        // 還沒排版（寬度 0）時 contentSize 可能已經有寬度：只把「排好版而且內容比自己寬」的當成橫的跳過
+        func find() {
             var p = superview
             for _ in 0..<12 {
                 guard let v = p else { return }
-                if let s = v as? UIScrollView, s.contentSize.width <= s.bounds.width + 1 { found?(s); return }
+                if let s = v as? UIScrollView, !(s.bounds.width > 0 && s.contentSize.width > s.bounds.width + 1) { found?(s); return }
                 p = v.superview
             }
         }
@@ -80,12 +84,15 @@ struct ListPullDown: UIViewRepresentable {
         private var handing = false
         private var start: CGFloat = 0
         private var oldBounce = true
+        private var told = false
 
         func attach(_ s: UIScrollView) {
             guard scroll !== s else { return }
             detach()
             scroll = s
             s.panGestureRecognizer.addTarget(self, action: #selector(pan(_:)))
+            // 量測浮層記一筆（模擬器驗收看得到有沒有掛上）
+            Perf.shared.mark("清單掛上")
         }
 
         // 拉到一半清單被拿掉：照樣收尾（面板停段、lift 歸零），不然面板會停在半路
@@ -105,9 +112,18 @@ struct ListPullDown: UIViewRepresentable {
             let dy = g.translation(in: nil).y      // 螢幕座標：面板跟著往下動也不會抵銷
             switch g.state {
             case .began, .changed:
+                if g.state == .began { told = false }
                 if !handing {
-                    guard on, dy > 0, g.velocity(in: nil).y > 0, s.contentOffset.y <= top + 0.5 else { return }
+                    guard on, dy > 0, g.velocity(in: nil).y > 0, s.contentOffset.y <= top + 0.5 else {
+                        // 在頂端往下拉卻沒接手：浮層記原因（一次手勢記一次）
+                        if !told, dy > 0, s.contentOffset.y <= top + 40 {
+                            told = true
+                            Perf.shared.mark("清單沒接手 on=\(on) y=\(Int(s.contentOffset.y))/\(Int(top)) v=\(Int(g.velocity(in: nil).y))")
+                        }
+                        return
+                    }
                     handing = true
+                    Perf.shared.mark("清單接手")
                     // 一開始就在頂端：連起手那幾點一起算，第一幀就動；捲回頂端才接手的，從這裡起算
                     start = g.state == .began ? 0 : dy
                     oldBounce = s.bounces
