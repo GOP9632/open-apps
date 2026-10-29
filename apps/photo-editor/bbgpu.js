@@ -249,8 +249,8 @@ function readBack(o8) {
   });
 }
 // 先開好、編好這支筆的程式，再每支畫一個像素（GPU 第一次畫才建管線），第一筆放開才不會多等。
-// 支援平行編譯就等它在背景編完再畫，不卡主執行緒
-export function gpuWarm(tool, local) {
+// 支援平行編譯就等它在背景編完再畫，不卡主執行緒。mg：局部模糊的筆（去黑眼圈等）每塊外面多算幾格
+export function gpuWarm(tool, local, mg = 0) {
   if (!init()) return;
   const ks = tool === 'blemish' ? (G.fl ? [['bprep', 32], ['box', 32], ['bfin', 0]] : []) : [[tool, 0], ...(local && G.fl ? [['prep', 16], ['box', 16]] : [])];
   try { for (const [k] of ks) G.prog[k] ||= program(FS[k] || fsMix(k)); G.gl.flush(); } catch (e) { return fail(e, '預備'); }
@@ -272,6 +272,9 @@ export function gpuWarm(tool, local) {
         if (G !== g || gl.isContextLost()) return;
         if (gl.clientWaitSync(sync, 0, 0) === gl.TIMEOUT_EXPIRED) { setTimeout(poll, 10); return; }
         gl.deleteSync(sync); if (!busy) gl.getError();
+        // 第一筆要畫進去的貼圖也先開好（一整塊那麼大）：第一筆才開要停下來等 GPU 確認，評審 #167 進分頁 3 秒後磨皮頭兩筆還有約 70ms
+        if (busy) return;
+        try { target('out', 0, TILE, TILE); if (local && G.fl) { target('k0', 16, TILE + 2 * mg, TILE + 2 * mg); target('k1', 16, TILE + 2 * mg, TILE + 2 * mg); } } catch (e) { fail(e, '預備'); }
       };
       setTimeout(poll, 10);
     } catch (e) { fail(e, '預備'); }
