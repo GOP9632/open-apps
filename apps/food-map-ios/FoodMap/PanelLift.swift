@@ -31,13 +31,10 @@ struct LiftOffset: ViewModifier {
     }
 }
 
-// 清單往下拉換成拉面板，有兩條路：清單自己的 pan（下面的 ListPullDown），和清單內容上的 SwiftUI 拖曳（站卡上的手勢
-// 擋住 pan、清單根本沒開始捲時的備案）。誰先接手誰做，另一個不動，放開只停一次段
+// 清單的 pan 正在拉面板（站卡的長按看這個，慢慢往下拉、停一下不算拿起）。
+// 不要再在清單內容上掛 SwiftUI 拖曳當備案：iOS 18 它會讓清單的 pan 開不了，手指放在站卡上整份清單捲不動
 @MainActor final class PullBox {
-    var uikit = false      // 清單的 pan 正在拉面板
-    var swift = false      // SwiftUI 拖曳正在拉面板（清單的 pan 若也在跑，只把清單釘在頂端）
-    var decided = false    // 這次拖曳已經判斷過要不要接手
-    var atTop = true       // 清單在頂端
+    var uikit = false
 }
 
 // 清單捲到頂再往下拉：手指交給面板（1:1 跟手、清單不回彈），放開照面板規則停段。
@@ -113,7 +110,6 @@ struct ListPullDown: UIViewRepresentable {
         var ended: (CGFloat) -> Void = { _ in }
         private weak var scroll: UIScrollView?
         private var handing = false
-        private var pinned = false        // SwiftUI 那邊在拉面板：清單只釘在頂端
         private var start: CGFloat = 0
         private var oldBounce = true
         private var told = false
@@ -141,14 +137,12 @@ struct ListPullDown: UIViewRepresentable {
             #if DEBUG
             if let sp = spy { sp.view?.removeGestureRecognizer(sp); spy = nil }
             #endif
-            let was = handing || pinned
             if handing {
                 handing = false
                 box?.uikit = false
                 ended(0)
+                scroll?.bounces = oldBounce
             }
-            if was { scroll?.bounces = oldBounce }
-            pinned = false
             scroll?.panGestureRecognizer.removeTarget(self, action: #selector(pan(_:)))
             scroll = nil
         }
@@ -165,12 +159,6 @@ struct ListPullDown: UIViewRepresentable {
                     print("[pull] \(name) began on=\(on) dy=\(dy) vy=\(g.velocity(in: nil).y) y=\(s.contentOffset.y) top=\(top) view=\(ObjectIdentifier(g.view!))")
                     #endif
                 }
-                // SwiftUI 那邊先接手了：清單釘在頂端不跟著捲、不回彈，面板交給它
-                if !handing, box?.swift == true {
-                    if !pinned { pinned = true; oldBounce = s.bounces; s.bounces = false }
-                    s.contentOffset.y = top
-                    return
-                }
                 if !handing {
                     guard on, dy > 0, g.velocity(in: nil).y > 0, s.contentOffset.y <= top + 0.5 else {
                         // 在頂端往下拉卻沒接手：浮層記原因（一次手勢記一次）
@@ -185,22 +173,17 @@ struct ListPullDown: UIViewRepresentable {
                     Perf.shared.mark("清單接手 \(name)")
                     // 一開始就在頂端：連起手那幾點一起算，第一幀就動；捲回頂端才接手的，從這裡起算
                     start = g.state == .began ? 0 : dy
-                    if !pinned { oldBounce = s.bounces }
-                    pinned = false
+                    oldBounce = s.bounces
                     s.bounces = false
                 }
                 s.contentOffset.y = top                // 釘在頂端：清單不回彈、不跟著捲
                 changed(-(dy - start))
             case .ended, .cancelled, .failed:
-                guard handing || pinned else { return }
-                let was = handing
+                guard handing else { return }
                 handing = false
-                pinned = false
-                if was {
-                    box?.uikit = false
-                    let v = g.state == .ended ? g.velocity(in: nil).y : 0
-                    ended(-(dy - start + v * 0.2))      // 約略等於 DragGesture 的 predictedEndTranslation
-                }
+                box?.uikit = false
+                let v = g.state == .ended ? g.velocity(in: nil).y : 0
+                ended(-(dy - start + v * 0.2))      // 約略等於 DragGesture 的 predictedEndTranslation
                 // 等這次手勢處理完才把回彈改回來（UIScrollView 自己的處理可能在我們後面跑，馬上改回去它會補彈一下）
                 DispatchQueue.main.async { [weak self, weak s] in
                     guard let self, let s else { return }

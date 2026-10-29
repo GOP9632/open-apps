@@ -37,20 +37,11 @@ struct TripPanel: View {
     @State private var placed = false
     @State private var checked = false          // 行程找不到時，已經重新跟伺服器確認過
     @State private var held = RowHeld()         // 站卡長按拿起中／剛放下（UIKit 長按，見 RowHold.swift）
-    // 診斷用（只有開發版）：啟動參數 -v11NoListPull 關掉清單往下拉的備案拖曳，看站卡上捲不動是不是它擋的
-    private static let noListPull: Bool = {
-        #if DEBUG
-        return ProcessInfo.processInfo.arguments.contains("-v11NoListPull")
-        #else
-        return false
-        #endif
-    }()
     @GestureState private var pulling = false   // 拉面板的手勢還在（被系統取消時把面板放回一段）
     @State private var lowering = false         // 清單捲到頂又往下拉過頭：放開就降一段
     @State private var pickingStart = false     // 起點選單（按鈕＋底部選單：用 Menu 的話從這顆拉面板拉不動）
     @State private var listTouch = false        // 手指正在拉清單（甩過頭的回彈不算）
-    @State private var pull = PullBox()         // 清單往下拉換成拉面板：清單的 pan 和備案拖曳誰接手（見 PanelLift.swift）
-    @GestureState private var listPulling = false
+    @State private var pull = PullBox()         // 清單的 pan 正在拉面板（長按不拿起，見 PanelLift.swift）
     // 出發
     @State private var me: CLLocation?          // 出發時的目前位置（只在 App 開著時更新）
     @State private var pinged: String?          // 已經為「快到了」震過的那站
@@ -243,11 +234,8 @@ struct TripPanel: View {
                         .background(ListPullDown(on: drag.id == nil, name: "行程", box: pull,
                                                  changed: { up in guard drag.id == nil else { return }; lift.y = up },
                                                  ended: { up in guard drag.id == nil else { lift.y = 0; return }; settleSheet(up) }))
-                        // 備案：手指按在站卡上時清單的 pan 可能根本沒開始（站卡有點一下、長按、左滑的手勢），改由這個拖曳接手
-                        .simultaneousGesture(listPull, including: drag.id == nil && !Self.noListPull ? .all : .subviews)
                     }
                     .scrollDisabled(drag.id != nil)
-                    .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top <= 1 } action: { _, top in pull.atTop = top }
                     // 備案（找不到底下的 UIScrollView 時）：捲到頂再往下拉約 56pt，放開時面板降一段；面板接手時不跑
                     // 清單拉過頭有阻力，手指拉 56pt 畫面只動約 28pt，所以線畫在 28；甩過頭的回彈不算
                     .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < -28 } action: { _, past in
@@ -288,14 +276,6 @@ struct TripPanel: View {
         .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg)
             .shadow(color: .black.opacity(0.14), radius: 14, y: -2).ignoresSafeArea(edges: .bottom))
         .animation(.snappy(duration: 0.25), value: strip)
-        // 清單的備案拖曳被系統取消（onEnded 不會來）：面板放回目前那段
-        .onChange(of: listPulling) { _, p in
-            guard !p else { return }
-            pull.decided = false
-            guard pull.swift else { return }
-            pull.swift = false
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { lift.y = 0; pullList = false }
-        }
         // 停好的面板高度：訊息條貼在面板上面，不蓋住站卡（拉的過程中不更新）
         .onChange(of: settledHeight(), initial: true) { _, v in if abs(mode.panelH - v) > 0.5 { mode.panelH = v } }
     }
@@ -423,32 +403,6 @@ struct TripPanel: View {
             }
     }
 
-    // 清單在頂端時從站卡上往下拉：清單的 pan 沒接手（站卡的手勢擋住、根本沒開始捲）就由這裡拉面板
-    private var listPull: some Gesture {
-        DragGesture(minimumDistance: 10, coordinateSpace: .global)
-            .updating($listPulling) { _, st, _ in st = true }
-            .onChanged { v in
-                let b = pull
-                if !b.swift {
-                    guard !b.decided else { return }
-                    b.decided = true
-                    let dx = v.translation.width, dy = v.translation.height
-                    // 往下、比較直、清單在頂端、清單的 pan 沒在拉面板：接手
-                    guard drag.id == nil, !b.uikit, b.atTop, dy > 0, dy > abs(dx) * 1.2 else { return }
-                    b.swift = true
-                    Perf.shared.mark("清單接手 備案")
-                }
-                lift.y = -v.translation.height
-            }
-            .onEnded { v in
-                pull.decided = false
-                guard pull.swift else { return }
-                pull.swift = false
-                guard drag.id == nil else { lift.y = 0; return }
-                settleSheet(-v.predictedEndTranslation.height)
-            }
-    }
-
     // 放開（拉橫條或清單捲到頂往下拉）：up 是預測會停的位移（往上為正）
     private func settleSheet(_ up: CGFloat) {
         let hs = heights()
@@ -550,7 +504,7 @@ struct TripPanel: View {
         RowHold(began: { _ in
             held.on = true
             // 正在把清單往下拉成拉面板：不算長按拿起
-            guard drag.id == nil, !pull.swift, !pull.uikit else { return }
+            guard drag.id == nil, !pull.uikit else { return }
             begin(s, k: k, size: (mode.geo.rows[s.id]?.height ?? 80) - (mode.geo.gaps[s.id] ?? 0))
         }, moved: { d, p in
             guard drag.id == s.id else { return }
