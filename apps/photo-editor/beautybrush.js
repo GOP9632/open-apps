@@ -37,7 +37,7 @@ const newCanvas = (w, h) => Object.assign(document.createElement('canvas'), { wi
 export const bbRadius = (size, W, H) => Math.min(W, H) * (0.003 + 0.117 * size / 100) / stageZoom.z;
 
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-const blur = (a, w, h, r) => boxBlur(Float32Array.from(a), w, h, Math.max(1, r));
+const blur = (a, w, h, r) => boxBlur(new Float32Array(a), w, h, Math.max(1, r));
 // 生成器一口氣跑完（筆畫當場要用）；stepwise：一步一步跑，每步之間讓畫面走一格，alive() 變 false 就停、回傳 null
 // （點開美顏筆時在背景先算的那些，iPhone 一口氣做完要停 0.1～0.2 秒，評審 #159）
 const done = g => { let r; while (!(r = g.next()).done); return r.value; };
@@ -49,16 +49,28 @@ async function stepwise(g, alive) {
 // 加權模糊：sum(a·wt) / sum(wt)；三個顏色共用一次權重的模糊（每模糊一次是一步）
 const wblur3 = (...a) => done(wblur3s(...a));
 function* wblur3s(c, wt, w, h, r) {
-  const n = wt.length, ww = blur(wt, w, h, r), out = [];
+  const ww = blur(wt, w, h, r), out = [];
   yield;
   for (const a of c) {
-    const aw = new Float32Array(n);
-    for (let i = 0; i < n; i++) aw[i] = a[i] * wt[i];
-    const b = blur(aw, w, h, r);
-    for (let i = 0; i < n; i++) b[i] = ww[i] > 1e-6 ? b[i] / ww[i] : a[i];
-    out.push(b); yield;
+    const b = boxBlur(mulW(a, wt), w, h, Math.max(1, r));
+    out.push(divW(b, ww, a)); yield;
   }
   return out;
+}
+// 生成器裡的逐像素迴圈瀏覽器很晚才最佳化（評審 #162：換黑眼圈那步 144ms），迴圈都放在下面這些小函式
+function mulW(a, wt) { const n = wt.length, o = new Float32Array(n); for (let i = 0; i < n; i++) o[i] = a[i] * wt[i]; return o; }
+function divW(b, ww, a) { for (let i = 0, n = b.length; i < n; i++) b[i] = ww[i] > 1e-6 ? b[i] / ww[i] : a[i]; return b; }
+function sqDiff(L, Lb) { const n = L.length, V = new Float32Array(n); for (let i = 0; i < n; i++) V[i] = (L[i] - Lb[i]) ** 2; return V; }
+function pow4(L) { const n = L.length, o = new Float32Array(n); for (let i = 0; i < n; i++) o[i] = L[i] ** 4 + 1e-4; return o; }
+function oilWt(L, Lb) { const n = L.length, o = new Float32Array(n); for (let i = 0; i < n; i++) o[i] = 1 - sstep(0.02, 0.1, L[i] - Lb[i]) * sstep(0.5, 0.8, L[i]) + 1e-4; return o; }
+function darkD(ref, low, cap) {
+  const n = ref[0].length, D = [0, 1, 2].map(() => new Float32Array(n));
+  for (let i = 0; i < n; i++) {
+    const dl = 0.299 * (ref[0][i] - low[0][i]) + 0.587 * (ref[1][i] - low[1][i]) + 0.114 * (ref[2][i] - low[2][i]);
+    const keep = 1 - sstep(cap, cap * 1.7, dl);
+    for (let j = 0; j < 3; j++) D[j][i] = Math.min(cap, Math.max(0, ref[j][i] - low[j][i])) * keep;
+  }
+  return D;
 }
 
 // 暫存陣列：每一塊都拿同一組，不要一直重配
@@ -120,12 +132,12 @@ function* sessionSteps(canvas, v0) {
 }
 function kill(ses) { Object.assign(ses, { dead: true, canvas: null, ctx: null, O: null, O0: null, A: null, Oh: null, hel: null }); }
 // 縮小圖：一次縮一半（瀏覽器一次縮太多會跳格），回傳 [R, G, B, L]（0～1）。
-// 每一半照列分段畫（每段約 100 萬像素、剪裁框對齊像素，跟一次畫完一樣），每段是一步：1200 萬像素第一次縮一半 iPhone 要 40ms
+// 每一半照列分段畫（每段約 50 萬像素、剪裁框對齊像素，跟一次畫完一樣），每段是一步：1200 萬像素第一次縮一半 iPhone 要 40ms
 function* shrink(src, w, h) {
   let c = src;
   while (c.width / 2 >= w && c.height / 2 >= h) {
     // 中間那幾張也放記憶體：照片在記憶體，畫進 GPU canvas 再讀回要等 GPU（評審 L71：點開美顏筆停 134ms，大半在等）
-    const t = newCanvas(Math.ceil(c.width / 2), Math.ceil(c.height / 2)), x = t.getContext('2d', { willReadFrequently: true }), n = Math.max(1, Math.ceil(1e6 / t.width));
+    const t = newCanvas(Math.ceil(c.width / 2), Math.ceil(c.height / 2)), x = t.getContext('2d', { willReadFrequently: true }), n = Math.max(1, Math.ceil(5e5 / t.width));
     for (let y = 0; y < t.height; y += n) {
       x.save(); x.beginPath(); x.rect(0, y, t.width, Math.min(n, t.height - y)); x.clip(); x.drawImage(c, 0, 0, t.width, t.height); x.restore();
       yield;
@@ -221,33 +233,26 @@ async function helWarm(ses, t, alive) {
 // O：小圖（R G B L）、w × h；k：小圖對原圖的比例
 const helCalc = (...a) => done(helSteps(...a));
 function* helSteps(t, O, w, h, R0, S, k) {
-  const n = w * h, c = O.slice(0, 3), L = O[3];
+  const c = O.slice(0, 3), L = O[3];
   let o = {};
   // 三個顏色各模糊一次，每次是一步
   const blur3 = function* (r) { const out = []; for (const a of c) { out.push(blur(a, w, h, r)); yield; } return out; };
   if (t === 'smooth') {
     // 醒圖：短邊 324px 縮圖上 9 點方框、間距 1.5px，約短邊的 1.5%
-    const r = S * 0.015 * k, Lb = blur(L, w, h, r), V = new Float32Array(n);
+    const r = S * 0.015 * k, Lb = blur(L, w, h, r);
     yield;
-    for (let i = 0; i < n; i++) V[i] = (L[i] - Lb[i]) ** 2;
-    o = { B: yield* blur3(r), V: boxBlur(V, w, h, Math.max(1, r)) };
+    o = { B: yield* blur3(r), V: boxBlur(sqDiff(L, Lb), w, h, Math.max(1, r)) };
   } else if (t === 'circle' || t === 'fold') {
     // 跟周圍亮的皮膚比，暗多少補多少（只補低頻，紋理留著）；差太多的是眼珠、眉毛、嘴縫這種本來就黑的地方，不補
     const fold = t === 'fold', cap = fold ? 0.3 : 0.2;
-    const wt = Float32Array.from(L, x => x ** 4 + 1e-4), ref = yield* wblur3s(c, wt, w, h, R0 * (fold ? 0.7 : 0.6) * k);
-    const low = yield* blur3(R0 * 0.08 * k), D = [0, 1, 2].map(() => new Float32Array(n));
-    for (let i = 0; i < n; i++) {
-      const dl = 0.299 * (ref[0][i] - low[0][i]) + 0.587 * (ref[1][i] - low[1][i]) + 0.114 * (ref[2][i] - low[2][i]);
-      const keep = 1 - sstep(cap, cap * 1.7, dl);
-      for (let j = 0; j < 3; j++) D[j][i] = Math.min(cap, Math.max(0, ref[j][i] - low[j][i])) * keep;
-    }
-    o = { D };
+    const ref = yield* wblur3s(c, pow4(L), w, h, R0 * (fold ? 0.7 : 0.6) * k);
+    const low = yield* blur3(R0 * 0.08 * k);
+    o = { D: darkD(ref, low, cap) };
   } else if (t === 'oil') {
     // 周圍不反光的皮膚是什麼顏色
-    const r = R0 * 0.4 * k, Lb = blur(L, w, h, r), wt = new Float32Array(n);
+    const r = R0 * 0.4 * k, Lb = blur(L, w, h, r);
     yield;
-    for (let i = 0; i < n; i++) wt[i] = 1 - sstep(0.02, 0.1, L[i] - Lb[i]) * sstep(0.5, 0.8, L[i]) + 1e-4;
-    o = { Lb, ref: yield* wblur3s(c, wt, w, h, r) };
+    o = { Lb, ref: yield* wblur3s(c, oilWt(L, Lb), w, h, r) };
   } else if (t === 'texture') {
     o = { b2: yield* blur3(R0 * 0.25 * k) };
   }
