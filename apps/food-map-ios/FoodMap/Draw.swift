@@ -60,6 +60,11 @@ struct DrawPrefs: Codable, Equatable {
 
     // 符合條件的店：同一家的分店只算一家，留離你最近的那間
     func candidates(_ store: Store, _ c: Ctx, _ p: DrawPrefs) -> [Place] {
+        store.brands(matching(store, c, p)).map { $0[0] }
+    }
+
+    // 符合條件的每一間（分店各算一間；面板說明「分店算一家（共 N 間）」用）
+    func matching(_ store: Store, _ c: Ctx, _ p: DrawPrefs) -> [Place] {
         var l: [Place]
         switch p.scope {
         case .view: l = c.onMap ? (c.view ?? c.base) : c.base
@@ -84,7 +89,7 @@ struct DrawPrefs: Codable, Equatable {
             let k = Self.meal().key
             l = l.filter { ($0.meals ?? []).isEmpty || $0.meals!.contains(k) }
         }
-        return store.brands(l).map { $0[0] }
+        return l
     }
 
     // 一家都不符合時：拿掉哪個條件剩最多家
@@ -145,6 +150,12 @@ struct DrawPrefs: Codable, Equatable {
     }
     private func recentBrands() -> Set<String> { Set(recent().keys) }
 
+    // 這些店裡 7 天內抽過的有幾家（面板小字用）
+    func recentCount(_ store: Store, _ pool: [Place]) -> Int {
+        let r = recentBrands()
+        return pool.filter { r.contains(store.brand($0)) }.count
+    }
+
     // 抽中的丟到群組投票：當下就切到群組頁，分享和開一輪在背景跑
     func vote(_ store: Store, _ gid: String, _ ps: [Place]) {
         Perf.shared.mark("群組投票")
@@ -189,7 +200,7 @@ struct DiceChip: View {
                 .frame(minHeight: 44).contentShape(.rect)
             }
             // 每次按下先清掉上一次的長按記號
-            .buttonStyle(PressStyle { long = false })
+            .buttonStyle(PressStyle(haptic: true) { long = false })
             .simultaneousGesture(LongPressGesture(minimumDuration: 0.35).onEnded { _ in
                 long = true
                 Haptic.medium()
@@ -248,17 +259,22 @@ struct DrawPanel: View {
     var body: some View {
         @Bindable var drawer = drawer
         let p = drawer.prefs
-        let n = drawer.candidates(store, ctx, p).count
+        let all = drawer.matching(store, ctx, p)
+        let pool = store.brands(all).map { $0[0] }
+        let n = pool.count
+        // 全部都抽過時 pick 不排除，就不說跳過
+        let recent = p.noRepeat ? drawer.recentCount(store, pool) : 0
+        let skip = recent < n ? recent : 0
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if let pickHistory { DrawHistory { pickHistory($0); dismiss() }.padding(.horizontal, -18) }
                     section("範圍") {
+                        chip("全部", p.scope == .all || (!ctx.onMap && p.scope == .view)) { drawer.prefs.scope = .all }
                         if ctx.onMap { chip("地圖上看到的", p.scope == .view) { drawer.prefs.scope = .view } }
                         chip("走路 800 m", p.scope == .near(DrawPrefs.walk)) { drawer.prefs.scope = .near(DrawPrefs.walk) }
                         chip("騎車 3 km", p.scope == .near(DrawPrefs.ride)) { drawer.prefs.scope = .near(DrawPrefs.ride) }
                         chip("開車 12 km", p.scope == .near(DrawPrefs.drive)) { drawer.prefs.scope = .near(DrawPrefs.drive) }
-                        chip("全部", p.scope == .all || (!ctx.onMap && p.scope == .view)) { drawer.prefs.scope = .all }
                     }
                     if case .near = p.scope, ctx.refIsCenter || ctx.ref == nil {
                         Text(ctx.ref == nil ? "沒開定位，抽全部" : "沒開定位，從地圖中心算").font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5)).padding(.top, -10)
@@ -302,12 +318,14 @@ struct DrawPanel: View {
             .background(Color.bg)
             .navigationTitle("抽一間").navigationBarTitleDisplayMode(.inline)
             .toolbar { Button("完成") { dismiss() } }
-            .safeAreaInset(edge: .bottom, spacing: 0) { bottom(n) }
+            .safeAreaInset(edge: .bottom, spacing: 0) { bottom(n, all.count, skip) }
         }
-        .onAppear { Perf.shared.mark("抽一間面板") }
+        // 跟按下去那一刻的「抽一間面板」分開記：兩行差不多＝建 sheet 卡住；這行大很多＝內容晚一輪才建
+        .onAppear { Perf.shared.mark("抽一間面板內容") }
     }
 
-    private func bottom(_ n: Int) -> some View {
+    // n：符合幾家（分店算一家）；total：分店各算一間共幾間；skip：7 天內抽過、這次先跳過的家數
+    private func bottom(_ n: Int, _ total: Int, _ skip: Int) -> some View {
         VStack(spacing: 8) {
             if n == 0, let h = drawer.hint(store, ctx, drawer.prefs) {
                 HStack {
@@ -317,6 +335,12 @@ struct DrawPanel: View {
                         .font(.subheadline.weight(.heavy)).foregroundStyle(Color.accent)
                         .frame(minWidth: 44, minHeight: 44)
                 }
+            }
+            // 「符合 82 家」跟收藏頁的「86 間」單位不一樣：說清楚（獨立一行，不擠「抽！」那排）
+            let notes = [total > n ? "分店算一家（共 \(total) 間）" : nil, skip > 0 ? "7 天內抽過的 \(skip) 家先跳過" : nil].compactMap { $0 }
+            if !notes.isEmpty {
+                Text(notes.joined(separator: "・")).font(.caption.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
+                    .frame(maxWidth: .infinity, alignment: .leading).lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 12) {
                 (Text("符合 ") + Text("\(n)").foregroundStyle(Color.accent) + Text(" 家"))

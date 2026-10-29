@@ -8,7 +8,6 @@ struct ListTab: View {
     @State private var drawer = Drawer.shared
     @State private var show: DrawShow?
     @State private var paneling = false
-    @State private var long = false
     @State private var pull = PullState()
     @State private var manual: PendingAdd?
     @Environment(\.accessibilityReduceMotion) private var reduce
@@ -24,44 +23,21 @@ struct ListTab: View {
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    HStack {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    // 375pt 寬也要放得下標題＋「🎲 抽一間」＋齒輪＋＋：間數放到標題下面
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 0) {
                             Text("我的收藏").font(.system(size: 30, weight: .black)).foregroundStyle(Color.ink)
+                                .lineLimit(1).minimumScaleFactor(0.8)
                             // 跟地圖、「我的」一樣算間數（同一家的分店在這裡合成一張卡，但數字照分店算）
                             Text("\(visible.count) 間").font(.headline).foregroundStyle(Color.accent)
                                 .contentTransition(.numericText(value: Double(visible.count)))
                                 .animation(.snappy, value: visible.count)
                         }
-                        Spacer()
-                        // 抽一間：跟地圖同一份設定（長按改），這裡沒座標的店也抽得到；分店多的不會比較容易抽到，抽中離你最近的那間
+                        Spacer(minLength: 0)
+                        // 抽一間：跟地圖同一顆膠囊、同一份設定（長按或點齒輪改）；從上面篩選後的店抽，沒座標的也抽得到；
+                        // 分店多的不會比較容易抽到，抽中離你最近的那間
                         if !store.mine.isEmpty {
-                            Button {
-                                if long { long = false; return }
-                                draw()
-                            } label: {
-                                Text("🎲").font(.system(size: 22))
-                                    .rotationEffect(.degrees(Double(drawer.spin) * 720))
-                                    .animation(.easeOut(duration: 0.5), value: drawer.spin)
-                                    .frame(width: 42, height: 42)
-                                    .background(RoundedRectangle(cornerRadius: 42 * 0.32).fill(Color.accent.opacity(0.13)))
-                                    .frame(minWidth: 44, minHeight: 44).contentShape(.rect)
-                            }
-                            .buttonStyle(PressStyle(haptic: true) { long = false })
-                            .simultaneousGesture(LongPressGesture(minimumDuration: 0.35).onEnded { _ in
-                                long = true
-                                Haptic.medium()
-                                openPanel()
-                            })
-                            .accessibilityLabel("抽一間")
-                            .accessibilityHint("長按改設定")
-                            // 跟地圖一樣的小齒輪：抽一間的設定
-                            Button { openPanel() } label: {
-                                Image(systemName: "slider.horizontal.3").font(.system(size: 14, weight: .heavy)).foregroundStyle(Color.accent)
-                                    .frame(width: 36, height: 36).background(Color.accent.opacity(0.13), in: .circle)
-                                    .frame(width: 40, height: 44).contentShape(.rect)
-                            }
-                            .buttonStyle(PressStyle(haptic: true))
-                            .accessibilityLabel("抽一間的設定")
+                            DiceChip(draw: draw, panel: openPanel)
                         }
                         AddButton(size: 42) { adding = true }
                     }
@@ -140,8 +116,8 @@ struct ListTab: View {
         .onChange(of: store.places.count) { markPaint() }
     }
 
-    // 收藏頁的抽一間：「地圖上看到的」在這裡當作全部，沒座標的店也算
-    private var drawCtx: Drawer.Ctx { Drawer.Ctx(base: store.mine, view: nil, ref: store.here, refIsCenter: false, onMap: false) }
+    // 收藏頁的抽一間：從上面搜尋、篩選後看得到的店抽（篩了咖啡就只抽咖啡）；「地圖上看到的」在這裡當作全部，沒座標的店也算
+    private var drawCtx: Drawer.Ctx { Drawer.Ctx(base: store.shown(store.listF), view: nil, ref: store.here, refIsCenter: false, onMap: false) }
 
     private func openPanel() {
         Perf.shared.mark("抽一間面板")

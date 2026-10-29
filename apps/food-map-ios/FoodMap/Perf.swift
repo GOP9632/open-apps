@@ -90,7 +90,7 @@ import os
             // 手指還按著（長按成立、拖曳中）也從狀態改變算：不然會抓到上一次點擊的放開時間，把按住的時間算進去
             // （在下一幀才判斷：按鈕的動作可能比視窗收到放開還早跑）
             let held = touchDown > touchUp
-            let from = !held && touchUp > 0 && p.at - touchUp < 1 ? touchUp : p.at
+            let from = !held && touchUp > 0 && p.at >= touchUp && p.at - touchUp < 1 ? touchUp : p.at
             let ms = Int((CACurrentMediaTime() - from) * 1000)
             let press = touchUp > touchDown && touchDown > 0 && p.at - touchUp < 1 ? "，按住 \(Int((touchUp - touchDown) * 1000))" : ""
             lines.insert("\(p.name) \(ms) ms\(press)", at: 0)
