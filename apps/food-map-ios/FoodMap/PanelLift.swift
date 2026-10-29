@@ -1,0 +1,309 @@
+import SwiftUI
+import UIKit
+import UIKit.UIGestureRecognizerSubclass
+
+// 手指拖的過程中每幀都在變的量（拉面板、拖一站、往下拖加站卡）放在這個小物件裡：
+// 只有套高度、位移的那一小層跟著重畫，面板裡面的站、清單不用每幀重算
+// （之前放在整個行程面板的狀態裡，拉一下整個面板每幀重算，只有 15–20 fps）
+@MainActor @Observable final class Lift {
+    var y: CGFloat = 0
+}
+
+// 面板高度 = 停好的高度 + 手指拉的量（最多比最低再低 30、比最高再高 30）
+struct LiftHeight: ViewModifier {
+    let lift: Lift
+    let base: CGFloat
+    let lo: CGFloat
+    let hi: CGFloat
+    func body(content: Content) -> some View {
+        content.frame(height: min(hi + 30, max(lo - 30, base + lift.y)), alignment: .top)
+    }
+}
+
+// 跟著手指位移：on 為 false 時不動（只有被拖的那一個讀手指）
+struct LiftOffset: ViewModifier {
+    let lift: Lift
+    var on = true
+    var x = false
+    func body(content: Content) -> some View {
+        let v = on ? lift.y : 0
+        content.offset(x: x ? v : 0, y: x ? 0 : v)
+    }
+}
+
+// 最低段往上拉：清單、站卡跟著手指淡入淡出（只有這層讀 lift，面板不用每幀重算）
+struct PullFade: ViewModifier {
+    let lift: Lift
+    let on: Bool          // 跟著手指（清單：最低段；站卡：還沒換成清單）
+    let out: Bool         // true 越拉越淡（站卡），false 越拉越清楚（清單）
+    let range: CGFloat    // 拉多少點走完
+    func body(content: Content) -> some View {
+        let k = min(1, max(0, lift.y / range))
+        content.opacity(on ? (out ? 1 - k : k) : (out ? 0 : 1))
+    }
+}
+
+// 清單的 pan 正在拉面板（站卡的長按看這個，慢慢往下拉、停一下不算拿起）。
+// 不要再在清單內容上掛 SwiftUI 拖曳當備案：iOS 18 它會讓清單的 pan 開不了，手指放在站卡上整份清單捲不動
+@MainActor final class PullBox {
+    var uikit = false
+}
+
+// 清單捲到頂再往下拉：手指交給面板（1:1 跟手、清單不回彈），放開照面板規則停段。
+// SwiftUI 的 ScrollView 拿不到手指位移、也停不掉回彈，所以找到底下的 UIScrollView，在它的 pan 上多掛一個 target（都是公開 API）。
+// 找不到的話什麼都不做，退回舊的「拉過頭放開降一段」
+struct ListPullDown: UIViewRepresentable {
+    var on = true
+    var name = ""                         // 量測浮層、log 用：「首頁」「行程」
+    var box: PullBox? = nil
+    var changed: (CGFloat) -> Void        // 往上為正（同 PanelDrag）
+    var ended: (CGFloat) -> Void          // 預測會停的位移，往上為正
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> Finder {
+        let v = Finder()
+        v.isUserInteractionEnabled = false
+        v.name = name
+        let c = context.coordinator
+        c.name = name
+        v.found = { [weak c] s in c?.attach(s) }
+        return v
+    }
+
+    func updateUIView(_ v: Finder, context: Context) {
+        // 每次更新換成新的閉包：拿到的面板高度、段落都是最新的
+        context.coordinator.on = on
+        context.coordinator.box = box
+        context.coordinator.changed = changed
+        context.coordinator.ended = ended
+        // 掛載那一刻清單可能還沒排好、底下的捲動區可能被 SwiftUI 換過：下一輪再對一次（同一個不會重掛）
+        DispatchQueue.main.async { [weak v] in v?.find() }
+    }
+
+    static func dismantleUIView(_ v: Finder, coordinator: Coordinator) { coordinator.detach() }
+
+    final class Finder: UIView {
+        var found: ((UIScrollView) -> Void)?
+        var name = ""
+        private var told = false
+        override func didMoveToWindow() { super.didMoveToWindow(); find() }
+        override func didMoveToSuperview() { super.didMoveToSuperview(); find() }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            DispatchQueue.main.async { [weak self] in self?.find() }
+        }
+        // 只放在「直的」ScrollView 的內容裡：往上第一個 UIScrollView 就是清單本身
+        // （不再看 contentSize／bounds：掛載當下可能還沒定，判斷錯了就永遠接不上）
+        func find() {
+            guard window != nil else { return }
+            var p = superview
+            var chain: [String] = []
+            for _ in 0..<12 {
+                guard let v = p else { break }
+                if let s = v as? UIScrollView { found?(s); return }
+                chain.append("\(type(of: v))")
+                p = v.superview
+            }
+            guard !told else { return }
+            told = true
+            Perf.shared.mark("清單找不到 \(name)")
+            #if DEBUG
+            print("[pull] \(name) 找不到 UIScrollView：\(chain.joined(separator: " > "))")
+            #endif
+        }
+    }
+
+    @MainActor final class Coordinator: NSObject {
+        var on = true
+        var name = ""
+        weak var box: PullBox?
+        var changed: (CGFloat) -> Void = { _ in }
+        var ended: (CGFloat) -> Void = { _ in }
+        private weak var scroll: UIScrollView?
+        private var handing = false
+        private var start: CGFloat = 0
+        private var oldBounce = true
+        private var told = false
+        #if DEBUG
+        private var spy: TouchSpy?
+        #endif
+
+        func attach(_ s: UIScrollView) {
+            guard scroll !== s else { return }
+            detach()
+            scroll = s
+            s.panGestureRecognizer.addTarget(self, action: #selector(pan(_:)))
+            // 量測浮層記一筆（模擬器驗收看得到有沒有掛上、掛了幾次）
+            Perf.shared.mark("清單掛上 \(name)")
+            #if DEBUG
+            print("[pull] \(name) 接上清單 id=\(ObjectIdentifier(s)) b=\(s.bounds.size) cs=\(s.contentSize) inset=\(s.adjustedContentInset.top)")
+            let sp = TouchSpy(name: name, scroll: s)
+            s.addGestureRecognizer(sp)
+            spy = sp
+            #endif
+        }
+
+        // 拉到一半清單被拿掉：照樣收尾（面板停段、lift 歸零），不然面板會停在半路
+        func detach() {
+            #if DEBUG
+            if let sp = spy { sp.view?.removeGestureRecognizer(sp); spy = nil }
+            #endif
+            if handing {
+                handing = false
+                box?.uikit = false
+                ended(0)
+                scroll?.bounces = oldBounce
+            }
+            scroll?.panGestureRecognizer.removeTarget(self, action: #selector(pan(_:)))
+            scroll = nil
+        }
+
+        @objc private func pan(_ g: UIPanGestureRecognizer) {
+            guard let s = scroll else { return }
+            let top = -s.adjustedContentInset.top
+            let dy = g.translation(in: nil).y      // 螢幕座標：面板跟著往下動也不會抵銷
+            switch g.state {
+            case .began, .changed:
+                if g.state == .began {
+                    told = false
+                    #if DEBUG
+                    print("[pull] \(name) began on=\(on) dy=\(dy) vy=\(g.velocity(in: nil).y) y=\(s.contentOffset.y) top=\(top) view=\(ObjectIdentifier(g.view!))")
+                    #endif
+                }
+                if !handing {
+                    guard on, dy > 0, g.velocity(in: nil).y > 0, s.contentOffset.y <= top + 0.5 else {
+                        // 在頂端往下拉卻沒接手：浮層記原因（一次手勢記一次）
+                        if !told, dy > 0, s.contentOffset.y <= top + 40 {
+                            told = true
+                            Perf.shared.mark("清單沒接手 \(name) on=\(on) y=\(Int(s.contentOffset.y))/\(Int(top)) v=\(Int(g.velocity(in: nil).y))")
+                        }
+                        return
+                    }
+                    handing = true
+                    box?.uikit = true
+                    Perf.shared.mark("清單接手 \(name)")
+                    // 一開始就在頂端：連起手那幾點一起算，第一幀就動；捲回頂端才接手的，從這裡起算
+                    start = g.state == .began ? 0 : dy
+                    oldBounce = s.bounces
+                    s.bounces = false
+                }
+                s.contentOffset.y = top                // 釘在頂端：清單不回彈、不跟著捲
+                changed(-(dy - start))
+            case .ended, .cancelled, .failed:
+                guard handing else { return }
+                handing = false
+                box?.uikit = false
+                let v = g.state == .ended ? g.velocity(in: nil).y : 0
+                ended(-(dy - start + v * 0.2))      // 約略等於 DragGesture 的 predictedEndTranslation
+                // 等這次手勢處理完才把回彈改回來（UIScrollView 自己的處理可能在我們後面跑，馬上改回去它會補彈一下）
+                DispatchQueue.main.async { [weak self, weak s] in
+                    guard let self, let s else { return }
+                    s.setContentOffset(CGPoint(x: s.contentOffset.x, y: -s.adjustedContentInset.top), animated: false)
+                    s.bounces = self.oldBounce
+                }
+            default:
+                break
+            }
+        }
+    }
+}
+
+#if DEBUG
+// 診斷用（只有開發版）：手指放在清單上，按下記「觸」，移動 25pt 時記清單的 pan 和這根手指身上所有手勢的狀態。
+// 清單捲不動時一輪就看得出是誰拿走了手指。不攔截、不影響任何手勢
+final class TouchSpy: UIGestureRecognizer, UIGestureRecognizerDelegate {
+    private let list: String
+    private weak var scroll: UIScrollView?
+    private var start: CGPoint = .zero
+    private var logged = false
+
+    init(name: String, scroll: UIScrollView) {
+        self.list = name
+        self.scroll = scroll
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+        delegate = self
+    }
+
+    private static func st(_ g: UIGestureRecognizer) -> String {
+        switch g.state {
+        case .possible: "可能"
+        case .began: "開始"
+        case .changed: "進行"
+        case .ended: "結束"
+        case .cancelled: "取消"
+        case .failed: "失敗"
+        @unknown default: "?"
+        }
+    }
+
+    override func touchesBegan(_ t: Set<UITouch>, with e: UIEvent) {
+        guard let p = t.first?.location(in: nil) else { return }
+        start = p
+        logged = false
+        MainActor.assumeIsolated {
+            print("[B8] \(list) 觸 (\(Int(p.x)),\(Int(p.y))) y=\(Int(scroll?.contentOffset.y ?? -1))")
+        }
+    }
+
+    override func touchesMoved(_ t: Set<UITouch>, with e: UIEvent) {
+        guard !logged, let u = t.first else { return }
+        let p = u.location(in: nil)
+        guard hypot(p.x - start.x, p.y - start.y) >= 25 else { return }
+        logged = true
+        let pan = scroll.map { Self.st($0.panGestureRecognizer) } ?? "-"
+        let all = (u.gestureRecognizers ?? []).filter { $0 !== self }.map { "\(type(of: $0))=\(Self.st($0))" }.joined(separator: " ")
+        MainActor.assumeIsolated {
+            Perf.shared.mark("觸動25 \(list) pan=\(pan)")
+            print("[B8] \(list) 動25 pan=\(pan) y=\(Int(scroll?.contentOffset.y ?? -1)) 手勢：\(all)")
+        }
+    }
+
+    override func touchesEnded(_ t: Set<UITouch>, with e: UIEvent) { state = .failed }
+    override func touchesCancelled(_ t: Set<UITouch>, with e: UIEvent) { state = .failed }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith o: UIGestureRecognizer) -> Bool { true }
+}
+#endif
+
+// 最低段在站卡、按鈕上往上推也能拉面板（規格 A2：面板上緣 44pt 都能拉）。
+// 橫向 ScrollView 遇到直的拖曳不會開始捲，ListPullDown 接不到，所以自己掛一個 UIKit pan，只在偏直的方向開始。
+// 跟 RowHold 一樣不同時辨識：pan 一成立，還在等的長按、點一下都會失敗
+struct PanelPan: UIGestureRecognizerRepresentable {
+    var canBegin: () -> Bool
+    var changed: (CGFloat) -> Void      // 往上為正
+    var ended: (CGFloat) -> Void        // 預測會停的位移，往上為正
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let g = UIPanGestureRecognizer()
+        g.delegate = context.coordinator
+        context.coordinator.canBegin = canBegin
+        return g
+    }
+
+    func updateUIGestureRecognizer(_ g: UIPanGestureRecognizer, context: Context) { context.coordinator.canBegin = canBegin }
+
+    func handleUIGestureRecognizerAction(_ g: UIPanGestureRecognizer, context: Context) {
+        let dy = g.translation(in: nil).y
+        switch g.state {
+        case .began, .changed: changed(-dy)
+        case .ended: ended(-(dy + g.velocity(in: nil).y * 0.2))
+        case .cancelled, .failed: ended(0)
+        default: break
+        }
+    }
+
+    @MainActor final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var canBegin: () -> Bool = { true }
+        func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+            guard let p = g as? UIPanGestureRecognizer, canBegin() else { return false }
+            let v = p.velocity(in: nil)
+            return abs(v.y) > abs(v.x) * 1.3
+        }
+    }
+}
