@@ -85,7 +85,9 @@ struct MapTab: View {
                     // 行程模式：點收藏、搜尋結果圖釘都由圖釘自己的按鈕呼叫 pins.tap，點空白由 blankTap，泡泡和站號本來就不聽。
                     // MapKit 自己晚到的選取（等「是不是點兩下」約 0.3 秒，加站卡框地圖後圖釘已不在手指下，會送 nil）不聽，免得剛開的卡被關掉
                     if trip.on {
-                        Perf.shared.mark("地圖選取略過 \(id ?? "nil") dt=\(String(format: "%.2f", CACurrentMediaTime() - trip.pickAt))")
+                        // 浮層只記剛點過圖釘那一下送來的 nil（泡泡、站號的 id 很長，記了會蓋住畫面）
+                        let dt = CACurrentMediaTime() - trip.pickAt
+                        if id == nil, dt < 1 { Perf.shared.mark(String(format: "地圖選取略過 nil dt=%.2f", dt)) }
                         return
                     }
                     if let id, (id.contains(",") && !id.hasPrefix("hit:")) || trip.marks.contains(where: { $0.id == id }) { return }
