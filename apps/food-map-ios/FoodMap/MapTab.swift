@@ -82,6 +82,12 @@ struct MapTab: View {
                 // 泡泡、行程站號沒有自己的 tag，MapKit 會拿它們的 id 當成可選：點泡泡放大後 sel 會變成「a,b」這種不是圖釘的 id，
                 // 所有圖釘一起變淡又沒有大卡。泡泡的 id 是幾間店的 id 用逗號串起來（搜到的地點 hit: 開頭，本身也有逗號，要收）
                 Map(position: $pos, selection: Binding(get: { pins.sel }, set: { id in
+                    // 行程模式：點收藏、搜尋結果圖釘都由圖釘自己的按鈕呼叫 pins.tap，點空白由 blankTap，泡泡和站號本來就不聽。
+                    // MapKit 自己晚到的選取（等「是不是點兩下」約 0.3 秒，加站卡框地圖後圖釘已不在手指下，會送 nil）不聽，免得剛開的卡被關掉
+                    if trip.on {
+                        Perf.shared.mark("地圖選取略過 \(id ?? "nil") dt=\(String(format: "%.2f", CACurrentMediaTime() - trip.pickAt))")
+                        return
+                    }
                     if let id, (id.contains(",") && !id.hasPrefix("hit:")) || trip.marks.contains(where: { $0.id == id }) { return }
                     pins.select(id)
                 })) {
@@ -518,7 +524,10 @@ struct MapTab: View {
         if trip.on {
             trip.pickAt = CACurrentMediaTime()
             guard let id else {
-                if trip.cand != nil { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { trip.cand = nil } }
+                if trip.cand != nil {
+                    Perf.shared.mark("picked nil 收加站卡")
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { trip.cand = nil }
+                }
                 return
             }
             var c: TripCand?
@@ -651,9 +660,12 @@ struct MapTab: View {
     // 點地圖空白處：等一下看是不是其實點到圖釘（圖釘的點擊可能晚一點才到）
     private func blankTap() {
         guard trip.on else { return }
+        let t0 = CACurrentMediaTime()
         Task {
             try? await Task.sleep(for: .milliseconds(180))
-            guard CACurrentMediaTime() - trip.pickAt > 0.4 else { return }
+            // 點下去前後 0.22 秒內點過圖釘就不算點空白，用點下去當下的時間算：
+            // 開第一張加站卡時主執行緒忙、這裡晚醒，也不會把剛開的卡當成點空白關掉
+            guard trip.pickAt < t0 - 0.22 else { return }
             trip.blank()
         }
     }

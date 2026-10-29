@@ -104,20 +104,24 @@ struct TripPanel: View {
         let carding = mode.cand != nil
         // 下面那塊疊在透明底上（overlay 不會撐大底）：面板拉過頭時量到的大小不變，地圖不會跟著一直重框
         let core = Color.clear.allowsHitTesting(false).overlay(alignment: .bottom) {
-            if mode.going {
-                goBottom(order)
-                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { goBot = $0 }
-            } else {
-                // 加站卡開著時面板不拿掉，滑到下面藏著：關卡時不用整塊重建（站卡、清單、選單）
-                panel(t, d: d, base: base, order: order, legs: legs, plan: plan)
-                    .offset(y: carding ? settledHeight() + 60 : 0)
-                    .allowsHitTesting(!carding)
-                    .accessibilityHidden(carding)
-                    .transition(.move(edge: .bottom))
-                if let c = mode.cand {
-                    addCard(t, c, order: order)
-                        .id(c.id)
-                        .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
+            // overlay 的 alignment 只決定整疊放哪，疊裡面的 view 預設置中：面板（中段約 360 高）比加站卡高時，
+            // 卡會被擺在面板高度的中間、浮在半空。明寫貼底
+            ZStack(alignment: .bottom) {
+                if mode.going {
+                    goBottom(order)
+                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { goBot = $0 }
+                } else {
+                    // 加站卡開著時面板不拿掉，滑到下面藏著：關卡時不用整塊重建（站卡、清單、選單）
+                    panel(t, d: d, base: base, order: order, legs: legs, plan: plan)
+                        .offset(y: carding ? settledHeight() + 60 : 0)
+                        .allowsHitTesting(!carding)
+                        .accessibilityHidden(carding)
+                        .transition(.move(edge: .bottom))
+                    if let c = mode.cand {
+                        addCard(t, c, order: order)
+                            .id(c.id)
+                            .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
+                    }
                 }
             }
         }
@@ -540,6 +544,8 @@ struct TripPanel: View {
             .updating($holding) { _, st, _ in st = true }
             .onChanged { v in
                 guard case .second(true, let g) = v else { return }
+                // 正在把清單往下拉成拉面板：慢慢拉、停一下也不算長按拿起
+                guard drag.id != nil || (!pull.swift && !pull.uikit) else { return }
                 if drag.id == nil { begin(s, k: k, size: (mode.geo.rows[s.id]?.height ?? 80) - (mode.geo.gaps[s.id] ?? 0)) }
                 guard let g else { return }
                 // 位移只寫進 dragY（只有被拖的那列跟著動）；插到哪變了才改 drag（整個面板重畫一次）
@@ -612,6 +618,7 @@ struct TripPanel: View {
     // ----- 最低：一排橫向站卡 -----
 
     private func cards(_ t: Trip, base: [TripStop], order: [TripStop], plan: DayPlan) -> some View {
+        ScrollViewReader { sp in
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 if base.isEmpty {
@@ -622,6 +629,7 @@ struct TripPanel: View {
                     let i = order.firstIndex { $0.id == s.id } ?? k
                     let dragging = drag.id == s.id
                     MiniStop(stop: s, n: i + 1, row: i < plan.rows.count ? plan.rows[i] : nil, hot: mode.hot == s.id)
+                        .id(s.id)
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { if drag.id == nil { mode.geo.cards[s.id] = $0 } }
                         .contentShape(.rect)
                         .onTapGesture { mode.tap(s.id) }
@@ -638,6 +646,12 @@ struct TripPanel: View {
             .padding(.horizontal, 14).padding(.vertical, 4)
         }
         .scrollDisabled(drag.id != nil)
+        // 正在看的那站（剛加的、地圖上點的號碼）捲到看得到的地方；等新加的那張排好再捲
+        .onChange(of: mode.hot) { _, id in
+            guard let id, drag.id == nil else { return }
+            Task { try? await Task.sleep(for: .milliseconds(80)); withAnimation(.snappy) { sp.scrollTo(id, anchor: .center) } }
+        }
+        }
         .swipeBackBlocked()
         .frame(height: 74)
     }
@@ -783,12 +797,9 @@ struct TripPanel: View {
         .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg)
             .shadow(color: .black.opacity(0.14), radius: 14, y: -2).ignoresSafeArea(edges: .bottom))
         // 卡片實際多高（店名兩行、有營業時間時會比較高）：框地圖時讓開，量到不一樣就重框一次
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { f in
-            // 量測浮層：卡片沒貼底（下緣離螢幕底超過 60）就記一筆位置
-            let H = MapTab.windowHeight
-            if f.maxY < H - 60 { Perf.shared.mark("加站卡浮著 \(Int(f.minY))–\(Int(f.maxY))/\(Int(H)) 面板\(Int(top0))+\(Int(size.height))") }
-            guard abs(f.height - cardH) > 8 else { return }
-            cardH = f.height
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+            guard abs(h - cardH) > 8 else { return }
+            cardH = h
             placeCand(t, order)
         }
         .modifier(LiftOffset(lift: cardLift))
