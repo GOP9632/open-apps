@@ -13,12 +13,13 @@ struct ListTab: View {
     @State private var pos = ScrollPosition(edge: .top)
     @State private var applied = Filter()   // 收藏頁在背景時畫的篩選，由 FilterSync 同步（地圖打字時這頁不用每個字重算）
     @Environment(\.accessibilityReduceMotion) private var reduce
+    @Environment(\.tabActive) private var front   // Root.page() 給的「收藏頁在前景」：只有進出收藏頁時才變
 
     var body: some View {
         let _ = Perf.shared.count("收藏")
         @Bindable var store = store
         // 篩選結果一次算好（每打一個字只算一次）
-        let visible = store.shown(store.tab == 1 ? store.listF : applied)
+        let visible = store.shown(front ? store.listF : applied)
         // 同一家的分店合成一張卡（最近的那間當封面）
         let groups = store.brands(visible)
         // 同一家用品牌當 id：換封面分店時卡片不會整張重建
@@ -462,13 +463,15 @@ struct FilterSync: View {
         Color.clear
             .onAppear { applied = store.mapF }
             .onChange(of: store.mapF) { old, f in
-                guard live, store.tab == tab else { return }
+                guard store.tab == tab else { return }
+                // 收藏頁在前景時 body 讀 listF、不讀 applied：順手對齊，離開時才不用再算一次
+                guard live else { applied = f; return }
                 // 點分類、想去去過（chips 本來就包 withAnimation(.snappy)）照舊有動畫；打字不帶動畫
                 if old.q == f.q { withAnimation(.snappy) { applied = f } } else { applied = f }
             }
             .onChange(of: store.tab) { old, new in
-                // 離開這頁：停在離開當下的篩選；切回 live 的那頁：馬上對齊
-                guard old == tab || (live && new == tab), applied != store.mapF else { return }
+                // 離開這頁：停在離開當下的篩選；切進這頁也先對齊（地圖馬上畫新的；收藏頁 body 讀 listF，這裡只是讓離開時不用再算）
+                guard old == tab || new == tab, applied != store.mapF else { return }
                 var t = Transaction(); t.disablesAnimations = true
                 withTransaction(t) { applied = store.mapF }
             }

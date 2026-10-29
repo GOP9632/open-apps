@@ -190,8 +190,8 @@ struct MapTab: View {
                     let now = CACurrentMediaTime()
                     if pos.positionedByUser { pins.camAt = now }
                     if !quiet.touched, pos.positionedByUser, now > quiet.until { quiet.touched = true }
-                    // 新帳號的「收藏第一間店」卡不降（跟 NearbySheet 裡那張卡同一個條件）
-                    let empty = store.mapGroup == nil && store.mine.isEmpty && !store.loading
+                    // 新帳號的「收藏第一間店」卡不降（跟 NearbySheet 裡那張卡同一個條件）；找到一間自己的店就停，不每幀濾整份收藏
+                    let empty = store.mapGroup == nil && !store.loading && !store.places.contains(where: { store.isMine($0) })
                     if !trip.on, !empty, pos.positionedByUser, now > quiet.until, now > MapPanel.shared.calmUntil, !MapPanel.shared.dragging {
                         MapPanel.shared.go(.low)
                     }
@@ -273,7 +273,8 @@ struct MapTab: View {
                     recluster(proxy)
                     // 選到的店被篩選或搜尋字篩掉：取消選取，大卡收起、其他圖釘恢復不透明
                     // 行程模式不管：那時的 sel 是加站卡在用，可能是 hit: 開頭的搜尋點，或 extraFound 裡不在 list 的店
-                    if !trip.on, let s = pins.sel, !s.hasPrefix("hit:"), !ids.contains(s) { pins.select(nil) }
+                    // 抽一間還在跳（drawWin 還在）：等它跳完自己選中抽到的那間，這裡取消會把整次抽一間取消掉
+                    if !trip.on, pins.drawWin == nil, let s = pins.sel, !s.hasPrefix("hit:"), !ids.contains(s) { pins.select(nil) }
                 }
                 .onChange(of: store.coachStep) { pinFrame(proxy) }
                 // 選到一根圖釘：地圖移過去、放光圈（只有這個小觀察者看 sel，MapTab 本身不跟著重算）
@@ -350,7 +351,7 @@ struct MapTab: View {
                             }
                             .padding(.horizontal, 16)
                             // 按搜尋鍵（有字）：把符合的店框進看得到的那塊
-                            .onSubmit(of: .text) { if !store.mapF.q.isEmpty { frameShown() } }
+                            .onSubmit(of: .text) { if !store.mapF.q.isEmpty { applied = store.mapF; frameShown() } }
                             FilterChips(f: $store.mapF, solid: true)
                         }
                         .padding(.top, 6)
@@ -415,6 +416,9 @@ struct MapTab: View {
                                     .accessibilityLabel("我的行程")
                                     Button {
                                         Haptic.light()
+                                        // 程式移鏡頭：離開「只列這幾間」（跟 frameShown 一樣，U12 6(d)）
+                                        seenBox.zoomed = nil
+                                        if seenBox.only != nil { withAnimation(.snappy) { seenBox.only = nil } }
                                         // 移到目前位置一次就好。不用 .userLocation：那會一直跟著走，位置一動整張地圖就每幀重畫，手機會燙
                                         if let l = loc.location ?? store.here {
                                             quiet.centered = true   // 以定位鈕為準，同步做完不再拉去 3 公里
@@ -676,7 +680,10 @@ struct MapTab: View {
         if hidden.contains(id) { Perf.shared.mark("拆泡泡"); recluster(proxy) }
         // 下面那塊升到中間段顯示大卡片；接下來地圖移過去不算拖地圖
         quiet.hush()
+        // 抽中、點到的不是「這裡有 N 間」那幾間：地圖要飛走，離開列出模式（跟 frameShown 一樣，U12 6(d)）；大卡蓋著，不用動畫
+        if let o = seenBox.only, !o.contains(id) { seenBox.zoomed = nil; seenBox.only = nil }
         MapPanel.shared.go(.mid)
+        Self.endHomeTyping()
         // 先把大卡片和店家頁要用的照片載好，點進去時第一幀就有
         if let u = p.photoURL { Task { _ = await PhotoLoader.shared.load(u, 400); _ = await PhotoLoader.shared.load(u, 1200) } }
         // 影片預載等地圖移完再開始（拿網址、建播放器在主執行緒，跟移地圖、飛過去搶會掉幀）；還選著這間才載
@@ -809,6 +816,12 @@ struct MapTab: View {
             guard trip.pickAt < t0 - 0.22 else { Perf.shared.mark("點空白略過"); return }
             trip.blank()
         }
+    }
+
+    // 首頁搜尋框還在打字：先收鍵盤，大卡和長按選單才不會躲在鍵盤後面（跟行程模式點圖釘的 trip.endTyping() 一樣）
+    fileprivate static func endHomeTyping() {
+        guard MapPanel.shared.typing else { return }
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     // 點首頁搜尋框：面板降到最低段（躲在鍵盤後面），搜尋列到鍵盤之間全是地圖
@@ -995,6 +1008,7 @@ struct MapTab: View {
         Perf.shared.mark("點泡泡 \(c.ids.count) 間")
         quiet.hush()
         MapPanel.shared.atLeastMid()
+        if !trip.on { Self.endHomeTyping() }
         let ps = currentList.filter { c.ids.contains($0.id) }
         guard !ps.isEmpty else { return }
         let la = ps.map { $0.lat! }, lo = ps.map { $0.lng! }
@@ -1999,6 +2013,7 @@ struct FoodPin: View {
                 pins.longFired = true
                 Haptic.medium()
                 Perf.shared.mark("長按圖釘")
+                MapTab.endHomeTyping()
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.72)) { pins.menu = place.id }
             })
             .accessibilityLabel(place.name)
@@ -2443,10 +2458,15 @@ private struct MyDotView: View {
 @MainActor @Observable final class EmojiSlot { var img: UIImage? }
 
 @MainActor enum EmojiArt {
-    // DiceChip 的字型是 .subheadline：同一個字級下 UIKit 的 subheadline 是幾 pt，🎲 就畫幾 pt
+    // DiceChip 的字型是 .subheadline：同一個字級下 UIKit 的 subheadline 是幾 pt，🎲 就畫幾 pt。
+    // 同一個字級只問一次：DiceChip 的 body 每次跟著面板、大卡重算都會讀 dice 兩次
+    private static var diceCache: [DynamicTypeSize: CGFloat] = [:]
     static func diceSize(_ d: DynamicTypeSize) -> CGFloat {
-        UIFont.preferredFont(forTextStyle: .subheadline,
-                             compatibleWith: UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(d))).pointSize
+        if let v = diceCache[d] { return v }
+        let v = UIFont.preferredFont(forTextStyle: .subheadline,
+                                     compatibleWith: UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(d))).pointSize
+        diceCache[d] = v
+        return v
     }
     enum Part: String { case pin, bubble, dice }
     static let parts: Set<String> = {
@@ -2468,7 +2488,7 @@ private struct MyDotView: View {
     static func img(_ e: String, _ size: CGFloat, _ p: Part) -> UIImage? { parts.contains(p.rawValue) ? slot(e, size).img : nil }
     static func render(_ e: String, _ size: CGFloat, _ p: Part) {
         let s = slot(e, size)
-        guard !e.isEmpty, s.img == nil else { return }
+        guard !e.isEmpty, warmOnly || parts.contains(p.rawValue), s.img == nil else { return }
         let t = CACurrentMediaTime()
         let r = ImageRenderer(content: Text(e).font(.system(size: size)).padding(pad))
         r.scale = scale * (warmOnly ? 1 : zoom(p))

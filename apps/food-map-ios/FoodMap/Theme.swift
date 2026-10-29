@@ -153,7 +153,9 @@ struct SearchField<Trailing: View>: View {
     var body: some View {
         let busy = typing || !text.isEmpty
         HStack(spacing: 10) {
-            if let lead { lead(busy) } else { Image(systemName: "magnifyingglass").foregroundStyle(.secondary) }
+            if let lead { lead(busy) }
+            // 有「我的收藏 ▾」時，只有打字中才拿掉放大鏡讓出位置；沒打字照 A1 的樣子
+            if lead == nil || !busy { Image(systemName: "magnifyingglass").foregroundStyle(.secondary) }
             TextField(prompt, text: $text).font(.body).submitLabel(.search)
                 .textInputAutocapitalization(.never)   // 打英文店名開頭不要自動變大寫（zzq 變 Zzq）
                 // 同一個點擊做兩件事：膠囊收小、地圖面板降段

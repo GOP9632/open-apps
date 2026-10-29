@@ -138,7 +138,15 @@ struct EditSheet: View {
     // 打開時的樣子：dishes、tags 是 onAppear 才填的，要跟填好的字串比，不能拿 split 後的陣列比
     private var dirty: Bool {
         guard let base else { return false }
-        return place != base.0 || dishes != base.1 || tags != base.2
+        return norm(place) != norm(base.0) || dishes != base.1 || tags != base.2
+    }
+    // 打了字又刪掉、時段點開又關掉，不算改過（Place.row 本來就把 nil 存成空字串，存檔內容不變）
+    private func norm(_ p: Place) -> Place {
+        var p = p
+        let ks: [WritableKeyPath<Place, String?>] = [\.branch, \.cuisine, \.city, \.district, \.address, \.hours, \.note, \.source_url]
+        for k in ks where p[keyPath: k]?.isEmpty == true { p[keyPath: k] = nil }
+        if p.meals?.isEmpty == true { p.meals = nil }
+        return p
     }
 
     var body: some View {
