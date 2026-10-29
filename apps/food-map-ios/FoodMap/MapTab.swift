@@ -62,6 +62,7 @@ struct MapTab: View {
 
     var body: some View {
         let _ = Perf.shared.count("地圖")
+        let _ = Flag.printChanges ? Self._printChanges() : ()   // 量測用 -printChanges：Console 印這次重算是哪個狀態變了
         let _ = Perf.shared.note("地圖重算")
         @Bindable var store = store
         // 篩選結果只算一次；有座標的店下面每個地方共用

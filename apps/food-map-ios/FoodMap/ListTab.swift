@@ -17,6 +17,7 @@ struct ListTab: View {
 
     var body: some View {
         let _ = Perf.shared.count("收藏")
+        let _ = Flag.printChanges ? Self._printChanges() : ()   // 量測用 -printChanges：Console 印這次重算是哪個狀態變了
         @Bindable var store = store
         // 篩選結果一次算好（每打一個字只算一次）
         // 在前景時不讀 applied.f：FilterSync 順手對齊它時這頁不會多算一次

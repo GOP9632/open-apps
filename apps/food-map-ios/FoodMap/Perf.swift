@@ -210,6 +210,7 @@ enum Flag {
         return args[i + 1]
     }
     @MainActor static var draws = 0                       // -drawWin 輪流用
+    static let printChanges = on("-printChanges")      // 量測：重算時印出是哪個狀態變了（SwiftUI 的 _printChanges）
 }
 
 // 量測／驗收用 -shareVerdictTest：把雲端會回的幾種字串餵給分享結果的判斷，印出通知標題和內文

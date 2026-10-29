@@ -19,6 +19,7 @@ struct PlaceDetail: View {
 
     var body: some View {
         let _ = Perf.shared.count("店家頁")
+        let _ = Flag.printChanges ? Self._printChanges() : ()   // 量測用 -printChanges：Console 印這次重算是哪個狀態變了
         let _ = Perf.shared.note("店家頁重算")
         // 永遠顯示最新的那份（剛改的狀態、別台裝置改的都會跟上）
         let base = store.place(self.place.id) ?? self.place
