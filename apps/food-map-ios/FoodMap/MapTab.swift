@@ -1427,9 +1427,10 @@ private struct SelWatcher: View {
     var body: some View {
         Color.clear.onChange(of: pins.sel) { _, id in act(id) }
             .onChange(of: pins.again) { act(pins.sel) }
-            // 行程模式的加站卡關掉了（往下拖、✕、加好了）：圖釘也取消選取，再點同一根才會重新打開
+            // 行程模式的加站卡關掉了（往下拖、✕、加好了、按「完成」離開行程）：圖釘也取消選取，再點同一根才會重新打開；
+            // 離開行程時不取消的話，回到首頁會冒出那間的大卡片
             .onChange(of: TripMode.shared.cand == nil) { _, gone in
-                if gone, TripMode.shared.on, pins.sel != nil { pins.select(nil) }
+                if gone, pins.sel != nil { pins.select(nil) }
             }
     }
 }
