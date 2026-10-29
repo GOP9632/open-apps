@@ -24,6 +24,7 @@ enum MapStage { case low, mid, high }
     // 至少升到中間（點泡泡、抽一間）
     func atLeastMid() {
         guard stage == .low else { return }
+        Perf.shared.note("面板 low → mid（至少中段）")
         calmUntil = CACurrentMediaTime() + 0.8
         Haptic.light()
         withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { stage = .mid }
@@ -31,6 +32,7 @@ enum MapStage { case low, mid, high }
 
     func go(_ s: MapStage) {
         guard stage != s else { return }
+        Perf.shared.note("面板 \(stage) → \(s)")   // 量測：誰換了段
         if s != .low { calmUntil = CACurrentMediaTime() + 0.8 }
         withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { stage = s }
     }

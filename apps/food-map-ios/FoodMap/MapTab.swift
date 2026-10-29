@@ -88,6 +88,7 @@ struct MapTab: View {
                 // 泡泡、行程站號沒有自己的 tag，MapKit 會拿它們的 id 當成可選：點泡泡放大後 sel 會變成「a,b」這種不是圖釘的 id，
                 // 所有圖釘一起變淡又沒有大卡。泡泡的 id 是幾間店的 id 用逗號串起來（搜到的地點 hit: 開頭，本身也有逗號，要收）
                 Map(position: $pos, selection: Binding(get: { pins.sel }, set: { id in
+                    Perf.shared.note("地圖選取 \(id.map { String($0.prefix(8)) } ?? "nil")")   // 量測：MapKit 自己送來的選取
                     if let id, (id.contains(",") && !id.hasPrefix("hit:")) || trip.marks.contains(where: { $0.id == id }) { return }
                     // 行程模式：點空白交給 blankTap；MapKit 點圖釘後會晚一步（等「是不是點兩下」）送 nil，不能拿來收加站卡。
                     // 手指剛點過圖釘 0.6 秒內，晚到而且跟目前不同的選取也不聽。淡化的圖釘按鈕比 MapKit 的框小，點到框內按鈕外還是靠這裡開卡
@@ -821,6 +822,7 @@ struct MapTab: View {
     // 首頁搜尋框還在打字：先收鍵盤，大卡和長按選單才不會躲在鍵盤後面（跟行程模式點圖釘的 trip.endTyping() 一樣）
     fileprivate static func endHomeTyping() {
         guard MapPanel.shared.typing else { return }
+        Perf.shared.note("收首頁鍵盤")
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
@@ -828,6 +830,7 @@ struct MapTab: View {
     private func beginTyping() {
         let mp = MapPanel.shared
         guard !trip.on, !mp.typing else { return }
+        Perf.shared.note("開始打字 面板 \(mp.stage)")
         mp.typing = true
         mp.beforeTyping = mp.stage
         mp.go(.low)          // 不要 go(.high)，會把地圖整塊蓋住
@@ -836,6 +839,7 @@ struct MapTab: View {
     private func endTyping() {
         let mp = MapPanel.shared
         guard mp.typing else { return }
+        Perf.shared.note("鍵盤收起 面板 \(mp.stage) 打字前 \(mp.beforeTyping)")
         mp.typing = false
         guard !trip.on, mp.stage == .low else { return }
         mp.go(mp.beforeTyping == .low ? .low : .mid)
@@ -1586,7 +1590,7 @@ struct NearbySheet: View {
         }
         mp.dragging = false
         mp.calmUntil = CACurrentMediaTime() + 0.8
-        if pick != mp.stage { Haptic.light() }
+        if pick != mp.stage { Haptic.light(); Perf.shared.note("面板 \(mp.stage) → \(pick)（拖放）") }
         withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { mp.stage = pick; lift.y = 0; tallPull = nil }
         // 停好之後量一次地圖邊距（拉的過程中都沒量）
         Task { try? await Task.sleep(for: .milliseconds(80)); report() }
@@ -1910,6 +1914,7 @@ struct PickedCard: View {
 
     func select(_ id: String?) {
         guard sel != id else { return }
+        Perf.shared.note("sel \(sel.map { String($0.prefix(8)) } ?? "nil") → \(id.map { String($0.prefix(8)) } ?? "nil")")   // 量測：誰改了選取
         // 手動選別根或點空白處，就取消還在跳的抽一間
         if drawWin != nil, id != drawWin { drawTask?.cancel(); drawTask = nil; drawWin = nil }
         if extra != nil, id != extra { extra = nil }
