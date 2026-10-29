@@ -1040,9 +1040,27 @@ export class Renderer {
   }
   // w、h：照片的原尺寸（src 可能是縮小的預覽，座標一律照原尺寸算）
   setImage(src, w = src.width, h = src.height) {
-    this.w = w; this.h = h; this.tImg = this.tOwn;
-    this.upload(this.tImg, src); this.imgW = src.width; this.imgH = src.height;
+    const pre = this.pre; this.pre = null;
+    this.w = w; this.h = h;
+    if (pre?.src === src) { this.gl.deleteTexture(this.tOwn); this.tOwn = pre.t; }
+    else { if (pre) this.gl.deleteTexture(pre.t); this.upload(this.tOwn, src); }
+    this.tImg = this.tOwn; this.imgW = src.width; this.imgH = src.height;
     this.derive();
+  }
+  // 開照片（評審 L71）：1200 萬像素整張 texImage2D 一次傳，iPhone 要停 0.2～0.3 秒。先分幾段（每段約 200 萬像素）
+  // 傳進另一張貼圖，段跟段之間讓轉圈走一格；接著 setImage 同一張就直接換上，不用再傳。src 傳完到 setImage 之間不能再改
+  async preload(src) {
+    const gl = this.gl, w = src.width, h = src.height, k = Math.max(1, Math.ceil(2e6 / w)), t = this.tex();
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    for (let y = 0; y < h; y += k) {
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); gl.pixelStorei(gl.UNPACK_SKIP_ROWS, y);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, y, w, Math.min(k, h - y), gl.RGBA, gl.UNSIGNED_BYTE, src);
+      gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+      if (y + k < h) await new Promise(r => setTimeout(r));
+    }
+    if (this.pre) gl.deleteTexture(this.pre.t);
+    this.pre = { src, t };
   }
   // 頭髮、膚質要先改的照片（hair.js、skin.js 在同一個 WebGL 上改）：同一張只傳一次，srcVer 跟著內容變
   srcTex(src) {
@@ -1154,10 +1172,12 @@ export class Renderer {
     this.gauss(this.fbL, 3);
   }
   // 美顏遮罩（ai.js skinMask）；它帶的閃光燈分類圖（cls）跟人像一起放進 uSeg
-  setMask(src) {
+  // segNext：接著就要 setSeg（applyDetect）：分類圖換了先不重組人像遮罩，等 setSeg 一起做
+  // （開新照片時以前先把上一張的人像遮罩配新的分類圖整張重傳一次，主執行緒多停 0.1 秒，接著又換掉）
+  setMask(src, segNext) {
     src ? this.upload(this.tMask, src) : this.blank(this.tMask, 0);
     const c = src?.cls || null;
-    if (c !== this.cls) { this.cls = c; if (this.segSrc) this.upSeg(); }
+    if (c !== this.cls) { this.cls = c; if (segNext) this.segUp = false; else if (this.segSrc) this.upSeg(); }
   }
   // 換照片但人像遮罩沒變（塗鴉、美顏筆每畫一筆都會換一張照片）就不用重傳：原尺寸遮罩重組一次要好幾百毫秒
   setSeg(src) { src ||= null; if (src !== this.segSrc || !this.segUp) { this.segSrc = src; this.upSeg(); this.segUp = true; } this.blurs(); this.bkKey = ''; }

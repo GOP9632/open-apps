@@ -111,14 +111,15 @@ const ADJUST = [
   ['grain', '顆粒', I.grain, 0], ['fade', '褪色', I.fade, 0], ['vignette', '暗角', I.vig],
 ];
 // 美顏只放皮膚類（照醒圖：美顏、臉部分開）。瘦臉、大眼以前在這裡另有一套滑桿，跟「臉型」的互不知道，
-// 兩邊都調會瘦兩次（評審 M14）。現在美顏裡的瘦臉、大眼是捷徑，點了跳到臉型的同一個滑桿
+// 兩邊都調會瘦兩次（評審 M14）。現在美顏裡的瘦臉、大眼調的就是臉型的那個值：照醒圖在美顏裡直接出滑桿，
+// 不跳到臉型（評審 L70：以前點了整個換到臉型分頁，要調磨皮還得切回來）
 const BEAUTY = [
   ['smooth', '磨皮', I.skin, 0], ['white', '美白', I.white, 0], ['dark', '黑眼圈', I.dark, 0], ['fold', '法令紋', I.fold, 0],
   ['eyeb', '亮眼', I.eyeb, 0], ['teeth', '白牙', I.teeth, 0],
 ];
 // 舊版美顏的臉型滑桿：舊草稿裡可能有值，照樣畫、美顏的重設照樣清掉，只是不再出現滑桿
 const BEAUTY_OLD = [['slim'], ['vface'], ['chin'], ['eyes'], ['nose'], ['mouth']];
-// 美顏裡跳到臉型的捷徑：[名稱, 圖示, 臉型分類, 臉型項目]
+// 美顏裡調臉型的那兩個：[名稱, 圖示, 臉型分類, 臉型項目]；cur 是 'J:' + 臉型項目
 const BEAUTY_JUMP = [['瘦臉', I.slim, 'face', 'face_thin'], ['大眼', I.eye, 'eye', 'eye_size']];
 // 第一次點開時的起始強度，照醒圖點開滑桿時的預設值
 const BEAUTY_DEF = { white: 60 };
@@ -219,8 +220,14 @@ async function decodePhoto(file) {
   let w = bmp.width, h = bmp.height;
   const k = Math.min(1, MAX_SIDE / Math.max(w, h), Math.sqrt(MAX_AREA / (w * h)));
   w = Math.round(w * k); h = Math.round(h * k);
-  const c = photoCanvas(w, h);
-  c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+  // 1200 萬像素一次畫進去 iPhone 要停 0.2 秒（評審 L71）：先配好記憶體，再照列分幾段畫（每段約 200 萬像素，
+  // 剪裁框對齊像素，跟一次畫完一樣），段跟段之間讓轉圈走一格
+  const c = photoCanvas(w, h), x = c.getContext('2d'), n = Math.max(1, Math.ceil(2e6 / w)), next = () => new Promise(r => setTimeout(r));
+  x.clearRect(0, 0, 1, 1); await next();
+  for (let y = 0; y < h; y += n) {
+    x.save(); x.beginPath(); x.rect(0, y, w, Math.min(n, h - y)); x.clip(); x.drawImage(bmp, 0, 0, w, h); x.restore();
+    if (y + n < h) await next();
+  }
   return { bmp, c };
 }
 // m：草稿（接著修上次的照片）
@@ -235,6 +242,8 @@ async function loadFile(file, m) {
     const orig = saved ? { blob: m.origBlob, ready: Promise.resolve(m.origBlob) } : makeOrig(bmp, bmp.width, bmp.height);
     const om = saved ? m.om : [1 / w, 0, 0, 1 / h, 0, 0];
     m?.patches?.forEach(q => c.getContext('2d').putImageData(q.img, q.x, q.y));  // 草稿：照片疊上之後畫的每一筆
+    // 照片先分段傳進 WebGL（下面 setBase 就不用整張一次傳）；傳的時候畫面還是上一張、照舊的設定畫
+    await R.preload(c);
     // 草稿存的時候增高拉著還沒離開：先照沒拉的照片開，再拉長（跟離開增高一樣多一步，復原就是不拉）
     const bh = m?.P?.bmHeight || 0;
     P = { ...P0, ...m?.P, bmHeight: 0 }; texts = m?.texts || []; selText = -1; stickers = m?.stickers || []; selSt = -1;
@@ -602,7 +611,7 @@ function applyBase() {
 }
 // 臉、人像這些偵測結果換成現在這個 base 的，還沒有的去找。lay：照片換了，重新排版
 function applyDetect(lay) {
-  R.setMask(base.mask); R.setMask2(base.mask2);
+  R.setMask(base.mask, true); R.setMask2(base.mask2);
   R.setSeg(base.matte || base.seg?.person); R.setSegB(base.segB); R.setFlashGrid(base.fnet?.grid || null);
   if (lay) layout();
   render();
@@ -1886,20 +1895,37 @@ function tabBeauty(box) {
       render(); commit(); showTab('beauty');
     },
   })));
-  const one = cur === 'oneTap' && T.oneTap >= 0;
-  paramItems(box, BEAUTY, 'smooth', one);
-  // 瘦臉、大眼：排在磨皮、美白後面，點了跳到臉型的同一個滑桿（第一次點跟臉型一樣套點開時的預設）
-  const at = box.children[ONE_TAPS.length + 2] || null;
-  BEAUTY_JUMP.forEach(([label, icon, c, id]) => box.insertBefore(item({
-    label, icon, cls: 'jump', set: shapeIsSet(T, id), onclick: () => {
-      shapeCat = c; shapeCur = id;
-      const C = SHAPE_CATS.find(x => x.id === c), it = C.items.find(x => x.id === id), d = it.def;
-      if (d && !shapeIsSet(T, id)) { setShape(T, id, 'both', d); render(); commit(); }
-      showTab('shape');
-      // 臉型裡叫「眼睛 › 大小」（醒圖的名字），跟美顏的「大眼」對不上：跳過去時說一聲（評審 #145 小 H）
-      if (it.name !== label) toast(`${label}在「臉型 › ${C.name} › ${it.name}」`, 2500);
-    },
-  }), at));
+  const one = cur === 'oneTap' && T.oneTap >= 0, J = !wide.matches && BEAUTY_JUMP.find(j => 'J:' + j[3] === cur);
+  paramItems(box, BEAUTY, 'smooth', one || !!J);
+  // 瘦臉、大眼：排在磨皮、美白後面，調的是臉型的同一個值（第一次點跟臉型一樣套點開時的預設）；可以左右分開
+  const at = box.children[ONE_TAPS.length + 2] || null, rat = wide.matches ? $('#rows').children[2] || null : null, shapeOf = ([, , c, id]) => SHAPE_CATS.find(x => x.id === c).items.find(x => x.id === id);
+  const els = BEAUTY_JUMP.map(j => {
+    const [label, icon, c, id] = j;
+    if (wide.matches) {
+      // 電腦版每個項目一條滑桿，這兩條一樣排在磨皮、美白後面（兩邊一起調；左右分開到臉型）
+      const it = shapeOf(j);
+      $('#rows').insertBefore(sliderRow({ label, min: it.min, max: 100, val: getShape(T, id, 'both'), def: it.def, onInput: v => { setShape(T, id, 'both', v); T.oneTap = -1; render(); } }), rat);
+      return null;
+    }
+    return box.insertBefore(item({
+      label, icon, on: J === j && !one, set: shapeIsSet(T, id), onclick: () => {
+        cur = 'J:' + id; shapeCat = c; shapeCur = id;
+        const d = shapeOf(j).def;
+        if (d && !shapeIsSet(T, id)) { setShape(T, id, 'both', d); T.oneTap = -1; render(); commit(); }
+        showTab('beauty');
+      },
+    }), at);
+  });
+  if (J && !one) {
+    const [label, , c, id] = J, it = shapeOf(J), side = shapeSide, el = els[BEAUTY_JUMP.indexOf(J)];
+    // 臉型裡叫「眼睛 › 大小」（醒圖的名字），跟美顏的「大眼」對不上：說明列寫一下（評審 #145 小 H）
+    $('#note').textContent = `${label}跟「臉型 › ${SHAPE_CATS.find(x => x.id === c).name} › ${it.name}」是同一個` + (base.faces?.length > 1 ? '。' + faceNote(base.faces) : '');
+    sideSeg(true, side, sd => { shapeSide = sd; showTab('beauty'); });
+    setSlider(label + (side === 'L' ? '左' : side === 'R' ? '右' : ''), it.min, 100, getShape(T, id, side), v => {
+      setShape(T, id, side, v); T.oneTap = -1; render();
+      el.classList.toggle('set', shapeIsSet(T, id));
+    });
+  }
   if (one) {
     const t = ONE_TAPS[T.oneTap];
     $('#note').textContent = t.note + (base.faces?.length > 1 ? '。' + faceNote(base.faces) : '');
