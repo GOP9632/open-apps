@@ -18,7 +18,6 @@ struct ListTab: View {
     var body: some View {
         let _ = Perf.shared.count("收藏")
         let _ = Flag.printChanges ? Self._printChanges() : ()   // 量測用 -printChanges：Console 印這次重算是哪個狀態變了
-        @Bindable var store = store
         // 篩選結果一次算好（每打一個字只算一次）
         // 在前景時不讀 applied.f：FilterSync 順手對齊它時這頁不會多算一次
         let visible = store.shown(front ? store.listF : applied.f)
@@ -56,8 +55,7 @@ struct ListTab: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
                     StarterCard(open: { if let p = $0 { path = NavigationPath([p]) } }, add: { adding = true })
-                    SearchField(text: $store.listF.q, prompt: "搜尋店名、地區、料理、標籤").padding(.horizontal, 16)
-                    if !store.mine.isEmpty { FilterChips(f: $store.listF) }
+                    ListSearchBar(chips: !store.mine.isEmpty)
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 14) {
                         ForEach(cards) { c in
                             let g = c.g, p = g[0]
@@ -125,7 +123,7 @@ struct ListTab: View {
         }
         // 推頁、返回只讓 DepthReport 重算（body 裡讀 path 的話整個收藏頁都會跟著重算）
         .background { DepthReport(path: $path, tab: 1) }
-        .background { FilterSync(tab: 1, applied: Binding(get: { applied.f }, set: { applied.f = $0 })) }
+        .background { FilterSync(tab: 1, get: { applied.f }, set: { applied.f = $0 }) }
         // 點「收藏好了」通知：回到清單頂層、捲到最上面
         .onChange(of: store.listTop) {
             path = NavigationPath()
@@ -456,39 +454,55 @@ struct DepthReport: View {
     var body: some View { Color.clear.onChange(of: path.count) { _, n in store.depth[tab] = n; if n == 0 { store.flushFresh() } } }
 }
 
+// 收藏頁的搜尋框和分類籤：只有這一小塊建 store.listF 的綁定（建綁定時會讀一次值、記下依賴），
+// 收藏頁在背景時，地圖打字、點籤不會把整個收藏頁帶著重算
+private struct ListSearchBar: View {
+    @Environment(Store.self) private var store
+    let chips: Bool
+    var body: some View {
+        @Bindable var store = store
+        VStack(alignment: .leading, spacing: 14) {
+            SearchField(text: $store.listF.q, prompt: "搜尋店名、地區、料理、標籤").padding(.horizontal, 16)
+            if chips { FilterChips(f: $store.listF) }
+        }
+    }
+}
+
 // 收藏頁在背景時畫的篩選放在盒子裡（不是直接放 @State）：@State 的值一改，整頁就重算，不管 body 這次有沒有讀它；
 // 放在 @Observable 的盒子裡，只有真的讀了 f（收藏頁在背景）才跟著重算
 @Observable final class FilterBox { var f = Filter() }
 
 // 共用篩選的同步：只有這一小塊讀 store.mapF 和 store.tab。
-// 分頁在背景時停字 350ms 才同步一次、不帶動畫；live 的那頁（地圖）在前景時也由這裡即時同步，body 就不用讀 store.mapF
+// 分頁在背景時停字 350ms 才同步一次、不帶動畫；live 的那頁（地圖）在前景時也由這裡即時同步，body 就不用讀 store.mapF。
+// 用 get／set 兩個閉包，不用 Binding：把 Binding 交給子畫面時 SwiftUI 會讀一次值，讀的會記成上一層（收藏頁、地圖）的依賴
 struct FilterSync: View {
     let tab: Int
     var live = false
-    @Binding var applied: Filter
+    let get: () -> Filter
+    let set: (Filter) -> Void
     @Environment(Store.self) private var store
     var body: some View {
         Color.clear
-            .onAppear { applied = store.mapF }
+            .onAppear { set(store.mapF) }
             .onChange(of: store.mapF) { old, f in
                 guard store.tab == tab else { return }
                 // 收藏頁在前景時 body 讀 listF、不讀 applied：順手對齊，離開時才不用再算一次
-                guard live else { applied = f; return }
+                guard live else { set(f); return }
                 // 點分類、想去去過（chips 本來就包 withAnimation(.snappy)）照舊有動畫；打字不帶動畫
-                if old.q == f.q { withAnimation(.snappy) { applied = f } } else { applied = f }
+                if old.q == f.q { withAnimation(.snappy) { set(f) } } else { set(f) }
             }
             .onChange(of: store.tab) { old, new in
                 // 離開這頁：停在離開當下的篩選；切進這頁也先對齊（地圖馬上畫新的；收藏頁 body 讀 listF，這裡只是讓離開時不用再算）
-                guard old == tab || new == tab, applied != store.mapF else { return }
+                guard old == tab || new == tab, get() != store.mapF else { return }
                 var t = Transaction(); t.disablesAnimations = true
-                withTransaction(t) { applied = store.mapF }
+                withTransaction(t) { set(store.mapF) }
             }
             .task(id: store.mapF) {
-                guard store.tab != tab, applied != store.mapF else { return }
+                guard store.tab != tab, get() != store.mapF else { return }
                 try? await Task.sleep(for: .milliseconds(350))
                 guard !Task.isCancelled, store.tab != tab else { return }
                 var t = Transaction(); t.disablesAnimations = true
-                withTransaction(t) { applied = store.mapF }
+                withTransaction(t) { set(store.mapF) }
             }
     }
 }

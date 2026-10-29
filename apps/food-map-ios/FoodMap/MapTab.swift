@@ -349,18 +349,12 @@ struct MapTab: View {
                             .transition(.opacity)
                     }
                     // 一般地圖的搜尋列：行程模式時收起來但不拿掉（拿掉再建一次很慢）
-                        VStack(spacing: 8) {
-                            // 「我的收藏 ▾」放在搜尋框最左邊（沒有群組就不放）；分類那排只剩分類
-                            SearchField(text: $store.mapF.q, prompt: gname != nil ? "在群組裡找" : "今天想吃什麼？",
-                                        lead: store.groups.isEmpty ? nil : { (busy: Bool) -> AnyView in AnyView(scopePill(gname, compact: busy)) },
-                                        begin: beginTyping) {
-                                AddButton { adding = true }.coachAnchor(.add)
-                            }
-                            .padding(.horizontal, 16)
-                            // 按搜尋鍵（有字）：把符合的店框進看得到的那塊
-                            .onSubmit(of: .text) { if !store.mapF.q.isEmpty { applied = store.mapF; frameShown() } }
-                            FilterChips(f: $store.mapF, solid: true)
-                        }
+                        // 「我的收藏 ▾」放在搜尋框最左邊（沒有群組就不放）；分類那排只剩分類
+                        MapSearchBar(prompt: gname != nil ? "在群組裡找" : "今天想吃什麼？",
+                                     lead: store.groups.isEmpty ? nil : { (busy: Bool) -> AnyView in AnyView(scopePill(gname, compact: busy)) },
+                                     begin: beginTyping, add: { adding = true },
+                                     // 按搜尋鍵（有字）：把符合的店框進看得到的那塊
+                                     submit: { if !store.mapF.q.isEmpty { applied = store.mapF; frameShown() } })
                         .padding(.top, 6)
                         .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { y in
                             guard !trip.on, abs(y - headY) > 0.5 else { return }
@@ -499,7 +493,7 @@ struct MapTab: View {
             // 第一次打開先把所有收藏的店框進畫面
             fit()
         }
-        .background { FilterSync(tab: 0, live: true, applied: $applied) }
+        .background { FilterSync(tab: 0, live: true, get: { applied }, set: { applied = $0 }) }
         .onChange(of: list.count) { fit() }
         .onChange(of: store.loading) { _, l in if !l { centerIfEmpty() } }
         // 進出行程：「只列這幾間」一律退出。
@@ -1149,6 +1143,28 @@ struct MapTab: View {
         guard let b = bounds else { Haptic.warning(); return }
         Perf.shared.mark("框搜尋結果 \(points.count) 間")
         withAnimation(.smooth(duration: 0.5)) { pos = .region(b) }
+    }
+}
+
+// 地圖的搜尋框和分類籤：只有這一小塊建 store.mapF 的綁定。把綁定交給子畫面時 SwiftUI 會讀一次值，
+// 讀的人就記下依賴（-printChanges 量到 MapTab 因此跟著收藏頁每打一個字重算）；放在這裡，MapTab 只看 FilterSync 給的 applied
+private struct MapSearchBar: View {
+    @Environment(Store.self) private var store
+    let prompt: String
+    let lead: ((Bool) -> AnyView)?
+    let begin: () -> Void
+    let add: () -> Void
+    let submit: () -> Void
+    var body: some View {
+        @Bindable var store = store
+        VStack(spacing: 8) {
+            SearchField(text: $store.mapF.q, prompt: prompt, lead: lead, begin: begin) {
+                AddButton { add() }.coachAnchor(.add)
+            }
+            .padding(.horizontal, 16)
+            .onSubmit(of: .text) { submit() }
+            FilterChips(f: $store.mapF, solid: true)
+        }
     }
 }
 
