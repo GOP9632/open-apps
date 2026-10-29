@@ -405,6 +405,7 @@ struct DrawStage: View {
     var hop: ((Place) -> Void)? = nil
     let pick: (Place) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduce
+    @Environment(Store.self) private var store
 
     var body: some View {
         ZStack {
@@ -425,6 +426,10 @@ struct DrawStage: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: show?.id)
+        // 換分頁：抽卡、轉盤直接收掉（丟到群組投票會在開著時切到群組頁）
+        .onChange(of: store.tab) { if show != nil { show = nil } }
+        // 抽卡開著：分頁列先滑下去
+        .onChange(of: show != nil) { _, v in store.drawCover = v }
     }
 
     private func close() { withAnimation(.easeOut(duration: 0.2)) { show = nil } }
@@ -630,26 +635,41 @@ struct DrawWheel: View {
     let pick: (Place) -> Void
     @State private var angle = 0.0          // 順時針轉了幾弧度
     @State private var run: Task<Void, Never>?
-    @State private var lastIdx = -1
+    @State private var spin: Spin?          // 正在自動轉或放手滑行：角度用時間算，畫面跟著螢幕刷新取樣
     @State private var dragLast: (a: Double, t: CFTimeInterval)?
     @State private var vel = 0.0
     @State private var won: String?
     @State private var burst = 0
     @Environment(\.accessibilityReduceMotion) private var reduce
     private let size: CGFloat = 300
-    // 每格不同顏色（相鄰的分得出來）；分類看格子裡的食物圖示
-    private static let colors: [Color] = [.accent, .sprPink, .sprBlue, .sprMint, .sprPurple, Color(hex: 0xe8a200), Color(hex: 0x1fbf8f), Color(hex: 0xff4f9a).mix(with: .accent, by: 0.5)]
+
+    // 點中間轉、放手滑行共用：從 from 轉 total 弧度，dur 秒，越轉越慢（cubic：三次方，滑行：二次方＝等減速）
+    struct Spin: Equatable {
+        let from: Double, total: Double, t0: TimeInterval, dur: Double, cubic: Bool
+        func angle(_ now: TimeInterval) -> Double {
+            let u = min(max((now - t0) / dur, 0), 1)
+            return from + total * (cubic ? 1 - pow(1 - u, 3) : 1 - pow(1 - u, 2))
+        }
+    }
+    private static func now() -> TimeInterval { Date.now.timeIntervalSinceReferenceDate }
 
     private var seg: Double { 2 * .pi / Double(max(places.count, 1)) }
 
     var body: some View {
         VStack(spacing: 18) {
             ZStack {
-                wheel.rotationEffect(.radians(angle))
-                    .frame(width: size, height: size)
-                    .contentShape(.circle)
-                    .gesture(spinDrag)
-                    .swipeBackBlocked()
+                // 不用 Task.sleep 推角度：對不上螢幕刷新，轉起來一頓一頓
+                TimelineView(.animation(paused: spin == nil)) { tl in
+                    let a = spin?.angle(tl.date.timeIntervalSinceReferenceDate) ?? angle
+                    WheelFace(places: places, won: won, size: size).equatable()
+                        .rotationEffect(.radians(a))
+                        // 每跨一格輕震一下（拖、自動轉、滑行都走這裡）
+                        .onChange(of: slot(a)) { Haptic.tick() }
+                }
+                .frame(width: size, height: size)
+                .contentShape(.circle)
+                .gesture(spinDrag)
+                .swipeBackBlocked()
                 Button(action: spinRandom) {
                     Text(won == nil ? "轉" : "🎉").font(.system(size: 26, weight: .black)).foregroundStyle(.white)
                         .frame(width: 92, height: 92).background(Color.ink, in: .circle)
@@ -670,11 +690,103 @@ struct DrawWheel: View {
                 .font(.system(size: 17, weight: .heavy)).foregroundStyle(.white)
                 .contentTransition(.opacity)
         }
-        .onAppear { Perf.shared.mark("轉盤"); lastIdx = index }
+        .onAppear { Perf.shared.mark("轉盤") }
         .onDisappear { run?.cancel() }
     }
 
-    private var wheel: some View {
+    // 指針指到第幾格
+    private func slot(_ a: Double) -> Int {
+        let a = (-a).truncatingRemainder(dividingBy: 2 * .pi)
+        return min(Int((a < 0 ? a + 2 * .pi : a) / seg), places.count - 1)
+    }
+    private var index: Int { slot(angle) }
+
+    private var spinDrag: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("wheel"))
+            .onChanged { v in
+                guard won == nil else { return }
+                // 抓住正在轉的轉盤：停在當下的角度
+                if let s = spin { angle = s.angle(Self.now()); spin = nil; run?.cancel() }
+                let dx = v.location.x - size / 2, dy = v.location.y - size / 2
+                let a = Double(atan2(dx, -dy))
+                let now = CACurrentMediaTime()
+                // 離圓心太近，角度變化太敏感：只記位置，不轉也不算速度
+                guard hypot(dx, dy) >= size * 0.15 else { dragLast = (a, now); return }
+                if let l = dragLast {
+                    var d = a - l.a
+                    if d > .pi { d -= 2 * .pi } else if d < -.pi { d += 2 * .pi }
+                    angle += d
+                    let dt = max(now - l.t, 1.0 / 240)
+                    vel = 0.6 * min(max(d / dt, -20), 20) + 0.4 * vel
+                }
+                dragLast = (a, now)
+            }
+            .onEnded { _ in
+                // 手指停住超過 0.06 秒才放開：當作停下來，不甩
+                if let l = dragLast, CACurrentMediaTime() - l.t > 0.06 { vel = 0 }
+                dragLast = nil
+                guard won == nil else { return }
+                // 放開時接著轉，摩擦約 3 rad/s²；甩太慢就停在原地（刻意的，不要改成 finish()）
+                if abs(vel) > 1.5 { coast(vel) }
+                vel = 0
+            }
+    }
+
+    // 開始轉：睡多久只決定什麼時候收尾，角度是公式算的，兩種曲線到終點時速度都是 0，不會跳
+    private func start(_ s: Spin) {
+        run?.cancel()
+        spin = s
+        run = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(s.dur))
+            guard !Task.isCancelled else { return }
+            angle = s.from + s.total; spin = nil
+            finish()
+        }
+    }
+
+    // 放手滑行：等減速，最多約 6 圈、5 秒
+    private func coast(_ v0: Double) {
+        let v = min(max(v0, -15), 15)
+        start(Spin(from: angle, total: v * abs(v) / 6, t0: Self.now(), dur: abs(v) / 3, cubic: false))
+    }
+
+    // 點中間：先照設定（加權、不重複）挑好中哪格，再轉 2–4 圈停在那格（2.5 秒，越轉越慢）
+    private func spinRandom() {
+        guard won == nil, spin == nil, !places.isEmpty else { return }
+        run?.cancel()
+        let w = Drawer.shared.pick(store, places, k: 1).first.flatMap { p in places.firstIndex { $0.id == p.id } } ?? Int.random(in: 0..<places.count)
+        let target = -(Double(w) + 0.5 + Double.random(in: -0.3...0.3)) * seg
+        var d = (target - angle).truncatingRemainder(dividingBy: 2 * .pi)
+        if d < 0 { d += 2 * .pi }
+        let total = d + 2 * .pi * Double(Int.random(in: 2...3))
+        let dur = reduce ? 0.6 : 2.5
+        start(Spin(from: angle, total: total, t0: Self.now(), dur: dur, cubic: true))
+    }
+
+    private func finish() {
+        let p = places[index]
+        won = p.id
+        Haptic.success()
+        if !reduce { burst += 1 }
+        Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            pick(p)
+        }
+    }
+}
+
+// 轉盤的盤面：TimelineView 每一格都會重算，盤面只在店或中獎那格變了才重建（8 格扇形和文字）
+struct WheelFace: View, Equatable {
+    let places: [Place]
+    let won: String?
+    let size: CGFloat
+    // 每格不同顏色（相鄰的分得出來）；分類看格子裡的食物圖示
+    private static let colors: [Color] = [.accent, .sprPink, .sprBlue, .sprMint, .sprPurple, Color(hex: 0xe8a200), Color(hex: 0x1fbf8f), Color(hex: 0xff4f9a).mix(with: .accent, by: 0.5)]
+    private var seg: Double { 2 * .pi / Double(max(places.count, 1)) }
+
+    nonisolated static func == (a: Self, b: Self) -> Bool { a.won == b.won && a.size == b.size && a.places.map(\.id) == b.places.map(\.id) }
+
+    var body: some View {
         ZStack {
             ForEach(Array(places.enumerated()), id: \.element.id) { i, p in
                 let a0 = Double(i) * seg, mid = a0 + seg / 2
@@ -695,94 +807,6 @@ struct DrawWheel: View {
         }
         .frame(width: size, height: size)
         .contentShape(.circle)
-    }
-
-    // 指針指到第幾格
-    private var index: Int {
-        let a = (-angle).truncatingRemainder(dividingBy: 2 * .pi)
-        return min(Int((a < 0 ? a + 2 * .pi : a) / seg), places.count - 1)
-    }
-
-    private func tick() {
-        let i = index
-        if i != lastIdx { lastIdx = i; Haptic.tick() }
-    }
-
-    private var spinDrag: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .named("wheel"))
-            .onChanged { v in
-                guard won == nil else { return }
-                run?.cancel()
-                let a = Double(atan2(v.location.x - size / 2, -(v.location.y - size / 2)))
-                let now = CACurrentMediaTime()
-                if let l = dragLast {
-                    var d = a - l.a
-                    if d > .pi { d -= 2 * .pi } else if d < -.pi { d += 2 * .pi }
-                    angle += d
-                    let dt = max(now - l.t, 1.0 / 240)
-                    vel = 0.6 * (d / dt) + 0.4 * vel
-                    tick()
-                }
-                dragLast = (a, now)
-            }
-            .onEnded { _ in
-                dragLast = nil
-                guard won == nil else { return }
-                // 放開時接著轉，摩擦約 3 rad/s²；甩太慢就停在原地
-                if abs(vel) > 1.5 { coast(vel) }
-                vel = 0
-            }
-    }
-
-    private func coast(_ v0: Double) {
-        run?.cancel()
-        run = Task { @MainActor in
-            var w = v0, t = CACurrentMediaTime()
-            while abs(w) > 0.08, !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(8))
-                let now = CACurrentMediaTime(), dt = now - t; t = now
-                let nw = w - (w > 0 ? 1 : -1) * 3 * dt
-                if nw * w <= 0 { break }
-                w = nw
-                angle += w * dt
-                tick()
-            }
-            if !Task.isCancelled { finish() }
-        }
-    }
-
-    // 點中間：先照設定（加權、不重複）挑好中哪格，再轉 2–4 圈停在那格（2.5 秒，越轉越慢）
-    private func spinRandom() {
-        guard won == nil, !places.isEmpty else { return }
-        run?.cancel()
-        let w = Drawer.shared.pick(store, places, k: 1).first.flatMap { p in places.firstIndex { $0.id == p.id } } ?? Int.random(in: 0..<places.count)
-        let target = -(Double(w) + 0.5 + Double.random(in: -0.3...0.3)) * seg
-        var d = (target - angle).truncatingRemainder(dividingBy: 2 * .pi)
-        if d < 0 { d += 2 * .pi }
-        let total = d + 2 * .pi * Double(Int.random(in: 2...3))
-        let start = angle, dur = reduce ? 0.6 : 2.5
-        run = Task { @MainActor in
-            let t0 = CACurrentMediaTime()
-            while !Task.isCancelled {
-                let u = min((CACurrentMediaTime() - t0) / dur, 1)
-                angle = start + total * (1 - pow(1 - u, 3))
-                tick()
-                if u >= 1 { break }
-                try? await Task.sleep(for: .milliseconds(8))
-            }
-            if !Task.isCancelled { finish() }
-        }
-    }
-
-    private func finish() {
-        let p = places[index]
-        won = p.id
-        Haptic.success()
-        if !reduce { burst += 1 }
-        Task {
-            try? await Task.sleep(for: .milliseconds(400))
-            pick(p)
-        }
     }
 }
 

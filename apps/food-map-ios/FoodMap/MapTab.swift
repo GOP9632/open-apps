@@ -62,7 +62,8 @@ struct MapTab: View {
         let _ = Perf.shared.count("地圖")
         @Bindable var store = store
         // 篩選結果只算一次；有座標的店下面每個地方共用
-        let all = store.shown(store.mapF, in: store.mapBase)
+        let base = store.mapBase
+        let all = store.shown(store.mapF, in: base)
         // 行程模式：這天已經排進去的店畫成號碼，不再畫一次圖釘
         let tripHide = tripHidden
         let list = withExtra(all.filter { $0.lat != nil && $0.lng != nil }).filter { !tripHide.contains($0.id) }
@@ -185,8 +186,15 @@ struct MapTab: View {
                     // 手指拖地圖：下面那塊降到一行（停下來不自動彈回）
                     let now = CACurrentMediaTime()
                     if pos.positionedByUser { pins.camAt = now }
-                    if !trip.on, pos.positionedByUser, now > quiet.until, now > MapPanel.shared.calmUntil, !MapPanel.shared.dragging {
+                    // 新帳號的「收藏第一間店」卡不降（跟 NearbySheet 裡那張卡同一個條件）
+                    let empty = store.mapGroup == nil && store.mine.isEmpty && !store.loading
+                    if !trip.on, !empty, pos.positionedByUser, now > quiet.until, now > MapPanel.shared.calmUntil, !MapPanel.shared.dragging {
                         MapPanel.shared.go(.low)
+                    }
+                    // 手指拖、縮放離開「只列這幾間」（不放進上面那個 if：剛點完泡泡的 calmUntil 會讓它退不出來）
+                    if !trip.on, pos.positionedByUser, now > quiet.until {
+                        seenBox.zoomed = nil
+                        if seenBox.only != nil { withAnimation(.snappy) { seenBox.only = nil } }
                     }
                     dot.refresh()
                     pinFrame(proxy)
@@ -255,7 +263,12 @@ struct MapTab: View {
                     if selfMoved && !landed { selfMoved = false } else { selfMoved = false; seenBox.set(c.region, publish: !trip.on) }
                     recluster(proxy)
                 }
-                .onChange(of: list.map(\.id)) { recluster(proxy) }
+                .onChange(of: list.map(\.id)) { _, ids in
+                    recluster(proxy)
+                    // 選到的店被篩選或搜尋字篩掉：取消選取，大卡收起、其他圖釘恢復不透明
+                    // 行程模式不管：那時的 sel 是加站卡在用，可能是 hit: 開頭的搜尋點，或 extraFound 裡不在 list 的店
+                    if !trip.on, let s = pins.sel, !s.hasPrefix("hit:"), !ids.contains(s) { pins.select(nil) }
+                }
                 .onChange(of: store.coachStep) { pinFrame(proxy) }
                 // 選到一根圖釘：地圖移過去、放光圈（只有這個小觀察者看 sel，MapTab 本身不跟著重算）
                 // 選到時不重算泡泡（會讓整張地圖重畫，點圖釘變慢）；地圖移完停下來時會重算
@@ -332,10 +345,13 @@ struct MapTab: View {
                         VStack(spacing: 8) {
                             // 「我的收藏 ▾」放在搜尋框最左邊（沒有群組就不放）；分類那排只剩分類
                             SearchField(text: $store.mapF.q, prompt: gname != nil ? "在群組裡找" : "今天想吃什麼？",
-                                        lead: store.groups.isEmpty ? nil : AnyView(scopePill(gname))) {
+                                        lead: store.groups.isEmpty ? nil : { (busy: Bool) -> AnyView in AnyView(scopePill(gname, compact: busy)) },
+                                        begin: beginTyping) {
                                 AddButton { adding = true }.coachAnchor(.add)
                             }
                             .padding(.horizontal, 16)
+                            // 按搜尋鍵（有字）：把符合的店框進看得到的那塊
+                            .onSubmit(of: .text) { if !store.mapF.q.isEmpty { frameShown() } }
                             FilterChips(f: $store.mapF, solid: true)
                         }
                         .padding(.top, 6)
@@ -355,9 +371,10 @@ struct MapTab: View {
                 // 下面那塊（三段）：行程模式時收起來但不拿掉（拿掉再建一次很慢）
                 // 行程、定位兩顆浮在面板上緣，跟著面板上下；地圖邊距只在面板停在中間段時才跟著量
                 // 「附近 N 間」在 NearbyHost 裡算：地圖停下來、面板上緣變了，只有這一塊重算
-                NearbyHost(seen: seenBox, list: list, total: total, headY: headY, mapRect: mapRect) { near in
+                NearbyHost(seen: seenBox, list: list, total: total, base: base.count, inGroup: store.mapGroup != nil, filter: store.mapF, headY: headY, mapRect: mapRect) { near in
                     let missing = total - list.count
                 NearbySheet(near: near, pins: pins, list: list, group: store.mapGroupName, draw: draw, panel: openPanel, choose: choose, dropKey: pins.dropKey, focus: focus,
+                            endOnly: { withAnimation(.snappy) { seenBox.only = nil } }, frameAll: frameShown,
                             ceiling: headY + 8, top: AnyView(
                         VStack(alignment: .trailing, spacing: 10) {
                             // AI 在背景找剛新增的店
@@ -425,6 +442,8 @@ struct MapTab: View {
                 .allowsHitTesting(!trip.on)
                 .accessibilityHidden(trip.on)
             }
+            // 打字時鍵盤不要把下面那塊頂上去（分頁列本來就留在鍵盤後面）
+            .ignoresSafeArea(.keyboard, edges: .bottom)
             // 長按圖釘：背景變暗、圖釘放大，旁邊彈出「加進行程／導航／看店家」
             .overlay { PinMenu(pins: pins, list: list, act: pinAct) }
             // 抽 3 間的卡片、轉盤蓋在地圖上
@@ -462,7 +481,7 @@ struct MapTab: View {
         .sheet(isPresented: $noAddr) { NoAddressSheet() }
         .sheet(isPresented: $scoping) { ScopeSheet().presentationDetents([.medium, .large]) }
         // 換看誰的收藏：重新框住那些店
-        .onChange(of: store.mapGroup) { pins.select(nil); fitted = false; fit() }
+        .onChange(of: store.mapGroup) { pins.select(nil); seenBox.only = nil; seenBox.zoomed = nil; fitted = false; fit() }
         .onAppear {
             loc.requestWhenInUseAuthorization()
             if store.here == nil { store.here = loc.location }
@@ -471,11 +490,13 @@ struct MapTab: View {
         }
         .onChange(of: list.count) { fit() }
         // 離開行程：下面的附近面板補算一次地圖現在看的範圍（行程模式時沒跟著算）
-        .onChange(of: trip.on) { _, on in if !on { seenBox.set(seenBox.peek, publish: true) } }
+        .onChange(of: trip.on) { _, on in seenBox.only = nil; seenBox.zoomed = nil; if !on { seenBox.set(seenBox.peek, publish: true) } }
         // 拿到一次目前位置就好（剛允許定位也會馬上更新「附近」），不一直開著 GPS
         .task {
             do { for try await u in CLLocationUpdate.liveUpdates() { if let l = u.location { store.here = l; break } } } catch {}
         }
+        // 鍵盤收起來（按搜尋、點地圖、捲面板）：首頁搜尋不算在打字了，面板回到打字前那段
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in endTyping() }
         // 藍點只在看地圖（或出發中）時更新
         .task(id: store.tab == 0 || trip.going) {
             guard store.tab == 0 || trip.going else { return }
@@ -640,6 +661,9 @@ struct MapTab: View {
         }
         Perf.shared.mark(pins.drawn == id ? "抽一間（抽中）" : "點圖釘")
         if Flag.on("-perfOverlay") { print("[perf] 選中 \(p.name) \(p.id)") }
+        // 抽中、轉盤選中、從「抽過」點回的店如果在泡泡裡：先拆出這根，光圈和圖釘同一刻出現
+        // （手指點圖釘點不到泡泡裡的店，不會走到這裡，一般點圖釘的路徑不受影響）
+        if hidden.contains(id) { Perf.shared.mark("拆泡泡"); recluster(proxy) }
         // 下面那塊升到中間段顯示大卡片；接下來地圖移過去不算拖地圖
         quiet.hush()
         MapPanel.shared.go(.mid)
@@ -767,6 +791,23 @@ struct MapTab: View {
             guard trip.pickAt < t0 - 0.22 else { Perf.shared.mark("點空白略過"); return }
             trip.blank()
         }
+    }
+
+    // 點首頁搜尋框：面板降到最低段（躲在鍵盤後面），搜尋列到鍵盤之間全是地圖
+    private func beginTyping() {
+        let mp = MapPanel.shared
+        guard !trip.on, !mp.typing else { return }
+        mp.typing = true
+        mp.beforeTyping = mp.stage
+        mp.go(.low)          // 不要 go(.high)，會把地圖整塊蓋住
+    }
+    // 收鍵盤：本來在最低段就留著，不然回中段
+    private func endTyping() {
+        let mp = MapPanel.shared
+        guard mp.typing else { return }
+        mp.typing = false
+        guard !trip.on, mp.stage == .low else { return }
+        mp.go(mp.beforeTyping == .low ? .low : .mid)
     }
 
     // 行程模式：手指點的地方 MapKit 會不會選到圖釘（收藏、搜尋結果）。收藏的圖釘畫在座標點上面；
@@ -917,7 +958,7 @@ struct MapTab: View {
         Task { try? await Task.sleep(for: .milliseconds(500)); pins.flyFrom = [:] }
     }
 
-    // 點泡泡：放大到框住這幾家
+    // 點泡泡：放大到框住這幾家；擠在一起拆不開的，卡片列改成只列這幾間
     private func zoom(_ c: PinCluster) {
         guard !pins.moving else { Perf.shared.mark("地圖在動 不算點泡泡"); return }
         // 行程裡點泡泡放大：不是點空白（不收加站卡、不收搜尋）
@@ -929,6 +970,14 @@ struct MapTab: View {
         let ps = currentList.filter { c.ids.contains($0.id) }
         guard !ps.isEmpty else { return }
         let la = ps.map { $0.lat! }, lo = ps.map { $0.lng! }
+        // 擠在同一處（約 50 m 內），或同一顆泡泡連點兩次、中間沒拖地圖（放大過還是同一顆）：再放大也拆不開
+        let tight = la.max()! - la.min()! < 0.0005 && lo.max()! - lo.min()! < 0.0005
+        let again = seenBox.zoomed == c.id
+        seenBox.zoomed = c.id
+        if !trip.on, tight || again {
+            Perf.shared.mark("泡泡列出 \(ps.count) 間")
+            withAnimation(.snappy) { seenBox.only = Set(ps.map(\.id)) }
+        }
         withAnimation(.smooth(duration: 0.5)) {
             pos = .region(aim(MKCoordinateRegion(center: .init(latitude: (la.min()! + la.max()!) / 2, longitude: (lo.min()! + lo.max()!) / 2),
                                                  span: .init(latitudeDelta: max(0.003, (la.max()! - la.min()!) * 2.6), longitudeDelta: max(0.003, (lo.max()! - lo.min()!) * 2.2)))))
@@ -956,13 +1005,14 @@ struct MapTab: View {
     }
 
     // 搜尋框最左邊的深色膠囊：現在看誰的收藏，點了換；群組時是頭像＋縮短的群組名，✕ 在膠囊裡（回到我的收藏）
-    private func scopePill(_ gname: String?) -> some View {
+    // compact：正在打字，只留兩個頭像和 ▾（✕ 讓給右邊的清除鈕），輸入框才有地方
+    private func scopePill(_ gname: String?, compact: Bool = false) -> some View {
         HStack(spacing: 2) {
             Button { scoping = true } label: {
                 HStack(spacing: 6) {
                     if let g = store.mapGroup {
-                        HStack(spacing: -6) { ForEach(store.membersOf(g).prefix(3), id: \.self) { Avatar(name: store.name($0), id: $0, size: 22) } }
-                        Text(Self.short(gname ?? "")).lineLimit(1)
+                        HStack(spacing: -6) { ForEach(store.membersOf(g).prefix(compact ? 2 : 3), id: \.self) { Avatar(name: store.name($0), id: $0, size: 22) } }
+                        if !compact { Text(Self.short(gname ?? "")).lineLimit(1) }
                     } else {
                         Text("我的收藏")
                     }
@@ -974,7 +1024,9 @@ struct MapTab: View {
             }
             .buttonStyle(PressStyle())
             .accessibilityLabel("地圖要看誰的收藏，現在是" + (gname ?? "我的收藏"))
-            if store.mapGroup != nil {
+            if store.mapGroup != nil && compact {
+                Color.clear.frame(width: 8, height: 1)
+            } else if store.mapGroup != nil {
                 Button { withAnimation(.snappy) { store.mapGroup = nil } } label: {
                     Image(systemName: "xmark").font(.system(size: 10, weight: .heavy)).foregroundStyle(.white)
                         .frame(width: 22, height: 22).background(.white.opacity(0.18), in: .circle)
@@ -992,8 +1044,8 @@ struct MapTab: View {
         .fixedSize()
     }
 
-    // 群組名太長：膠囊裡只放前 5 個字
-    private static func short(_ s: String) -> String { s.count > 5 ? String(s.prefix(5)) + "…" : s }
+    // 群組名太長：膠囊裡只放前 4 個字
+    private static func short(_ s: String) -> String { s.count > 4 ? String(s.prefix(4)) + "…" : s }
 
     // 教學第一步：量出那間店的圖釘在螢幕上的位置（圖釘的尖端就是店的座標）
     private func pinFrame(_ proxy: MapProxy) {
@@ -1026,6 +1078,18 @@ struct MapTab: View {
         return aim(MKCoordinateRegion(center: .init(latitude: (la.min()! + la.max()!) / 2, longitude: (lo.min()! + lo.max()!) / 2),
                                       span: .init(latitudeDelta: max(0.02, (la.max()! - la.min()!) * 1.3), longitudeDelta: max(0.02, (lo.max()! - lo.min()!) * 1.3))))
     }
+
+    // 搜尋按 return、「看全部 N 間」：把符合的店框進看得到的那塊
+    private func frameShown() {
+        // 程式移鏡頭也要離開「只列這幾間」
+        seenBox.zoomed = nil
+        if seenBox.only != nil { withAnimation(.snappy) { seenBox.only = nil } }
+        quiet.hush()
+        MapPanel.shared.go(.mid)          // 先換段，aim() 才會用中段上緣算
+        guard let b = bounds else { Haptic.warning(); return }
+        Perf.shared.mark("框搜尋結果 \(points.count) 間")
+        withAnimation(.smooth(duration: 0.5)) { pos = .region(b) }
+    }
 }
 
 // 下面那排要放哪些店：地圖現在看到的範圍裡的店，由近到遠（沒開定位就從地圖中心算）
@@ -1034,6 +1098,8 @@ struct MapTab: View {
 @MainActor @Observable final class SeenBox {
     private(set) var shown: MKCoordinateRegion?
     @ObservationIgnored private(set) var peek: MKCoordinateRegion?
+    var only: Set<String>?                          // 點了拆不開的泡泡：卡片列只列這幾間
+    @ObservationIgnored var zoomed: String?         // 上一次點的泡泡；沒拖地圖又點同一顆，表示放大過了還是拆不開
     func set(_ r: MKCoordinateRegion?, publish: Bool) {
         peek = r
         guard publish, let r else { return }
@@ -1048,19 +1114,23 @@ struct NearbyHost<C: View>: View, Equatable {
     let seen: SeenBox
     let list: [Place]
     let total: Int
+    let base: Int          // 篩選前有幾間（我的收藏或這個群組）
+    let inGroup: Bool
+    let filter: Filter
     let headY: CGFloat
     let mapRect: CGRect
     @ViewBuilder let content: (Nearby) -> C
     @Environment(Store.self) private var store
 
     nonisolated static func == (a: Self, b: Self) -> Bool {
-        a.total == b.total && a.headY == b.headY && a.mapRect == b.mapRect && a.list == b.list
+        a.total == b.total && a.base == b.base && a.inGroup == b.inGroup && a.filter == b.filter
+            && a.headY == b.headY && a.mapRect == b.mapRect && a.list == b.list
     }
 
     var body: some View {
         let _ = Perf.signposter.emitEvent("附近重算")
         let _ = Perf.shared.note("附近重算")
-        content(Nearby(list: list, here: store.here, region: visible, total: total))
+        content(Nearby(list: list, here: store.here, region: visible, total: total, base: base, inGroup: inGroup, filter: filter, only: seen.only))
     }
 
     // 「附近」只算看得到的那塊：搜尋列下緣到面板上緣（停好的位置）
@@ -1078,34 +1148,71 @@ struct NearbyHost<C: View>: View, Equatable {
 struct Nearby {
     let title: String, subtitle: String, places: [Place]
     var short = ""                     // 小字放不下整句時的短句（放不下就不顯示，不出現「…」）
-    var lead: String?                  // 「附近 」「這一帶 」：後面接間數（數字會滾動）
+    var lead: String?                  // 「附近 」「這一帶 」「找到 」：後面接間數（數字會滾動）
+    var clear = false                  // 篩選或搜尋沒結果：標題那行放「清除篩選」
+    var more = 0                       // 只點分類、鏡頭內 0 間但別處有幾間（放「看全部 N 間」）
+    var isOnly = false                 // 點拆不開的泡泡：只列那幾間
 
-    init(list: [Place], here: CLLocation?, region: MKCoordinateRegion?, total: Int) {
+    init(list: [Place], here: CLLocation?, region: MKCoordinateRegion?, total: Int, base: Int, inGroup: Bool, filter: Filter, only: Set<String>? = nil) {
+        // 先看篩選前有沒有店：群組或帳號本來就沒有店時，清除篩選也不會有結果
         guard !list.isEmpty else {
-            title = total == 0 ? "還沒有收藏" : "地圖上還沒有店"
-            subtitle = total == 0 ? "按右上角＋新增第一間" : "有地址的店會自己出現在地圖上"
+            if base == 0 && inGroup { title = "還沒有店"; subtitle = "在店家頁按「分享到群組」加進來" }
+            else if base == 0 { title = "還沒有收藏"; subtitle = "按右上角＋新增第一間" }
+            else if (filter.on || !filter.q.isEmpty) && total == 0 {
+                if filter.q.isEmpty { title = "沒有符合的店"; subtitle = Self.cond(filter) }
+                else { title = "找不到「\(filter.q)」"; subtitle = "換個字試試" }
+                clear = true
+            } else { title = "地圖上還沒有店"; subtitle = "有地址的店會自己出現在地圖上" }
+            short = subtitle
             places = []
             return
         }
         let center = region.map { CLLocation(latitude: $0.center.latitude, longitude: $0.center.longitude) }
         let ref = here ?? center
+        if let only {
+            let l = list.filter { only.contains($0.id) }
+            // 篩選把那幾間都拿掉：退回一般的「附近 N 間」
+            if !l.isEmpty {
+                places = ref.map { r in l.sorted { r.distance(from: CLLocation(latitude: $0.lat!, longitude: $0.lng!)) < r.distance(from: CLLocation(latitude: $1.lat!, longitude: $1.lng!)) } } ?? l
+                title = "這裡有 \(l.count) 間"; subtitle = "擠在同一處"; short = subtitle; isOnly = true
+                return
+            }
+        }
         func inView(_ p: Place) -> Bool {
             guard let r = region else { return true }
             return abs(p.lat! - r.center.latitude) <= r.span.latitudeDelta / 2 && abs(p.lng! - r.center.longitude) <= r.span.longitudeDelta / 2
         }
-        var l = list.filter(inView)
+        // 有搜尋字：符合的店全部列出，不管鏡頭在哪；只點分類：維持鏡頭內的「附近 N 間」
+        let searching = !filter.q.isEmpty
+        var l = searching ? list : list.filter(inView)
         if let ref {
             l = l.map { ($0, ref.distance(from: CLLocation(latitude: $0.lat!, longitude: $0.lng!))) }.sorted { $0.1 < $1.1 }.map(\.0)
         }
         places = l
         if l.isEmpty {
             title = "這一帶沒有收藏"; subtitle = "把地圖拉遠一點看看"
+            if filter.on { more = list.count }      // 只點分類：鏡頭內 0 間但別處有
+        } else if searching {
+            lead = "找到 "
+            title = "找到 \(l.count) 間"
+            subtitle = here != nil ? "由近到遠" : "從地圖中心排"
+            short = subtitle
         } else {
             lead = here != nil ? "附近 " : "這一帶 "
             title = lead! + "\(l.count) 間"
             subtitle = here != nil ? "由近到遠" : "打開定位就會從你的位置排"
             short = here != nil ? "由近到遠" : "從地圖中心排"
         }
+    }
+
+    // 目前的條件，例如「✓ 去過・🍜 餐廳・「拉麵」」
+    static func cond(_ f: Filter) -> String {
+        var parts: [String] = []
+        if f.status == "want" { parts.append("♥ 想去") } else if f.status == "been" { parts.append("✓ 去過") }
+        // -noEmoji 量測時 emoji 是空字串：不多一個開頭空格
+        if let c = Cat.all[f.cat] { parts.append([c.emoji, c.name].filter { !$0.isEmpty }.joined(separator: " ")) }
+        if !f.q.isEmpty { parts.append("「\(f.q)」") }
+        return parts.joined(separator: "・")
     }
 }
 
@@ -1121,12 +1228,14 @@ struct NearbySheet: View {
     var choose: (Place) -> Void = { _ in }
     var dropKey: String? = nil
     var focus: (String) -> Void = { _ in }
+    var endOnly: () -> Void = {}                // 離開「只列這幾間」
+    var frameAll: () -> Void = {}               // 「看全部 N 間」：把符合的店框進看得到的那塊
     var ceiling: CGFloat = 0                    // 拉到最高時面板上緣停在這（搜尋列下緣再下面一點，螢幕座標）
     var top: AnyView? = nil                     // 浮在面板上緣的東西（行程、定位兩顆），跟著面板上下
     var foot: (CGFloat) -> Void = { _ in }      // 回報最低段停好時的面板上緣（只報變大的），地圖拿來定下緣
     @State private var counted: Int?          // 圖釘落下時「附近 N 間」從 0 數上去
     @State private var scrolled: String?      // 卡片列停在哪一間
-    @State private var skip: String?          // 自己捲過去的（關掉大卡），不用再移地圖
+    @State private var cards = CardScroll()   // 卡片列：上次對過去的那間、手指有沒有在捲（不觀察，改了不重畫面板）
     @State private var mp = MapPanel.shared
     @State private var lift = Lift()            // 手指拉了多少（往上為正）：只有套高度那層每幀重畫
     @State private var tallPull: Bool?          // 拉的過程中跨過一半：換成直的清單（只在跨線時變）
@@ -1241,7 +1350,7 @@ struct NearbySheet: View {
             if let p = picked {
                 PickedCard(place: p, saver: group == nil ? nil : p.owner, drawn: drawn, draw: draw, panel: panel, pickHistory: choose, grip: grip) {
                     // 關掉大卡：下面的卡片列捲到這間
-                    skip = p.id; scrolled = p.id
+                    cards.focused = p.id; scrolled = p.id
                     pins.select(nil)
                 }
                     .id(p.id)
@@ -1264,13 +1373,23 @@ struct NearbySheet: View {
                         }
                         .scrollTargetBehavior(.viewAligned)
                         .scrollPosition(id: $scrolled, anchor: .leading)
+                        // 只有手指捲過才算；停下來那一刻也記（viewAligned 對齊時 scrolled 跟 phase 會同時變）
+                        // 程式自己捲（關大卡、重新掛上）不是 interacting 或 decelerating，不算
+                        .onScrollPhaseChange { old, ph in
+                            let f = ph == .interacting || ph == .decelerating
+                            // 手指重新開始捲：停回同一張也要對過去
+                            if ph == .interacting && old != .interacting && old != .decelerating { cards.focused = nil }
+                            if f || old == .interacting || old == .decelerating { cards.fingerAt = CACurrentMediaTime() }
+                            cards.finger = f
+                        }
                         .frame(height: 112)
-                        // 停在某張 0.25 秒：那根圖釘跳一下、地圖移過去
+                        // 手指捲停在某張 0.25 秒：那根圖釘跳一下、地圖移過去
                         .task(id: scrolled) {
-                            guard let id = scrolled else { return }
-                            if id == skip { skip = nil; return }
+                            guard let id = scrolled, id != cards.focused else { return }
                             try? await Task.sleep(for: .milliseconds(250))
-                            if !Task.isCancelled { focus(id) }
+                            guard !Task.isCancelled, cards.finger || CACurrentMediaTime() - cards.fingerAt < 1.0 else { return }
+                            cards.focused = id
+                            focus(id)
                         }
                     }
                 }
@@ -1337,8 +1456,34 @@ struct NearbySheet: View {
             }
             .font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.45))
             Spacer(minLength: 0)
+            if near.isOnly {
+                Button { endOnly() } label: {
+                    Image(systemName: "xmark").font(.system(size: 13, weight: .heavy)).foregroundStyle(Color.ink)
+                        .frame(width: 32, height: 32).background(Color.ink.opacity(0.07), in: .circle)
+                        .frame(width: 44, height: 44).contentShape(.rect)
+                }
+                .buttonStyle(PressStyle())
+                .accessibilityLabel("回到附近的店")
+            }
+            // 「看全部」放在 if let draw 外面：more > 0 時 list 不是空的，🎲 也會在
+            if near.more > 0 {
+                Button { Haptic.light(); frameAll() } label: {
+                    Text("看全部 \(near.more) 間").font(.subheadline.weight(.heavy)).foregroundStyle(Color.accent)
+                        .padding(.horizontal, 12).frame(height: 36).background(Color.accent.opacity(0.13), in: .capsule)
+                        .frame(minHeight: 44).contentShape(.rect)
+                }
+                .buttonStyle(PressStyle())
+            }
             if let draw, !list.isEmpty {
                 DiceChip(draw: draw, panel: panel)
+            } else if near.clear {
+                // 清除篩選（動作跟收藏頁的一樣，listF 就是 mapF）
+                Button { Haptic.light(); withAnimation(.snappy) { store.mapF = Filter() } } label: {
+                    Text("清除篩選").font(.subheadline.weight(.heavy)).foregroundStyle(Color.accent)
+                        .padding(.horizontal, 12).frame(height: 36).background(Color.accent.opacity(0.13), in: .capsule)
+                        .frame(minHeight: 44).contentShape(.rect)
+                }
+                .buttonStyle(PressStyle())
             }
         }
         .padding(.leading, 18).padding(.trailing, 12)
@@ -1427,6 +1572,13 @@ private final class PanelProbe {
     var top: CGFloat = 0
 }
 
+// 卡片列的手指狀態：只有手指捲停的那張才移地圖（重新掛上、換清單時 SwiftUI 自己改 scrolled 不算）
+private final class CardScroll {
+    var focused: String?                 // 上一次已經讓地圖對過去的那間（關大卡自己捲過去的也算）
+    var finger = false                   // 手指正在捲，或甩出去還在滑
+    var fingerAt: CFTimeInterval = 0     // 手指最後一次捲的時間（放開、停下那一刻也算）
+}
+
 // 面板頂部（橫條、標題那行、大卡片最上面那行）的拖曳：往上拉為正；手勢被中斷時 released 收尾
 struct PanelDrag: ViewModifier {
     var on = true
@@ -1489,13 +1641,15 @@ struct PickedCard: View {
     var grip = PanelDrag(on: false)           // 地圖首頁：最上面那行也能拉面板
     let close: () -> Void
     @State private var askNav = false
+    @State private var mp = MapPanel.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // 這次抽過的店，點一個回到那間
-            if draw != nil { DrawHistory(tap: pickHistory).padding(.top, -2) }
             HStack(spacing: 8) {
-                Text(top).font(.system(size: 15, weight: .heavy)).foregroundStyle(Color.ink.opacity(0.55)).lineLimit(1)
+                // 最低段只露這一行：放店名（中段照舊是「離你 350 m」，店名在下面卡片裡）
+                Text(mp.stage == .low ? place.name : top)
+                    .font(.system(size: 15, weight: .heavy))
+                    .foregroundStyle(Color.ink.opacity(mp.stage == .low ? 1 : 0.55)).lineLimit(1)
                 Spacer(minLength: 0)
                 if let draw {
                     DiceChip(text: drawn ? "再抽一次" : "抽一間", draw: draw, panel: panel)
@@ -1509,6 +1663,8 @@ struct PickedCard: View {
             }
             .padding(.leading, 18).padding(.trailing, 10)
             .modifier(grip)
+            // 這次抽過的店，點一個回到那間（放在有 ✕、能拉的那行下面，最低段才看得到那行）
+            if draw != nil { DrawHistory(tap: pickHistory).padding(.bottom, -2) }
             HStack(alignment: .top, spacing: 12) {
                 // 點照片也進店家頁（照片飛過去）
                 NavigationLink(value: place) {

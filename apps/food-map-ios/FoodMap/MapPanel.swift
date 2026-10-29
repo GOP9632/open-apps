@@ -17,6 +17,9 @@ enum MapStage { case low, mid, high }
     @ObservationIgnored var dragging = false
     // 剛換過段：地圖還在滑（甩過的慣性）也不要馬上又降到一行
     @ObservationIgnored var calmUntil: CFTimeInterval = 0
+    // 首頁搜尋框正在打字：打字前停在哪段（收鍵盤時回去）
+    @ObservationIgnored var typing = false
+    @ObservationIgnored var beforeTyping: MapStage = .mid
 
     // 至少升到中間（點泡泡、抽一間）
     func atLeastMid() {

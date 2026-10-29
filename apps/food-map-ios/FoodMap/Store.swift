@@ -70,6 +70,9 @@ struct Snapshot: Codable {
     var groupJump: GroupJump?
     // 行程模式出發時：全畫面導航，分頁列收起來
     var barHidden: Bool { tab == 0 ? (!mapPath.isEmpty || TripMode.shared.tid != nil) : depth[tab] > 0 }
+    // 長按圖釘的選單、抽卡／轉盤開著：分頁列先滑下去（不放進 barHidden，訊息條、剪貼簿膠囊照舊算位置）
+    var menuCover = false
+    var drawCover = false
 
     // 教學（Coach.swift）：在真的畫面上把要按的東西圈起來
     var coach: [CoachStep] = []

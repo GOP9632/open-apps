@@ -10,6 +10,7 @@ struct PinMenu: View {
     let list: [Place]
     let act: (Act, Place) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduce
+    @Environment(Store.self) private var store
 
     private let w: CGFloat = 230
     private let h: CGFloat = 214
@@ -21,7 +22,8 @@ struct PinMenu: View {
             ZStack(alignment: .topLeading) {
                 if let p, let la = p.lat, let ln = p.lng, let at = pins.locate?(CLLocationCoordinate2D(latitude: la, longitude: ln)) {
                     let x = at.x - o.x, y = at.y - o.y
-                    let below = y + 14 + h < g.size.height - 24
+                    // 下面留 76（分頁列那麼高），選單開著時分頁列雖然滑下去，靠近底下的還是往上彈
+                    let below = y + 14 + h < g.size.height - 76
                     let cx = min(max(x, w / 2 + 16), g.size.width - w / 2 - 16)
                     let cy = below ? y + 14 + h / 2 : y - 64 - h / 2
                     Color.black.opacity(0.32)
@@ -44,6 +46,10 @@ struct PinMenu: View {
         }
         // 選單沒開時整層不擋手指
         .allowsHitTesting(pins.menu != nil)
+        // 換分頁（點分頁列、教學、丟到群組投票…）：選單直接收掉，回來不會還開著
+        .onChange(of: store.tab) { if pins.menu != nil { pins.menu = nil } }
+        // 選單開著：分頁列先滑下去
+        .onChange(of: pins.menu != nil) { _, v in store.menuCover = v }
         .task(id: pins.menu) {
             // 先把行程讀好，按「加進行程」才知道要加到哪一個
             guard pins.menu != nil, !TripStore.shared.loaded else { return }

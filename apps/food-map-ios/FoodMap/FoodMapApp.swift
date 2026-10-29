@@ -44,11 +44,12 @@ struct Root: View {
                     page(3) { MeTab() }
                 }
                 .overlay(alignment: .bottom) {
-                    if !store.barHidden {
+                    if !store.barHidden && !store.menuCover && !store.drawCover {
                         TabBar().transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
                 .animation(.snappy, value: store.barHidden)
+                .animation(.spring(response: 0.3, dampingFraction: 0.85), value: store.menuCover || store.drawCover)
                 // 加進行程：兩個以上的行程時問加到哪個
                 .tripChooser()
                 .onChange(of: store.tab) { _, t in opened.insert(t) }

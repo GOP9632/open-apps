@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // 甜甜圈糖霜風格的共用元件：白色圓角卡片（底下一條奶油色厚影子）、會往下壓的厚按鈕、彩色篩選膠囊
 
@@ -109,14 +110,22 @@ struct FilterChips: View {
 struct SearchField<Trailing: View>: View {
     @Binding var text: String
     let prompt: String
-    // 放在最左邊的東西（地圖頁的「我的收藏 ▾」膠囊）
-    var lead: AnyView? = nil
+    // 放在最左邊的東西（地圖頁的「我的收藏 ▾」膠囊）；參數是「正在打字」，打字時收小讓出輸入框
+    var lead: ((Bool) -> AnyView)? = nil
+    var begin: (() -> Void)? = nil            // 點輸入框開始打字（要放在 trailing 前面，尾隨閉包才不會壞）
     @ViewBuilder var trailing: () -> Trailing
+    // 不用 @FocusState：放在 safeAreaInset 裡收不到焦點變化（跟 TripTop 一樣用點擊和 keyboardWillHide）
+    @State private var typing = false
     var body: some View {
+        let busy = typing || !text.isEmpty
         HStack(spacing: 10) {
-            if let lead { lead }
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            if let lead { lead(busy) } else { Image(systemName: "magnifyingglass").foregroundStyle(.secondary) }
             TextField(prompt, text: $text).font(.body).submitLabel(.search)
+                // 同一個點擊做兩件事：膠囊收小、地圖面板降段
+                .simultaneousGesture(TapGesture().onEnded {
+                    if !typing { withAnimation(.snappy) { typing = true } }
+                    begin?()
+                })
             if !text.isEmpty {
                 Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary).frame(width: 44, height: 44).contentShape(.rect) }
                     .accessibilityLabel("清除")
@@ -126,6 +135,9 @@ struct SearchField<Trailing: View>: View {
         .padding(.leading, lead == nil ? 16 : 8).padding(.trailing, 6)
         .frame(height: 52)
         .candy(18)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            if typing { withAnimation(.snappy) { typing = false } }
+        }
     }
 }
 
