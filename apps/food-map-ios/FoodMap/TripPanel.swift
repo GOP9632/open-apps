@@ -21,7 +21,7 @@ struct TripPanel: View {
     @State private var lift = Lift()
     @State private var dragY = Lift()
     @State private var cardLift = Lift()
-    @State private var pullDown = false         // 最低段往下拉超過 20：換成直的清單（跨過線才改，不是每幀）
+    @State private var pullList = false         // 最低段往下拉超過 20、往上拉超過 40：換成直的清單（跨過線才改，不是每幀）
     @State private var drag = RowDrag()
     @State private var size: CGSize = .zero
     @State private var top0: CGFloat = 0            // 面板頂端在螢幕上的位置
@@ -204,14 +204,13 @@ struct TripPanel: View {
     }
 
     private func panel(_ t: Trip, d: Int, base: [TripStop], order: [TripStop], legs: [Leg?], plan: DayPlan) -> some View {
-        let strip = mode.level == .low && !pullDown
+        let strip = mode.level == .low && !pullList
         let hs = heights()
         return VStack(spacing: 0) {
             head(t, base: base, d: d, strip: strip)
-            if strip {
-                cards(t, base: base, order: order, plan: plan)
-                    .transition(.opacity)
-            } else {
+            // 直的清單一直留著（最低段時藏在站卡下面）：從最低往上拉，清單邊拉邊長出來，
+            // 不會等放手才一口氣建整份清單（之前停下來那一下會卡 0.1 秒）
+            ZStack(alignment: .top) {
                 ScrollViewReader { sp in
                     ScrollView {
                         rows(t, d: d, base: base, order: order, legs: legs, plan: plan)
@@ -232,7 +231,7 @@ struct TripPanel: View {
                         guard drag.id == nil else { return }
                         withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                             mode.level = mode.level == .high ? .mid : .low
-                            lift.y = 0; pullDown = false
+                            lift.y = 0; pullList = false
                         }
                     }
                     .onChange(of: mode.scrollTo, initial: true) { _, id in
@@ -241,7 +240,14 @@ struct TripPanel: View {
                         Task { try? await Task.sleep(for: .seconds(0.35)); withAnimation(.snappy) { sp.scrollTo(id, anchor: .top) } }
                     }
                 }
-                .transition(.opacity)
+                .opacity(strip ? 0 : 1)
+                .allowsHitTesting(!strip)
+                .accessibilityHidden(strip)
+                if strip {
+                    cards(t, base: base, order: order, plan: plan)
+                        .background(Color.bg)
+                        .transition(.opacity)
+                }
             }
             // 這天還沒有站：不放「排順序／出發」，空白提示不會被蓋住
             if !base.isEmpty { actions(t, base: base) }
@@ -299,7 +305,7 @@ struct TripPanel: View {
         // 拉面板被系統取消（onEnded 不會來）：放回目前那段
         .onChange(of: pulling) { _, p in
             guard !p, lift.y != 0 else { return }
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { lift.y = 0; pullDown = false }
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { lift.y = 0; pullList = false }
         }
     }
 
@@ -363,8 +369,8 @@ struct TripPanel: View {
             .onChanged { v in
                 guard drag.id == nil else { return }
                 lift.y = -v.translation.height
-                let down = mode.level == .low && lift.y < -20
-                if down != pullDown { pullDown = down }
+                let alt = mode.level == .low && (lift.y < -20 || lift.y > 40)
+                if alt != pullList { pullList = alt }
             }
             .onEnded { v in
                 guard drag.id == nil else { lift.y = 0; return }
@@ -379,7 +385,7 @@ struct TripPanel: View {
                     if all.indices.contains(i) { pick = all[i] }
                 }
                 if pick != mode.level { Haptic.light() }
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { mode.level = pick; lift.y = 0; pullDown = false }
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { mode.level = pick; lift.y = 0; pullList = false }
             }
     }
 
