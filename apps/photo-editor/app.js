@@ -362,9 +362,25 @@ function paintPatch({ x, y, before, after, aux }, redetect) {
   pixelsChanged(S.canvas, [{ x, y, img: after, e }]);
   // 壓好的檔案是第幾筆的樣子還在這串裡（沒被這筆蓋掉）：留著，收起來時對調回那一筆直接用（評審 M49）
   if (kb?.ver !== undefined && kb.ver <= v0) shelfBlob.set(S.canvas, kb);
-  if (redetect) applyDetect(); else render();
+  if (redetect) { if (tab === 'erase') { eraseAt = performance.now(); R.setMask(base.mask); R.setMask2(base.mask2); detectLater(base); render(); } else applyDetect(); }
+  else render();
   perfBase();
 }
+// 消除完重找臉、人像、膚質、頭髮（評審 M51）：電腦連按消除，每次消完馬上重算，跟下一次的 MI-GAN 搶 CPU，
+// 第 2～4 次從 0.8 秒變 5 秒多。還在消除分頁、正在消除或上次消完不到 2.5 秒、手還在畫選區：先不算，
+// 畫面沿用消除前的人像、閃光燈資料（照片同一張，只差消掉那一塊）；停手了、離開消除分頁、存檔才算現在這張。
+// detectT 不是 0 就是在等：畫面那邊（render、draw、effects）也先不找
+let eraseAt = 0, eraseOn = false, detectT = 0;
+function detectLater(b, now) {
+  clearTimeout(detectT); detectT = 0;
+  if (b !== base) return;
+  const w = Math.max(eraseAt + 2500, lastInput + 1000) - performance.now();
+  if (!now && tab === 'erase' && (eraseOn || w > 0)) { detectT = setTimeout(() => detectLater(b), Math.min(250, Math.max(20, w + 20))); return; }
+  if (!b.facesP) findFaces();
+  if (needSeg() && !b.seg) findPerson(P.bg === 'keep');
+  if (needMatte()) getMatte(b);
+}
+const detectNow = () => { if (detectT) detectLater(base, true); };
 // 消除（評審 M51）：以前補好的那塊疊到一整張新的照片上再整張換掉，按「立即消除」那下主執行緒停 0.6 秒，接著又停兩三下。
 // 現在跟美顏筆、塗鴉一樣只換選區那一塊、記成同一張 canvas 的一筆：復原、重做只對調那一塊
 // soft：照片 (x, y) 開始 w×h 那塊要疊上去的 RGBA（選區以外透明、邊緣羽化、不預乘，見 erase.js 的 inpaint）
@@ -818,7 +834,7 @@ function render(liqOnly) {
   if (!base) return;
   perfReq();
   if (raf) return;
-  if (needMatte() && !base.matteP) getMatte(base);
+  if (needMatte() && !base.matteP && !detectT) getMatte(base);
   raf = requestAnimationFrame(() => {
     raf = 0;
     if (cmpOn) { const o = origFrame(); if (o) R.drawOrig(o); perfDrawn(); return; }
@@ -826,13 +842,13 @@ function render(liqOnly) {
     R.keepPost = tab === 'reshape';
     const only = !mainDirty; mainDirty = false;
     if (only) {
-      if (P.bgProtect && P.liq.length && !base.segP) getSeg(base);  // 沒有臉的照片：背景保護要的人像遮罩推的時候才算（同 draw）
+      if (P.bgProtect && P.liq.length && !base.segP && !detectT) getSeg(base);  // 沒有臉的照片：背景保護要的人像遮罩推的時候才算（同 draw）
       R.liqSync(P.liq, base.canvas.width, base.canvas.height);
       if (R.liqFrame(P)) { paintPop(); if (curFrame()?.live) paintFrame(); perfDrawn(); return; }
     }
     const f = liveFilter(), lut = gradeOn(P) ? getGradeLut() : f === 'none' ? null : getLut(f);
     // 皮膚、頭髮另外一套顏色要用皮膚遮罩和分類圖，還沒找過臉就先找
-    if ((lut?.skin || lut?.hair) && !base.facesP) findFaces();
+    if ((lut?.skin || lut?.hair) && !base.facesP && !detectT) findFaces();
     R.setLut(lut); R.setGlow(xtItem(f)?.glow, (P.filterAmt ?? 100) / 100, xtItem(f)?.grain);
     draw();
     paintPop();
@@ -885,7 +901,7 @@ function draw(full, toFbo) {
   const warps = [...man, ...(base.body ? bodyWarps(base.body, base.faces, P) : []), ...(base.faces ? [...fw, ...hairWarps(base.faces, P, base.hair)] : [])];
   warps.manual = man.length;  // 手動塑身不受背景保護（gl.js uWm）
   // 背景保護要知道人在哪；有臉的照片開圖時就算好了，沒有臉的照片推的時候才算
-  if (P.bgProtect && (warps.length || P.liq.length) && !base.segP) getSeg(base);
+  if (P.bgProtect && (warps.length || P.liq.length) && !base.segP && !detectT) getSeg(base);
   let p = gradeOn(P) ? { ...P, filterAmt: 100 } : P;
   // 多張臉分開修：磨皮、美白這些顏色效果每張臉各一組數字，shader 照像素離哪張臉近決定用哪組
   if (pf) p = { ...p, faceAmts: base.faces.map((f, i) => { const g = base.geoms[i], q = PF(i); return { cx: g.cx, cy: g.cy, W: g.W, smooth: q.smooth, white: q.white, dark: q.dark, fold: q.fold, eyeb: q.eyeb, teeth: q.teeth }; }) };
@@ -1205,7 +1221,7 @@ function syncTex() {
 // 打光、閃光燈的參數
 function effects() {
   const fx = { faces: base.geoms };
-  if (P.flashFill > 0 && !base.segP) getSeg(base);
+  if (P.flashFill > 0 && !base.segP && !detectT) getSeg(base);
   if (tab === 'light' || FLASHES.find(F => F.id === P.flash)?.cam) flashNetSoon();
   if (P.light || P.flash || P.flashFill > 0) Object.assign(fx, litParams(P, base, ensureGeo()));
   const e = fxById(P.fx);
@@ -1654,7 +1670,7 @@ function paramRows(box, list) {
 
 // 消除筆在 erase.js，這裡把它要用的東西傳過去
 const eraseApp = {
-  get base() { return base; }, erasePatch, commit, item, hideSlider, showTab, toast, busy, toSrc: srcMapper,
+  get base() { return base; }, erasePatch, erasing: on => { eraseOn = on; eraseAt = performance.now(); }, commit, item, hideSlider, showTab, toast, busy, toSrc: srcMapper,
 };
 doodleInput($('#wrap'), { get base() { return base; }, tab: () => tab, surf: ensureSurf, paint: paintPatch, commit, toSrc: srcMapper });
 // queued：放開了一筆、還在算：復原先亮起來（按下去會等它算完再退回）；settled：都算完了，照實際的復原步數
@@ -3518,6 +3534,7 @@ $('#stage').addEventListener('pointerdown', e => {
 // ---------- 儲存 ----------
 // 把目前的成品（含邊框、貼紙、文字）畫成一張 canvas，存檔和「拼貼／範本」共用
 async function compose() {
+  detectNow();
   if (bmBake()) { showTab(tab); await dataReady(base); }
   // 原尺寸畫在 GPU 暫存上，等讀回的時候畫面照常畫預覽大小（以前畫面跟著放大，中間畫的每一格都是原尺寸）
   try { return await composeFull(); } finally { render(); }
@@ -3535,18 +3552,35 @@ async function composeFull() {
   // iPhone 的 canvas 最大約 1600 萬像素，邊框加大後超過就整張等比縮小
   const sc = Math.min(1, Math.sqrt(16e6 / (g.W * g.H)));
   const out = memCanvas(g.W * sc, g.H * sc), ctx = out.getContext('2d');
+  // 放進 canvas、疊邊框都照列分幾段（每段約 200 萬像素），一段做完讓轉圈走一格：
+  // 1200 萬像素一次放進去、一次畫上拍立得邊框，iPhone 各停 0.1 秒多（評審 #159）
+  const bands = (w, h) => { const k = Math.max(1, Math.ceil(2e6 / w)), r = []; for (let y = 0; y < h; y += k) r.push([y, Math.min(h, y + k)]); return r; };
+  // canvas 第一次畫才配記憶體（1200 萬像素約 40ms）：先自己一下，再一段一段放進去
+  const put = async c => {
+    const x = c.getContext('2d');
+    x.clearRect(0, 0, 1, 1); await next();
+    for (const [y0, y1] of bands(W, H)) { x.putImageData(im, 0, 0, 0, y0, W, y1 - y0); await next(); }
+  };
   // 沒有邊框、出框：直接放進輸出那張
-  if (!f && !P.pop && sc === 1) ctx.putImageData(im, 0, 0);
+  if (!f && !P.pop && sc === 1) await put(out);
   else {
-    const gl = memCanvas(im.width, im.height);
-    gl.getContext('2d').putImageData(im, 0, 0);
-    await next();
-    ctx.scale(sc, sc);
+    const gl = memCanvas(W, H);
+    await put(gl);
+    ctx.clearRect(0, 0, 1, 1); await next();
     // 出框要用原尺寸重畫一次（畫面上的是螢幕大小）
     let photo = gl;
     if (P.pop) { photo = newCanvas(W, H); popDraw(photo.getContext('2d'), W, H, gl); }
-    if (f) drawFrame(ctx, f, W, H, gl, (c, gg) => c.drawImage(photo, gg.x, gg.y, W, H));
-    else ctx.drawImage(photo, 0, 0);
+    // 每段只畫輸出的那幾列（剪裁框對齊像素，段跟段接起來跟一次畫完一樣）
+    for (const [y0, y1] of bands(out.width, out.height)) {
+      ctx.save(); ctx.beginPath(); ctx.rect(0, y0, out.width, y1 - y0); ctx.clip(); ctx.scale(sc, sc);
+      if (f) drawFrame(ctx, f, W, H, gl, (c, gg) => c.drawImage(photo, gg.x, gg.y, W, H));
+      else ctx.drawImage(photo, 0, 0);
+      ctx.restore();
+      if (y1 < out.height) await next();
+    }
+    if (photo !== gl) photo.width = 0;
+    gl.width = 0;
+    ctx.scale(sc, sc);
   }
   ctx.save(); ctx.beginPath(); ctx.rect(g.x, g.y, W, H); ctx.clip(); ctx.translate(g.x, g.y);
   for (const s of stickers) {

@@ -424,6 +424,7 @@ export function tabErase(box, app) {
     const none = () => { s.bb = null; s.ui(); app.toast('先塗抹或框選要消除的地方'); };
     if (!hasMask()) return none();
     app.busy(modelOn || ERASE_LITE ? '消除中…' : '下載消除模型（約 28MB，只有第一次）…');
+    app.erasing?.(true);
     // 先讓「消除中…」畫出來再讀選區（讀選區要等 GPU，以前點下去畫面先停住、等一下才出現「消除中」，評審 M51）
     await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
     let t;
@@ -438,7 +439,7 @@ export function tabErase(box, app) {
       state(app.base);
       redraw();
     } catch (e) { console.error(e); app.toast(ERASE_LITE ? '消除失敗，再試一次' : '消除失敗，檢查一下網路再試一次'); }
-    finally { clearTimeout(t); app.busy(); }
+    finally { clearTimeout(t); app.busy(); app.erasing?.(false); }
   } });
   box.prepend(go); s.ui();
 
