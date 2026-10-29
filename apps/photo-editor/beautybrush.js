@@ -201,13 +201,16 @@ function hel(ses, t) {
   return o;
 }
 // 點開美顏筆、換筆時先算 hel：交給背景執行緒（bbwork.js，連打包給 GPU 的那張一起），主執行緒不停；
-// 筆畫比它先要用到，就照舊當場算（背景算好的丟掉）。這串的小圖第一次要用時傳過去一份（seen 記那時候），
+// 筆畫比它先放開，就等背景算完再算這一筆（粉紅筆跡先留著；當場算會讓主執行緒停 50～80ms，評審 #165）。這串的小圖第一次要用時傳過去一份（seen 記那時候），
 // 之後除斑改了小圖，改到的那幾塊 hel() 會補算。背景執行緒開不了、出錯，就在這裡分步算（每模糊一次讓畫面走一格）
 async function helWarm(ses, t, alive) {
   if (ses.hel[t] || !HEAVY.includes(t)) return;
   if (bbWorker()) {
     if (ses.wSeen === undefined) { ses.wSeen = ses.hp.length; bbWork('oh', { sid: ses.id, Oh: ses.Oh, hw: ses.hw, hh: ses.hh }); }
-    const r = await bbWork('hel', { sid: ses.id, t, R0: ses.R0, S: ses.S, k: ses.hw / ses.W });
+    const pr = bbWork('hel', { sid: ses.id, t, R0: ses.R0, S: ses.S, k: ses.hw / ses.W });
+    (ses.wp ||= {})[t] = pr;
+    const r = await pr;
+    if (ses.wp[t] === pr) delete ses.wp[t];
     if (!r.err) {
       // 算好了就留著（換了筆也留，再換回來不用重算）
       if (!ses.dead && !ses.hel[t]) { const o = r.out.o; o.seen = ses.wSeen; o.packed = r.out.d; ses.hel[t] = o; }
@@ -657,6 +660,7 @@ export function tabBeautyBrush(box, app) {
   const tok = ++warmTok, tool = st.tool, alive = () => warmTok === tok && app.tab() === 'bbrush' && st.tool === tool;
   warmT = setTimeout(async () => {
     if (!alive()) return;
+    if (HEAVY.includes(tool)) bbWorker();  // 先開背景執行緒，讓它趁縮圖的時候載入
     const S = app.surf();
     if (!valid(S.bbSes, S)) {
       const v = S.ver, c = S.canvas, ses = await stepwise(sessionSteps(c, v), () => alive() && S.canvas === c && S.ver === v);
@@ -736,6 +740,9 @@ export function beautyBrushInput(wrap, app) {
     try {
       if (!same(job)) return;
       const S = job.S;
+      // 背景執行緒還在算的筆（剛點開、剛換筆就塗）：等它算完，不在這裡重算一次
+      const wp = S.bbSes?.wp && Object.values(S.bbSes.wp);
+      if (wp?.length) { await Promise.all(wp); if (!same(job)) return; }
       if (!valid(S.bbSes, S)) { bbRelease(S); S.bbSes = session(S.canvas, S.ver); }
       const ses = S.bbSes, sp = job.map ? job.pts.map(job.map) : job.pts;
       r = await (job.tool !== 'blemish' ? maskStroke(ses, job.tool, sp, job.rd, job.k, job.erase) : job.erase ? blemishErase(ses, sp, job.rd) : blemishStroke(ses, sp, job.rd, job.k));
