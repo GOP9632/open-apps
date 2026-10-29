@@ -307,31 +307,44 @@ function bindDraw() {
     const d = brushPx() * p.k;
     Object.assign(ring.style, { display: 'block', left: p.sx + 'px', top: p.sy + 'px', width: d + 'px', height: d + 'px' });
   };
+  // 同一段同時畫進遮罩和畫面上的選區（顏色不同、疊法一樣），塗的時候不用每次把整張遮罩重新上色（評審 M33）；放開再整張對一次
   const stroke = (a, b) => {
-    const ctx = st.mask.getContext('2d');
-    ctx.globalCompositeOperation = st.tool === 'eraser' ? 'destination-out' : 'source-over';
-    ctx.strokeStyle = '#fff'; ctx.lineCap = ctx.lineJoin = 'round'; ctx.lineWidth = brushPx();
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x + 0.01, b.y); ctx.stroke();
-    ctx.globalCompositeOperation = 'source-over';
-    if (st.tool !== 'eraser') { const r = ctx.lineWidth / 2 + 2; addBB(Math.min(a.x, b.x) - r, Math.min(a.y, b.y) - r, Math.max(a.x, b.x) + r, Math.max(a.y, b.y) + r); }
+    const w = brushPx();
+    for (const [c, col] of [[st.mask, '#fff'], [ov, `rgb(${MASK_RGB})`]]) {
+      const ctx = c.getContext('2d');
+      ctx.globalCompositeOperation = st.tool === 'eraser' ? 'destination-out' : 'source-over';
+      ctx.strokeStyle = col; ctx.lineCap = ctx.lineJoin = 'round'; ctx.lineWidth = w;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x + 0.01, b.y); ctx.stroke();
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    if (st.tool !== 'eraser') { const r = w / 2 + 2; addBB(Math.min(a.x, b.x) - r, Math.min(a.y, b.y) - r, Math.max(a.x, b.x) + r, Math.max(a.y, b.y) + r); }
   };
+  // 下筆前的遮罩（第二指放下要縮放時退回去）：一張畫布重複用，不用每一筆都配一張 2048 大的（評審 M33）
+  let snap = null;
   ov.addEventListener('pointerdown', e => {
     if (!st || pinch.on) return;
     e.preventDefault(); try { ov.setPointerCapture(e.pointerId); } catch {}
-    const p = pos(e), snap = newCanvas(st.mask.width, st.mask.height);
-    snap.getContext('2d').drawImage(st.mask, 0, 0);
-    drag = { a: p, last: p, snap, bb: st.bb };
-    if (st.tool !== 'box') { stroke(p, p); paintOverlay(); }
+    const p = pos(e), m = st.mask;
+    if (st.tool !== 'box') {
+      if (snap?.width !== m.width || snap.height !== m.height) snap = newCanvas(m.width, m.height);
+      const x = snap.getContext('2d'); x.clearRect(0, 0, m.width, m.height); x.drawImage(m, 0, 0);
+    }
+    if (ov.width !== m.width || ov.height !== m.height) paintOverlay();
+    drag = { a: p, last: p, bb: st.bb };
+    if (st.tool !== 'box') stroke(p, p);
     showRing(p);
   });
+  // 框選的框一格畫面只畫一次（iPhone 一格畫面可能來兩三個移動事件）
+  let pv = 0, pvRect;
+  const paintSoon = rect => { pvRect = rect; if (!pv) pv = requestAnimationFrame(() => { pv = 0; if (drag) paintOverlay(pvRect); }); };
   ov.addEventListener('pointermove', e => {
     const p = pos(e);
     if (e.pointerType !== 'touch' || drag) showRing(p);
     if (!drag) return;
     if (st.tool === 'box') {
       const a = drag.a;
-      paintOverlay({ x: Math.min(a.x, p.x), y: Math.min(a.y, p.y), w: Math.abs(p.x - a.x), h: Math.abs(p.y - a.y) });
-    } else { stroke(drag.last, p); paintOverlay(); }
+      paintSoon({ x: Math.min(a.x, p.x), y: Math.min(a.y, p.y), w: Math.abs(p.x - a.x), h: Math.abs(p.y - a.y) });
+    } else stroke(drag.last, p);
     drag.last = p;
   });
   const up = e => {
@@ -351,7 +364,8 @@ function bindDraw() {
   // 第二指放下是要縮放：這一筆不算，遮罩回到下筆之前
   addEventListener('pinchstart', () => {
     if (!drag) return;
-    const ctx = st.mask.getContext('2d'); ctx.clearRect(0, 0, st.mask.width, st.mask.height); ctx.drawImage(drag.snap, 0, 0);
+    // 框選放開前還沒畫進遮罩，不用退
+    if (st.tool !== 'box') { const ctx = st.mask.getContext('2d'); ctx.clearRect(0, 0, st.mask.width, st.mask.height); ctx.drawImage(snap, 0, 0); }
     st.bb = drag.bb; drag = null; ring.style.display = 'none'; paintOverlay();
   });
 }

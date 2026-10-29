@@ -154,6 +154,9 @@ export function doodleInput(wrap, app) {
     else { ctx.fillStyle = st.tool === 'erase' ? '#fff' : 'rgba(128,128,128,0.8)'; ctx.fillRect(0, 0, ov.width, ov.height); }
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'destination-in'; ctx.drawImage(m, 0, 0); ctx.globalCompositeOperation = 'source-over';
   };
+  // 手指移動一格畫面只重畫一次（iPhone 一格畫面可能來兩三個移動事件，每次都把整串筆跡重算）；放開了就不畫
+  let pv = 0;
+  const previewSoon = () => { if (!pv) pv = requestAnimationFrame(() => { pv = 0; if (pts) preview(); }); };
   wrap.addEventListener('pointerdown', e => {
     if (app.tab() !== 'doodle' || !app.base || e.target.closest('.st,.tx') || e.button > 0 || pinch.on) return;
     e.preventDefault(); wrap.setPointerCapture(e.pointerId);
@@ -169,7 +172,7 @@ export function doodleInput(wrap, app) {
       if (Math.hypot(p.x - q.x, p.y - q.y) < 2) continue;
       pts.push(p); add = true;
     }
-    if (add) preview();
+    if (add) previewSoon();
   });
   const up = () => {
     if (!pts) return;

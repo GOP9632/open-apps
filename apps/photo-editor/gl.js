@@ -825,6 +825,79 @@ void main(){
   o = vec4(col, a);
 }`;
 
+// 醒圖風格濾鏡的色表在 GPU 上烘（xt.js 的模型照搬，權重放在浮點貼圖 uW，一列一套：一般、皮膚、頭髮）。
+// 以前在 CPU 每套算 26 萬次：第一次點濾鏡、有濾鏡時拖調色或強度，每次停 0.1～0.3 秒（評審 M10、M11）。
+// uG：先調色（HSL、曲線、分色）的結果，只算了 uGN³ 個格點（filters.js bakeGrid），這裡內插到 64³，跟 CPU 烘的內插一樣；uGN = 0 是沒調色。
+// uRow < 0：只有調色、沒有濾鏡。寫出去的值照 CPU 烘的方式取整（v×255＋0.5 再四捨五入到偶數，見 main 最後），跟以前的色表一樣
+const FS_XTLUT = `#version 300 es
+precision highp float;
+precision highp int;
+uniform highp sampler2D uW, uG;
+uniform int uRow, uSp, uGN, uSide, uQ;
+uniform ivec3 uGrid;
+uniform float uAmt;
+out vec4 o;
+vec3 acc;
+void add(int k, float v) { if (v != 0.0) acc += texelFetch(uW, ivec2(k, uRow), 0).rgb * v; }
+void hat(int off, float z) { z = clamp(z, 0.0, 1.0) * 8.0; int i = min(int(floor(z)), 7); float f = z - float(i); add(off + i, 1.0 - f); add(off + i + 1, f); }
+void cell(int hh, float hw, int li, float lw, int ci, float cf) { int q = 150 + (hh * uGrid.y + li) * uGrid.z + ci; add(q, hw * lw * (1.0 - cf)); add(q + 1, hw * lw * cf); }
+vec3 xt(vec3 c) {
+  float r = c.r, g = c.g, b = c.b;
+  acc = vec3(0.0);
+  hat(0, r); hat(9, g); hat(18, b);
+  float L = 0.2126 * r + 0.7152 * g + 0.0722 * b, c0 = r - L, c1 = g - L, c2 = b - L, m = sqrt(c0 * c0 + c1 * c1 + c2 * c2);
+  float y = sqrt(3.0) * (g - b), x = 2.0 * r - g - b;
+  float a = x == 0.0 && y == 0.0 ? 0.0 : atan(y, x) / 6.283185307179586;  // 灰色：JS 的 atan2(0, 0) 是 0，GLSL 沒定義
+  a -= floor(a);
+  float t = a * 8.0, hf = fract(t);
+  int h0 = int(floor(t)) % 8, h1 = (h0 + 1) % 8;
+  for (int j = 0; j < 3; j++) {
+    float tj = j == 0 ? clamp(1.0 - 2.0 * L, 0.0, 1.0) : j == 1 ? 1.0 - abs(2.0 * L - 1.0) : clamp(2.0 * L - 1.0, 0.0, 1.0);
+    if (tj == 0.0) continue;
+    int q = 27 + j * 32;
+    float k = (1.0 - hf) * tj;
+    add(q + h0, c0 * k); add(q + 8 + h0, c1 * k); add(q + 16 + h0, c2 * k); add(q + 24 + h0, m * k);
+    k = hf * tj;
+    add(q + h1, c0 * k); add(q + 8 + h1, c1 * k); add(q + 16 + h1, c2 * k); add(q + 24 + h1, m * k);
+  }
+  float z = clamp(L, 0.0, 1.0) * 8.0; int i = min(int(floor(z)), 7); float f = z - float(i);
+  add(123 + i, c0 * (1.0 - f)); add(124 + i, c0 * f);
+  add(132 + i, c1 * (1.0 - f)); add(133 + i, c1 * f);
+  add(141 + i, c2 * (1.0 - f)); add(142 + i, c2 * f);
+  if (uSp == 1) {
+    float th = a * float(uGrid.x), gf = fract(th);
+    int g0 = int(floor(th)) % uGrid.x, g1 = (g0 + 1) % uGrid.x;
+    float zl = clamp(L, 0.0, 1.0) * float(uGrid.y - 1); int li = min(int(floor(zl)), uGrid.y - 2); float lf = zl - float(li);
+    float zc = clamp(m / 0.5, 0.0, 1.0) * float(uGrid.z - 1); int ci = min(int(floor(zc)), uGrid.z - 2); float cf = zc - float(ci);
+    cell(g0, 1.0 - gf, li, 1.0 - lf, ci, cf); cell(g0, 1.0 - gf, li + 1, lf, ci, cf);
+    cell(g1, gf, li, 1.0 - lf, ci, cf); cell(g1, gf, li + 1, lf, ci, cf);
+  }
+  return clamp(acc, 0.0, 1.0);
+}
+vec3 gAt(int r, int g, int b) { return texelFetch(uG, ivec2(r, g + b * uGN), 0).rgb; }
+vec3 grade(ivec3 q) {
+  if (uGN == 64) return gAt(q.x, q.y, q.z);
+  vec3 u = vec3(q) / 63.0 * float(uGN - 1);
+  ivec3 a = min(ivec3(floor(u)), ivec3(uGN - 2));
+  vec3 w = u - vec3(a);
+  vec3 c0 = gAt(a.x, a.y, a.z), c1 = gAt(a.x, a.y + 1, a.z), c2 = gAt(a.x, a.y, a.z + 1), c3 = gAt(a.x, a.y + 1, a.z + 1);
+  c0 += (gAt(a.x + 1, a.y, a.z) - c0) * w.x; c1 += (gAt(a.x + 1, a.y + 1, a.z) - c1) * w.x;
+  c2 += (gAt(a.x + 1, a.y, a.z + 1) - c2) * w.x; c3 += (gAt(a.x + 1, a.y + 1, a.z + 1) - c3) * w.x;
+  vec3 e0 = c0 + (c1 - c0) * w.y, e1 = c2 + (c3 - c2) * w.y;
+  return e0 + (e1 - e0) * w.z;
+}
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy) - ivec2(uSide * 512, 0);
+  ivec3 q = ivec3(p.x % 64, p.y % 64, (p.y / 64) * 8 + p.x / 64);
+  vec3 c = uGN > 0 ? grade(q) : vec3(q) / 63.0;
+  vec3 v = c;
+  if (uRow >= 0) { vec3 f = xt(c); v = uGN > 0 ? c + (f - c) * uAmt : f; }
+  // v×255 有小數就進位（＋0.5 再四捨五入），剛好是整數才取偶數。不能先加 0.5：0.000…01 這種很小的數在 float 會被吃掉
+  // uQ：格點已經取整好了（只有調色、64³，filters.js bakeGrid）
+  vec3 w = v * 255.0, fl = floor(w), k = uQ == 1 ? floor(w + 0.5) : fl + mix(mod(fl, 2.0), vec3(1.0), vec3(greaterThan(w, fl)));
+  o = vec4(clamp(k, 0.0, 255.0) / 255.0, 1.0);
+}`;
+
 function compile(gl, type, src) {
   const s = gl.createShader(type);
   gl.shaderSource(s, src); gl.compileShader(s);
@@ -1088,7 +1161,60 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, this.tMakeup);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
   }
-  setLut(src, skin, hair) { this.hasLut = !!src; this.lutSkin = !!skin; this.lutHair = !!hair; if (src) this.upload(this.tLut, src); }
+  // lut：{ c: 1536×512 畫布 } 或 { xt: [一般, 皮膚, 頭髮] 的權重（xt.js xtWeights）, grade, amt }（GPU 烘，見 bakeXt），再加 skin、hair。
+  // 跟上一次是同一個就不重傳、不重烘（評審 L8：以前每一格都整張 3MB 重傳）
+  setLut(lut) {
+    this.hasLut = !!lut; this.lutSkin = !!lut?.skin; this.lutHair = !!lut?.hair;
+    if (!lut || lut === this.lutNow) return;
+    this.lutNow = lut;
+    if (lut.c) this.upload(this.tLut, lut.c); else this.bakeXt(lut);
+  }
+  // 這台能不能在 GPU 上烘醒圖濾鏡（第一次問才編 shader）
+  get canXt() {
+    if (this.xtOk === undefined) {
+      try { this.pXt = program(this.gl, FS_XTLUT); this.xtOk = true; } catch (e) { console.warn(e); this.xtOk = false; }
+    }
+    return this.xtOk;
+  }
+  // L.xt：三套權重（沒有濾鏡就是 [null]，只套調色）；L.grade：{ n, d, q } 調色格點（filters.js bakeGrid）；L.amt：濾鏡強度（有調色時混在色表裡）
+  bakeXt(L) {
+    if (!this.canXt) return;
+    const gl = this.gl, P = this.pXt, u = P.u, ft = t => { gl.bindTexture(gl.TEXTURE_2D, t); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST); };
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    if (!this.tW) { this.tW = this.tex(); ft(this.tW); this.tG = this.tex(); ft(this.tG); this.fbX = gl.createFramebuffer(); }
+    // 權重：每個特徵一格 RGBA32F（A 不用），一列一套
+    if (this.xtFor !== L.xt && L.xt[0]) {
+      const nw = Math.max(...L.xt.map(x => x?.nf || 0)), d = new Float32Array(nw * 3 * 4);
+      L.xt.forEach((x, r) => { if (x) for (let k = 0; k < x.nf; k++) d.set(x.w.subarray(k * 3, k * 3 + 3), (r * nw + k) * 4); });
+      gl.bindTexture(gl.TEXTURE_2D, this.tW);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, nw, 3, 0, gl.RGBA, gl.FLOAT, d);
+      this.xtFor = L.xt;
+    }
+    if (L.grade && this.gFor !== L.grade) {
+      const n = L.grade.n;
+      gl.bindTexture(gl.TEXTURE_2D, this.tG);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, n, n * n, 0, gl.RGBA, gl.FLOAT, L.grade.d);
+      this.gFor = L.grade;
+    }
+    if (!this.lutBig) {
+      gl.bindTexture(gl.TEXTURE_2D, this.tLut);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1536, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      this.lutBig = true;
+    }
+    gl.useProgram(P.p);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbX);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.tLut, 0);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.tW); gl.uniform1i(u.uW, 0);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.tG); gl.uniform1i(u.uG, 1);
+    gl.uniform1i(u.uGN, L.grade ? L.grade.n : 0); gl.uniform1i(u.uQ, L.grade?.q && !L.xt[0] ? 1 : 0); gl.uniform1f(u.uAmt, L.amt ?? 1);
+    // 沒有皮膚、頭髮那套：主 shader 不會讀那一塊，不用畫
+    L.xt.forEach((x, side) => {
+      if (!x && side) return;
+      gl.viewport(side * 512, 0, 512, 512);
+      gl.uniform1i(u.uRow, x ? side : -1); gl.uniform1i(u.uSide, side); gl.uniform1i(u.uSp, x?.sp ? 1 : 0); gl.uniform3i(u.uGrid, ...(x?.grid || [0, 0, 0]));
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    });
+  }
 
   // fx：{ lit: { lights: [{ pos, col, par }], ambS, ambB, bgDepth, haze, hazeCol }, flash: { amt, retro } }
   // full：畫原尺寸（存檔用）；平常只畫到螢幕看得到的解析度（this.view），手機才不會每動一下就算整張千萬像素

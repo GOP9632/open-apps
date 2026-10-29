@@ -676,6 +676,9 @@ export function beautyBrushInput(wrap, app) {
       ctx.stroke();
     }
   };
+  // 手指移動一格畫面只重畫一次（iPhone 一格畫面可能來兩三個移動事件，每次都把整串筆跡重畫）
+  let pv = 0;
+  const previewSoon = () => { if (!pv) pv = requestAnimationFrame(() => { pv = 0; preview(); }); };
   wrap.addEventListener('pointerdown', e => {
     if (app.tab() !== 'bbrush' || !app.base || e.target.closest('.st,.tx') || e.button > 0 || pinch.on) return;
     e.preventDefault(); wrap.setPointerCapture(e.pointerId);
@@ -691,7 +694,7 @@ export function beautyBrushInput(wrap, app) {
       if (Math.hypot(p.x - q.x, p.y - q.y) < 2) continue;
       pts.push(p); add = true;
     }
-    if (add) preview();
+    if (add) previewSoon();
   });
   const up = () => {
     if (!pts) return;

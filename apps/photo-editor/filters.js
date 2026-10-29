@@ -115,6 +115,20 @@ export function bakeLUT(fn, n = 64) {
   return c;
 }
 
+// 調色：只在 n³ 個格點算（排成 n × n² 的浮點貼圖，第 r 欄、第 g＋b×n 列），醒圖濾鏡、內插都在 GPU 上做（gl.js bakeXt）。
+// q：先照 bakeLUT 的方式取整成 0～255 階（只有調色、沒有濾鏡時用，色表跟以前 CPU 烘的一模一樣）
+const u8 = new Uint8ClampedArray(1);
+export function bakeGrid(fn, n = 64, q = false) {
+  const d = new Float32Array(n * n * n * 4);
+  for (let b = 0, i = 0; b < n; b++) for (let g = 0; g < n; g++) for (let r = 0; r < n; r++, i += 4) {
+    const o = fn(r / (n - 1), g / (n - 1), b / (n - 1));
+    if (q) for (let k = 0; k < 3; k++) { u8[0] = o[k] * 255 + 0.5; d[i + k] = u8[0] / 255; }
+    else { d[i] = o[0]; d[i + 1] = o[1]; d[i + 2] = o[2]; }
+    d[i + 3] = 1;
+  }
+  return d;
+}
+
 // 濾鏡縮圖：直接在小圖上用 CPU 套顏色函式
 export function thumb(src, fn, size = 124) {
   const c = document.createElement('canvas');
