@@ -11,7 +11,7 @@ struct ListTab: View {
     @State private var pull = PullState()
     @State private var manual: PendingAdd?
     @State private var pos = ScrollPosition(edge: .top)
-    @State private var applied = Filter()   // 收藏頁在背景時畫的篩選，由 FilterSync 同步（地圖打字時這頁不用每個字重算）
+    @State private var applied = FilterBox()   // 收藏頁在背景時畫的篩選，由 FilterSync 同步（地圖打字時這頁不用每個字重算）
     @Environment(\.accessibilityReduceMotion) private var reduce
     @Environment(\.tabActive) private var front   // Root.page() 給的「收藏頁在前景」：只有進出收藏頁時才變
 
@@ -19,7 +19,8 @@ struct ListTab: View {
         let _ = Perf.shared.count("收藏")
         @Bindable var store = store
         // 篩選結果一次算好（每打一個字只算一次）
-        let visible = store.shown(front ? store.listF : applied)
+        // 在前景時不讀 applied.f：FilterSync 順手對齊它時這頁不會多算一次
+        let visible = store.shown(front ? store.listF : applied.f)
         // 同一家的分店合成一張卡（最近的那間當封面）
         let groups = store.brands(visible)
         // 同一家用品牌當 id：換封面分店時卡片不會整張重建
@@ -121,7 +122,7 @@ struct ListTab: View {
         }
         // 推頁、返回只讓 DepthReport 重算（body 裡讀 path 的話整個收藏頁都會跟著重算）
         .background { DepthReport(path: $path, tab: 1) }
-        .background { FilterSync(tab: 1, applied: $applied) }
+        .background { FilterSync(tab: 1, applied: Binding(get: { applied.f }, set: { applied.f = $0 })) }
         // 點「收藏好了」通知：回到清單頂層、捲到最上面
         .onChange(of: store.listTop) {
             path = NavigationPath()
@@ -451,6 +452,10 @@ struct DepthReport: View {
     @Environment(Store.self) private var store
     var body: some View { Color.clear.onChange(of: path.count) { _, n in store.depth[tab] = n; if n == 0 { store.flushFresh() } } }
 }
+
+// 收藏頁在背景時畫的篩選放在盒子裡（不是直接放 @State）：@State 的值一改，整頁就重算，不管 body 這次有沒有讀它；
+// 放在 @Observable 的盒子裡，只有真的讀了 f（收藏頁在背景）才跟著重算
+@Observable final class FilterBox { var f = Filter() }
 
 // 共用篩選的同步：只有這一小塊讀 store.mapF 和 store.tab。
 // 分頁在背景時停字 350ms 才同步一次、不帶動畫；live 的那頁（地圖）在前景時也由這裡即時同步，body 就不用讀 store.mapF

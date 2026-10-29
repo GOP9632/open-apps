@@ -108,6 +108,11 @@ struct MapTab: View {
                             pins.select(h)
                             return
                         }
+                    } else if CACurrentMediaTime() - pins.tapAt < 0.6, id != pins.sel {
+                        // 一般地圖也一樣：手指剛點過圖釘按鈕，MapKit 等完「是不是點兩下」才用手指的位置找圖釘，
+                        // 那時地圖已經開始移（收鍵盤、飛過去），會找到旁邊那根或空白：一下選兩間、選了又被 nil 取消。按鈕選的為準
+                        Perf.shared.mark("地圖選取略過 \(id.map { String($0.prefix(8)) } ?? "nil") \(Int((CACurrentMediaTime() - pins.tapAt) * 1000))ms")
+                        return
                     }
                     pins.select(id)
                 })) {
