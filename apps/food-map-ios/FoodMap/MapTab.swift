@@ -162,6 +162,7 @@ struct MapTab: View {
                 }
                 .onMapCameraChange { c in
                     trip.toScreen = { proxy.convert($0, to: .global) }
+                    if quiet.flying { quiet.flying = false; Perf.shared.mark("飛完") }
                     if let f = trip.afterFit { trip.afterFit = nil; f() }
                     // 行程模式時下面的附近面板收著，不用跟著重算（離開行程時補一次）
                     if selfMoved { selfMoved = false } else { seenBox.set(c.region, publish: !trip.on) }
@@ -539,7 +540,7 @@ struct MapTab: View {
         let far = cur.map { abs(c.latitude - $0.center.latitude) > $0.span.latitudeDelta * 0.6 || abs(c.longitude - $0.center.longitude) > $0.span.longitudeDelta * 0.6 } ?? false
         // 圖釘放在中段面板上面看得到那塊的中間（大卡比卡片列高一點，還是在大卡上面）
         let to = aim(MKCoordinateRegion(center: c, span: span), grow: false)
-        if far && !reduce { flight = Flight(lat: to.center.latitude, lng: to.center.longitude) }
+        if far && !reduce { quiet.flying = true; flight = Flight(lat: to.center.latitude, lng: to.center.longitude) }
         else { withAnimation(.smooth(duration: 0.55)) { pos = .region(to) } }
     }
 
@@ -708,7 +709,10 @@ struct MapTab: View {
     }
 
     // 下面的卡片停在某間：那根圖釘跳一下；不在看得到的地方就平移過去（縮放不變，下面的卡片不換）
+    // 選著一根時（大卡片）卡片列不在畫面上、行程模式時整塊藏著：都不動。
+    // 卡片列換掉的那一下可能還會停在某張，這時候移地圖會把剛飛去遠處的鏡頭拉回來
     private func focus(_ id: String) {
+        guard pins.sel == nil, !trip.on else { return }
         guard let p = currentList.first(where: { $0.id == id }), let la = p.lat, let lo = p.lng else { return }
         if !hidden.contains(id) { pins.hops[id, default: 0] += 1 }
         guard let r = store.mapRegion ?? shownRegion else { return }
@@ -718,6 +722,7 @@ struct MapTab: View {
         guard pt.y < headY + 50 || pt.y > bottom - 20 || pt.x < 30 || pt.x > Self.mapWidth - 30 else { return }
         selfMoved = true
         quiet.hush()
+        Perf.shared.mark("卡片列移地圖")
         withAnimation(.smooth(duration: 0.45)) {
             pos = .region(aim(MKCoordinateRegion(center: .init(latitude: la, longitude: lo), span: r.span), grow: false))
         }

@@ -37,5 +37,6 @@ enum MapStage { case low, mid, high }
 // 不是 @Observable：每幀的鏡頭回呼讀它，不會讓 MapTab 重算
 final class CamQuiet {
     var until: CFTimeInterval = 0
+    var flying = false      // 飛去遠的店還沒停（停下來時在量測浮層記一筆「飛完」）
     func hush(_ s: Double = 1.0) { until = max(until, CACurrentMediaTime() + s) }
 }
