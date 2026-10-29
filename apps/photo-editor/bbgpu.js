@@ -148,7 +148,7 @@ function program(fs) {
     gl.shaderSource(s, src); gl.compileShader(s); gl.attachShader(p, s); sh.push(s);
   }
   gl.bindAttribLocation(p, 0, 'a'); gl.linkProgram(p);
-  return { p, sh, u: null };
+  return { p, sh, u: null, t: performance.now() };
 }
 function linked(P) {
   if (P.u) return P;
@@ -253,17 +253,27 @@ function readBack(o8) {
 export function gpuWarm(tool, local) {
   if (!init()) return;
   const ks = tool === 'blemish' ? (G.fl ? [['bprep', 32], ['box', 32], ['bfin', 0]] : []) : [[tool, 0], ...(local && G.fl ? [['prep', 16], ['box', 16]] : [])];
-  try { for (const [k] of ks) G.prog[k] ||= program(FS[k] || fsMix(k)); } catch (e) { return fail(e, '預備'); }
+  try { for (const [k] of ks) G.prog[k] ||= program(FS[k] || fsMix(k)); G.gl.flush(); } catch (e) { return fail(e, '預備'); }
   const g = G, go = () => {
     if (G !== g || busy) return;
     const { gl, par } = G;
     if (par && ks.some(([k]) => !gl.getProgramParameter(G.prog[k].p, par.COMPLETION_STATUS_KHR))) { setTimeout(go, 20); return; }
+    // 不支援平行編譯：GPU 那邊一樣在背景編，只是問不到編好沒；送出後先等 150ms 再碰它，不然一問就得停在主執行緒等編完（換到去油光停約 35ms）
+    const wait = par ? 0 : Math.max(0, ...ks.map(([k]) => G.prog[k].u ? 0 : G.prog[k].t + 150 - performance.now()));
+    if (wait > 0) { setTimeout(go, wait); return; }
     try {
       // 每個貼圖單元都放一張 1×1 的空貼圖（取樣器不能指到正在畫的那張）
       const fs = ks.map(([, f]) => target('w' + f, f, 1, 1)), t = upload('w', 'rgba', 1, 1, new Uint8Array(4));
       for (let i = 0; i < 8; i++) { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); }
       ks.forEach(([k], i) => draw(k, fs[i], 1, 1, () => {}, []));
-      gl.getError();
+      // 等 GPU 畫完再清掉可能的錯誤：馬上問 getError 要等 GPU 把這幾個程式第一次畫完，換筆時主執行緒停 30～40ms（評審 #163）
+      const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush();
+      const poll = () => {
+        if (G !== g || gl.isContextLost()) return;
+        if (gl.clientWaitSync(sync, 0, 0) === gl.TIMEOUT_EXPIRED) { setTimeout(poll, 10); return; }
+        gl.deleteSync(sync); if (!busy) gl.getError();
+      };
+      setTimeout(poll, 10);
     } catch (e) { fail(e, '預備'); }
   };
   setTimeout(go, 0);
