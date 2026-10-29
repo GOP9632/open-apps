@@ -126,6 +126,7 @@ struct Root: View {
             try? await Task.sleep(for: .milliseconds(450))
             if Task.isCancelled { return }
         }
+        if act != nil { Flag.log("[訊息條] 時間到收起（有復原）：\(t)") }
         withAnimation(.snappy) { if store.toast == t { store.toast = nil; store.toastAction = nil } }
         store.toastFading = false
     }

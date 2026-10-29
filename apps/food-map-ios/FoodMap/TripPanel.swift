@@ -1130,14 +1130,14 @@ struct TripPanel: View {
             .overlay {
                 if finished {
                     ZStack {
-                        Color.black.opacity(0.25).ignoresSafeArea().onTapGesture { endGo() }
+                        Color.black.opacity(0.25).ignoresSafeArea().onTapGesture { endGo("點完成卡外面") }
                         // 最後一間好不好吃，直接在這張卡上問（不另外疊一張評分卡在後面）
                         let last = rate.flatMap { id in order.first { $0.id == id } }.flatMap { $0.place_id }.flatMap { store.place($0) }
                         DoneCard(eaten: eaten, shot: party, last: last) { n in
                             if let id = rate, let last { rated(id, last, n) }
                         } close: {
                             if let id = rate { TripAsked.add(id) }
-                            endGo()
+                            endGo("完成卡的關閉")
                         }
                     }
                     .transition(.opacity)
@@ -1157,7 +1157,7 @@ struct TripPanel: View {
             }
             // 出發中沒有下一站了（別人刪了站、別台裝置都標成到了），又不是自己按到最後一站：收掉出發，回到排行程
             .onChange(of: next == nil) { _, none in
-                if none, mode.going, !finished { endGo() }
+                if none, mode.going, !finished { endGo("沒有下一站") }
             }
     }
 
@@ -1186,7 +1186,8 @@ struct TripPanel: View {
         }
     }
 
-    private func endGo() {
+    private func endGo(_ why: String) {
+        Flag.log("[出發] 結束出發：\(why)")
         Haptic.light()
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { mode.going = false; finished = false; rate = nil }
         mode.offFollow = false
@@ -1272,7 +1273,7 @@ struct TripPanel: View {
                       nav: { goNav(t, order, next) },
                       arrived: { arrive(t, order, next) },
                       skip: { skip(t, order, next) },
-                      close: { endGo() })
+                      close: { endGo("站卡的結束") })
             .id(next.id)
             .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .move(edge: .leading).combined(with: .opacity)))
     }
@@ -1325,7 +1326,10 @@ struct TripPanel: View {
     // 「到了」「跳過」的復原：清掉 done_at，評分卡和完成卡放回按之前的樣子
     private func undoArrive(_ s: TripStop, oldRate: String?, oldFinished: Bool, skipped: Bool = false, wasAsked: Bool = true) {
         Perf.shared.mark("復原到了")
-        guard var y = TripStore.shared.stops.first(where: { $0.id == s.id }), y.done_at != nil else { store.toast = nil; return }
+        guard var y = TripStore.shared.stops.first(where: { $0.id == s.id }), y.done_at != nil else {
+            Flag.log("[出發] 復原到了 \(s.name)：這站已經沒有 done_at，不用動"); store.toast = nil; return
+        }
+        Flag.log("[出發] 復原到了 \(s.name)：清掉 done_at（\(y.done_at ?? "")），出發中=\(mode.going)")
         y.done_at = nil
         if skipped { TripSkipped.remove(s.id); if !wasAsked { TripAsked.remove(s.id) } }
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
