@@ -236,7 +236,7 @@ FilterSync 的 :464-474（兩個 onChange）換成：
 
 **錄影結果**（149b223，不加參數）：(a) 地圖點「咖啡」後約半秒切到收藏：舊卡還在淡出約 10 幀，「N 間」從 2 滾到 0，「沒有符合的店／清除篩選」跟舊卡疊了好幾幀。(b) 從「我的」點「去過 2」：一進來舊咖啡卡才開始縮小淡出，「N 間」從 11 滾到 2，中間好幾幀疊成「21 間」，兩張去過的卡從下面滑上來約 12 幀才定住。
 
-**原因**：收藏頁藏著時畫的是 applied（背景同步要停 350ms，「我的」那條是切過來那一刻才改 listF），切進來那一下 front 變 true、改畫 listF，卡片和間數在同一次更新裡改變。這次更新是 Root 換分頁的 `withAnimation(.spring)`，所以 :70 的 `.animation(…, value: cards.map(\.id))` 和間數的 `.animation(.snappy, value: visible.count)` 都把它當成篩選改變來播。
+**原因**：收藏頁藏著時畫的是 applied（背景同步要停 350ms，「我的」那條是切過來那一刻才改 listF），切進來那一下 front 變 true、改畫 listF，卡片和間數在同一次更新裡改變。這次更新是 Root 換分頁的 `withAnimation(.spring)`，所以 :71 的 `.animation(…, value: cards.map(\.id))` 和間數的 `.animation(.snappy, value: visible.count)` 都把它當成篩選改變來播。
 
 **修法**：這是一進來看到舊內容和疊字，不是新的樣子，直接修，不用問 Anthony。ListTab.swift 的 ScrollView 裡那個 VStack，在 :83 `.padding(.top, 8).padding(.bottom, 24)` 後面加一行（行號是 fccc58f 的）：
 ```swift
