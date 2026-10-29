@@ -116,6 +116,8 @@ struct Root: View {
                 let onMap = store.tab == 0 && store.mapPath.isEmpty && store.panelTop > 0 && !TripMode.shared.on
                 // 行程模式（還沒出發）：貼著行程面板的上緣，不蓋住站卡；面板拉很高時最多到 420
                 let onTrip = store.tab == 0 && store.mapPath.isEmpty && TripMode.shared.on && !TripMode.shared.going && TripMode.shared.panelH > 0
+                // 店家頁（分頁列藏著）：貼著底部按鈕列；分頁列有顯示時一律 96（bottomBar 留著舊值也不會用錯）
+                let pad: CGFloat = onMap ? store.panelTop + 8 : onTrip ? min(TripMode.shared.panelH, 420) + 8 : (store.barHidden && store.bottomBar > 0) ? store.bottomBar + 8 : 96
                 HStack(spacing: 10) {
                     if let p = store.toastPlace {
                         PhotoView(place: p, px: 120).frame(width: 30, height: 30).clipShape(.rect(cornerRadius: 8))
@@ -135,7 +137,9 @@ struct Root: View {
                 }
                 .padding(.horizontal, 16).padding(.vertical, 11)
                 .background(Color.ink.opacity(0.92), in: .capsule)
-                .padding(.bottom, onMap ? store.panelTop + 8 : onTrip ? min(TripMode.shared.panelH, 420) + 8 : 96).padding(.horizontal, 24).padding(.trailing, onMap ? 52 : 0)
+                .padding(.bottom, pad).padding(.horizontal, 24).padding(.trailing, onMap ? 52 : 0)
+                // 返回時從按鈕列上方滑到面板上緣，不是一格跳過去
+                .animation(.snappy(duration: 0.3), value: pad)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .accessibilityAddTraits(.isButton)
                 .onAppear { AccessibilityNotification.Announcement(t).post() }

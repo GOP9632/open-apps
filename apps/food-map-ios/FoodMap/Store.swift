@@ -51,6 +51,8 @@ struct Snapshot: Codable {
     var toastPlace: Place?
     // 地圖首頁下面那塊停好時，上緣到螢幕底（安全區）的距離：訊息條貼著它（0 = 還沒量）
     var panelTop: CGFloat = 0
+    // 店家頁底部按鈕列的高度（0 = 不在店家頁）：訊息條貼著它的上緣
+    var bottomBar: CGFloat = 0
     // 新增時 AI 在背景找店（收藏頁上面一張「找店中」卡、地圖上一個膠囊）
     var pendingAdds: [PendingAdd] = []
     // 剛出現的新店（回到前景同步到的、AI 剛找到的）：卡片亮框 1 秒

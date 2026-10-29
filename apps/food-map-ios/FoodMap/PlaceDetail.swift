@@ -14,11 +14,11 @@ struct PlaceDetail: View {
     // 選到的分店（預設是點進來的那間）；想去／去過、導航、地址都跟著它
     @State private var picked: String?
     @State private var scroll = ScrollY()
-    @State private var dishesIn = false
     @State private var trips = TripStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduce
 
     var body: some View {
+        let _ = Perf.shared.count("店家頁")
         // 永遠顯示最新的那份（剛改的狀態、別台裝置改的都會跟上）
         let base = store.place(self.place.id) ?? self.place
         let place = picked.flatMap { store.place($0) } ?? base
@@ -26,7 +26,6 @@ struct PlaceDetail: View {
         let mine = store.isMine(place)
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                top(place, mine: mine)
                 photo(place)
                 info(place, mine: mine, branches: branches)
                 if let d = place.dishes, !d.isEmpty { dishes(d) }
@@ -39,16 +38,25 @@ struct PlaceDetail: View {
         }
         // 導航、加進行程、分享固定在最下面，捲到哪都按得到（單手大拇指剛好）
         .safeAreaInset(edge: .bottom, spacing: 0) { actions(place, branched: branches.count > 1) }
+        // 返回、更多固定在最上面，捲下去也按得到；捲動後才墊一條底色（只有 TopShade 跟著捲動重畫）。
+        // 下面留 14：跟原本在內容裡時和照片之間的間距一樣，照片位置不變
+        .safeAreaInset(edge: .top, spacing: 0) {
+            top(place, mine: mine)
+                .padding(.horizontal, 14).padding(.bottom, 14)
+                .background { TopShade(scroll: scroll) }
+        }
         // 往下拉超過頂端時大圖放大、往上滑時大圖慢一半（只有大圖跟著重畫）
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in scroll.y = y }
         .background(Color.bg)
         .toolbarVisibility(.hidden, for: .navigationBar)
-        // 先在背景讀行程，按「加進行程」時就知道要加到哪
-        .task { if !trips.loaded { await trips.load() } }
-        .onAppear {
-            Perf.shared.mark("進店家頁")
-            if !dishesIn { withAnimation { dishesIn = true } }
+        // 先在背景讀行程，按「加進行程」時就知道要加到哪（等推頁動畫跑完再讀，讀完換資料不落在轉場裡；按鈕自己也會先讀）
+        .task {
+            try? await Task.sleep(for: .milliseconds(400))
+            if !Task.isCancelled, !trips.loaded { await trips.load() }
         }
+        .onAppear { Perf.shared.mark("進店家頁") }
+        // 離開店家頁：訊息條不用再讓開按鈕列
+        .onDisappear { store.bottomBar = 0 }
         .sheet(isPresented: $editing) { EditSheet(place: place) }
         .confirmationDialog("用哪個地圖導航？", isPresented: $askNav, titleVisibility: .visible) {
             ForEach(NavApp.allCases, id: \.self) { a in
@@ -211,6 +219,8 @@ struct PlaceDetail: View {
         .frame(height: 58)
         .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 6)
         .background(Color.bg.shadow(color: .black.opacity(0.08), radius: 8, y: -3).ignoresSafeArea(edges: .bottom))
+        // 訊息條貼著按鈕列上緣（值有變才寫，推頁時不讓沒訊息條的畫面重算）
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in if abs(store.bottomBar - h) > 0.5 { store.bottomBar = h } }
     }
 
     // 加進行程：只有一個進行中的行程就直接加在最順的位置，不然先問加到哪個；已經在行程裡就打開那個行程、捲到那一站
@@ -246,25 +256,7 @@ struct PlaceDetail: View {
         }
     }
 
-    private func dishes(_ d: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("必點").font(.system(size: 18, weight: .heavy)).foregroundStyle(Color.ink)
-            Flow(spacing: 8) {
-                ForEach(Array(d.enumerated()), id: \.offset) { i, t in
-                    let c = Color.sprinkles[i % Color.sprinkles.count]
-                    Text(t).font(.subheadline.weight(.heavy)).padding(.horizontal, 12).frame(height: 34)
-                        .background(c.opacity(0.15), in: .capsule).foregroundStyle(c.mix(with: .black, by: 0.15))
-                        // 第一次出現時從 0.6 倍依序彈到原大（跟推頁同時開始）
-                        .scaleEffect(dishesIn || reduce ? 1 : 0.6)
-                        .opacity(dishesIn ? 1 : 0)
-                        .animation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.6).delay(Double(i) * 0.04), value: dishesIn)
-                }
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .candy(24)
-    }
+    private func dishes(_ d: [String]) -> some View { DishChips(d: d) }
 
     private func details(_ place: Place) -> some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -425,6 +417,11 @@ struct MiniMap: View {
             .task(id: key) {
                 guard width > 0 else { return }
                 if let c = Self.cache.object(forKey: key as NSString) { withAnimation(.easeOut(duration: 0.2)) { img = c }; return }
+                // 第一次截圖等推頁動畫跑完再開始（在畫面外，晚一點出現看不到）；換分店時已經有舊圖，不用等
+                if img == nil {
+                    try? await Task.sleep(for: .milliseconds(450))
+                    guard !Task.isCancelled else { return }
+                }
                 let o = MKMapSnapshotter.Options()
                 o.region = MKCoordinateRegion(center: coord, latitudinalMeters: 700, longitudinalMeters: 700)
                 o.size = CGSize(width: width, height: 190)
@@ -449,6 +446,45 @@ struct PinGlyph: View {
             Triangle().fill(.white).frame(width: 14, height: 10).rotationEffect(.degrees(180))
         }
         .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
+    }
+}
+
+// 必點：第一次出現時從 0.6 倍依序彈到原大（跟推頁同時開始）。
+// 「彈出來了沒」放在這一小塊裡：onAppear 改它只重算這塊，不讓整個店家頁在第一幀前再算一次
+private struct DishChips: View {
+    let d: [String]
+    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduce
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("必點").font(.system(size: 18, weight: .heavy)).foregroundStyle(Color.ink)
+            Flow(spacing: 8) {
+                ForEach(Array(d.enumerated()), id: \.offset) { i, t in
+                    let c = Color.sprinkles[i % Color.sprinkles.count]
+                    Text(t).font(.subheadline.weight(.heavy)).padding(.horizontal, 12).frame(height: 34)
+                        .background(c.opacity(0.15), in: .capsule).foregroundStyle(c.mix(with: .black, by: 0.15))
+                        .scaleEffect(shown || reduce ? 1 : 0.6)
+                        .opacity(shown ? 1 : 0)
+                        .animation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.6).delay(Double(i) * 0.04), value: shown)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .candy(24)
+        .onAppear { if !shown { withAnimation { shown = true } } }
+    }
+}
+
+// 返回、更多那一排的底：停在頂端時透明（跟原本一樣），捲下去才墊上底色和淡陰影，蓋住往上捲的照片
+private struct TopShade: View {
+    let scroll: ScrollY
+    var body: some View {
+        let on = scroll.y > 4
+        Color.bg.opacity(on ? 1 : 0)
+            .shadow(color: .black.opacity(on ? 0.08 : 0), radius: 8, y: 3)
+            .ignoresSafeArea(edges: .top)
+            .animation(.easeOut(duration: 0.15), value: on)
     }
 }
 

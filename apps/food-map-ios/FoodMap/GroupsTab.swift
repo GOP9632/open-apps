@@ -11,6 +11,7 @@ struct GroupsTab: View {
     enum Ask: Identifiable { case create, join; var id: Self { self } }
 
     var body: some View {
+        let _ = Perf.shared.count("群組")
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -49,7 +50,7 @@ struct GroupsTab: View {
             .navigationDestination(for: Round.self) { RoundView(rid: $0.id) }
             .navigationDestination(for: Place.self) { PlaceDetail(place: $0) }
             .tripDestinations()
-            .onChange(of: path.count) { _, n in store.depth[2] = n }
+            .background { DepthReport(path: $path, tab: 2) }
             .onChange(of: store.groupJump) { jump() }
             .onAppear(perform: jump)
             .alert(asking == .join ? "輸入邀請碼" : "建立美食群組", isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } })) {

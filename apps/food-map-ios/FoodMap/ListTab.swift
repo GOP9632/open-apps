@@ -13,6 +13,7 @@ struct ListTab: View {
     @Environment(\.accessibilityReduceMotion) private var reduce
 
     var body: some View {
+        let _ = Perf.shared.count("收藏")
         @Bindable var store = store
         // 篩選結果一次算好（每打一個字只算一次）
         let visible = store.shown(store.listF)
@@ -111,7 +112,8 @@ struct ListTab: View {
                     .presentationDetents([.medium, .large])
             }
         }
-        .onChange(of: path.count) { _, n in store.depth[1] = n }
+        // 推頁、返回只讓 DepthReport 重算（body 裡讀 path 的話整個收藏頁都會跟著重算）
+        .background { DepthReport(path: $path, tab: 1) }
         .onAppear(perform: markPaint)
         .onChange(of: store.places.count) { markPaint() }
     }
@@ -419,4 +421,12 @@ struct StarterCard: View {
                 }
         }
     }
+}
+
+// 分頁推了幾層 → store.depth（分頁列藏不藏）。只有這一小塊讀 path，推頁時收藏頁、群組頁本身不用重算
+struct DepthReport: View {
+    @Binding var path: NavigationPath
+    let tab: Int
+    @Environment(Store.self) private var store
+    var body: some View { Color.clear.onChange(of: path.count) { _, n in store.depth[tab] = n } }
 }

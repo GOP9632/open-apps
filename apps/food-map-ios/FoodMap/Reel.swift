@@ -50,7 +50,9 @@ struct PlaceMedia: View {
                 u = f; p = ReelCache.player(f)
             }
             print("[reel] 影片網址 \(u.host() ?? "")")
-            try? AVAudioSession.sharedInstance().setCategory(.ambient)
+            // 設定聲音類別是同步跟系統要東西：放到背景做，不卡主執行緒（推頁那幾幀）
+            await Task.detached { try? AVAudioSession.sharedInstance().setCategory(.ambient) }.value
+            guard !Task.isCancelled else { return }
             // 先直接串流；6 秒還沒能播（IG 的伺服器有時不給串流），就整支下載到手機再播
             start(p)
             if !(await Self.waitReady(p)) {

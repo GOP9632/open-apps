@@ -624,11 +624,12 @@ enum TripSort {
         insert(s, store: store)
         Haptic.success()
         let n = at + 1
+        // 停 6 秒：從店家頁加完按返回，回到地圖還看得到、點得到「打開行程」
         let msg = smooth ? "加到 \(t.title) 第 \(n) 站・順路" : order.isEmpty ? "加到 \(t.title)・第 1 站" : "加到 \(t.title) 最後・第 \(n) 站"
         store.say(msg, icon: .check, action: ("復原", { [weak self] in
             self?.remove(s, dropTrip: made, store: store)
             store.toast = nil
-        }), tap: { TripMode.shared.open(t.id, focus: s.id, store: store) })
+        }), tap: { TripMode.shared.open(t.id, focus: s.id, store: store) }, seconds: 6)
     }
 
     // 整天換順序（幫我排順序、復原）：pos 依序改成 1、2、3…，只送有變的站。
