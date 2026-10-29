@@ -943,7 +943,8 @@ struct NearbySheet: View {
                     high
                         .frame(height: max(0, highT - Self.grabH), alignment: .top)
                         .opacity(tall ? 1 : 0)
-                        .allowsHitTesting(tall)
+                        // 拉過一半清單淡出時，正在拉的手指不能被中斷
+                        .allowsHitTesting(tall || mp.dragging)
                         .accessibilityHidden(!tall)
                         .onAppear { highUsed = true }
                 }
@@ -1052,9 +1053,14 @@ struct NearbySheet: View {
         VStack(alignment: .leading, spacing: 10) {
             titleRow
             if near.places.isEmpty {
-                Text(near.subtitle).font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
-                    .padding(.horizontal, 18)
-                Spacer(minLength: 0)
+                // 沒有店：整塊空白也能拉
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(near.subtitle).font(.subheadline.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.5))
+                        .padding(.horizontal, 18)
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .modifier(grip)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 10) {
@@ -1063,11 +1069,13 @@ struct NearbySheet: View {
                         }
                     }
                     .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 16)
+                    // 捲到頂再往下拉：面板跟著手指往下（清單不回彈），放開照面板的規則停段
+                    .background(ListPullDown(changed: { drag($0) }, ended: { up in settle(target(mp.stage) + up * 0.6, push: up) }))
                 }
-                // 捲到頂再往下拉約 56pt：放開時面板降到中間段（只在跨過那條線時通知，捲動時不會每幀重畫）
+                // 備案（找不到底下的 UIScrollView 時）：拉過頭約 56pt，放開降到中間段；面板接手時不跑
                 // 清單拉過頭有阻力，手指拉 56pt 畫面只動約 28pt，所以線畫在 28
                 .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < -28 } action: { _, past in
-                    guard past, listTouch, !lowering else { return }
+                    guard past, listTouch, !lowering, !mp.dragging else { return }
                     lowering = true
                     Haptic.light()
                 }

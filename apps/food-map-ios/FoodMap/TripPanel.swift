@@ -215,12 +215,16 @@ struct TripPanel: View {
                     ScrollView {
                         rows(t, d: d, base: base, order: order, legs: legs, plan: plan)
                             .padding(.horizontal, 14).padding(.top, 2).padding(.bottom, 16)
+                            // 捲到頂再往下拉：面板跟著手指往下（清單不回彈），放開照面板的規則停段；拖站換順序時不接手
+                            .background(ListPullDown(on: drag.id == nil,
+                                                     changed: { up in guard drag.id == nil else { return }; lift.y = up },
+                                                     ended: { up in guard drag.id == nil else { lift.y = 0; return }; settleSheet(up) }))
                     }
                     .scrollDisabled(drag.id != nil)
-                    // 捲到頂再往下拉約 56pt：放開時面板降一段（只在跨過那條線時通知，捲動時不會每幀重畫）
+                    // 備案（找不到底下的 UIScrollView 時）：捲到頂再往下拉約 56pt，放開時面板降一段；面板接手時不跑
                     // 清單拉過頭有阻力，手指拉 56pt 畫面只動約 28pt，所以線畫在 28；甩過頭的回彈不算
                     .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < -28 } action: { _, past in
-                        guard past, listTouch, !lowering, drag.id == nil else { return }
+                        guard past, listTouch, !lowering, drag.id == nil, lift.y == 0 else { return }
                         lowering = true
                         Haptic.light()
                     }
@@ -374,19 +378,23 @@ struct TripPanel: View {
             }
             .onEnded { v in
                 guard drag.id == nil else { lift.y = 0; return }
-                let hs = heights()
-                let up = -v.predictedEndTranslation.height
-                let now: CGFloat = (mode.level == .low ? hs.low : mode.level == .mid ? hs.mid : hs.high) + up * 0.6
-                var pick: TripLevel = [(TripLevel.low, hs.low), (TripLevel.mid, hs.mid), (TripLevel.high, hs.high)].min { abs($0.1 - now) < abs($1.1 - now) }!.0
-                // 段跟段距離很大（最高到中間三百多點）：往一個方向拉超過 60 就至少換一段，不會彈回原位像沒反應
-                if pick == mode.level, abs(up) > 60 {
-                    let all: [TripLevel] = [.low, .mid, .high]
-                    let i = all.firstIndex(of: mode.level)! + (up > 0 ? 1 : -1)
-                    if all.indices.contains(i) { pick = all[i] }
-                }
-                if pick != mode.level { Haptic.light() }
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { mode.level = pick; lift.y = 0; pullList = false }
+                settleSheet(-v.predictedEndTranslation.height)
             }
+    }
+
+    // 放開（拉橫條或清單捲到頂往下拉）：up 是預測會停的位移（往上為正）
+    private func settleSheet(_ up: CGFloat) {
+        let hs = heights()
+        let now = settledHeight() + up * 0.6
+        var pick: TripLevel = [(TripLevel.low, hs.low), (TripLevel.mid, hs.mid), (TripLevel.high, hs.high)].min { abs($0.1 - now) < abs($1.1 - now) }!.0
+        // 段跟段距離很大（最高到中間三百多點）：往一個方向拉超過 60 就至少換一段，不會彈回原位像沒反應
+        if pick == mode.level, abs(up) > 60 {
+            let all: [TripLevel] = [.low, .mid, .high]
+            let i = all.firstIndex(of: mode.level)! + (up > 0 ? 1 : -1)
+            if all.indices.contains(i) { pick = all[i] }
+        }
+        if pick != mode.level { Haptic.light() }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { mode.level = pick; lift.y = 0; pullList = false }
     }
 
     // ----- 每一站（一半、全開） -----
