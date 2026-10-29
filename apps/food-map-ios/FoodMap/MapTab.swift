@@ -2102,7 +2102,9 @@ private struct ClusterBubble: View {
             } else {
                 HStack(spacing: 2) {
                     if !c.emoji.isEmpty { EmojiGlyph(e: c.emoji, size: 15, part: .bubble) }
+                    // 數字一定一行：emoji 換成圖時圖寬取整會比字寬一點，數字會被擠成兩行（47 變 4、7）
                     Text("\(c.ids.count)").font(.system(size: 17, weight: .black)).foregroundStyle(.white)
+                        .lineLimit(1).fixedSize()
                 }
                 .padding(.horizontal, 9)
                 .frame(minWidth: 46, minHeight: 46)
