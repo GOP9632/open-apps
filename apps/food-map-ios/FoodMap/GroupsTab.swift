@@ -139,6 +139,7 @@ struct GroupCard: View {
         let count = store.placesIn(group.id).count
         let act = store.roundAction(group.id)
         let isNew: Bool = { if case .new = act { return true } else { return false } }()
+        let wide: Bool = { if case .resume = act { return true } else { return false } }()   // 只有「繼續滑 N 張」比較寬
         Button(action: open) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
@@ -154,7 +155,7 @@ struct GroupCard: View {
                     Spacer(minLength: 0)
                 }
                 status(mem)
-                    .padding(.trailing, 150)      // 右下留給「開始滑卡／繼續滑 N 張」
+                    .padding(.trailing, wide ? 150 : 110)      // 右下留給按鈕：「繼續滑 N 張」要 150，「開始滑卡／看結果」110 就夠
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -260,8 +261,6 @@ struct GroupView: View {
 
     private func content(_ g: FoodGroup) -> some View {
         let mem = store.membersOf(gid), list = store.placesIn(gid), rounds = store.roundsOf(gid)
-        let act = store.roundAction(gid)
-        let isNew: Bool = { if case .new = act { return true } else { return false } }()
         let alone = mem.count < 2
         return ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -288,14 +287,7 @@ struct GroupView: View {
                 HStack(spacing: 10) {
                     // 直接用預設條件開一輪（這一餐、離你近的 10 張），不用先填表
                     // 這輪還沒滑完：繼續；我滑完、別人還沒：看結果
-                    Button { quick() } label: {
-                        HStack(spacing: 6) {
-                            if starting { ProgressView().controlSize(.small).tint(.white) } else { Image(systemName: GroupCard.icon(act)) }
-                            Text({ if case .resume(_, let n) = act { return "繼續滑（剩 \(n) 張）" } else { return GroupCard.label(act) } }())
-                        }
-                        .frame(maxWidth: .infinity).frame(height: 44)
-                    }
-                    .buttonStyle(ChunkyStyle(radius: 16)).disabled((list.isEmpty && isNew) || starting)
+                    QuickButton(gid: gid, empty: list.isEmpty, starting: starting) { quick() }
                     Button("調整條件") { newRound = true }
                         .font(.subheadline.weight(.heavy)).foregroundStyle(Color.accentDeep)
                         .frame(minWidth: 44, minHeight: 44).contentShape(.rect)
@@ -567,6 +559,28 @@ struct PickSheet: View {
     }
 }
 
+// 群組頁的主按鈕（開始滑卡／繼續滑 N 張／看結果）：只有這顆讀 roundAction（會讀 swipes），
+// 滑卡時每滑一張，底下的群組頁不用整頁重算。字跟群組卡片一樣（主按鈕旁邊還有調整條件、邀請，放不下「（剩 N 張）」）
+private struct QuickButton: View {
+    @Environment(Store.self) private var store
+    let gid: String
+    let empty: Bool
+    let starting: Bool
+    let action: () -> Void
+    var body: some View {
+        let act = store.roundAction(gid)
+        let isNew: Bool = { if case .new = act { return true } else { return false } }()
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if starting { ProgressView().controlSize(.small).tint(.white) } else { Image(systemName: GroupCard.icon(act)) }
+                Text(GroupCard.label(act)).lineLimit(1).minimumScaleFactor(0.85)
+            }
+            .frame(maxWidth: .infinity).frame(height: 44)
+        }
+        .buttonStyle(ChunkyStyle(radius: 16)).disabled((empty && isNew) || starting)
+    }
+}
+
 // 一輪滑卡：先滑，滑完看結果；全員都想吃同一間就跳出「配對成功」
 struct RoundView: View {
     @Environment(Store.self) private var store
@@ -575,6 +589,8 @@ struct RoundView: View {
     @State private var showResult = false
     @State private var detail: Place?
     @State private var match: Store.Match?
+    @State private var held: Store.Match?      // 群組分頁藏著時來的配對：回到群組分頁再跳
+    @Environment(\.tabActive) private var tabActive
     @State private var dropping = false
     @State private var history: [String] = []
     @State private var finishing = false      // 最後一張正在飛走：飛完才換結果頁
@@ -594,6 +610,9 @@ struct RoundView: View {
             }
             .presentationBackground(.clear)
         }
+        .onChange(of: tabActive) { _, on in
+            if on, match == nil, let m = held { held = nil; celebrate(m) }
+        }
         // 驗收用 -fakeMatch：進來就跳一次配對畫面（沒有配對就拿第一張當配對）
         .task {
             guard Flag.on("-fakeMatch"), let r = store.rounds.first(where: { $0.id == rid }) else { return }
@@ -607,7 +626,7 @@ struct RoundView: View {
                 guard let r = store.rounds.first(where: { $0.id == rid }) else { continue }
                 let before = Set(store.matches(r).filter(\.all).map(\.id))
                 await store.syncRound(r)
-                if match == nil, let m = store.matches(r).first(where: { $0.all && !before.contains($0.id) }) { celebrate(m) }
+                if match == nil, held == nil, let m = store.matches(r).first(where: { $0.all && !before.contains($0.id) }) { celebrate(m) }
             }
         }
     }
@@ -745,6 +764,8 @@ struct RoundView: View {
     }
 
     private func celebrate(_ m: Store.Match) {
+        // 群組分頁藏著（Root.page 用 opacity 藏）：fullScreenCover 會蓋到別的分頁上，先留著，回到群組分頁再跳
+        guard tabActive else { held = m; return }
         Haptic.success()
         var t = Transaction(); t.disablesAnimations = true
         withTransaction(t) { match = m }   // 關掉系統往上滑的轉場，由 MatchView 自己淡入
