@@ -52,21 +52,27 @@ struct NotifyCard: View {
     }
 }
 
-// ----- 剪貼簿：剛複製了連結就在上面浮一條膠囊問要不要收 -----
-// 只用 detectPatterns 看「像不像網址」（不會跳「允許貼上」），內容要等他按系統的「貼上」才拿得到
+// ----- 剪貼簿：剛複製了連結就在面板上緣浮一條膠囊問要不要收 -----
+// 只用 detectPatterns 看「像不像網址」（不會跳「允許貼上」），內容要等他按系統的「貼上」才拿得到。
+// 所以看不出是 IG 還是新聞網址：任何網址都問一次，但連按三次 ✕ 就兩週不問
 
 @MainActor @Observable final class ClipWatch {
     static let shared = ClipWatch()
     var showing = false
     @ObservationIgnored private var seen = UserDefaults.standard.integer(forKey: "clipSeen")
     @ObservationIgnored private var hide: Task<Void, Never>?
+    // 連按幾次 ✕（按一次貼上就歸零）；三次就兩週不問，到這個時間（秒）為止
+    @ObservationIgnored private var skips = UserDefaults.standard.integer(forKey: "clipSkips")
+    @ObservationIgnored private var muteUntil = UserDefaults.standard.double(forKey: "clipMuteUntil")
+    // 手指碰著膠囊：8 秒倒數先停（伸手要按貼上時不會剛好收掉）
+    @ObservationIgnored var held = false
 
     // 回到前景時看一次；同一次複製只問一次（changeCount 記在手機裡）
     func check(_ store: Store) {
         let pb = UIPasteboard.general
         let n = pb.changeCount
         guard store.loggedIn, store.coach.isEmpty, !store.showIG, !store.askNotify, !TripMode.shared.on,
-              n != seen, !Self.sheetOpen, pb.hasURLs || pb.hasStrings else { return }
+              n != seen, Date().timeIntervalSince1970 >= muteUntil, !Self.sheetOpen, pb.hasURLs || pb.hasStrings else { return }
         Task {
             guard await Self.hasLink(), UIPasteboard.general.changeCount == n else { return }
             show(n)
@@ -91,12 +97,31 @@ struct NotifyCard: View {
     private func show(_ n: Int) {
         seen = n
         UserDefaults.standard.set(n, forKey: "clipSeen")
+        held = false
         withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) { showing = true }
         hide?.cancel()
         hide = Task {
-            try? await Task.sleep(for: .seconds(8))
-            if !Task.isCancelled { dismiss() }
+            var left = 8.0
+            while left > 0 {
+                try? await Task.sleep(for: .milliseconds(100))
+                if Task.isCancelled { return }
+                if !held { left -= 0.1 }
+            }
+            dismiss()
         }
+    }
+
+    // 按 ✕：連三次就兩週不問，並說一聲（8 秒自己收起不算）
+    func skip(_ store: Store) {
+        skips += 1
+        if skips >= 3 {
+            skips = 0
+            muteUntil = Date().timeIntervalSince1970 + 14 * 86400
+            UserDefaults.standard.set(muteUntil, forKey: "clipMuteUntil")
+            store.say("兩週內不再問；要收藏按右上「＋」")
+        }
+        UserDefaults.standard.set(skips, forKey: "clipSkips")
+        dismiss()
     }
 
     func dismiss() {
@@ -106,6 +131,8 @@ struct NotifyCard: View {
 
     // 按了「貼上」：收過的店說一聲，沒收過就走「找店中」
     func pasted(_ text: String?, store: Store) {
+        skips = 0
+        UserDefaults.standard.set(0, forKey: "clipSkips")
         dismiss()
         guard let t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return }
         let k = Self.key(t)
@@ -135,17 +162,23 @@ struct NotifyCard: View {
     }
 }
 
+// 位置跟訊息條一樣：地圖首頁貼著面板上緣（右邊讓開行程、定位兩顆），面板拉到最高時和其他分頁在分頁列上方，店家頁貼著按鈕列。
+// 不擋篩選籤和頂端的地圖。面板上緣在這裡讀，換段時只有膠囊重算
 struct ClipCapsule: View {
     @Environment(Store.self) private var store
     @State private var clip = ClipWatch.shared
+    @State private var panel = MapPanel.shared
 
     var body: some View {
+        let onMap = store.tab == 0 && store.mapPath.isEmpty && store.panelTop > 0 && panel.stage != .high
+        let pad: CGFloat = onMap ? store.panelTop + 8 : (store.barHidden && store.bottomBar > 0) ? store.bottomBar + 8 : 96
         HStack(spacing: 10) {
             Image(systemName: "link").font(.system(size: 14, weight: .heavy)).foregroundStyle(.white)
                 .frame(width: 32, height: 32).background(Color.accent, in: .circle)
+            // 看不出是不是店家的連結：不說「這間店」，問他是不是想吃的
             VStack(alignment: .leading, spacing: 1) {
-                Text("剛複製了一個連結").font(.subheadline.weight(.heavy)).foregroundStyle(.white).lineLimit(1)
-                Text("按「貼上」收藏這間店").font(.caption2.weight(.semibold)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                Text("剛複製了連結").font(.subheadline.weight(.heavy)).foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.8)
+                Text("想吃的店就按貼上").font(.caption2.weight(.semibold)).foregroundStyle(.white.opacity(0.6)).lineLimit(1).minimumScaleFactor(0.8)
             }
             Spacer(minLength: 4)
             // 系統的貼上按鈕：按了才讀剪貼簿，不會跳「允許貼上」
@@ -154,18 +187,24 @@ struct ClipCapsule: View {
                 Task { @MainActor in clip.pasted(t, store: store) }
             }
             .buttonBorderShape(.capsule).labelStyle(.titleOnly).tint(Color.accent)
-            Button { clip.dismiss() } label: {
+            Button { clip.skip(store) } label: {
                 Image(systemName: "xmark").font(.system(size: 13, weight: .heavy)).foregroundStyle(.white.opacity(0.6))
-                    .frame(width: 36, height: 44).contentShape(.rect)
+                    .frame(width: 44, height: 44).contentShape(.rect)
             }
             .buttonStyle(PressStyle())
             .accessibilityLabel("不要")
         }
-        .padding(.leading, 8).padding(.trailing, 4).padding(.vertical, 4)
+        .padding(.leading, 8).padding(.trailing, 2).padding(.vertical, 4)
         .background(Color.ink.opacity(0.92), in: .capsule)
         .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+        .simultaneousGesture(DragGesture(minimumDistance: 0)
+            .onChanged { _ in if !clip.held { clip.held = true } }
+            .onEnded { _ in clip.held = false })
         .padding(.horizontal, 16)
-        .transition(.move(edge: .top).combined(with: .opacity))
+        .padding(.trailing, onMap ? 52 : 0)
+        .padding(.bottom, pad)
+        .animation(.snappy(duration: 0.3), value: pad)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
 

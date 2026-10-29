@@ -66,12 +66,6 @@ struct Root: View {
                     Task { if await store.join(code) != nil { withAnimation(.snappy) { store.tab = 2 } } }
                 }
                 .overlay { CoachOverlay().ignoresSafeArea() }
-                // 剛複製了 IG／Google 地圖連結：上面浮一條膠囊問要不要收（地圖分頁放在搜尋列下面）
-                .overlay(alignment: .top) {
-                    if clip.showing && store.coach.isEmpty {
-                        ClipCapsule().padding(.top, store.tab == 0 ? 104 : 6)
-                    }
-                }
                 // 問通知前的小卡（教學跑完才出來）
                 .overlay {
                     if store.askNotify && store.coach.isEmpty {
@@ -113,7 +107,8 @@ struct Root: View {
             if let t = store.toast {
                 let act = store.toastAction
                 // 地圖首頁（不在行程、沒點進店家頁）：貼著下面那塊的上緣，右邊讓開行程、定位兩顆；其他分頁照舊
-                let onMap = store.tab == 0 && store.mapPath.isEmpty && store.panelTop > 0 && !TripMode.shared.on
+                // 面板拉到最高段時上緣在篩選籤附近：改放分頁列上方，不壓到籤
+                let onMap = store.tab == 0 && store.mapPath.isEmpty && store.panelTop > 0 && !TripMode.shared.on && MapPanel.shared.stage != .high
                 // 行程模式（還沒出發）：貼著行程面板的上緣，不蓋住站卡；面板拉很高時最多到 420
                 let onTrip = store.tab == 0 && store.mapPath.isEmpty && TripMode.shared.on && !TripMode.shared.going && TripMode.shared.panelH > 0
                 // 店家頁（分頁列藏著）：貼著底部按鈕列；分頁列有顯示時一律 96（bottomBar 留著舊值也不會用錯）
@@ -161,6 +156,12 @@ struct Root: View {
                     withAnimation(.snappy) { store.toast = nil; store.toastTap = nil }
                     tap?()
                 }
+            }
+        }
+        // 剛複製了連結：在面板上緣（其他分頁在分頁列上方）浮一條膠囊問要不要收。訊息條優先，有訊息條時先藏著
+        .overlay(alignment: .bottom) {
+            if clip.showing && store.loggedIn && store.coach.isEmpty && store.toast == nil && !TripMode.shared.on {
+                ClipCapsule()
             }
         }
         .environment(\.toastNS, toastNS)

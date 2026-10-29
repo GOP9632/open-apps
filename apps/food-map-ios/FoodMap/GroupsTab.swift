@@ -103,23 +103,17 @@ struct GroupsTab: View {
         }
     }
 
+    // 不用程式讀剪貼簿（會跳「允許貼上」）：他在輸入框長按貼上整段邀請文字，go() 再從裡面抓 8 碼
     private func ask(_ a: Ask) {
         text = ""
-        // 剪貼簿裡有朋友傳的邀請碼或邀請連結，就直接幫他填好
-        // 先偷看剪貼簿裡是不是連結（不會跳「允許貼上」），是連結才讀出來，免得每次都問
         asking = a
-        guard a == .join, UIPasteboard.general.hasStrings else { return }
-        UIPasteboard.general.detectPatterns(for: [.probableWebURL]) { r in
-            guard case .success(let found) = r, found.contains(.probableWebURL) else { return }
-            DispatchQueue.main.async {
-                if text.isEmpty, let c = FoodGroup.code(in: UIPasteboard.general.string ?? "") { text = c }
-            }
-        }
     }
 
     private func go(_ a: Ask?) {
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty, let a else { return }
+        guard let a else { return }
+        let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let t = a == .join ? (FoodGroup.code(in: raw) ?? raw) : raw
+        guard !t.isEmpty else { return }
         Task {
             if a == .create, let g = await store.createGroup(t) { path.append(g) }
             if a == .join, let gid = await store.join(t), let g = store.groups.first(where: { $0.id == gid }) { path.append(g) }
