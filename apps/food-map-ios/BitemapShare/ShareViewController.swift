@@ -8,6 +8,8 @@ final class ShareViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // 跟主 App 一樣只有淺色（顏色都是照淺底配的，深色模式會深底深字）
+        overrideUserInterfaceStyle = .light
         view.backgroundColor = .clear
         let host = UIHostingController(rootView: ShareCard(model: model))
         host.view.backgroundColor = .clear
