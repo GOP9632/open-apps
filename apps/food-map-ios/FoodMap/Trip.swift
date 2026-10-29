@@ -72,6 +72,20 @@ enum TravelMode: String, CaseIterable {
     var mPerMin: Double { self == .walk ? 75 : self == .drive ? 500 : 300 }
 }
 
+extension TravelMode {
+    // 沒選過的段：直線 1.2 公里內走路，更遠開車。只看兩點座標，結果固定，路線不會換 key 一直重抓
+    static func auto(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D) -> TravelMode {
+        CLLocation(latitude: a.latitude, longitude: a.longitude).distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude)) <= 1200 ? .walk : .drive
+    }
+    // 這段選過就照選的；行程預設是開車／捷運（舊資料）就照行程；其他（行程存的 "walk" 當成自動）依距離
+    static func pick(_ t: Trip, _ s: TripStop?, from a: CLLocationCoordinate2D?, to b: CLLocationCoordinate2D?) -> TravelMode {
+        if let r = s?.mode, let m = TravelMode(rawValue: r) { return m }
+        if t.mode != "walk", let m = TravelMode(rawValue: t.mode) { return m }
+        guard let a, let b else { return .walk }
+        return auto(a, b)
+    }
+}
+
 // 每站的顏色：依順序輪流用糖粒色（號碼、路線都用這個）
 enum TripColor {
     static let list: [Color] = [.accent, .sprMint, .sprBlue, .sprPink, .sprPurple, Color(hex: 0xe8a200)]
@@ -141,6 +155,11 @@ enum TripDate {
     static func time(_ m: Int) -> String { String(format: "%02d:%02d:00", (m / 60) % 24, m % 60) }
     // 一天的第幾分鐘 → 12:05
     static func clock(_ m: Int) -> String { String(format: "%d:%02d", ((m / 60) % 24 + 24) % 24, ((m % 60) + 60) % 60) }
+    // 排過半夜：「隔天 1:27」「+3 天 1:27」（clock 只取餘數，看起來像當天凌晨）
+    static func clockDay(_ m: Int) -> String {
+        let d = m / 1440
+        return (d <= 0 ? "" : d == 1 ? "隔天 " : "+\(d) 天 ") + clock(m)
+    }
     // 95 → 1 小時 35 分
     static func span(_ m: Int) -> String {
         if m < 60 { return "\(max(m, 1)) 分" }
@@ -598,7 +617,7 @@ enum TripSort {
         var smooth = false
         if let c = s.coord, !order.isEmpty {
             let b = TripInsert.best(order, c)
-            let tm = TravelMode(rawValue: t.mode) ?? .walk
+            let tm = TripMath.dayMode(t, order)
             if TripInsert.minutes(b.extra, tm) <= 10 { at = b.at; smooth = true }
         }
         s.pos = TripInsert.pos(order, at: at)
@@ -612,13 +631,21 @@ enum TripSort {
         }), tap: { TripMode.shared.open(t.id, focus: s.id, store: store) })
     }
 
-    // 整天換順序（幫我排順序、復原）：pos 依序改成 1、2、3…，只送有變的站
-    func reorder(_ seq: [TripStop], store: Store?) {
+    // 整天換順序（幫我排順序、復原）：pos 依序改成 1、2、3…，只送有變的站。
+    // 交通方式存在到達站上（從上一站怎麼來）：前一站換了，那段手動選的方式就不適用，清掉回到自動；
+    // 復原（restore）時照快照把原本選的方式放回去
+    func reorder(_ seq: [TripStop], store: Store?, restore: Bool = false) {
+        let now = seq.compactMap { s in stops.first { $0.id == s.id } }.sorted { $0.pos < $1.pos }.map(\.id)
         withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
             for (i, s) in seq.enumerated() {
                 guard let cur = stops.first(where: { $0.id == s.id }) else { continue }
-                let p = Double(i + 1)
-                if cur.pos != p { var x = cur; x.pos = p; update(x, store: store) }
+                var x = cur
+                x.pos = Double(i + 1)
+                let np = i > 0 ? seq[i - 1].id : nil
+                let oi = now.firstIndex(of: s.id) ?? 0
+                let op = oi > 0 ? now[oi - 1] : nil
+                if np != op { x.mode = restore ? s.mode : nil }
+                if x != cur { update(x, store: store) }
             }
         }
     }

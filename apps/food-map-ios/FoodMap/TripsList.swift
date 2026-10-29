@@ -100,7 +100,7 @@ struct TripCard: View {
                     if today { tag("今天", .accent) }
                     if let g = trip.group_id {
                         tag("👥 " + (store.groups.first { $0.id == g }?.name ?? "群組"), .sprPurple)
-                    } else if trip.mode == "drive" {
+                    } else if pairs(ss).contains(where: { $0.2 == .drive }) {
                         tag("🚗 開車", .sprBlue); tag("只有我", Color(hex: 0x9a8a7a))
                     } else {
                         tag("只有我", Color(hex: 0x9a8a7a))
@@ -140,9 +140,11 @@ struct TripCard: View {
         if stays > 0 { side.append("\(stays) 間住宿") }
         parts.append("\(ss.count) 站" + (!side.isEmpty && trip.days > 1 ? "（\(side.joined(separator: "・"))）" : ""))
         if trip.days == 1 && ss.count > 1 {
-            let m = TravelMode(rawValue: trip.mode) ?? .walk
+            // 每段都一樣就寫「開車共／走路共」，混著用寫「交通共」
+            let ms = Set(pairs(ss).map(\.2))
+            let verb = ms.count == 1 ? ms.first!.verb : "交通"
             let t = total(ss)
-            parts.append("\(m.verb)共 \(t.approx ? "約 " : "")\(TripDate.span(t.min))")
+            parts.append("\(verb)共 \(t.approx ? "約 " : "")\(TripDate.span(t.min))")
         }
         return parts.joined(separator: "・")
     }
@@ -154,7 +156,7 @@ struct TripCard: View {
             let l = ss.filter { $0.day == d }.sorted { $0.pos < $1.pos }
             for (a, b) in zip(l, l.dropFirst()) {
                 guard let ca = a.coord, let cb = b.coord else { continue }
-                out.append((ca, cb, TravelMode(rawValue: b.mode ?? trip.mode) ?? .walk))
+                out.append((ca, cb, TravelMode.pick(trip, b, from: ca, to: cb)))
             }
         }
         return out
@@ -192,10 +194,10 @@ struct TripThumb: View {
         return stops.filter { $0.day == d && $0.coord != nil }.sorted { $0.pos < $1.pos }
     }
     private var key: String {
-        day1.map { "\($0.id)\($0.pos)\($0.mode ?? trip.mode)" }.joined() + "@\(Int(width))\(scheme == .dark ? "d" : "l")" + (allRouted ? "r" : "")
+        day1.map { "\($0.id)\($0.pos)\($0.mode ?? "-")" }.joined() + "@\(Int(width))\(scheme == .dark ? "d" : "l")" + (allRouted ? "r" : "")
     }
     private var allRouted: Bool {
-        zip(day1, day1.dropFirst()).allSatisfy { a, b in router.legs[TripRouter.key(a.coord!, b.coord!, TravelMode(rawValue: b.mode ?? trip.mode) ?? .walk)] != nil }
+        zip(day1, day1.dropFirst()).allSatisfy { a, b in router.legs[TripRouter.key(a.coord!, b.coord!, .pick(trip, b, from: a.coord, to: b.coord))] != nil }
     }
 
     var body: some View {
@@ -218,7 +220,7 @@ struct TripThumb: View {
         o.traitCollection = UITraitCollection(traitsFrom: [UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light), UITraitCollection(displayScale: scale)])
         guard let snap = try? await MKMapSnapshotter(options: o).start(), !Task.isCancelled else { return }
         let segs: [([CLLocationCoordinate2D], UIColor)] = zip(day1, day1.dropFirst()).enumerated().map { i, ab in
-            let l = router.leg(ab.0.coord!, ab.1.coord!, TravelMode(rawValue: ab.1.mode ?? trip.mode) ?? .walk)
+            let l = router.leg(ab.0.coord!, ab.1.coord!, .pick(trip, ab.1, from: ab.0.coord, to: ab.1.coord))
             return (l.coords ?? [ab.0.coord!, ab.1.coord!], UIColor(TripColor.of(i + 1)))
         }
         let k = key

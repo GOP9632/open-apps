@@ -45,6 +45,7 @@ struct TripTop: View {
         .task(id: routeKey(t)) {
             guard let t, !mode.going else { return }
             let d = min(mode.day, t.days)
+            // 傳行程預設；走路（＝自動）時每段依距離選，跟面板同一套
             mode.search.measure(trips.stops(t.id, day: d), seg: mode.seg, mode: TravelMode(rawValue: t.mode) ?? .walk, store: store)
         }
         // 鍵盤收起來（捲結果、按搜尋、點地圖）：不算在打字了（搜尋框還開著，✕ 或點地圖才收）
@@ -85,7 +86,7 @@ struct TripTop: View {
         let ss = trips.stops(t.id, day: min(mode.day, t.days))
         let routed = zip(ss, ss.dropFirst()).filter { a, b in
             guard let ca = a.coord, let cb = b.coord else { return false }
-            return router.legs[TripRouter.key(ca, cb, TripMath.mode(t, b))] != nil
+            return router.legs[TripRouter.key(ca, cb, TripMath.mode(t, b, from: ca))] != nil
         }.count
         return ss.map { "\($0.id)\($0.mode ?? "")" }.joined(separator: ",") + "|\(mode.seg?.joined() ?? "")|\(routed)|\(store.places.count)"
     }

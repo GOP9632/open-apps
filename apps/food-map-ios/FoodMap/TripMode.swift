@@ -201,7 +201,17 @@ enum TripInsert {
         return here.distance(from: CLLocation(latitude: f.latitude, longitude: f.longitude)) < 30_000 ? here.coordinate : nil
     }
 
-    static func mode(_ t: Trip, _ s: TripStop) -> TravelMode { TravelMode(rawValue: s.mode ?? t.mode) ?? .walk }
+    // 從 a 到 s 這段怎麼去：選過照選的，沒選過依距離（1.2 公里內走路，更遠開車）
+    static func mode(_ t: Trip, _ s: TripStop, from a: CLLocationCoordinate2D?) -> TravelMode { .pick(t, s, from: a, to: s.coord) }
+
+    // 一整天大概怎麼移動（排順序省幾分、加站順不順路用）：每段平均直線距離 1.2 公里內算走路
+    static func dayMode(_ t: Trip, _ ss: [TripStop]) -> TravelMode {
+        if t.mode != "walk", let m = TravelMode(rawValue: t.mode) { return m }
+        let cs = ss.compactMap(\.coord)
+        guard cs.count > 1 else { return .walk }
+        let sum = zip(cs, cs.dropFirst()).map { CLLocation(latitude: $0.latitude, longitude: $0.longitude).distance(from: CLLocation(latitude: $1.latitude, longitude: $1.longitude)) }.reduce(0, +)
+        return sum / Double(cs.count - 1) <= 1200 ? .walk : .drive
+    }
 
     // legs[i] = 到第 i 站的那段（第 0 站從起點來）
     static func legs(_ t: Trip, _ order: [TripStop], origin: CLLocationCoordinate2D?, router: TripRouter) -> [Leg?] {
@@ -209,7 +219,7 @@ enum TripInsert {
             guard let b = s.coord else { return nil }
             let a: CLLocationCoordinate2D? = i == 0 ? origin : order[i - 1].coord
             guard let a else { return nil }
-            return router.leg(a, b, i == 0 ? (TravelMode(rawValue: t.mode) ?? .walk) : mode(t, s))
+            return router.leg(a, b, i == 0 ? .pick(t, nil, from: a, to: b) : mode(t, s, from: a))
         }
     }
 
@@ -222,18 +232,17 @@ enum TripInsert {
 
     static func backLeg(_ t: Trip, _ order: [TripStop], origin: CLLocationCoordinate2D?, router: TripRouter) -> Int? {
         guard let o = backTo(order, origin: origin), let l = order.last?.coord else { return nil }
-        return router.leg(l, o, TravelMode(rawValue: t.mode) ?? .walk).min
+        return router.leg(l, o, .pick(t, nil, from: l, to: o)).min
     }
 
     static func needs(_ t: Trip, _ base: [TripStop], origin: CLLocationCoordinate2D?) -> [(CLLocationCoordinate2D, CLLocationCoordinate2D, TravelMode)] {
         var out: [(CLLocationCoordinate2D, CLLocationCoordinate2D, TravelMode)] = []
-        let tm = TravelMode(rawValue: t.mode) ?? .walk
         for (i, s) in base.enumerated() {
             guard let b = s.coord else { continue }
-            if i == 0 { if let o = origin { out.append((o, b, tm)) } }
-            else if let a = base[i - 1].coord { out.append((a, b, mode(t, s))) }
+            if i == 0 { if let o = origin { out.append((o, b, .pick(t, nil, from: o, to: b))) } }
+            else if let a = base[i - 1].coord { out.append((a, b, mode(t, s, from: a))) }
         }
-        if let o = backTo(base, origin: origin), let l = base.last?.coord { out.append((l, o, tm)) }
+        if let o = backTo(base, origin: origin), let l = base.last?.coord { out.append((l, o, .pick(t, nil, from: l, to: o))) }
         return out
     }
 
@@ -266,8 +275,8 @@ enum TripInsert {
     static func summary(_ order: [TripStop], plan: DayPlan) -> String {
         guard !order.isEmpty else { return "還沒有站" }
         var p = ["\(order.count) 站"]
-        if let b = plan.back { p.append("\(TripDate.clock(b)) 回") }
-        else if let l = plan.rows.last { p.append("\(TripDate.clock(l.leave)) 結束") }
+        if let b = plan.back { p.append("\(TripDate.clockDay(b)) 回") }
+        else if let l = plan.rows.last { p.append("\(TripDate.clockDay(l.leave)) 結束") }
         return p.joined(separator: "・")
     }
 }
@@ -291,7 +300,8 @@ enum TripInsert {
         if cs.count == 1 { lines = [[cs[0].1]] }
         for i in cs.indices.dropFirst() {
             let a = cs[i - 1].1, b = cs[i].1
-            let m = TravelMode(rawValue: cs[i].0.mode ?? mode.rawValue) ?? mode
+            // 跟行程面板同一套規則：選過照選的，行程預設不是走路就照行程，其他依距離
+            let m = cs[i].0.mode.flatMap { TravelMode(rawValue: $0) } ?? (mode != .walk ? mode : .auto(a, b))
             lines.append(router.leg(a, b, m).coords ?? [a, b])
         }
         if lines.isEmpty, let h = store.here { lines = [[h.coordinate]] }

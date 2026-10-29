@@ -425,7 +425,8 @@ struct TripPanel: View {
                 LegRow(trip: t, from: prev, to: s, leg: leg, hidden: drag.id != nil) { m in
                     Haptic.light()
                     Perf.shared.mark("換交通方式")
-                    var x = s; x.mode = m.rawValue == t.mode ? nil : m.rawValue
+                    // 一律存明確的值：沒選過（nil）代表依距離自動選，手動選的要留得住
+                    var x = s; x.mode = m.rawValue
                     trips.update(x, store: store)
                 } openMaps: { if let b = s.coord, let u = transitURL(prev.coord, b) { openURL(u) } }
                 // 空檔推薦：下一站有固定時間、中間多出 1 小時以上
@@ -530,6 +531,14 @@ struct TripPanel: View {
             case let (nil, a?): s.pos = a - 1
             default: break
             }
+            // 交通方式存在到達站上：前一站換了的站（拖的這站、原本在它後面的、現在在它後面的），手動選的方式回到自動
+            s.mode = nil
+            var after: Set<String> = []
+            if let k = base.firstIndex(where: { $0.id == id }), k + 1 < base.count { after.insert(base[k + 1].id) }
+            if i + 1 < order.count { after.insert(order[i + 1].id) }
+            for sid in after where sid != id {
+                if var x = trips.stops.first(where: { $0.id == sid }), x.mode != nil { x.mode = nil; trips.update(x, store: store) }
+            }
         }
         Haptic.light()
         withAnimation(.snappy(duration: 0.28)) { trips.update(s, store: store); drag = RowDrag(); dragY.y = 0 }
@@ -624,7 +633,7 @@ struct TripPanel: View {
 
     private func addCard(_ t: Trip, _ c: TripCand, order: [TripStop]) -> some View {
         let r = candAt(order, c)
-        let tm = TravelMode(rawValue: t.mode) ?? .walk
+        let tm = TripMath.dayMode(t, order)
         let inTrip = stopOf(c, t)
         let n = r.at + 1
         return VStack(alignment: .leading, spacing: 12) {
@@ -921,7 +930,7 @@ struct TripPanel: View {
         Perf.shared.mark("幫我排順序")
         let n = base.filter(TripSort.movable).count
         if n > TripSort.maxStops { store.say("超過 \(TripSort.maxStops) 站，先移一些到別天再排"); return }
-        let tm = TravelMode(rawValue: t.mode) ?? .walk
+        let tm = TripMath.dayMode(t, base)
         guard let r = TripSort.best(base, origin: TripMath.origin(base, here: store.here), mode: tm), r.saved >= 3 else {
             store.say("已經很順了", icon: .check)
             return
@@ -931,7 +940,7 @@ struct TripPanel: View {
         trips.reorder(r.order, store: store)
         Haptic.success()
         store.say("省下 \(r.saved) 分", icon: .check, action: ("復原", {
-            TripStore.shared.reorder(old, store: store)
+            TripStore.shared.reorder(old, store: store, restore: true)
             store.toast = nil
         }))
     }
@@ -941,7 +950,7 @@ struct TripPanel: View {
     // 這段路 400 公尺內、還沒去過、不在這個行程裡的收藏有幾間
     private func gapCount(_ t: Trip, _ a: TripStop, _ b: TripStop) -> Int {
         guard let ca = a.coord, let cb = b.coord else { return 0 }
-        let line = router.leg(ca, cb, TripMath.mode(t, b)).coords ?? [ca, cb]
+        let line = router.leg(ca, cb, TripMath.mode(t, b, from: ca)).coords ?? [ca, cb]
         let near = RouteNear([line])
         let inTrip = Set(trips.stops(t.id).compactMap(\.place_id))
         return store.places.filter { p in
@@ -991,7 +1000,7 @@ struct TripPanel: View {
                 }
             }
             .task(id: mode.going) { await follow() }
-            .task(id: goKey(t, next)) { if let k = goNeed(t, order, next) { router.need([k]) } }
+            .task(id: goKey(t, order, next)) { if let k = goNeed(t, order, next) { router.need([k]) } }
             .onChange(of: near) { _, on in
                 guard on, let next, pinged != next.id else { return }
                 pinged = next.id
@@ -1072,8 +1081,12 @@ struct TripPanel: View {
         return CLLocationCoordinate2D(latitude: (h.latitude * 1000).rounded() / 1000, longitude: (h.longitude * 1000).rounded() / 1000)
     }
 
+    // 出發模式往下一站怎麼去：跟面板上那段同一套（上一站到這站；第一站從起點），不看現在離多近，
+    // 不然開到 1.2 公里內會跳成走路，導航也跟著換
     private func goMode(_ t: Trip, _ order: [TripStop], _ s: TripStop) -> TravelMode {
-        order.first?.id == s.id ? (TravelMode(rawValue: t.mode) ?? .walk) : TripMath.mode(t, s)
+        guard let i = order.firstIndex(where: { $0.id == s.id }) else { return .walk }
+        if i == 0 { return .pick(t, nil, from: TripMath.origin(order, here: store.here), to: s.coord) }
+        return TripMath.mode(t, s, from: order[i - 1].coord)
     }
 
     private func goNeed(_ t: Trip, _ order: [TripStop], _ next: TripStop?) -> (CLLocationCoordinate2D, CLLocationCoordinate2D, TravelMode)? {
@@ -1081,9 +1094,9 @@ struct TripPanel: View {
         return (a, b, goMode(t, order, next))
     }
 
-    private func goKey(_ t: Trip, _ next: TripStop?) -> String {
-        guard mode.going, let next, let a = hereRounded(), let b = next.coord else { return "" }
-        return TripRouter.key(a, b, TravelMode(rawValue: next.mode ?? t.mode) ?? .walk)
+    // 跟 goNeed 同一套規則算 key：換方式時 task 一定會重跑，不換時不會白跑
+    private func goKey(_ t: Trip, _ order: [TripStop], _ next: TripStop?) -> String {
+        goNeed(t, order, next).map { TripRouter.key($0.0, $0.1, $0.2) } ?? ""
     }
 
     private func nearNext(_ next: TripStop?) -> Bool {
@@ -1194,10 +1207,12 @@ struct TripPanel: View {
             if let date = t.date(of: d) { head += (head.isEmpty ? "" : " ") + TripDate.label(date) }
             if !head.isEmpty { lines.append(head) }
             for (i, s) in ss.enumerated() {
-                let time = i < plan.rows.count ? TripDate.clock(plan.rows[i].arrive) + " " : ""
+                let time = i < plan.rows.count ? TripDate.clockDay(plan.rows[i].arrive) + " " : ""
                 lines.append("\(i + 1). \(time)\(s.name)" + (s.address.map { "（\($0)）" } ?? ""))
             }
-            if let u = googleDir(ss, mode: TravelMode(rawValue: t.mode) ?? .walk) { lines.append(u.absoluteString) }
+            // 這天有任一段開車，Google 地圖就開開車模式
+            let drive = zip(ss, ss.dropFirst()).contains { a, b in TripMath.mode(t, b, from: a.coord) == .drive }
+            if let u = googleDir(ss, mode: drive ? .drive : .walk) { lines.append(u.absoluteString) }
         }
         presentShare([lines.joined(separator: "\n")])
     }
@@ -1421,9 +1436,10 @@ struct StopCard: View {
     @ViewBuilder private var times: some View {
         if let row {
             VStack(alignment: .trailing, spacing: 1) {
+                // 排過半夜：大字放不下「隔天」，改橘色；下面那行寫「到 隔天 1:27」
                 Text(TripDate.clock(row.arrive)).font(.system(size: 16, weight: .heavy)).monospacedDigit()
-                    .foregroundStyle(row.late > 0 ? Color.red : Color.ink)
-                Text(row.late > 0 ? "會晚 \(row.late) 分" : "到 \(TripDate.clock(row.leave))").font(.caption2.weight(.bold)).monospacedDigit()
+                    .foregroundStyle(row.late > 0 ? Color.red : row.arrive >= 1440 ? Color.accentDeep : Color.ink)
+                Text(row.late > 0 ? "會晚 \(row.late) 分" : "到 \(TripDate.clockDay(row.leave))").font(.caption2.weight(.bold)).monospacedDigit()
                     .foregroundStyle(row.late > 0 ? Color.red : Color.ink.opacity(0.45))
             }
             .contentTransition(.numericText())
@@ -1514,7 +1530,7 @@ private struct LegRow: View {
     let openMaps: () -> Void
 
     var body: some View {
-        let m = TravelMode(rawValue: to.mode ?? trip.mode) ?? .walk
+        let m = TripMath.mode(trip, to, from: from.coord)
         HStack(spacing: 8) {
             // 對齊號碼的虛線
             Rectangle().fill(.clear).frame(width: 30, height: 40)
@@ -1549,10 +1565,17 @@ private struct LegRow: View {
             }
             .buttonStyle(PressStyle())
         } else if let leg {
-            Text("\(m.emoji) \(m.verb) \(leg.approx ? "約 " : "")\(TripDate.span(leg.min))")
-                .font(.footnote.weight(.heavy)).foregroundStyle(Color.ink.opacity(0.6))
-                .contentTransition(.numericText())
-                .animation(.snappy, value: leg.min)
+            // 手動選了走路、Apple 算出來要走一個半小時以上：字改橘色，下面提醒一句（不加按鈕，旁邊就有開車鈕）
+            let long = m == .walk && !leg.approx && leg.min >= 90
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(m.emoji) \(m.verb) \(leg.approx ? "約 " : "")\(TripDate.span(leg.min))")
+                    .font(.footnote.weight(.heavy)).foregroundStyle(long ? Color.accentDeep : Color.ink.opacity(0.6))
+                    .contentTransition(.numericText())
+                    .animation(.snappy, value: leg.min)
+                if long {
+                    Text("走很久，可以改開車").font(.caption2.weight(.bold)).foregroundStyle(Color.accentDeep)
+                }
+            }
         } else {
             Text("\(m.emoji) \(m.verb)").font(.footnote.weight(.heavy)).foregroundStyle(Color.ink.opacity(0.4))
         }
@@ -1593,7 +1616,7 @@ struct MiniStop: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(stop.name).font(.system(size: 14, weight: .heavy)).foregroundStyle(Color.ink).lineLimit(1)
                 if let row {
-                    Text(TripDate.clock(row.arrive)).font(.caption.weight(.bold)).foregroundStyle(Color.ink.opacity(0.5))
+                    Text(TripDate.clock(row.arrive)).font(.caption.weight(.bold)).foregroundStyle(row.arrive >= 1440 ? Color.accentDeep : Color.ink.opacity(0.5))
                         .contentTransition(.numericText())
                 }
             }
