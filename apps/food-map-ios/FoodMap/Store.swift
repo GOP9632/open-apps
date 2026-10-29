@@ -595,9 +595,11 @@ struct Snapshot: Codable {
                 self.groupPlaces += shares
                 self.toast = nil; self.toastPlace = nil
             }
-        }))
+        }), seconds: 6)
         Task {
-            try? await Task.sleep(for: .seconds(4.2))
+            // 等訊息條收起來才真的刪（按著訊息條時繼續等）：「復原」還看得到就一定有用
+            try? await Task.sleep(for: .seconds(Store.slowToasts ? 20.5 : 6.5))
+            while toastHeld && toast?.hasPrefix("已刪除") == true { try? await Task.sleep(for: .milliseconds(200)) }
             guard undoable.remove(p.id) != nil, loggedIn else { return }
             do { try await Supa.write("DELETE", "places", query: "id=eq.\(p.id)"); saveCache() }
             catch {

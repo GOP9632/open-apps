@@ -275,6 +275,18 @@ struct TripPanel: View {
         .modifier(LiftHeight(lift: lift, base: settledHeight(), lo: hs.low, hi: hs.high))
         .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg)
             .shadow(color: .black.opacity(0.14), radius: 14, y: -2).ignoresSafeArea(edges: .bottom))
+        // 拖一站時：面板上緣露出「第 N 天」，拖過去放開就換天（最低段放在面板上面）。之前放在標題列下面，最高段被面板蓋住。
+        // 一直掛著只換透明度：拿起那一刻不用新建一排，位置平常就量好了
+        .overlay(alignment: .top) {
+            if t.days > 1 {
+                DayDrops(days: t.days, day: d)
+                    .background { if !strip { Color.bg.padding(.horizontal, 10) } }
+                    .offset(y: strip ? -50 : 8)
+                    .opacity(mode.moving ? 1 : 0)
+                    .accessibilityHidden(!mode.moving)
+                    .animation(.snappy(duration: 0.2), value: mode.moving)
+            }
+        }
         .animation(.snappy(duration: 0.25), value: strip)
         // 停好的面板高度：訊息條貼在面板上面，不蓋住站卡（拉的過程中不更新）
         .onChange(of: settledHeight(), initial: true) { _, v in if abs(mode.panelH - v) > 0.5 { mode.panelH = v } }

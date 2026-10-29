@@ -29,17 +29,6 @@ struct TripTop: View {
         .padding(.top, 6)
         // 框地圖時圖釘要在這條線下面（不被 🔍 蓋住）
         .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { mode.barBottom = $0 }
-        // 拖一站時：下面露出「第 N 天」，拖過去放開就換天。
-        // 一直掛著只換透明度（拿起那一刻不用新建一排，位置平常就量好了）
-        .overlay(alignment: .bottom) {
-            if let t, t.days > 1 {
-                dayDrops(t)
-                    .alignmentGuide(.bottom) { $0[.top] }
-                    .opacity(mode.moving ? 1 : 0)
-                    .accessibilityHidden(!mode.moving)
-            }
-        }
-        .animation(.snappy(duration: 0.2), value: mode.moving)
         .task(id: searchKey) {
             guard mode.searchOn else { return }
             await mode.search.run(mode.q, mode.filter, here: store.here, view: store.mapRegion)
@@ -207,14 +196,19 @@ struct TripTop: View {
         }
     }
 
-    // ----- 拖一站換天：標題列下面的「第 N 天」 -----
+}
 
-    private func dayDrops(_ t: Trip) -> some View {
-        let d = min(mode.day, t.days)
-        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 76), spacing: 8)], alignment: .leading, spacing: 8) {
-            ForEach(1...t.days, id: \.self) { n in dropChip(n, on: n == d) }
+// 拖一站換天：面板上緣露出「第 N 天」，拖過去放開就換天（TripPanel 掛在面板最上面，最高段也不會被蓋住）
+struct DayDrops: View {
+    let days: Int
+    let day: Int
+    @State private var mode = TripMode.shared
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 76), spacing: 8)], alignment: .leading, spacing: 8) {
+            ForEach(1...days, id: \.self) { n in dropChip(n, on: n == day) }
         }
-        .padding(.horizontal, 16).padding(.top, 10)
+        .padding(.horizontal, 16).padding(.vertical, 6)
         .allowsHitTesting(false)
     }
 

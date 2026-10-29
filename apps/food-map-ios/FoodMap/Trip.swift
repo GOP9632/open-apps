@@ -542,9 +542,11 @@ enum TripSort {
             LaterDelete.remove("trip_stops", s.id)
             withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { self.stops.append(s); store.toast = nil }
             self.saveCache()
-        }))
+        }), seconds: 6)
         Task {
-            try? await Task.sleep(for: .seconds(4.2))
+            // 等訊息條收起來才真的刪（按著訊息條時繼續等），跟刪行程一樣：「復原」還看得到就一定有用
+            try? await Task.sleep(for: .seconds(Store.slowToasts ? 20.5 : 6.5))
+            while store.toastHeld && store.toast?.hasPrefix("已拿掉") == true { try? await Task.sleep(for: .milliseconds(200)) }
             guard hiddenStops.contains(s.id) else { return }
             do { try await Supa.write("DELETE", "trip_stops", query: "id=eq.\(s.id)"); hiddenStops.remove(s.id) }
             catch {
