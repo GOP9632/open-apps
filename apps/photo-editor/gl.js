@@ -47,12 +47,13 @@ void main(){
 //   uT：0 推（uV = 位移）、1 脹大／縮小（uV.x = 比例）、2 旋轉（uV.x = 角度）、3 還原（uV.x = 還原多少）
 const FS_LIQ = `#version 300 es
 precision highp float; precision highp int;
-in vec2 vUV; uniform sampler2D uTex; uniform vec2 uImg, uV; uniform vec3 uM; uniform float uStep; uniform int uT; out vec4 o;${LIQ_GLSL}
+in vec2 vUV; uniform sampler2D uTex; uniform vec2 uImg, uV; uniform vec3 uM; uniform float uStep; uniform int uT; uniform ivec2 uOff; out vec4 o;${LIQ_GLSL}
 vec4 enc(vec2 d){ vec2 c = clamp(floor(d / uStep + 0.5) + 32768.0, 0.0, 65535.0), hi = floor(c / 256.0), lo = c - hi * 256.0; return vec4(hi.x, hi.y, lo.x, lo.y) / 255.0; }
 void main(){
-  ivec2 px = ivec2(gl_FragCoord.xy);
+  // 畫在筆刷那一塊大小的暫存上（uOff：這塊在位移場的哪裡），畫完抄回位移場
+  ivec2 px = ivec2(gl_FragCoord.xy) + uOff;
   vec4 cur = texelFetch(uTex, px, 0);
-  vec2 p = vUV * uImg, rel = p - uM.xy;
+  vec2 p = (vec2(px) + 0.5) / vec2(textureSize(uTex, 0)) * uImg, rel = p - uM.xy;
   float t2 = dot(rel, rel) / (uM.z * uM.z);
   if (t2 >= 1.0) { o = cur; return; }
   float f = (1.0 - t2) * (1.0 - t2);
@@ -860,6 +861,8 @@ export class Renderer {
     this.view = 1;  // 預覽的解析度（相對原圖），見 render
     this.fast = 1;  // 拖的時候先畫小一點：小圖的解析度（相對預覽），畫完再放大到畫布
     this.fbFast = this.fbo();
+    // 推臉那一頁：主 shader 一律先畫到 fbPost，推的時候只重畫推到的那一塊（liqFrame）。mainFb：fbPost 裡現在是哪一次的結果
+    this.keepPost = false; this.mainFb = null; this.canvasOk = false;
   }
   tex() {
     const gl = this.gl, t = gl.createTexture();
@@ -1058,7 +1061,7 @@ export class Renderer {
     if (this.canvas.width !== ow || this.canvas.height !== oh) { this.canvas.width = ow; this.canvas.height = oh; }
     if (fx.bokeh) this.bokeh(fx.bokeh);
     // 有臉型變形時先畫到暫存，最後再變形一次畫到畫面
-    const lq = this.lq?.n ? this.lq : null, fast = !full && this.fast < 1, post = this.disp?.step > 0 || !!lq || fast;
+    const lq = this.lq?.n ? this.lq : null, fast = !full && this.fast < 1, post = this.disp?.step > 0 || !!lq || fast || (this.keepPost && !full);
     const iw = fast ? Math.max(1, Math.round(ow * this.fast)) : ow, ih = fast ? Math.max(1, Math.round(oh * this.fast)) : oh, fb = fast ? this.fbFast : this.fbPost;
     if (post) this.sizeFbo(fb, iw, ih);
     this.pass(this.pMain, post ? fb : null, iw, ih);
@@ -1134,17 +1137,45 @@ export class Renderer {
     const hex = p.bgColor || '#ffffff';
     gl.uniform3f(u.uBgColor, parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    if (post) {
-      const d = this.pDisp;
-      this.pass(d, null, ow, oh, fb.t);
-      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.disp?.step > 0 ? this.disp.tex : null); gl.uniform1i(d.u.uDisp, 1);
-      gl.uniform2f(d.u.uSize, this.w, this.h); gl.uniform1f(d.u.uStep, this.disp?.step > 0 ? this.disp.step : 0);
-      gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, lq ? lq.A.t : null); gl.uniform1i(d.u.uLiq, 3);
-      gl.uniform1f(d.u.uLiqStep, lq ? lq.step : 0);
-      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.tSegB); gl.uniform1i(d.u.uSegB, 2);
-      gl.uniform1f(d.u.uProtect, p.bgProtect === 0 ? 0 : 1);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    this.mainFb = post ? { fb, ow, oh, fast: fast ? this.fast : 1 } : null;
+    if (post) this.postPass(p, fb, ow, oh, lq, null);
+    this.canvasOk = post;
+  }
+  // 臉型位移、推臉位移場照 fb（主 shader 的結果）取樣畫到畫面上。sc：只畫這一塊（視窗座標 [x, y, w, h]）
+  postPass(p, fb, ow, oh, lq, sc) {
+    const gl = this.gl, d = this.pDisp;
+    this.pass(d, null, ow, oh, fb.t);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.disp?.step > 0 ? this.disp.tex : null); gl.uniform1i(d.u.uDisp, 1);
+    gl.uniform2f(d.u.uSize, this.w, this.h); gl.uniform1f(d.u.uStep, this.disp?.step > 0 ? this.disp.step : 0);
+    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, lq ? lq.A.t : null); gl.uniform1i(d.u.uLiq, 3);
+    gl.uniform1f(d.u.uLiqStep, lq ? lq.step : 0);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.tSegB); gl.uniform1i(d.u.uSegB, 2);
+    gl.uniform1f(d.u.uProtect, p.bgProtect === 0 ? 0 : 1);
+    if (sc) { gl.enable(gl.SCISSOR_TEST); gl.scissor(...sc); }
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (sc) gl.disable(gl.SCISSOR_TEST);
+    if (lq) lq.dirty = null;
+  }
+  // 推臉拖動中、這一格只多了幾下推臉（app.js 確定別的都沒改才叫）：主 shader 那整套美顏、調色、濾鏡的結果還在 fbPost，
+  // 不用重畫（以前每一格都重畫，佔一格九成以上的時間，女友說推臉很卡），只把位移場改到的那一塊重新取樣到畫面上。
+  // 畫不了（還沒有主 shader 的結果、預覽大小變了）回傳 false，app.js 就整張照常畫
+  liqFrame(p) {
+    const m = this.mainFb, lq = this.lq, ow = Math.max(1, Math.round(this.w * this.view)), oh = Math.max(1, Math.round(this.h * this.view));
+    if (!m || !lq?.n || m.ow !== ow || m.oh !== oh || this.canvas.width !== ow || this.canvas.height !== oh || m.fast !== (this.fast < 1 ? this.fast : 1)) return false;
+    const d = lq.dirty;
+    if (!d) return true;
+    let sc = null;
+    if (this.canvasOk) {
+      // 位移場一格是畫面上幾格；雙線性內插會用到旁邊一格，多留兩格
+      const kx = ow / lq.fw, ky = oh / lq.fh, mg = Math.ceil(2 * Math.max(kx, ky)) + 2;
+      const x0 = Math.max(0, Math.floor(d.x0 * kx) - mg), x1 = Math.min(ow, Math.ceil(d.x1 * kx) + mg);
+      const r0 = Math.max(0, Math.floor(d.y0 * ky) - mg), r1 = Math.min(oh, Math.ceil(d.y1 * ky) + mg);
+      if (x1 <= x0 || r1 <= r0) { lq.dirty = null; return true; }
+      sc = [x0, oh - r1, x1 - x0, r1 - r0];  // 畫面的視窗座標從下面算起
     }
+    this.postPass(p, m.fb, ow, oh, lq, sc);
+    this.canvasOk = true;
+    return true;
   }
   // 臉型位移圖：{ tex, step }，step = 0 表示沒有
   setDisp(d) { this.disp = d; }
@@ -1158,29 +1189,32 @@ export class Renderer {
     if (!L) L = this.lq = { A: this.fbo(), B: this.fbo(), n: 0, last: null };
     const fresh = L.W !== W || L.H !== H || list.length < L.n || (L.n && list[L.n - 1] !== L.last);
     if (fresh || !L.n) {
-      this.sizeFbo(L.A, fw, fh); this.sizeFbo(L.B, fw, fh);
-      Object.assign(L, { W, H, fw, fh, n: 0, step: M / 60000 });
+      this.sizeFbo(L.A, fw, fh);
+      Object.assign(L, { W, H, fw, fh, n: 0, step: M / 60000, dirty: { x0: 0, y0: 0, x1: fw, y1: fh } });
       gl.bindFramebuffer(gl.FRAMEBUFFER, L.A.f); gl.viewport(0, 0, fw, fh);
       gl.clearColor(128 / 255, 128 / 255, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     }
     if (L.n === list.length) return;
-    const u = this.pLiq.u, s = fw / W;
-    gl.enable(gl.SCISSOR_TEST);
+    const u = this.pLiq.u, s = fw / W, D = L.dirty ||= { x0: fw, y0: fh, x1: 0, y1: 0 };
     for (let i = L.n; i < list.length; i++) {
       const m = list[i], cx = m.cx * M, cy = m.cy * M, r = m.r * M;
       const x0 = Math.max(0, Math.floor((cx - r) * s) - 1), y0 = Math.max(0, Math.floor((cy - r) * s) - 1);
       const x1 = Math.min(fw, Math.ceil((cx + r) * s) + 1), y1 = Math.min(fh, Math.ceil((cy + r) * s) + 1);
       if (x1 <= x0 || y1 <= y0) continue;
-      this.pass(this.pLiq, L.B, fw, fh, L.A.t);
-      gl.scissor(x0, y0, x1 - x0, y1 - y0);
+      // 只畫筆刷那一塊：暫存 B 跟那一塊一樣大，不是整張位移場。
+      // 以前 B 跟位移場一樣大（最大 1536×2048），iPhone 的 GPU 每推一下都要把整張讀進來再寫回去，一格推好幾下就很吃力
+      const bw = x1 - x0, bh = y1 - y0;
+      if (L.B.w < bw || L.B.h < bh) this.sizeFbo(L.B, Math.max(L.B.w, bw, 64), Math.max(L.B.h, bh, 64));
+      this.pass(this.pLiq, L.B, bw, bh, L.A.t);
+      gl.uniform2i(u.uOff, x0, y0);
       gl.uniform2f(u.uImg, W, H); gl.uniform1f(u.uStep, L.step); gl.uniform3f(u.uM, cx, cy, r); gl.uniform1i(u.uT, m.t);
       gl.uniform2f(u.uV, m.t === 0 ? m.a * M : m.a, m.t === 0 ? m.b * M : 0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       // 改好的那一塊抄回 A
       gl.bindTexture(gl.TEXTURE_2D, L.A.t);
-      gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, x0, y0, x0, y0, x1 - x0, y1 - y0);
+      gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, x0, y0, 0, 0, bw, bh);
+      D.x0 = Math.min(D.x0, x0); D.y0 = Math.min(D.y0, y0); D.x1 = Math.max(D.x1, x1); D.y1 = Math.max(D.y1, y1);
     }
-    gl.disable(gl.SCISSOR_TEST);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     L.n = list.length; L.last = list[list.length - 1];
   }
@@ -1201,7 +1235,7 @@ export class Renderer {
     if (this.canvas.width !== ow || this.canvas.height !== oh) { this.canvas.width = ow; this.canvas.height = oh; }
     if (!this.tOrig) this.tOrig = this.tex();
     if (this.origSrc !== src) { this.upload(this.tOrig, src); this.origSrc = src; }
-    this.pass(this.pCopy, null, ow, oh, this.tOrig);
+    this.pass(this.pCopy, null, ow, oh, this.tOrig); this.canvasOk = false;
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
