@@ -1284,5 +1284,28 @@ export class Renderer {
     gl.viewport(0, oh - ph, ow, ph);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
+  // 存草稿的縮圖（評審 L9）：畫面在 GPU 上先一半一半縮（每次 2×2 平均），最後縮到長邊 max，只讀回這一小張。
+  // 以前把整張畫面畫到 2D 畫布再縮，iPhone 要把一千多萬位元組從 GPU 讀回主執行緒，存草稿那一下會頓
+  thumb(max) {
+    const gl = this.gl, c = this.canvas, k = Math.min(1, max / Math.max(c.width, c.height));
+    const tw = Math.max(1, Math.round(c.width * k)), th = Math.max(1, Math.round(c.height * k));
+    this.fbT ||= [];
+    let src = null, w = c.width, h = c.height, i = 0;
+    const blit = (dst, nw, nh) => {
+      this.sizeFbo(dst, nw, nh);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, src ? src.f : null); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dst.f);
+      gl.blitFramebuffer(0, 0, w, h, 0, 0, nw, nh, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+      src = dst; w = nw; h = nh;
+    };
+    while (w > tw * 2 && h > th * 2) blit(this.fbT[i++] ||= this.fbo(), Math.ceil(w / 2), Math.ceil(h / 2));
+    blit(this.fbT[i] ||= this.fbo(), tw, th);
+    const d = new Uint8ClampedArray(tw * th * 4), row = tw * 4;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, src.f); gl.readPixels(0, 0, tw, th, gl.RGBA, gl.UNSIGNED_BYTE, d); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    // 讀回來是下面那列在前：上下翻過來；透明的地方跟以前一樣當成黑底（存成 JPEG）
+    const out = new ImageData(tw, th);
+    for (let y = 0; y < th; y++) out.data.set(d.subarray((th - 1 - y) * row, (th - y) * row), y * row);
+    for (let j = 3; j < out.data.length; j += 4) out.data[j] = 255;
+    return out;
+  }
   dropOrig() { if (this.tOrig) { this.gl.deleteTexture(this.tOrig); this.tOrig = null; this.origSrc = null; } }
 }
