@@ -4,8 +4,8 @@ import Security
 // 直接用 Supabase 的 REST API（不裝 SDK，編譯快、App 小）
 // 網址和 publishable key 跟網頁版 config.js 一樣，本來就是公開用的
 @MainActor enum Supa {
-    static let url = URL(string: "https://ptocokzxpwwautnbbuup.supabase.co")!
-    static let key = "sb_publishable_p_eT8zA9iEEITNyUFslSpQ_BU62SO9n"
+    nonisolated static let url = URL(string: "https://ptocokzxpwwautnbbuup.supabase.co")!
+    nonisolated static let key = "sb_publishable_p_eT8zA9iEEITNyUFslSpQ_BU62SO9n"
 
     struct Session: Codable {
         var access_token: String
@@ -263,11 +263,15 @@ import Security
 
     // IG Reel 的影片網址（IG 的網址會過期，ReelCache 記到期前 5 分鐘）
     static func reelVideo(_ source: String) async throws -> URL? {
-        let s = try await fresh()
+        let token = try await fresh().access_token
+        return try await reelVideoRequest(source, token: token)
+    }
+    // 送請求、解 JSON 不在主執行緒（Swift 5 模式下 nonisolated async 在背景執行緒池跑）；登入憑證留在主執行緒拿
+    nonisolated private static func reelVideoRequest(_ source: String, token: String) async throws -> URL? {
         var r = URLRequest(url: URL(string: "\(url.absoluteString)/functions/v1/reel-video")!)
         r.httpMethod = "POST"
         r.setValue(key, forHTTPHeaderField: "apikey")
-        r.setValue("Bearer \(s.access_token)", forHTTPHeaderField: "Authorization")
+        r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.httpBody = try JSONEncoder().encode(["url": source])
         r.timeoutInterval = 20

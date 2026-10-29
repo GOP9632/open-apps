@@ -123,11 +123,17 @@ struct DrawPrefs: Codable, Equatable {
         return out
     }
 
+    // 解析過的收藏日期（每間每次都用 DateFormatter 解析，按一下要 3、4ms）；解析不出來的也記著
+    @ObservationIgnored private var born: [String: Date?] = [:]
+
     // 權重 = 距離 × 等待：近的、收藏很久還沒去的比較容易抽到
     private func weight(_ store: Store, _ p: Place) -> Double {
         let dist = store.distance(p).map { 1 / (1 + $0 / 1000 / 2) } ?? 1
         guard !p.been else { return dist }
-        let days = Self.day.date(from: String((p.created_at ?? "").prefix(10))).map { Date().timeIntervalSince($0) / 86400 } ?? 0
+        let k = String((p.created_at ?? "").prefix(10))
+        let d: Date?
+        if let hit = born[k] { d = hit } else { d = Self.day.date(from: k); born.updateValue(d, forKey: k) }
+        let days = d.map { Date().timeIntervalSince($0) / 86400 } ?? 0
         return dist * (1 + min(max(days, 0), 90) / 90)
     }
     private static let day: DateFormatter = {

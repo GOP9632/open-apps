@@ -47,7 +47,7 @@ struct PlaceMedia: View {
                 try? await Task.sleep(for: .milliseconds(350))
                 guard !Task.isCancelled else { return }
                 guard let f = await ReelCache.url(src), !Task.isCancelled else { print("[reel] 這則沒有影片網址"); return }
-                u = f; p = ReelCache.player(f)
+                u = f; p = await ReelCache.build(f, .userInitiated)
             }
             print("[reel] 影片網址 \(u.host() ?? "")")
             // 設定聲音類別是同步跟系統要東西：放到背景做，不卡主執行緒（推頁那幾幀）
@@ -60,7 +60,7 @@ struct PlaceMedia: View {
                 print("[reel] 串流沒成功，改成先下載")
                 p.pause(); p.replaceCurrentItem(with: nil)
                 guard let local = await Self.download(u), !Task.isCancelled else { print("[reel] 下載失敗"); return }
-                p = ReelCache.player(local)
+                p = await ReelCache.build(local, .userInitiated)
                 start(p)
                 guard await Self.waitReady(p) else { return }
             }
@@ -170,9 +170,9 @@ struct PlaceMedia: View {
         Task {
             guard let u = await url(src), !ready.contains(where: { $0.src == src }) else { return }
             // 建播放器不在主執行緒（建 asset、item 會占掉一兩幀，地圖還在動、大卡還在彈）
-            let made = await Task.detached(priority: .utility) { Made(player(u)) }.value
-            guard !ready.contains(where: { $0.src == src }) else { return }
-            ready.append((src, u, made.player))
+            let pl = await build(u)
+            guard !ready.contains(where: { $0.src == src }) else { pl.replaceCurrentItem(with: nil); return }
+            ready.append((src, u, pl))
             if ready.count > 2 { ready.removeFirst().player.replaceCurrentItem(with: nil) }
         }
     }
@@ -181,6 +181,11 @@ struct PlaceMedia: View {
     private final class Made: @unchecked Sendable {
         let player: AVPlayer
         init(_ p: AVPlayer) { player = p }
+    }
+
+    // 在背景建播放器（店家頁沒預載到時也一樣，不在推頁動畫尾巴卡主執行緒）
+    static func build(_ u: URL, _ pr: TaskPriority = .utility) async -> AVPlayer {
+        await Task.detached(priority: pr) { Made(player(u)) }.value.player
     }
 
     static func take(_ src: String) -> (URL, AVPlayer)? {
