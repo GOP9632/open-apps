@@ -243,3 +243,17 @@ s1b 本來就沒有字形載入，沒東西可省；-emojiWarm 量 1 次最長 1
 - H2 主執行緒等 CA 的鎖：__psynch_mutexwait 不在 sampletree 的 IDLE 清單（tools/sampletree.py:8），所以算忙。s2b 35 個，23 個上層是 MapKit 圖釘狀態更新（MKAnnotationContainerView _performStateUpdatesIfNeeded）在等 CA commit 的鎖。查出拿鎖的是誰，我們能動的也只有「少在降落那一刻改 Map 的 annotation」，就是 E、D 在做的事，所以 H2 只幫 E 判斷，不會自己產生修法。更正：「-emojiImg all 那次 mutex 只有 2」是 s1b 的數字，不能拿 s2b 去比。
 - 降落後約 900ms 那幀（E1 2905:198、E3 2880:288 靜止空白）：很可能是同一種東西。那時選中的 spring、PinBurst、大卡升起都播完了，錄影只在畫面有變時才寫一幀（推論）。也可能是第一次飛到新地區，圖釘封面照片陸續到、各自淡入（MapTab.swift:1873-1877）。M7 用記號分。要是之後真的要讓預載等降落，寫成最多再等 1.5 秒（quiet.flyTo 只有對上終點時才清掉，MapTab.swift:201-204，沒對上會一直等），而且這也是改時機，要問 Anthony。
 - H5 冷比熱貴：混了「第一次建畫面」和「地圖移得遠」，現在分不開，M4 對齊平移距離再看。預熱大卡這類修法現在談太早。
+
+## 6. 第 3 節的結果（模擬器讀 52a0b69 現成檔，2026-10-29 17:35Z）
+
+更正和更新，第 4 節照跑，判讀照這裡：
+
+- **基準降落幀是 83，不是 122 到 140。** 那個範圍混了 E1 127、-noHopScale 122、-noMidStop 140。E3 基準降落附近最長是 83（1960ms），只有 1 次。所以 -emojiImg pin 97、all 72、-landDefer 43 都要跟 83 比，A 在降落幀上幾乎看不出差別，只剩 -landDefer 的 43 明顯低。E1 s1b busy 198 沒抄錯。
+- **浮層的「飛完 X ms」量不到降落那一下（都是 3 到 6）。** 推論：onMapCameraChange 是在 MapKit 自己的逐幀回呼裡跑的，Perf 的 tick 緊接在同一幀，SwiftUI 的更新和 CA 提交還沒做。所以 M1、M2 一律看 H1 印的「掉幀」那幾行，不要看浮層的「飛完」。
+- **「降落後補做 82 ms」是真的成本。** 它是從 Task 打的記號，下一個 tick 在 SwiftUI 更新和提交之後，所以 82ms 就是附近清單加泡泡重組一起做的那一幀。這是目前找到最大的一塊單幀成本。也表示只延後（4.E 原樣）是把 80ms 的卡頓搬到 0.6 秒後，不是拿掉。M2 拆開量之後，修法要往「變便宜」或「拆到不同幀」走：哪一塊貴就先處理哪一塊（清單重建或泡泡重組），兩塊分在相鄰兩幀做也是選項。這只差一兩幀，看不出時機改變（推論，量完再確認）。M2 請同時記「降落後補做」那筆掉幀。
+- **字形重畫是我們的 emoji，不是地名。** loadPart、CopyGlyph 的上層是某個 CALayer 用 CGDisplayList 在 CPU 上重畫字形；-emojiImg all 讓 s2b 的 ripc_DrawGlyphs 從 39 降到 7、CABackingStoreUpdate_ 從 81 降到 30，所以畫的是 -emojiImg 換掉的那幾種 emoji（推論：MapKit 把 SwiftUI 標註畫進 layer 的 backing store，縮放時重新點陣化）。s1b 冷沒有省。所以 A 只在 s2b 遠飛（很多新圖釘、泡泡一起出現）有 CPU 上的證據，M1 以 s2b 為主。
+- **F 結案，不做**：E7 -smallBurst 的 _display 是 203，比不加的 131 還多，縮小框沒有省到。
+- **C 結案，不做**：vSepConvolve、make_cgimage 都在 RenderBox 的 apply_blur 底下，沒有 App 的 frame。
+- **H2 的另一個提交者是 SwiftUI.AsyncRenderer**（s2b 47 個樣本，s1b 冷 7 個），沒有 VectorKit、AVFoundation 的執行緒在提交 CA。App 裡沒有 drawingGroup 或 rendersAsynchronously；用到 Canvas 的有 PinBurst（MapTab.swift:1924、:1928）和 Draw.swift:813，另有 4 個 TimelineView。M7 看 mutexwait 多的那幾幀時，順便記當時有沒有 PinBurst 在播。
+- **InsetLayoutComputer**：沒有 App 的 frame，分不出 :309 還是 :338，先不追。
+- **H5 冷比熱貴**：沒有單一熱點，多的是 Swift metadata 第一次查表、SwiftUI 圖第一次建、VectorKit。浮層「點圖釘」冷的是 86 到 148ms，熱的是 43 到 67ms。M3、M4 量完，冷的「放開後第一幀」如果常常超過 100ms，再考慮開 App 後在空檔先建一次大卡（改時機，要問 Anthony）。
