@@ -29,85 +29,117 @@ vec2 liq(sampler2D t, vec2 uv, float s){
 // 濾鏡的紋理（評審 M52；參數見 setGlow 的 tx、filters.json 的 tex）：醒圖不少底片、復古濾鏡疊了灰塵刮痕、漏光、網點、斑駁的素材，
 // 我們不拿它的素材，全部在這裡用程式產生：位置用照片座標（照片短邊 = 1）、種子固定，預覽、存檔一樣，拉強度不會閃
 const TEX_GLSL = `uniform float uTon;
-uniform vec4 uTd, uTf, uTx;      // 灰塵點：密度、大小、最亮、分布；纖維：密度、大小、最亮、粗細；x：種子、刮痕條數、刮痕粗細、刮痕最亮
+uniform vec4 uTd, uTf, uTx;      // 灰塵點：密度、大小、最亮、亮度分布；纖維：密度、長度、最亮、粗細；x：種子、刮痕條數、刮痕粗細、刮痕最亮
+uniform vec4 uTq, uTr;           // 灰塵：大小分布（指數越大小點越多）、最長的橢圓長寬比、白點群最亮、白點群裡亮點的比例；白點群：中心（照片 0～1）、半徑（短邊）
 uniform vec4 uTs[4];             // 刮痕兩端（短邊單位）
-uniform vec4 uTl[3], uTc[3];     // 漏光：中心（照片 0～1）、半徑（短邊）；顏色、w 0 照片座標／1 照片邊
-uniform vec4 uTh;                // 網點：週期（短邊）、角度、強度
-uniform vec4 uTm, uTn, uTo;      // 斑駁：中心 xy（照片 0～1）、範圍半徑 xy（短邊）；顏色 rgb、多少；飽和度門檻（從、到），斑點的大小、門檻（短邊）
+uniform vec4 uTl[4], uTc[4];     // 漏光：中心（照片 0～1）、半徑（短邊）；顏色（正的濾色疊上、負的乘上去壓暗那個通道）、w 有沒有這團
+uniform vec4 uTh;                // 網點：週期（短邊）、角度、強度、暗點加深
+uniform vec4 uTw;                // 紙紋：格子大小（短邊）、深淺、線寬（短邊）、線長是格子的幾倍（最多 3）
+uniform vec4 uTm, uTn, uTo;      // 斑駁：中心 xy（照片 0～1）、範圍半徑 xy（短邊）；顏色 rgb、多少；飽和度門檻（從、到），方塊大小（短邊）、門檻
 vec4 th4(ivec2 c, uint s){ uvec2 v = uvec2(c) * 1664525u + 1013904223u + s * 2654435761u; v.x += v.y * 1664525u; v.y += v.x * 1664525u; v ^= v >> 16u; v.x += v.y * 1664525u; v.y += v.x * 1664525u; v ^= v >> 16u; v.x += v.y * 1664525u; v.y += v.x * 1664525u; v ^= v >> 16u; uint h = v.x ^ v.y, k = v.x * 2246822519u + v.y; return vec4(uvec4(h & 65535u, h >> 16u, k & 65535u, k >> 16u)) / 65535.0; }
 // 半徑 r 的圓點蓋住這個像素多少（fw 一個像素多寬）：比像素小的點照面積變淡，不會一閃一閃
 // 邊緣軟一點（至少 0.7 倍半徑寬）：醒圖的灰塵是放大過的素材，邊不銳利
 float dotCov(float d, float r, float fw){ float e = max(fw, 0.7 * r); return r >= 0.5 * fw ? clamp((r + 0.5 * e - d) / e, 0.0, 1.0) : min(1.0, 3.2 * r * r / (fw * fw)) * clamp(1.0 - d / (0.5 * fw + r), 0.0, 1.0); }
-// 到圓弧的距離：圓心 c、半徑 R、從角度 a 轉 s（弧度）；w = 半徑起伏（幅度、沿弧長每單位幾圈、相位），毛屑歪歪扭扭
-float arcD(vec2 g, vec2 c, float R, float a, float s, vec3 w){ vec2 q = g - c; float t = mod(atan(q.y, q.x) - a, 6.2831853); if (t <= s) return abs(length(q) - R - w.x * sin(w.y * R * t + w.z)); float r0 = R + w.x * sin(w.z), r1 = R + w.x * sin(w.y * R * s + w.z); vec2 e0 = c + r0 * vec2(cos(a), sin(a)), e1 = c + r1 * vec2(cos(a + s), sin(a + s)); return min(length(g - e0), length(g - e1)); }
+// 一段圓弧：從 p 出發、方向 a、曲率 k（正的往左彎）、長 l；回傳到 g 的距離、走到哪（0～1）。幾乎不彎就當直線
+vec2 arcSeg(vec2 g, vec2 p, float a, float k, float l){
+  vec2 q = g - p; float cs = cos(a), sn = sin(a); q = vec2(cs * q.x + sn * q.y, -sn * q.x + cs * q.y);
+  if (k < 0.0) q.y = -q.y;
+  float ak = abs(k);
+  if (ak * l < 1e-3) { float t = clamp(q.x / l, 0.0, 1.0); return vec2(length(q - vec2(t * l, 0.0)), t); }
+  float R = 1.0 / ak, s = l * ak; vec2 v = q - vec2(0.0, R);
+  float u = mod(atan(v.y, v.x) + 1.5707963, 6.2831853);
+  if (u <= s) return vec2(abs(length(v) - R), u / s);
+  float d0 = length(q), d1 = length(q - R * vec2(sin(s), 1.0 - cos(s)));
+  return d0 < d1 ? vec2(d0, 0.0) : vec2(d1, 1.0);
+}
 // 數值雜訊（格點隨機值、平滑內插），0～1
 float vnoise(vec2 q, uint s){ ivec2 c = ivec2(floor(q)); vec2 f = fract(q); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(th4(c, s).x, th4(c + ivec2(1, 0), s).x, f.x), mix(th4(c + ivec2(0, 1), s).x, th4(c + ivec2(1, 1), s).x, f.x), f.y); }
-float segD(vec2 g, vec2 a, vec2 b){ vec2 ab = b - a; float t = clamp(dot(g - a, ab) / dot(ab, ab), 0.0, 1.0); return length(g - a - ab * t); }
+// 紙紋（醒圖舊報）：很多條淡淡的細長直線，方向亂、有的偏亮有的偏暗，像紙的纖維、細摺痕；回傳 −1～1
+float paper(vec2 g, float cs, float w, float lf, float fw, uint s){
+  vec2 q = g / cs; ivec2 c0 = ivec2(floor(q)); float v = 0.0;
+  for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) {
+    ivec2 c = c0 + ivec2(i, j); vec4 h = th4(c, s), k = th4(c, s + 5u);
+    float a = 3.14159265 * h.z, L = cs * lf * (0.4 + 0.6 * h.w); vec2 ab = L * vec2(cos(a), sin(a)), P = (vec2(c) + h.xy) * cs - 0.5 * ab;
+    float t = clamp(dot(g - P, ab) / dot(ab, ab), 0.0, 1.0), al = (2.0 * k.x - 1.0) * (0.3 + 0.7 * k.y) * smoothstep(0.0, 0.2, t) * smoothstep(1.0, 0.8, t) * dotCov(length(g - P - ab * t), w, fw);
+    if (abs(al) > abs(v)) v = al;
+  }
+  return v;
+}
 vec3 texLayer(vec3 o, vec2 g, vec2 E, float fw){
   uint sd = uint(uTx.x);
-  float a = 0.0;
+  float A = 0.0;
   if (uTd.x > 0.0) {
+    // 白點群（醒圖邊緣漏光左下角）：這一區有些點換成很亮的白點
+    vec2 rd = uTr.z > 0.0 ? (g - uTr.xy * E) / uTr.zw : vec2(1e3); float rw = exp(-0.5 * dot(rd, rd));
     // 灰塵點：每格（平均一格一顆）擲一次，有就放在格子裡隨機位置；兩層格子錯開，看不出格線
     for (int L = 0; L < 2; L++) {
       float cell = inversesqrt(uTd.x) * (L == 0 ? 1.0 : 1.4142); vec2 q = g / cell + float(L) * 0.5; ivec2 c = ivec2(floor(q));
       vec4 h = th4(c, sd + uint(L) * 7u);
       if (h.x < (L == 0 ? 0.67 : 0.66)) {
-        // 大小、長短（有些是短短一撇）、方向、亮度都隨機；亮度 u^w：w 越大暗的越多、亮的少
+        // 大小、長短、方向、亮度都隨機；大小 h^指數：指數越大小點越多、大塊越少（醒圖多半是小圓點）；亮度 u^w：w 越大暗的越多、亮的少
         vec4 k = th4(c, sd + 99u + uint(L));
-        float r = uTd.y * (0.35 + 1.3 * h.y * h.y), el = 1.0 + 1.5 * k.y * k.y, rc = min(0.45, r * el / cell);
+        bool wh = k.w < uTq.w * rw;  // 白點群裡的亮點：大三倍
+        float r = uTd.y * (0.35 + 1.3 * pow(h.y, uTq.x)) * (wh ? 3.0 : 1.0), el = 1.0 + (uTq.y - 1.0) * k.y * k.y, rc = min(0.45, r * el / cell);
         vec2 pp = rc + (1.0 - 2.0 * rc) * h.zw, v = (fract(q) - pp) * cell;
         float an = 6.2831853 * k.z, cs = cos(an), sn = sin(an);
         float d = length(vec2((cs * v.x + sn * v.y) / el, -sn * v.x + cs * v.y)), al = uTd.z * pow(k.x, uTd.w);
-        a = max(a, al * dotCov(d, r, fw));
+        if (wh) al = uTq.z * (0.5 + 0.5 * k.x);
+        A = max(A, al * dotCov(d, r, fw));
       }
     }
   }
   if (uTf.x > 0.0) {
-    // 纖維、毛屑：一格最多一條，一段或兩段反彎的圓弧（S 形）；看周圍 3×3 格
+    // 毛髮、纖維：一格最多一條，四段圓弧接起來，每段的彎度接著上一段慢慢變（平滑、不規則地彎，常常一頭捲起來，像 C、S、問號）；
+    // 粗細、亮度沿線變，兩頭淡掉。看周圍 3×3 格
     float cell = inversesqrt(uTf.x); vec2 q = g / cell; ivec2 c0 = ivec2(floor(q));
     for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
-      ivec2 c = c0 + ivec2(i, j); vec4 h = th4(c, sd + 31u), k = th4(c, sd + 57u);
+      ivec2 c = c0 + ivec2(i, j); vec4 h = th4(c, sd + 31u);
       if (h.x > 0.8) continue;
-      // 長度 ℓ 固定在 0.3～1 倍大小，彎曲（圓心角）隨機：捲的、彎的、幾乎直的都有
-      float len = uTf.y * (0.3 + 0.7 * h.y), s = 0.15 + 3.6 * k.x * k.x, R = len / s, a0 = 6.2831853 * k.y;
-      vec2 ct = (vec2(c) + h.zw) * cell - R * vec2(cos(a0 + 0.5 * s), sin(a0 + 0.5 * s));
-      vec3 wv = vec3(len * 0.07 * h.y, 6.2831853 * (1.5 + 3.0 * k.w) / len, 6.2831853 * k.z);
-      float d = arcD(g, ct, R, a0, s, wv);
-      if (k.z < 0.45) { // 第二段：接在第一段尾巴，反方向彎（S 形）
-        float a1 = a0 + s, s2 = 0.3 + 2.2 * k.w, R2 = len * (0.4 + 0.6 * k.w) / s2; vec2 e = ct + R * vec2(cos(a1), sin(a1));
-        vec2 c2 = e + R2 * vec2(cos(a1), sin(a1));
-        d = min(d, arcD(g, c2, R2, a1 + 3.14159265 - s2, s2, wv));
+      float len = uTf.y * (0.3 + 0.7 * h.y), l = 0.25 * len; vec2 p = (vec2(c) + h.zw) * cell;
+      if (length(g - p) > len + 3.0 * uTf.w + fw) continue;
+      vec4 k = th4(c, sd + 57u), m = th4(c, sd + 77u);
+      float hd = 6.2831853 * k.x, tw = (k.y - 0.5) * 1.6, best = 1e9, bt = 0.0;
+      for (int s = 0; s < 4; s++) {
+        vec2 r = arcSeg(g, p, hd, tw / l, l);
+        if (r.x < best) { best = r.x; bt = (float(s) + r.y) * 0.25; }
+        vec2 e = abs(tw) < 1e-3 ? vec2(l, 0.0) : l / abs(tw) * vec2(sin(abs(tw)), sign(tw) * (1.0 - cos(abs(tw))));
+        p += vec2(cos(hd) * e.x - sin(hd) * e.y, sin(hd) * e.x + cos(hd) * e.y); hd += tw;
+        tw = clamp(tw * 1.35 + (th4(c, sd + 60u + uint(s)).x - 0.5), -2.0, 2.0);
       }
-      float al = uTf.z * (0.35 + 0.65 * th4(c, sd + 77u).x);
-      a = max(a, al * dotCov(d, uTf.w, fw));
+      float vr = bt < 0.5 ? mix(m.x, m.y, 2.0 * bt) : mix(m.y, m.w, 2.0 * bt - 1.0);
+      float al = uTf.z * (0.35 + 0.65 * m.z) * (0.45 + 0.55 * vr) * smoothstep(0.0, 0.12, bt) * smoothstep(1.0, 0.88, bt);
+      A = max(A, al * dotCov(best, uTf.w * (0.6 + 0.8 * vr), fw));
     }
   }
   for (int i = 0; i < 4; i++) {
     if (float(i) >= uTx.y) break;
-    // 刮痕：細長直線，兩端淡掉
-    vec2 A = uTs[i].xy, B = uTs[i].zw, ab = B - A; float t = clamp(dot(g - A, ab) / dot(ab, ab), 0.0, 1.0);
-    float d = length(g - A - ab * t), al = uTx.w * smoothstep(0.0, 0.25, t) * smoothstep(1.0, 0.75, t);
-    a = max(a, al * dotCov(d, uTx.z, fw));
+    // 刮痕：細長直線，兩端淡掉，沿線亮度有起伏
+    vec2 P = uTs[i].xy, ab = uTs[i].zw - P; float t = clamp(dot(g - P, ab) / dot(ab, ab), 0.0, 1.0);
+    float d = length(g - P - ab * t), al = uTx.w * smoothstep(0.0, 0.25, t) * smoothstep(1.0, 0.75, t) * (0.55 + 0.45 * vnoise(vec2(t * 12.0, float(i) * 3.0), sd + 41u));
+    A = max(A, al * dotCov(d, uTx.z, fw));
   }
-  o = min(o + (1.0 - dot(o, vec3(0.299, 0.587, 0.114))) * a, 1.0);  // 灰塵、刮痕是白的：照醒圖只在亮度上濾色，三個通道加一樣多（不會染色）
-  for (int i = 0; i < 3; i++) {
+  o = min(o + (1.0 - dot(o, vec3(0.299, 0.587, 0.114))) * A, 1.0);  // 灰塵、刮痕是白的：照醒圖只在亮度上濾色，三個通道加一樣多（不會染色）
+  if (uTw.y > 0.0) o *= 1.0 + uTw.y * paper(g, uTw.x, uTw.z, uTw.w, fw, sd + 21u);  // 紙紋：亮的、暗的細線都是乘上去
+  for (int i = 0; i < 4; i++) {
     if (uTc[i].w <= 0.0) break;
-    // 漏光：一團顏色（高斯）用濾色疊上，中心可以在照片外
+    // 漏光：一團顏色（高斯），中心可以在照片外；正的濾色疊上（變亮），負的乘上去把那個通道壓暗（醒圖寶麗舊影左上偏紫粉、右上偏綠）
     vec2 d = (g - uTl[i].xy * E) / uTl[i].zw; vec3 l = uTc[i].rgb * exp(-0.5 * dot(d, d));
-    o = 1.0 - (1.0 - o) * (1.0 - l);
+    o = (1.0 - (1.0 - o) * (1.0 - max(l, 0.0))) * (1.0 + min(l, 0.0));
   }
   if (uTh.z != 0.0) {
     // 網點：轉 θ 的兩組直角條紋（醒圖復古雜誌：週期 896 寬上 4.8 像素、54°），起伏照 x(1−x)，中間調最明顯（像柔光疊上去）
+    // w：暗點比亮點深（醒圖的是淺底上的深色網點，w 減掉 w² 那份，平均不變）；暗部也看得到（o^0.75）
     float cs = cos(uTh.y), sn = sin(uTh.y); vec2 r = mat2(cs, sn, -sn, cs) * g * (6.2831853 / uTh.x);
-    o += uTh.z * o * (1.0 - o) * (cos(r.x) + cos(r.y));
+    float w = cos(r.x) + cos(r.y); w -= uTh.w * (w * w - 1.0);
+    o += uTh.z * pow(o, vec3(0.75)) * (1.0 - o) * w;
   }
   if (uTn.w > 0.0) {
-    // 斑駁（醒圖暖調膠片）：一塊平頂的橢圓範圍裡撒小斑點（雜訊過門檻），往一個顏色推；只出現在鮮豔的地方
-    // （醒圖的只在紅毛衣上，旁邊的脖子、背景沒有：照飽和度 max−min 開關）
+    // 斑駁（醒圖暖調膠片）：一塊平頂的橢圓範圍裡撒小方塊（像低解析度放大、不內插；兩種大小），方塊再照大一點的雲聚成團，往一個顏色推；
+    // 只出現在鮮豔的地方（醒圖的只在紅毛衣上，旁邊的脖子、背景沒有：照飽和度 max−min 開關）
     vec2 d = (g - uTm.xy * E) / uTm.zw; float r2 = dot(d, d), m = exp(-0.5 * r2 * r2);
-    float hi = 0.6 * vnoise(g / uTo.z, sd + 8u) + 0.4 * vnoise(g / uTo.z * 2.1, sd + 9u);
-    float v = smoothstep(uTo.x, uTo.y, max(o.r, max(o.g, o.b)) - min(o.r, min(o.g, o.b))) * smoothstep(uTo.w, uTo.w + 0.25, hi) * m * uTn.w;
+    float hi = 0.4 * th4(ivec2(floor(g / uTo.z)), sd + 8u).x + 0.25 * th4(ivec2(floor(g / uTo.z * 0.5)), sd + 10u).x + 0.35 * vnoise(g / (uTo.z * 6.0), sd + 9u);
+    float v = smoothstep(uTo.x, uTo.y, max(o.r, max(o.g, o.b)) - min(o.r, min(o.g, o.b))) * smoothstep(uTo.w, uTo.w + 0.05, hi) * m * uTn.w;
     o = mix(o, uTn.rgb, v);
   }
   return clamp(o, 0.0, 1.0);
@@ -1226,15 +1258,18 @@ export class Renderer {
   // p、q 是顆粒跟亮度的曲線 L^p·(1−L)^q（沒給是 1、1：4L(1−L)）；N 是照片短邊幾格（顆粒粗細，見 GRAIN_N）
   // tx：紋理（filters.json 的 tex，評審 M52，見 TEX_GLSL），灰塵、漏光這些的不透明度也跟著強度變
   setGlow(q, k, gr, tx) { this.glow = (q || gr || tx) && k > 0 ? { q, k, gr, tx } : null; }
-  // 紋理的 uniform：seed 種子；d 灰塵點 [密度（短邊平方幾顆）, 大小, 最亮, 亮度分布指數]；f 纖維 [密度, 長度, 最亮, 粗細]；
-  // s 刮痕 [條數, 粗細, 最亮]；l 漏光 [[中心 x, y（照片 0～1）, 半徑 x, y（短邊）, R, G, B]…]（最多 3 團，濾色）；
-  // h 網點 [週期（短邊）, 角度, 強度]；m 斑駁 [中心 x, y, 範圍半徑 x, y, R, G, B, 多少, 雲大小, 雲門檻, 小點大小, 小點門檻]
+  // 紋理的 uniform：seed 種子；d 灰塵點 [密度（短邊平方幾顆）, 大小, 最亮, 亮度分布指數, 大小分布指數, 最長的橢圓長寬比]；
+  // b 白點群 [中心 x, y（照片 0～1）, 半徑 x, y（短邊）, 最亮, 亮點比例]；f 毛髮、纖維 [密度, 長度, 最亮, 粗細]；s 刮痕 [條數, 粗細, 最亮]；
+  // w 紙紋 [格子大小, 深淺, 線寬, 線長是格子的幾倍]；l 漏光 [[中心 x, y（照片 0～1）, 半徑 x, y（短邊）, R, G, B]…]（最多 4 團，正的濾色、負的壓暗）；
+  // h 網點 [週期（短邊）, 角度, 強度, 暗點加深]；m 斑駁 [中心 x, y, 範圍半徑 x, y, R, G, B, 多少, 飽和度門檻從, 到, 方塊大小, 門檻]
   texUni(u, G) {
     const gl = this.gl, T = G?.tx, k = G?.k || 0;
     gl.uniform1f(u.uTon, T ? 1 : 0);
     if (!T) return;
-    const s = Math.min(this.w, this.h), E = [this.w / s, (this.h + this.ext) / s], pad = (a, n) => a.concat(Array(n).fill(0)).slice(0, n);
-    gl.uniform4f(u.uTd, ...(T.d ? [T.d[0], T.d[1], T.d[2] * k, T.d[3]] : [0, 0, 0, 1]));
+    const s = Math.min(this.w, this.h), E = [this.w / s, (this.h + this.ext) / s], pad = (a, n) => a.concat(Array(n).fill(0)).slice(0, n), d = T.d, b = T.b;
+    gl.uniform4f(u.uTd, ...(d ? [d[0], d[1], d[2] * k, d[3]] : [0, 0, 0, 1]));
+    gl.uniform4f(u.uTq, d?.[4] ?? 2, d?.[5] ?? 2.5, b ? b[4] * k : 0, b ? b[5] : 0);
+    gl.uniform4f(u.uTr, ...(b ? b.slice(0, 4) : [0, 0, 0, 0]));
     gl.uniform4f(u.uTf, ...(T.f ? [T.f[0], T.f[1], T.f[2] * k, T.f[3]] : [0, 0, 0, 0]));
     // 刮痕：照種子固定的位置、斜一點，長 0.3～0.6 個短邊
     let r = (T.seed || 1) * 7919 % 233280;
@@ -1245,10 +1280,11 @@ export class Renderer {
     }
     gl.uniform4f(u.uTx, T.seed || 1, sc.length / 4, T.s?.[1] || 0, (T.s?.[2] || 0) * k);
     gl.uniform4fv(u.uTs, pad(sc, 16));
-    const L = (T.l || []).slice(0, 3);
-    gl.uniform4fv(u.uTl, pad(L.flatMap(l => l.slice(0, 4)), 12));
-    gl.uniform4fv(u.uTc, pad(L.flatMap(l => [l[4] * k, l[5] * k, l[6] * k, 1]), 12));
-    gl.uniform4f(u.uTh, ...(T.h ? [T.h[0], T.h[1], T.h[2] * k, 0] : [1, 0, 0, 0]));
+    gl.uniform4f(u.uTw, ...(T.w ? [T.w[0], T.w[1] * k, T.w[2], T.w[3]] : [1, 0, 0, 1]));
+    const L = (T.l || []).slice(0, 4);
+    gl.uniform4fv(u.uTl, pad(L.flatMap(l => l.slice(0, 4)), 16));
+    gl.uniform4fv(u.uTc, pad(L.flatMap(l => [l[4] * k, l[5] * k, l[6] * k, 1]), 16));
+    gl.uniform4f(u.uTh, ...(T.h ? [T.h[0], T.h[1], T.h[2] * k, T.h[3] || 0] : [1, 0, 0, 0]));
     const m = T.m;
     gl.uniform4f(u.uTm, ...(m ? m.slice(0, 4) : [0, 0, 1, 1]));
     gl.uniform4f(u.uTn, ...(m ? [m[4], m[5], m[6], m[7] * k] : [0, 0, 0, 0]));
