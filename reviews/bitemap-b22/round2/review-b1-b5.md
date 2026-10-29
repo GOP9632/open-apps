@@ -41,7 +41,85 @@ GroupsTab.swift:577 `@State private var match: Store.Match?` 下面加：
 
 震動跟著畫面：以前在別的分頁會先震一下、什麼都看不到，現在回到群組分頁、配對畫面出來時才震。這是跟著修 bug，不用另外問。
 
-**模擬器**：帶 -fakeMatch -fakeRound 開 App，進一輪滑卡後 1 秒內點分頁列的「地圖」：地圖上不能跳出配對畫面；切回群組分頁時配對畫面淡入、同時震一下。再一次：進一輪後切到收藏分頁打開新增框，等 2 秒關掉新增框，收藏分頁上不能跳配對畫面；切回群組才出來。Console 不能有「Attempt to present」。
+**模擬器**（作廢，滑卡時分頁列是藏著的，改照下面 R3-1b）：帶 -fakeMatch -fakeRound 開 App，進一輪滑卡後 1 秒內點分頁列的「地圖」：地圖上不能跳出配對畫面；切回群組分頁時配對畫面淡入、同時震一下。再一次：進一輪後切到收藏分頁打開新增框，等 2 秒關掉新增框，收藏分頁上不能跳配對畫面；切回群組才出來。Console 不能有「Attempt to present」。
+
+### R3-1b 朋友滑出配對時，配對畫面還是會蓋到別的分頁（R3-1 的修法在輪詢那條路沒效，要修）
+
+**模擬器回報**（3a839aa）：上面 R3-1 的驗收步驟做不到，是我寫錯了。滑卡畫面裡分頁列本來就藏著（Store.swift:80 的 `depth[tab] > 0`），按不到「地圖」。真的會在滑卡開著時離開群組分頁的路，主要是點「收藏好了」「之前收藏過了」通知（FoodMapApp.swift:395-401 → :182 → :237-239 設 `store.tab = 1`）。另一條是從店家頁「加進行程」後返回滑卡，6 秒內點訊息條（Trip.swift:676-679 → TripMode.swift:78）。
+
+**原因**（兩位反方都推翻不了）：celebrate 在 GroupsTab.swift:768 讀 `@Environment(\.tabActive)`。呼叫它的每 5 秒輪詢（:623-631）和 -fakeMatch（:617-621）都是 `.task`，在 RoundView 出現那一刻開始跑，抓的是當時那份 RoundView struct 的複本。@Environment 的值存在 struct 裡，SwiftUI 之後只把新值寫進下次要算 body 的那一份，不會改 closure 手上那份；@State（match、held）透過共用的儲存讀，才是最新值。
+
+所以輪詢裡讀到的 tabActive 永遠是進這輪那一刻的 true，guard 每次都過，人在收藏頁時朋友滑出配對，全螢幕「配對成功」照樣蓋上去，held 從來不會被設上。反過來也有一條（推論）：按「開始滑卡」後等網路的那段時間（:93-95）先切到別的分頁，RoundView 在藏著的群組分頁裡出現，輪詢抓到的就永遠是 false，回到群組盯著滑卡時，朋友的配對會一直被留著不跳。
+
+證據：SwiftUI 的 Environment 是 @frozen struct，wrappedValue 是 @inlinable，直接讀存在自己身上的值（Swift Forums「Reverse-Engineering SwiftUI」的 swiftinterface、OpenSwiftUI 的 Environment.swift）；Swift Forums「Behavior of environment values inside task」（2025-07-30）有人實測過：.task 開始後改 colorScheme，task 裡看不到，改 @State 看得到。onChange(of:initial:_:) 的 closure 每次重做（Apple 文件原文），所以 :613 那條「回到群組再跳」本身是對的，只是 held 永遠等不到。滑卡的 closure（:664-677）也是每次重做，沒問題。我掃過整個專案 38 個值型別的 @Environment，會改變看得到的行為的只有這一處。
+
+**修法**（不用問 Anthony，這是讓 R3-1 真的生效）：
+
+(1) GroupsTab.swift:766-772 的 celebrate 換成：
+```swift
+    private func celebrate(_ m: Store.Match) {
+        // 群組分頁藏著（Root.page 用 opacity 藏）：fullScreenCover 會蓋到別的分頁上，先留著，回到群組分頁再跳。
+        // 讀 store.tab、不讀 tabActive：輪詢和 -fakeMatch 的 .task 用的是進這頁那一刻的 self，
+        // @Environment 的值存在 struct 裡，那份複本之後不會更新；store 是 class，讀到的是現在的分頁。
+        // 2 = 群組分頁（FoodMapApp.swift:141），RoundView 只在群組分頁推進來（GroupsTab.swift:50）
+        guard store.tab == 2 else { held = m; Flag.log("[R3-1] 先留著 \(m.place.name) tab=\(store.tab) env=\(tabActive)"); return }
+        Flag.log("[R3-1] 跳出 \(m.place.name) tab=\(store.tab) env=\(tabActive)")
+        Haptic.success()
+        var t = Transaction(); t.disablesAnimations = true
+        withTransaction(t) { match = m }   // 關掉系統往上滑的轉場，由 MatchView 自己淡入
+    }
+```
+:593 的 `@Environment(\.tabActive)` 和 :613 的 onChange 都留著（onChange 的 closure 是新的，靠它在回到群組時放出留著的配對）。:593 的註解改成「只拿來觸發下面的 onChange；.task 裡讀到的是舊值，要不要跳看 store.tab」。:614 加一行記號：
+```swift
+            if on, match == nil, let m = held { Flag.log("[R3-1] 回到群組，放出留著的配對"); held = nil; celebrate(m) }
+```
+
+(2) 被取消後不要再往下跑。`try? await Task.sleep` 被取消時會馬上丟錯、被 try? 吞掉，接著照樣 celebrate、震一下、再打一次雲端（模擬器說「返回後 fake 配對取消了」，其實只是畫面跳不出來）。輪詢 :625 換成：
+```swift
+                do { try await Task.sleep(for: .seconds(5)) } catch { return }
+```
+-fakeMatch 那個 .task（:616-621）整段換成（順便加驗收用的等待秒數，不帶 -fakeMatchAfter 時跟現在一樣等 1 秒）：
+```swift
+        // 驗收用 -fakeMatch：進來就跳一次配對畫面（沒有配對就拿第一張當配對）
+        // -fakeMatchAfter 12：進來 12 秒才跳，留時間點通知離開群組分頁（驗 R3-1）；-fakeMatchAway：1 秒後自己走「點了收藏好了通知」那條路
+        .task {
+            guard Flag.on("-fakeMatch"), let r = store.rounds.first(where: { $0.id == rid }) else { return }
+            let wait = Flag.value("-fakeMatchAfter").flatMap { Double($0) } ?? 1
+            Flag.log("[R3-1] 假配對 \(wait) 秒後跳")
+            if Flag.on("-fakeMatchAway") {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                NotificationCenter.default.post(name: .openSaved, object: nil)
+            }
+            do { try await Task.sleep(for: .seconds(wait)) } catch { Flag.log("[R3-1] 假配對取消"); return }
+            if let m = store.matches(r).first ?? store.todo(r).first.map({ Store.Match(place: $0, who: store.membersOf(r.group_id), all: true) }) { celebrate(m) }
+        }
+```
+
+(3) 驗收用的 Console 記號（只有開發版、模擬器印，不用開 -perfOverlay）。Perf.swift 的 enum Flag 裡，`static let printChanges` 那行下面加：
+```swift
+    // 驗收用的 Console 記號：只有開發版、模擬器印，正式版這行編不進去
+    static func log(_ s: @autoclosure () -> String) {
+        #if DEBUG || targetEnvironment(simulator)
+        print(s())
+        #endif
+    }
+```
+FoodMapApp.swift:397 `let kind = …` 下一行加 `Flag.log("[notify] 點了通知 kind=\(kind ?? "nil")")`（專案是 Swift 5 模式、沒有預設 MainActor，didReceive 裡直接叫得到）。MatchView 的 `.onAppear {`（GroupsTab.swift:821）第一行加 `Flag.log("[R3-1] 配對畫面出現 tab=\(store.tab)")`。
+
+**模擬器**（iPhone 17，一次 build 就夠：記號裡的 env= 就是對照組，B 版印出「先留著 tab=1 env=true」就代表舊的 guard 在那一刻會直接跳出來）。
+
+準備：
+1. 在 Mac 建 ~/r31.json：`{"aps":{"alert":{"title":"R3-1 test","body":"tap me"},"sound":"default"},"kind":"saved"}`。
+2. 通知權限：「我的」→「找好時通知我」那一列寫「打開」就點它、系統問時按「允許」；寫「已打開 ✓」就不用動。只寫 App 自己的設定，不動收藏。
+3. 管線先驗：App 停在地圖分頁，另開一個終端機跑 `xcrun simctl push booted io.github.gop9632.foodmap ~/r31.json`。預期上方出橫幅，點了切到收藏頁最上面，Console 有 `[notify] 點了通知 kind=saved`。沒有橫幅或點了沒反應，就改用下面的備案。
+4. 群組卡片的按鈕要寫「開始滑卡」才開始（寫「繼續滑」「看結果」代表推進來的是雲端那一輪，換一個群組）。
+
+A. 人在收藏頁時先留著：帶 `-fakeRound -fakeMatch -fakeMatchAfter 12` 開 App，按「開始滑卡」，Console 出現「假配對 12.0 秒後跳」就跑 push、點橫幅（或先排好 `(sleep 4; xcrun simctl push booted io.github.gop9632.foodmap ~/r31.json) &`）。停在收藏頁等到滿 15 秒：收藏頁上沒有「配對成功」；Console 只多一行 `[R3-1] 先留著 … tab=1 env=…`，沒有「跳出」「配對畫面出現」「假配對取消」，也沒有「Attempt to present」。截圖，並記下 env= 是 true 還是 false。
+B. 回到群組才跳：點分頁列的「群組」。配對畫面原地淡入，Console 依序是「回到群組，放出留著的配對」「跳出 … tab=2」「配對畫面出現 tab=2」，各 1 行。關掉配對畫面再等 15 秒，不會再跳。（真機每跳一次配對會震兩下：celebrate 一下、愛心爆開一下，原本就是這樣；要確認的是在收藏頁時「跳出」「配對畫面出現」都是 0 行。）
+C. 一直在滑卡畫面：同樣參數重開、進一輪不動，約 12 秒直接跳出，Console 只有「跳出 … tab=2」，沒有「先留著」。再拿掉 -fakeMatchAfter 開一次，約 1 秒跳出，跟以前一樣。
+D. 推頁會取消（可選）：12 秒內點最上面那張卡進店家頁，Console 馬上有「假配對取消」，店家頁上不跳；返回後重新出現「假配對 12.0 秒後跳」。店家頁上不要按「加進行程」。
+備案（第 3 步的橫幅點不到時）：改帶 `-fakeRound -fakeMatch -fakeMatchAway -fakeMatchAfter 3`，進一輪 1 秒後 App 自己走 openSaved 切到收藏頁，再 3 秒才配對；預期同 A、B。
+判讀：A 印 env=true 而且沒有跳出，就是修好了，也證明舊寫法會出錯。如果 A 印的是 env=false，代表我對舊值的推論不成立、3a839aa 本來就沒事，這個修法也沒有壞處，照實回報即可。收尾不用清：假的一輪只在手機記憶體裡，通知只是橫幅。
 
 ### R3-2 群組頁主按鈕「繼續滑（剩 N 張）」放不下（U38，要修）
 
