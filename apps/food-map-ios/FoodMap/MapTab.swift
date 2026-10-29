@@ -27,6 +27,7 @@ struct MapTab: View {
     @State private var clusters: [PinCluster] = []
     @State private var hidden: Set<String> = []
     @State private var clusterTask: Task<Void, Never>?
+    @State private var settleTask: Task<Void, Never>?      // 框地圖要修正時，泡泡晚一點重組的保險
     // 選到很遠的店：先拉遠再降落
     @State private var flight: Flight?
     // 地圖鋪滿整個畫面，鏡頭框的那塊：上面到搜尋列下緣，下面到「最低段面板上緣再上去 56」（Apple 標誌貼在這，HIG 要它停在
@@ -163,10 +164,19 @@ struct MapTab: View {
                 .onMapCameraChange { c in
                     trip.toScreen = { proxy.convert($0, to: .global) }
                     if quiet.flying { quiet.flying = false; Perf.shared.mark("飛完") }
-                    if let f = trip.afterFit { trip.afterFit = nil; f() }
+                    store.mapRegion = c.region
+                    settleTask?.cancel()
+                    // 行程框地圖停好量了一次、要再修正：這次先不重組泡泡，等修正完停好再做（只做一次、在最後的鏡頭上做）；
+                    // 修正沒再停下來（幾乎沒動、被打斷）也會在 0.6 秒後補做
+                    if let f = trip.afterFit {
+                        trip.afterFit = nil
+                        if f() {
+                            settleTask = Task { try? await Task.sleep(for: .milliseconds(600)); if !Task.isCancelled { recluster(proxy) } }
+                            return
+                        }
+                    }
                     // 行程模式時下面的附近面板收著，不用跟著重算（離開行程時補一次）
                     if selfMoved { selfMoved = false } else { seenBox.set(c.region, publish: !trip.on) }
-                    store.mapRegion = c.region
                     recluster(proxy)
                 }
                 // 很遠的店：前 40% 時間拉遠到 1.6 倍，再降落到那間（共 0.8 秒）
@@ -333,7 +343,7 @@ struct MapTab: View {
             .overlay {
                 DrawStage(show: $show, reroll: { avoid, n in
                     drawer.pick(store, drawer.candidates(store, drawCtx(), drawer.prefs), k: n, avoid: avoid)
-                }, hop: { p in pins.hops[p.id, default: 0] += 1 }, pick: { p in
+                }, hop: { p in pins.hop(p.id) }, pick: { p in
                     drawer.record(store, p)
                     choose(p)
                 })
@@ -430,7 +440,7 @@ struct MapTab: View {
             pins.drawWin = win.id
             pins.drawTask = Task {
                 for p in hoppers {
-                    pins.hops[p.id, default: 0] += 1
+                    pins.hop(p.id)
                     Haptic.tick()
                     try? await Task.sleep(for: .seconds(0.15))
                     if Task.isCancelled { return }
@@ -623,6 +633,7 @@ struct MapTab: View {
         if pins.dropping {
             // 落下播完再算，不然一邊掉一邊合
             clusterTask?.cancel()
+            pins.setMerge([:])
             let wait = max(0.05, 1.3 - (CACurrentMediaTime() - pins.dropStart))
             clusterTask = Task { try? await Task.sleep(for: .seconds(wait)); if !Task.isCancelled { recluster(proxy) } }
             return
@@ -679,16 +690,18 @@ struct MapTab: View {
         clusterTask?.cancel()
         pins.flyFrom = reduce ? [:] : from
         if to.isEmpty {
+            // 上一輪還沒合完就被這輪取代：飛到一半的圖釘用同一個彈簧回原位
+            pins.setMerge([:])
             hidden = nextHidden; clusters = next
         } else {
             // 先拆開的馬上出來、沒變的泡泡留著；要合的先飛過去，0.33 秒後再換成泡泡
             hidden = hidden.intersection(nextHidden)
             clusters = clusters.filter { o in next.contains { $0.id == o.id } }
-            pins.mergeTo = to
+            pins.setMerge(to)
             clusterTask = Task {
                 try? await Task.sleep(for: .milliseconds(reduce ? 200 : 330))
                 guard !Task.isCancelled else { return }
-                hidden = nextHidden; clusters = next; pins.mergeTo = [:]
+                hidden = nextHidden; clusters = next; pins.setMerge([:])
             }
         }
         Task { try? await Task.sleep(for: .milliseconds(500)); pins.flyFrom = [:] }
@@ -714,7 +727,7 @@ struct MapTab: View {
     private func focus(_ id: String) {
         guard pins.sel == nil, !trip.on else { return }
         guard let p = currentList.first(where: { $0.id == id }), let la = p.lat, let lo = p.lng else { return }
-        if !hidden.contains(id) { pins.hops[id, default: 0] += 1 }
+        if !hidden.contains(id) { pins.hop(id) }
         guard let r = store.mapRegion ?? shownRegion else { return }
         // 圖釘在螢幕上哪裡：在搜尋列下面、面板上面、左右沒出界就不用動
         guard let pt = pins.locate?(.init(latitude: la, longitude: lo)) else { return }
@@ -919,7 +932,8 @@ struct NearbySheet: View {
     var body: some View {
         let _ = Perf.shared.count("附近面板")
         // 選到的那間（點圖釘或抽中）：下面換成那間的大卡片
-        let picked = pins.sel.flatMap { id in list.first { $0.id == id } }
+        // 行程模式時這塊藏著：選到收藏是給加站卡用的，這裡不跟著換大卡片、也不拆掉卡片列
+        let picked = TripMode.shared.on ? nil : pins.sel.flatMap { id in list.first { $0.id == id } }
         let drawn = pins.drawn != nil && pins.drawn == pins.sel
         // 拉過中間和最高的一半：內容換成直的清單
         let tall = tallPull ?? (mp.stage == .high)
@@ -1340,11 +1354,12 @@ struct PickedCard: View {
     // 取消選取的次數：MapTab 只看這個（不看 sel），取消時重畫一次，地圖才會真的放掉那根，再點同一根才有反應
     private(set) var cleared = 0
     var drawn: String?                  // 抽一間抽中的那間（還選著它時，按鈕變「再抽一次」）
-    var hops: [String: Int] = [:]       // 抽一間時跳一下的圖釘（每跳一次加一）
     var extra: String?                  // 抽中但被篩選篩掉的店：照樣畫出圖釘（選別間就收掉）
     @ObservationIgnored var drawWin: String?     // 抽一間正在跳，最後會選中這根
     @ObservationIgnored var drawTask: Task<Void, Never>?
-    var mergeTo: [String: CGSize] = [:]          // 要合進泡泡的圖釘：往泡泡的位置飛過去並淡掉
+    // 每根圖釘自己的盒子（要飛進哪顆泡泡、抽一間跳一下）。整份不觀察：合併、跳的時候只有改到的那幾根重算，不是全部圖釘
+    @ObservationIgnored private var boxes: [String: PinFX] = [:]
+    @ObservationIgnored private var merging: Set<String> = []
     var menu: String?                            // 長按開了選單的那根
     @ObservationIgnored var longFired = false    // 長按剛開過選單（放開手指時不要當成點一下）
     @ObservationIgnored var countedKey: String?  // 「附近 N 間」已經為這次落下數過了
@@ -1410,6 +1425,23 @@ struct PickedCard: View {
         if sel == id { again += 1 } else { select(id) }
     }
 
+    func fx(_ id: String) -> PinFX {
+        if let b = boxes[id] { return b }
+        let b = PinFX()
+        boxes[id] = b
+        return b
+    }
+
+    // 那根跳一下（抽一間輪流跳、卡片列停在那間）
+    func hop(_ id: String) { fx(id).hop += 1 }
+
+    // 要合進泡泡的圖釘往泡泡的位置飛過去並淡掉；不在名單裡的回原位
+    func setMerge(_ to: [String: CGSize]) {
+        for id in merging where to[id] == nil { boxes[id]?.to = nil }
+        for (id, v) in to { let b = fx(id); if b.to != v { b.to = v } }
+        merging = Set(to.keys)
+    }
+
     func select(_ id: String?) {
         guard sel != id else { return }
         // 手動選別根或點空白處，就取消還在跳的抽一間
@@ -1418,6 +1450,12 @@ struct PickedCard: View {
         if id == nil { cleared += 1 }
         sel = id
     }
+}
+
+// 一根圖釘自己的動作：要往哪顆泡泡飛（nil：不用合）、抽一間時跳了幾下
+@MainActor @Observable final class PinFX {
+    var to: CGSize?
+    var hop = 0
 }
 
 // 只有這個看不見的小東西看 sel；sel 變了才呼叫 MapTab 處理（移地圖、放光圈）
@@ -1453,6 +1491,7 @@ private struct PinPress: ButtonStyle {
 struct FoodPin: View {
     let place: Place
     let pins: PinState             // 選到哪根、抽一間跳哪根；每根自己看，地圖不用整張重算
+    let fx: PinFX                  // 這根要不要飛進泡泡、跳一下（只看自己的盒子）
     var reduce = false             // 減少動態：不壓扁、不放光圈糖粒，只淡入淡出
     var saver: (id: String, name: String)? = nil   // 群組地圖：右上角小頭像是誰收的（地圖圖釘裡拿不到環境，直接傳名字）
     @State private var sx: CGFloat = 1
@@ -1471,6 +1510,7 @@ struct FoodPin: View {
 
     init(place: Place, pins: PinState, reduce: Bool = false, saver: (id: String, name: String)? = nil) {
         self.place = place; self.pins = pins; self.reduce = reduce; self.saver = saver
+        self.fx = pins.fx(place.id)
         let d = pins.drop(place.id), pop = pins.popping(place.id) && !reduce
         _dropAt = State(initialValue: d?.at)
         _dropFade = State(initialValue: d?.fade ?? false)
@@ -1484,10 +1524,10 @@ struct FoodPin: View {
     var body: some View {
         let on = pins.sel == place.id
         // 選到的那根永遠不跟泡泡合、也不從泡泡飛（店名小牌子才會跟著圖釘）
-        let merge = on ? nil : pins.mergeTo[place.id]
+        let merge = on ? nil : fx.to
         let faded = pins.sel != nil && !on && !hopping   // 別間被選到時變淡（只改透明度，76 根一起動也不吃力）
         let dim = pins.dimAll && !on && !hopping && !pins.bright.contains(place.id)   // 行程模式的其他收藏
-        let hop = pins.hops[place.id] ?? 0
+        let hop = fx.hop
         // 自己接點擊：手指一按下就壓扁、輕震，放開就選中，不用等地圖確認「是不是點兩下放大」
         Button {
             // 長按開過選單：放開手指不算點一下

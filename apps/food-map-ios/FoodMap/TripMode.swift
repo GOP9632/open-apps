@@ -60,7 +60,7 @@ struct TripCand: Equatable {
     @ObservationIgnored var mapTop: CGFloat = 0
     @ObservationIgnored var barBottom: CGFloat = 0     // 上面那排（膠囊、🔍、完成）的下緣，螢幕座標
     @ObservationIgnored var toScreen: ((CLLocationCoordinate2D) -> CGPoint?)?   // 地圖上的點在螢幕哪裡（MapTab 給的）
-    @ObservationIgnored var afterFit: (() -> Void)?    // 框地圖後，鏡頭停好時量一次、需要就修正
+    @ObservationIgnored var afterFit: (() -> Bool)?    // 框地圖後，鏡頭停好時量一次、需要就修正（回傳有沒有修）
     @ObservationIgnored var mapBottom: CGFloat = 0
     let search = TripSearch()
 

@@ -18,7 +18,9 @@ struct Snapshot: Codable {
 // 資料：上次讀到的先從手機裡拿出來畫（開 app 不用等網路），再到背景跟雲端同步
 // 改資料一律「畫面先變、背景存檔」，存失敗才改回來並告訴你
 @MainActor @Observable final class Store {
-    var places: [Place] = [] { didSet { branchMemo = [:]; hay = [:] } }
+    var places: [Place] = [] { didSet { branchMemo = [:]; hay = [:]; placesRev &+= 1 } }
+    // 收藏改過幾次（算過的東西拿來當快取的鑰匙；不用觀察）
+    @ObservationIgnored private(set) var placesRev = 0
     var groups: [FoodGroup] = []
     var members: [Member] = []
     var groupPlaces: [GroupPlace] = []

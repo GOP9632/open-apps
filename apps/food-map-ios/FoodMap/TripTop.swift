@@ -29,12 +29,14 @@ struct TripTop: View {
         .padding(.top, 6)
         // 框地圖時圖釘要在這條線下面（不被 🔍 蓋住）
         .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { mode.barBottom = $0 }
-        // 拖一站時：下面露出「第 N 天」，拖過去放開就換天
+        // 拖一站時：下面露出「第 N 天」，拖過去放開就換天。
+        // 一直掛著只換透明度（拿起那一刻不用新建一排，位置平常就量好了）
         .overlay(alignment: .bottom) {
-            if mode.moving, let t, t.days > 1 {
+            if let t, t.days > 1 {
                 dayDrops(t)
                     .alignmentGuide(.bottom) { $0[.top] }
-                    .transition(.opacity)
+                    .opacity(mode.moving ? 1 : 0)
+                    .accessibilityHidden(!mode.moving)
             }
         }
         .animation(.snappy(duration: 0.2), value: mode.moving)
