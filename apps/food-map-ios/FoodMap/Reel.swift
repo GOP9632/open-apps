@@ -122,7 +122,11 @@ struct PlaceMedia: View {
         player?.pause()
         if let loop { NotificationCenter.default.removeObserver(loop) }
         player = nil; loop = nil
+        let loud = !muted
         muted = true
+        // 開過聲音（喇叭切成 .playback）才要切回；新進來的頁 muted 本來就是 true，播之前會在背景設好 .ambient。
+        // 第一次進店家頁同步設一次約 25ms，剛好卡在推頁那幾幀。不要改成非同步排佇列：會跟喇叭那下的 .playback 搶順序
+        guard loud else { return }
         let t = CACurrentMediaTime()
         try? AVAudioSession.sharedInstance().setCategory(.ambient)
         if Flag.on("-perfOverlay") { print("[reel] stop 設聲音類別 \(Int((CACurrentMediaTime() - t) * 1000)) ms") }
