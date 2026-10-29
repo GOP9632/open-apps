@@ -558,6 +558,8 @@ struct MapTab: View {
         let far = cur.map { abs(c.latitude - $0.center.latitude) > $0.span.latitudeDelta * 0.6 || abs(c.longitude - $0.center.longitude) > $0.span.longitudeDelta * 0.6 } ?? false
         // 圖釘放在中段面板上面看得到那塊的中間（大卡比卡片列高一點，還是在大卡上面）
         let to = aim(MKCoordinateRegion(center: c, span: span), grow: false)
+        Perf.shared.mark(String(format: "移地圖%@ %.2f,%.2f→%.2f,%.2f 寬%.2f", far ? "（遠）" : "", cur?.center.latitude ?? 0, cur?.center.longitude ?? 0,
+                                to.center.latitude, to.center.longitude, span.latitudeDelta))
         flyTask?.cancel(); quiet.flyTo = nil
         if far && !reduce, let from = cur?.center {
             // 很遠的店：先拉遠到看得到兩地（至少 1.6 倍），再降落到那間（共約 0.8 秒）。
@@ -609,6 +611,10 @@ struct MapTab: View {
 
     static var mapWidth: CGFloat {
         UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow?.bounds.width }.first ?? 390
+    }
+
+    static var windowHeight: CGFloat {
+        UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow?.bounds.height }.first ?? 844
     }
 
     private var currentList: [Place] {
@@ -675,23 +681,35 @@ struct MapTab: View {
             let y = log(tan(.pi / 4 + p.lat! * .pi / 360)) * 180 / .pi
             cells["\(Int((p.lng! / cell).rounded(.down))),\(Int((y / cell).rounded(.down)))", default: []].append(p)
         }
-        // 同一群店剛好落在格子邊界兩側會變成兩顆，泡泡（46pt）比格子大一定疊在一起：螢幕上太近的再合成一顆
-        var groups = cells.values.filter { $0.count >= 2 }
-        func ctr(_ g: [Place]) -> CGPoint? {
-            let ps = g.compactMap { pts[$0.id] }
-            guard !ps.isEmpty else { return nil }
-            return CGPoint(x: ps.map(\.x).reduce(0, +) / CGFloat(ps.count), y: ps.map(\.y).reduce(0, +) / CGFloat(ps.count))
+        // 同一群店剛好落在格子邊界兩側會變成兩顆，泡泡比格子大會疊在一起；單根圖釘也可能壓在泡泡上。
+        // 螢幕上真的疊到的（照泡泡、圖釘實際的大小量）再合成一顆，直到沒有東西壓在泡泡上
+        var items: [[Place]] = Array(cells.values)
+        var sum: [CGPoint] = [], cnt: [Int] = []      // 每顆的螢幕點加總、個數（算中心）
+        for g in items {
+            var s = CGPoint.zero, n = 0
+            for p in g { if let q = pts[p.id] { s.x += q.x; s.y += q.y; n += 1 } }
+            sum.append(s); cnt.append(n)
+        }
+        // 泡泡：食物圖示＋家數，至少 46 寬、46 高，畫在中心；單根圖釘：44 的圓，在座標點上面（底部尖角 7）
+        func box(_ k: Int) -> CGRect? {
+            guard cnt[k] > 0 else { return nil }
+            let c = CGPoint(x: sum[k].x / CGFloat(cnt[k]), y: sum[k].y / CGFloat(cnt[k]))
+            if items[k].count >= 2 {
+                let w = max(46, 40 + 11 * CGFloat(String(items[k].count).count))
+                return CGRect(x: c.x - w / 2, y: c.y - 23, width: w, height: 46)
+            }
+            return CGRect(x: c.x - 22, y: c.y - 51, width: 44, height: 44)
         }
         var i = 0
-        while i < groups.count {
-            var hit = false, j = i + 1
-            while j < groups.count {
-                if let a = ctr(groups[i]), let b = ctr(groups[j]), hypot(a.x - b.x, a.y - b.y) < 46 {
-                    groups[i] += groups[j]; groups.remove(at: j); hit = true
-                } else { j += 1 }
-            }
-            if !hit { i += 1 }
+        while i < items.count {
+            // 只有泡泡會吃掉旁邊的（兩根單獨的圖釘靠近不合，交給格子）；吃了一個就重新量一次
+            guard items[i].count >= 2, let a = box(i)?.insetBy(dx: -3, dy: -3),
+                  let j = items.indices.first(where: { $0 != i && box($0).map { a.intersects($0) } == true }) else { i += 1; continue }
+            items[i] += items[j]; sum[i].x += sum[j].x; sum[i].y += sum[j].y; cnt[i] += cnt[j]
+            items.remove(at: j); sum.remove(at: j); cnt.remove(at: j)
+            if j < i { i -= 1 }
         }
+        let groups = items.filter { $0.count >= 2 }
         // 行程模式：泡泡落在某站號碼上就往外推開（號碼要看得到）
         let marks = trip.on ? trip.marks.compactMap { proxy.convert($0.coord, to: .local) } : []
         func aside(_ lat: Double, _ lng: Double) -> (Double, Double) {
@@ -750,6 +768,7 @@ struct MapTab: View {
     // 點泡泡：放大到框住這幾家
     private func zoom(_ c: PinCluster) {
         Haptic.light()
+        Perf.shared.mark("點泡泡 \(c.ids.count) 間")
         quiet.hush()
         MapPanel.shared.atLeastMid()
         let ps = currentList.filter { c.ids.contains($0.id) }
@@ -1126,7 +1145,7 @@ struct NearbySheet: View {
                     }
                     .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 16)
                     // 捲到頂再往下拉：面板跟著手指往下（清單不回彈），放開照面板的規則停段
-                    .background(ListPullDown(changed: { drag($0) }, ended: { up in settle(target(mp.stage) + up * 0.6, push: up) }))
+                    .background(ListPullDown(name: "首頁", changed: { drag($0) }, ended: { up in settle(target(mp.stage) + up * 0.6, push: up) }))
                 }
                 // 備案（找不到底下的 UIScrollView 時）：拉過頭約 56pt，放開降到中間段；面板接手時不跑
                 // 清單拉過頭有阻力，手指拉 56pt 畫面只動約 28pt，所以線畫在 28

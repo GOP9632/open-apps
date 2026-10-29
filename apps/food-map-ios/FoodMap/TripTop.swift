@@ -255,6 +255,7 @@ struct TripFind: View {
         withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) {
             mode.typing = true
             mode.cand = nil
+            mode.folded = false
             mode.level = .low
         }
     }
@@ -294,6 +295,7 @@ struct TripFind: View {
                         withAnimation(.snappy) {
                             mode.filter = mode.filter == f ? nil : f
                             mode.cand = nil
+                            mode.folded = false
                             if mode.level != .low { mode.level = .low }
                         }
                     }

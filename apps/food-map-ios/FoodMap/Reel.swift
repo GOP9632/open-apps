@@ -132,7 +132,7 @@ struct PlaceMedia: View {
     private static var finding: [String: Task<URL?, Never>] = [:]
     // 先緩衝好的播放器，最多留 2 個
     private static var ready: [(src: String, url: URL, player: AVPlayer)] = []
-    static let ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+    nonisolated static let ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
 
     static func maybeVideo(_ p: Place) -> Bool {
         guard let s = p.source_url, s.contains("instagram.com") else { return false }
@@ -169,9 +169,18 @@ struct PlaceMedia: View {
         guard maybeVideo(p), let src = p.source_url, !ready.contains(where: { $0.src == src }) else { return }
         Task {
             guard let u = await url(src), !ready.contains(where: { $0.src == src }) else { return }
-            ready.append((src, u, player(u)))
+            // 建播放器不在主執行緒（建 asset、item 會占掉一兩幀，地圖還在動、大卡還在彈）
+            let made = await Task.detached(priority: .utility) { Made(player(u)) }.value
+            guard !ready.contains(where: { $0.src == src }) else { return }
+            ready.append((src, u, made.player))
             if ready.count > 2 { ready.removeFirst().player.replaceCurrentItem(with: nil) }
         }
+    }
+
+    // 從背景執行緒帶回主執行緒（還沒播、只有這裡拿著）
+    private final class Made: @unchecked Sendable {
+        let player: AVPlayer
+        init(_ p: AVPlayer) { player = p }
     }
 
     static func take(_ src: String) -> (URL, AVPlayer)? {
@@ -182,7 +191,7 @@ struct PlaceMedia: View {
     }
 
     // 建播放器（還不播）：先緩衝 3 秒；用一般瀏覽器的 User-Agent 去拿影片（有些 CDN 不理 AVPlayer 預設的）
-    static func player(_ u: URL) -> AVPlayer {
+    nonisolated static func player(_ u: URL) -> AVPlayer {
         let asset = AVURLAsset(url: u, options: ["AVURLAssetHTTPHeaderFieldsKey": ["User-Agent": ua]])
         let item = AVPlayerItem(asset: asset)
         item.preferredForwardBufferDuration = 3

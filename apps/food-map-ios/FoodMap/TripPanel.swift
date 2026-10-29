@@ -28,6 +28,7 @@ struct TripPanel: View {
     @State private var top0: CGFloat = 0            // 面板頂端在螢幕上的位置
     @State private var cardH: CGFloat = 224         // 加站卡量到的高度
     @State private var fitSeq = 0                   // 第幾次框地圖（停好後修正時，看是不是還是同一次）
+    @State private var candFit: Task<Void, Never>?  // 加站卡的框地圖晚 40ms 起步：卡高、畫面大小接著變時只框一次
     // 出發中：上面「下一站」卡片的下緣、下面那塊的上緣（螢幕座標），藍點要放在中間看得到的地方
     @State private var goTop: CGFloat = 0
     @State private var goBot: CGFloat = 0
@@ -41,6 +42,8 @@ struct TripPanel: View {
     @State private var lowering = false         // 清單捲到頂又往下拉過頭：放開就降一段
     @State private var pickingStart = false     // 起點選單（按鈕＋底部選單：用 Menu 的話從這顆拉面板拉不動）
     @State private var listTouch = false        // 手指正在拉清單（甩過頭的回彈不算）
+    @State private var pull = PullBox()         // 清單往下拉換成拉面板：清單的 pan 和備案拖曳誰接手（見 PanelLift.swift）
+    @GestureState private var listPulling = false
     // 出發
     @State private var me: CLLocation?          // 出發時的目前位置（只在 App 開著時更新）
     @State private var pinged: String?          // 已經為「快到了」震過的那站
@@ -126,7 +129,7 @@ struct TripPanel: View {
                 // 🔍 展開的搜尋框＋分類，下面是結果（正在看加站卡時先收起結果）
                 VStack(spacing: 0) {
                     TripFind()
-                    if mode.cand == nil {
+                    if mode.cand == nil && !mode.folded {
                         TripResults().transition(.opacity.combined(with: .offset(y: -8)))
                     }
                 }
@@ -134,7 +137,7 @@ struct TripPanel: View {
             }
         }
         .animation(.snappy(duration: 0.22), value: mode.searchOn)
-        .animation(.snappy(duration: 0.22), value: mode.searchOn && mode.cand == nil)
+        .animation(.snappy(duration: 0.22), value: mode.searchOn && mode.cand == nil && !mode.folded)
         return goMods(core, t, order: order, next: next)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
         .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { top0 = $0 }
@@ -221,14 +224,20 @@ struct TripPanel: View {
             ZStack(alignment: .top) {
                 ScrollViewReader { sp in
                     ScrollView {
-                        rows(t, d: d, base: base, order: order, legs: legs, plan: plan)
-                            .padding(.horizontal, 14).padding(.top, 2).padding(.bottom, 16)
-                            // 捲到頂再往下拉：面板跟著手指往下（清單不回彈），放開照面板的規則停段；拖站換順序時不接手
-                            .background(ListPullDown(on: drag.id == nil,
-                                                     changed: { up in guard drag.id == nil else { return }; lift.y = up },
-                                                     ended: { up in guard drag.id == nil else { lift.y = 0; return }; settleSheet(up) }))
+                        // rows 是 @ViewBuilder（空白那天是兩個子 view）：先包一層，不然 background 會掛兩份、放手連降兩段
+                        VStack(spacing: 0) {
+                            rows(t, d: d, base: base, order: order, legs: legs, plan: plan)
+                        }
+                        .padding(.horizontal, 14).padding(.top, 2).padding(.bottom, 16)
+                        // 捲到頂再往下拉：面板跟著手指往下（清單不回彈），放開照面板的規則停段；拖站換順序時不接手
+                        .background(ListPullDown(on: drag.id == nil, name: "行程", box: pull,
+                                                 changed: { up in guard drag.id == nil else { return }; lift.y = up },
+                                                 ended: { up in guard drag.id == nil else { lift.y = 0; return }; settleSheet(up) }))
+                        // 備案：手指按在站卡上時清單的 pan 可能根本沒開始（站卡有點一下、長按、左滑的手勢），改由這個拖曳接手
+                        .simultaneousGesture(listPull, including: drag.id == nil ? .all : .subviews)
                     }
                     .scrollDisabled(drag.id != nil)
+                    .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top <= 1 } action: { _, top in pull.atTop = top }
                     // 備案（找不到底下的 UIScrollView 時）：捲到頂再往下拉約 56pt，放開時面板降一段；面板接手時不跑
                     // 清單拉過頭有阻力，手指拉 56pt 畫面只動約 28pt，所以線畫在 28；甩過頭的回彈不算
                     .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < -28 } action: { _, past in
@@ -269,6 +278,14 @@ struct TripPanel: View {
         .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg)
             .shadow(color: .black.opacity(0.14), radius: 14, y: -2).ignoresSafeArea(edges: .bottom))
         .animation(.snappy(duration: 0.25), value: strip)
+        // 清單的備案拖曳被系統取消（onEnded 不會來）：面板放回目前那段
+        .onChange(of: listPulling) { _, p in
+            guard !p else { return }
+            pull.decided = false
+            guard pull.swift else { return }
+            pull.swift = false
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { lift.y = 0; pullList = false }
+        }
         // 停好的面板高度：訊息條貼在面板上面，不蓋住站卡（拉的過程中不更新）
         .onChange(of: settledHeight(), initial: true) { _, v in if abs(mode.panelH - v) > 0.5 { mode.panelH = v } }
     }
@@ -391,6 +408,32 @@ struct TripPanel: View {
                 if alt != pullList { pullList = alt }
             }
             .onEnded { v in
+                guard drag.id == nil else { lift.y = 0; return }
+                settleSheet(-v.predictedEndTranslation.height)
+            }
+    }
+
+    // 清單在頂端時從站卡上往下拉：清單的 pan 沒接手（站卡的手勢擋住、根本沒開始捲）就由這裡拉面板
+    private var listPull: some Gesture {
+        DragGesture(minimumDistance: 10, coordinateSpace: .global)
+            .updating($listPulling) { _, st, _ in st = true }
+            .onChanged { v in
+                let b = pull
+                if !b.swift {
+                    guard !b.decided else { return }
+                    b.decided = true
+                    let dx = v.translation.width, dy = v.translation.height
+                    // 往下、比較直、清單在頂端、清單的 pan 沒在拉面板：接手
+                    guard drag.id == nil, !b.uikit, b.atTop, dy > 0, dy > abs(dx) * 1.2 else { return }
+                    b.swift = true
+                    Perf.shared.mark("清單接手 備案")
+                }
+                lift.y = -v.translation.height
+            }
+            .onEnded { v in
+                pull.decided = false
+                guard pull.swift else { return }
+                pull.swift = false
                 guard drag.id == nil else { lift.y = 0; return }
                 settleSheet(-v.predictedEndTranslation.height)
             }
@@ -634,7 +677,9 @@ struct TripPanel: View {
     // 地圖上畫「前一站 → 這間 → 後一站」的虛線，框住這三個點
     private func placeCand(_ t: Trip, _ order: [TripStop]) {
         guard let c = mode.cand, let co = c.coord, stopOf(c, t) == nil else {
+            candFit?.cancel(); candFit = nil
             if mode.preview != nil { mode.preview = nil; mode.previewN = nil }
+            if let c = mode.cand { Perf.shared.mark(c.coord == nil ? "加站卡不框：沒座標" : "加站卡不框：已在行程") }
             return
         }
         let r = candAt(order, c)
@@ -644,7 +689,14 @@ struct TripPanel: View {
         if r.at < order.count, let b = order[r.at].coord { line.append(b) }
         mode.preview = line.count > 1 ? TripSeg(id: "cand", coords: line, color: TripColor.of(r.at), routed: false) : nil
         mode.previewN = r.at + 1
-        fitCoords(line, card: true, animated: true)
+        // 同一張卡量到新高度、鍵盤收起改了大小，一兩幀內會再叫一次：等一下再框，只框最後那次（不會連發兩段鏡頭）
+        let cid = c.id, pts = line
+        candFit?.cancel()
+        candFit = Task {
+            try? await Task.sleep(for: .milliseconds(40))
+            guard !Task.isCancelled, mode.cand?.id == cid else { return }
+            fitCoords(pts, card: true, animated: true)
+        }
     }
 
     // 這間已經在這個行程裡：哪一站
@@ -731,9 +783,12 @@ struct TripPanel: View {
         .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg)
             .shadow(color: .black.opacity(0.14), radius: 14, y: -2).ignoresSafeArea(edges: .bottom))
         // 卡片實際多高（店名兩行、有營業時間時會比較高）：框地圖時讓開，量到不一樣就重框一次
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
-            guard abs(h - cardH) > 8 else { return }
-            cardH = h
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { f in
+            // 量測浮層：卡片沒貼底（下緣離螢幕底超過 60）就記一筆位置
+            let H = MapTab.windowHeight
+            if f.maxY < H - 60 { Perf.shared.mark("加站卡浮著 \(Int(f.minY))–\(Int(f.maxY))/\(Int(H)) 面板\(Int(top0))+\(Int(size.height))") }
+            guard abs(f.height - cardH) > 8 else { return }
+            cardH = f.height
             placeCand(t, order)
         }
         .modifier(LiftOffset(lift: cardLift))
@@ -803,6 +858,8 @@ struct TripPanel: View {
         if mode.slot != nil { mode.clearSearch() }
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             mode.cand = nil
+            // 從搜尋結果加的：結果框不再冒出來蓋住地圖（地圖上的結果還在，點搜尋框或換分類再打開）
+            if mode.searchOn { mode.folded = true }
             mode.hot = s.id
             if mode.level == .low && !mode.searchOn { mode.level = .mid }
         }
@@ -852,7 +909,7 @@ struct TripPanel: View {
             // 長路線（雲林到台北）：全部框進來會縮到看見對岸。超過 40 公里就不框這天的站；
             // 結果本身也拉得很長，就只框現在看得到的那些（都不在畫面裡就框離畫面中心最近的 5 個）
             var res = found + hits
-            let top = TripResults.height(mode) + 8
+            let top = mode.folded ? 12 : TripResults.height(mode) + 8
             let withStops = res + base.compactMap(\.coord)
             if Self.km(withStops) <= 40 { fitCoords(withStops, card: false, animated: animated, top: top); return }
             // 打字搜（台北101）：框排第一的那個和它 40 公里內的結果（其他同名的可能遠在對岸）

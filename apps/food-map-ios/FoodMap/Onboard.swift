@@ -104,6 +104,7 @@ struct NotifyCard: View {
         seen = n
         UserDefaults.standard.set(n, forKey: "clipSeen")
         held = false
+        Perf.shared.mark("剪貼簿膠囊（已按 ✕ \(skips) 次）")
         withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) { showing = true }
         hide?.cancel()
         hide = Task {
@@ -113,6 +114,7 @@ struct NotifyCard: View {
                 if Task.isCancelled { return }
                 if !held { left -= 0.1 }
             }
+            Perf.shared.mark("剪貼簿膠囊 8 秒收起")
             dismiss()
         }
     }
@@ -120,6 +122,7 @@ struct NotifyCard: View {
     // 按 ✕：連三次就兩週不問，並說一聲（8 秒自己收起不算）
     func skip(_ store: Store) {
         skips += 1
+        Perf.shared.mark("剪貼簿 ✕ 第 \(skips) 次")
         if skips >= 3 {
             skips = 0
             muteUntil = Date().timeIntervalSince1970 + 14 * 86400

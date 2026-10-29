@@ -48,6 +48,7 @@ struct TripCand: Equatable {
     var filter: AddFilter?
     var finding = false              // 按了 🔍：標題列下面展開搜尋框＋分類（✕ 或點地圖收回）
     var typing = false
+    var folded = false               // 從結果加了一站：結果框先收起來（地圖上的結果還在）；點搜尋框、換分類再打開
     var slot: AddSlot?               // 空檔推薦、選住宿當起點：加的位置固定
     var seg: [String]?               // 空檔推薦：順路只看那兩站中間
     var listing = false              // 「我的行程」sheet
@@ -103,7 +104,7 @@ struct TripCand: Equatable {
         Haptic.light()
         cand = nil
         slot = s; seg = g
-        withAnimation(.snappy) { finding = true; filter = f; level = .low }
+        withAnimation(.snappy) { finding = true; filter = f; level = .low; folded = false }
     }
 
     // 收鍵盤（不靠 @FocusState，見 TripTop）
@@ -114,13 +115,14 @@ struct TripCand: Equatable {
 
     func clearSearch() {
         if typing { endTyping() }
-        q = ""; filter = nil; slot = nil; seg = nil; finding = false
+        q = ""; filter = nil; slot = nil; seg = nil; finding = false; folded = false
         search.clear()
     }
 
     // 點地圖空白處：先收掉加站卡，再收掉搜尋
     func blank() {
         if cand != nil {
+            Perf.shared.mark("點空白 收加站卡")
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { cand = nil }
         } else if searchOn {
             // 跟搜尋框的 ✕ 一樣：收起搜尋、面板回到一半
