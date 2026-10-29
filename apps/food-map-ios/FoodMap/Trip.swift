@@ -533,6 +533,7 @@ enum TripSort {
 
     // 刪一站：先拿掉，4 秒內可以復原
     func deleteWithUndo(_ s: TripStop, store: Store) {
+        Perf.shared.mark("拿掉一站")
         hiddenStops.insert(s.id); rev += 1
         LaterDelete.add("trip_stops", s.id)
         withAnimation(.snappy(duration: 0.3)) { stops.removeAll { $0.id == s.id } }

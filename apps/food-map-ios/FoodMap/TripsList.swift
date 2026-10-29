@@ -329,7 +329,8 @@ private let swipeOff: Bool = {
     #endif
 }()
 
-// 往左滑刪除（滑超過一半放開就刪，有復原）；上下捲動照常
+// 往左滑刪除（有復原）：滑超過 4 成放開就刪；滑一小段放開停在露出垃圾桶，點垃圾桶才刪、點卡片收回（跟系統清單一樣）。
+// 上下捲動照常
 struct SwipeToDelete<C: View>: View {
     var enabled = true
     let onDelete: () -> Void
@@ -337,41 +338,65 @@ struct SwipeToDelete<C: View>: View {
     @State private var dx: CGFloat = 0
     @State private var horizontal: Bool?
     @State private var w: CGFloat = 300
+    @State private var open = false           // 停在露出垃圾桶
     // 正在左滑（和放開後一下下）：裡面的按鈕／連結不要被當成點了一下
     @State private var swiped = false
+    private static var reveal: CGFloat { 84 }
 
     var body: some View {
         content()
             .disabled(swiped)
+            // 露出垃圾桶時點卡片：只收回，不算點卡片
+            .overlay { if open { Color.clear.contentShape(.rect).onTapGesture { close() } } }
             .offset(x: dx)
             .background(alignment: .trailing) {
                 if dx < 0 {
-                    Image(systemName: "trash.fill").font(.system(size: 20, weight: .bold)).foregroundStyle(.white)
-                        .frame(width: max(0, -dx)).frame(maxHeight: .infinity)
-                        .background(Color.sprPink, in: .rect(cornerRadius: 22))
-                        .scaleEffect(-dx > w * 0.4 ? 1 : 0.9)
+                    Button(action: delete) {
+                        Image(systemName: "trash.fill").font(.system(size: 20, weight: .bold)).foregroundStyle(.white)
+                            .frame(width: max(0, -dx)).frame(maxHeight: .infinity)
+                            .background(Color.sprPink, in: .rect(cornerRadius: 22))
+                            .scaleEffect(-dx > w * 0.4 ? 1 : 0.9)
+                    }
+                    .buttonStyle(.plain)
+                    .allowsHitTesting(open)
+                    .accessibilityLabel("刪除")
                 }
             }
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w = max($0, 1) }
+            .onChange(of: enabled) { _, on in if !on, open { close() } }
             .simultaneousGesture(DragGesture(minimumDistance: 18).onChanged { v in
                 if horizontal == nil { horizontal = abs(v.translation.width) > abs(v.translation.height) * 1.3 }
                 guard horizontal == true else { return }
                 if !swiped { swiped = true }
                 let was = -dx > w * 0.4
-                dx = min(0, v.translation.width)
+                dx = min(0, (open ? -Self.reveal : 0) + v.translation.width)
                 if (-dx > w * 0.4) != was { Haptic.tick() }
             }
             .onEnded { v in
                 defer { horizontal = nil }
                 guard horizontal == true else { return }
                 Task { try? await Task.sleep(for: .seconds(0.35)); swiped = false }
-                if -dx > w * 0.4 || v.predictedEndTranslation.width < -w {
-                    withAnimation(.easeIn(duration: 0.18)) { dx = -w - 40 }
-                    onDelete()
-                    Task { try? await Task.sleep(for: .seconds(0.4)); dx = 0 }
+                let end = (open ? -Self.reveal : 0) + v.predictedEndTranslation.width
+                if -dx > w * 0.4 || end < -w {
+                    delete()
+                } else if -dx > 44 || end < -Self.reveal {
+                    open = true
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { dx = -Self.reveal }
                 } else {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { dx = 0 }
+                    close()
                 }
             }, including: enabled && !swipeOff ? .all : .subviews)
+    }
+
+    private func delete() {
+        open = false
+        withAnimation(.easeIn(duration: 0.18)) { dx = -w - 40 }
+        onDelete()
+        Task { try? await Task.sleep(for: .seconds(0.4)); dx = 0 }
+    }
+
+    private func close() {
+        open = false
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { dx = 0 }
     }
 }

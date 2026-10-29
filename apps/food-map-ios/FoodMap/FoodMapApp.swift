@@ -114,10 +114,12 @@ struct Root: View {
                 // 地圖首頁（不在行程、沒點進店家頁）：貼著下面那塊的上緣，右邊讓開行程、定位兩顆；其他分頁照舊
                 // 面板拉到最高段時上緣在篩選籤附近：改放分頁列上方，不壓到籤
                 let onMap = store.tab == 0 && store.mapPath.isEmpty && store.panelTop > 0 && !TripMode.shared.on && MapPanel.shared.stage != .high
-                // 行程模式（還沒出發）：貼著行程面板的上緣，不蓋住站卡；面板拉很高時最多到 420
+                // 行程模式（還沒出發）：貼著行程面板的上緣，不蓋住站卡。面板拉到最高時放進面板最上面那條（把手、起點那排），
+                // 不浮在清單中間：蓋在站卡右邊時，想點垃圾桶、交通方式會按到訊息條上的「復原」
                 let onTrip = store.tab == 0 && store.mapPath.isEmpty && TripMode.shared.on && !TripMode.shared.going && TripMode.shared.panelH > 0
+                let tripPad = TripMode.shared.panelH <= 420 ? TripMode.shared.panelH + 8 : TripMode.shared.panelH - 56
                 // 店家頁（分頁列藏著）：貼著底部按鈕列；分頁列有顯示時一律 96（bottomBar 留著舊值也不會用錯）
-                let pad: CGFloat = onMap ? store.panelTop + 8 : onTrip ? min(TripMode.shared.panelH, 420) + 8 : (store.barHidden && store.bottomBar > 0) ? store.bottomBar + 8 : 96
+                let pad: CGFloat = onMap ? store.panelTop + 8 : onTrip ? tripPad : (store.barHidden && store.bottomBar > 0) ? store.bottomBar + 8 : 96
                 HStack(spacing: 10) {
                     if let p = store.toastPlace {
                         PhotoView(place: p, px: 120).frame(width: 30, height: 30).clipShape(.rect(cornerRadius: 8))

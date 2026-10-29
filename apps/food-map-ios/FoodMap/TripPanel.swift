@@ -844,6 +844,7 @@ struct TripPanel: View {
         Perf.shared.mark("加站")
         trips.insert(s, store: store)
         store.say("加到第 \(i + 1) 站", icon: .check, action: ("復原", {
+            Perf.shared.mark("復原加站")
             TripStore.shared.remove(s, dropTrip: false, store: store)
             store.toast = nil
         }))
