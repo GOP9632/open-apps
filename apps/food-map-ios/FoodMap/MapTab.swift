@@ -82,15 +82,16 @@ struct MapTab: View {
                 // 泡泡、行程站號沒有自己的 tag，MapKit 會拿它們的 id 當成可選：點泡泡放大後 sel 會變成「a,b」這種不是圖釘的 id，
                 // 所有圖釘一起變淡又沒有大卡。泡泡的 id 是幾間店的 id 用逗號串起來（搜到的地點 hit: 開頭，本身也有逗號，要收）
                 Map(position: $pos, selection: Binding(get: { pins.sel }, set: { id in
-                    // 行程模式：點收藏、搜尋結果圖釘都由圖釘自己的按鈕呼叫 pins.tap，點空白由 blankTap，泡泡和站號本來就不聽。
-                    // MapKit 自己晚到的選取（等「是不是點兩下」約 0.3 秒，加站卡框地圖後圖釘已不在手指下，會送 nil）不聽，免得剛開的卡被關掉
-                    if trip.on {
-                        // 浮層只記剛點過圖釘那一下送來的 nil（泡泡、站號的 id 很長，記了會蓋住畫面）
-                        let dt = CACurrentMediaTime() - trip.pickAt
-                        if id == nil, dt < 1 { Perf.shared.mark(String(format: "地圖選取略過 nil dt=%.2f", dt)) }
-                        return
-                    }
                     if let id, (id.contains(",") && !id.hasPrefix("hit:")) || trip.marks.contains(where: { $0.id == id }) { return }
+                    // 行程模式：點空白交給 blankTap；MapKit 點圖釘後會晚一步（等「是不是點兩下」）送 nil，不能拿來收加站卡。
+                    // 手指剛點過圖釘 0.6 秒內，晚到而且跟目前不同的選取也不聽。淡化的圖釘按鈕比 MapKit 的框小，點到框內按鈕外還是靠這裡開卡
+                    if trip.on {
+                        let dt = CACurrentMediaTime() - pins.tapAt
+                        if id == nil || (dt < 0.6 && id != pins.sel) {
+                            if dt < 2 { Perf.shared.mark("地圖選取略過 \(id.map { String($0.prefix(8)) } ?? "nil") \(Int(dt * 1000))ms") }
+                            return
+                        }
+                    }
                     pins.select(id)
                 })) {
                     ForEach(list.filter { !hidden.contains($0.id) }) { p in
@@ -218,7 +219,9 @@ struct MapTab: View {
                     pins.dimAll = trip.on
                     pins.bright = foundIds
                 }
-                .onChange(of: trip.cand?.id) { _, _ in
+                .onChange(of: trip.cand?.id) { old, now in
+                    // 量測浮層：加站卡關掉時記離最後點圖釘多久（太快關掉＝被誤關）
+                    if old != nil, now == nil { Perf.shared.mark("加站卡關掉 距點 \(Int((CACurrentMediaTime() - pins.tapAt) * 1000))ms") }
                     // 正在看要不要加的那間：圖釘放大（收藏用店的 id，搜到的地點用 hit: 開頭）
                     pins.select(trip.cand.map { $0.place != nil ? $0.id : "hit:" + $0.id })
                 }
@@ -667,7 +670,7 @@ struct MapTab: View {
             try? await Task.sleep(for: .milliseconds(180))
             // 點下去前後 0.22 秒內點過圖釘就不算點空白，用點下去當下的時間算：
             // 開第一張加站卡時主執行緒忙、這裡晚醒，也不會把剛開的卡當成點空白關掉
-            guard trip.pickAt < t0 - 0.22 else { return }
+            guard trip.pickAt < t0 - 0.22 else { Perf.shared.mark("點空白略過"); return }
             trip.blank()
         }
     }
@@ -781,6 +784,8 @@ struct MapTab: View {
 
     // 點泡泡：放大到框住這幾家
     private func zoom(_ c: PinCluster) {
+        // 行程裡點泡泡放大：不是點空白（不收加站卡、不收搜尋）
+        if trip.on { trip.pickAt = CACurrentMediaTime() }
         Haptic.light()
         Perf.shared.mark("點泡泡 \(c.ids.count) 間")
         quiet.hush()
@@ -1443,6 +1448,7 @@ struct PickedCard: View {
     @ObservationIgnored private var merging: Set<String> = []
     var menu: String?                            // 長按開了選單的那根
     @ObservationIgnored var longFired = false    // 長按剛開過選單（放開手指時不要當成點一下）
+    @ObservationIgnored var tapAt: CFTimeInterval = 0   // 手指最後點圖釘按鈕的時間（行程模式擋 MapKit 晚到的選取）
     @ObservationIgnored var countedKey: String?  // 「附近 N 間」已經為這次落下數過了
     var dimAll = false                           // 行程模式：圖釘縮小變淡
     var bright: Set<String> = []                 // 行程模式搜到的：照常大小
@@ -1503,6 +1509,7 @@ struct PickedCard: View {
     // 手指點圖釘：點到已經選著的那根也通知一次（例如加站卡關掉後再點同一根）
     private(set) var again = 0
     func tap(_ id: String) {
+        tapAt = CACurrentMediaTime()
         if sel == id { again += 1 } else { select(id) }
     }
 
