@@ -188,7 +188,9 @@ struct DiceChip: View {
     @State private var drawer = Drawer.shared
     @State private var long = false
     @Environment(\.accessibilityReduceMotion) private var reduce
-    @ScaledMetric(relativeTo: .subheadline) private var dice: CGFloat = 15
+    @Environment(\.dynamicTypeSize) private var dts
+    // 🎲 圖跟旁邊「抽一間」的字一樣大：直接問 UIKit 這個字級的 subheadline 幾 pt（@ScaledMetric 在最大字級時比字小）
+    private var dice: CGFloat { EmojiArt.diceSize(dts) }
 
     var body: some View {
         HStack(spacing: 6) {

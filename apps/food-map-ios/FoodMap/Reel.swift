@@ -55,9 +55,14 @@ struct PlaceMedia: View {
             }
             print("[reel] 影片網址 \(u.host() ?? "")")
             // 設定聲音類別是同步跟系統要東西：放到背景做，不卡主執行緒（推頁那幾幀）
-            await Task.detached { try? AVAudioSession.sharedInstance().setCategory(.ambient) }.value
+            await Task.detached {
+                let t = CACurrentMediaTime()
+                try? AVAudioSession.sharedInstance().setCategory(.ambient)
+                if Flag.on("-perfOverlay") { print("[reel] 背景設聲音類別 \(Int((CACurrentMediaTime() - t) * 1000)) ms，在主執行緒：\(pthread_main_np() != 0)") }
+            }.value
             guard !Task.isCancelled else { return }
             // 先直接串流；6 秒還沒能播（IG 的伺服器有時不給串流），就整支下載到手機再播
+            Perf.shared.note("影片 start")
             start(p)
             if !(await Self.waitReady(p)) {
                 guard !Task.isCancelled else { return }
@@ -70,6 +75,7 @@ struct PlaceMedia: View {
             }
             guard !Task.isCancelled else { p.pause(); return }
             print("[reel] 開始播放")
+            Perf.shared.note("影片開始播")
             withAnimation(.easeOut(duration: 0.3)) { player = p }
         }
         // 離開店家頁就停

@@ -9,7 +9,7 @@ struct MapTab: View {
     @State private var pos: MapCameraPosition = .region(MKCoordinateRegion(center: .init(latitude: 25.0418, longitude: 121.5436), latitudinalMeters: 9000, longitudinalMeters: 9000))
     // 選到哪根、抽一間的跳動：放在自己的物件裡，選圖釘時只有圖釘和下面的卡片重畫，整張地圖不用重算
     @State private var pins = PinState()
-    @State private var loc = CLLocationManager()
+    @State private var loc = LocMgr.shared
     @State private var fitted = false
     @State private var adding = false
     @State private var noAddr = false
@@ -22,6 +22,7 @@ struct MapTab: View {
     @State private var applied = Filter()   // 地圖畫的篩選，由 FilterSync 同步（body 不直接讀 store.mapF，收藏頁打字時背景地圖不重算）
     @State private var nearTask: Task<Void, Never>?   // 量測用 -landDefer：降落後晚 0.6 秒再換附近清單
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.dynamicTypeSize) private var dts
     @State private var spot = BurstSpot()
     @State private var drawer = Drawer.shared
     @State private var show: DrawShow?
@@ -61,6 +62,7 @@ struct MapTab: View {
 
     var body: some View {
         let _ = Perf.shared.count("地圖")
+        let _ = Perf.shared.note("地圖重算")
         @Bindable var store = store
         // 篩選結果只算一次；有座標的店下面每個地方共用
         let base = store.mapBase
@@ -296,7 +298,8 @@ struct MapTab: View {
                     var list: [(String, CGFloat, EmojiArt.Part)] = []
                     for e in es { list.append((e, 21, .pin)) }
                     for e in es { list.append((e, 15, .bubble)) }
-                    list.append(("🎲", UIFontMetrics(forTextStyle: .subheadline).scaledValue(for: 15), .dice))
+                    list.append(("🎲", EmojiArt.diceSize(dts), .dice))
+                    if Flag.on("-perfOverlay") { print("[emoji] 🎲 舊算法 \(UIFontMetrics(forTextStyle: .subheadline).scaledValue(for: 15)) pt，新算法 \(EmojiArt.diceSize(dts)) pt，字級 \(dts)") }
                     await EmojiArt.warm(list)
                 }
                 // 行程模式：其他收藏縮小變淡（搜到的、正在看要不要加的那間照常）。
@@ -319,6 +322,7 @@ struct MapTab: View {
             // 量在 ignoresSafeArea 裡面才是地圖真正鋪開的範圍（整個螢幕）；量在外面只拿到 safe area 那塊，上下邊距會各少算 62、34
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { r in
                 mapRect = r; trip.mapBottom = footY > 0 ? footY : r.maxY
+                Perf.shared.note("地圖範圍變了 x=\(Int(r.minX)) y=\(Int(r.minY)) w=\(Int(r.width)) h=\(Int(r.height))")
                 showGeo(r, footY)
             }
             .ignoresSafeArea()
@@ -552,6 +556,7 @@ struct MapTab: View {
             let hoppers = wins.isEmpty ? Array(canHop.shuffled().prefix(Int.random(in: 6...8))) : Array(canHop.sorted { $0.id < $1.id }.prefix(7))
             guard !reduce, !hoppers.isEmpty else {
                 Haptic.success()
+                Perf.shared.note("select 開始（抽中）")
                 pins.select(win.id)
                 return
             }
@@ -567,6 +572,7 @@ struct MapTab: View {
                 guard pins.drawWin == win.id else { return }
                 pins.drawWin = nil; pins.drawTask = nil
                 Haptic.success()
+                Perf.shared.note("select 開始（抽中）")
                 pins.select(win.id)
             }
         }
@@ -679,7 +685,7 @@ struct MapTab: View {
         if !reduce {
             spot.coord = c; spot.color = p.cat.color
             spot.at = proxy.convert(c, to: .global)
-            spot.until = Date().addingTimeInterval(0.9)
+            spot.until = Date().addingTimeInterval(0.75)   // 光圈 0.7 秒畫完（PinBurst 的 keyframe），之後不用再追著地圖更新位置
             spot.shot += 1
         }
         selfMoved = true
@@ -876,7 +882,13 @@ struct MapTab: View {
         }
         // 同一群店剛好落在格子邊界兩側會變成兩顆，泡泡比格子大會疊在一起；單根圖釘也可能壓在泡泡上。
         // 螢幕上真的疊到的（照泡泡、圖釘實際的大小量）再合成一顆，直到沒有東西壓在泡泡上
-        var items: [[Place]] = Array(cells.values)
+        // 字典的順序不固定：每次開 App 換種子，同一次開 App 裡每建一個新字典（或字典長大換表）也會換。
+        // 下面的合併是照順序吃的，不先排好，同一個畫面會合成不一樣的泡泡。大的先吃，一樣大照格子位置
+        let order: [String] = cells.keys.sorted { a, b in
+            let na = cells[a]?.count ?? 0, nb = cells[b]?.count ?? 0
+            return na != nb ? na > nb : a < b
+        }
+        var items: [[Place]] = order.compactMap { cells[$0] }
         var sum: [CGPoint] = [], cnt: [Int] = []      // 每顆的螢幕點加總、個數（算中心）
         for g in items {
             var s = CGPoint.zero, n = 0
@@ -916,7 +928,11 @@ struct MapTab: View {
             return (c.latitude, c.longitude)
         }
         let next = groups.map { g -> PinCluster in
-            let top = Dictionary(grouping: g, by: \.cat.key).sorted { $0.value.count > $1.value.count }.prefix(2)
+            // 一樣多時照分類固定的順序（Cat.order）：字典順序不固定，不排的話泡泡的圖示和顏色會換
+            let top = Dictionary(grouping: g, by: \.cat.key).sorted { a, b in
+                if a.value.count != b.value.count { return a.value.count > b.value.count }
+                return (Cat.order.firstIndex(of: a.key) ?? Cat.order.count) < (Cat.order.firstIndex(of: b.key) ?? Cat.order.count)
+            }.prefix(2)
             let cats = top.map { $0.value[0].cat.color }
             let (la, ln) = aside(g.map { $0.lat! }.reduce(0, +) / Double(g.count), g.map { $0.lng! }.reduce(0, +) / Double(g.count))
             return PinCluster(id: g.map(\.id).sorted().joined(separator: ","), ids: g.map(\.id),
@@ -1102,6 +1118,9 @@ struct MapTab: View {
     }
 }
 
+// MapTab 每次被重新建構（Root 重算）時不要再 new 一個 CLLocationManager：整個 App 共用一個
+@MainActor enum LocMgr { static let shared = CLLocationManager() }
+
 // 下面那排要放哪些店：地圖現在看到的範圍裡的店，由近到遠（沒開定位就從地圖中心算）
 // 地圖現在看的範圍（手指移動、縮放停下來才更新）。peek 給 MapTab 的函式用（改了不重畫），
 // shown 只有 NearbyHost 讀：地圖每停一次只重算下面的面板
@@ -1140,7 +1159,10 @@ struct NearbyHost<C: View>: View, Equatable {
     var body: some View {
         let _ = Perf.signposter.emitEvent("附近重算")
         let _ = Perf.shared.note("附近重算")
-        content(Nearby(list: list, here: store.here, region: visible, total: total, base: base, inGroup: inGroup, filter: filter, only: seen.only))
+        let t0 = CACurrentMediaTime()
+        let n = Nearby(list: list, here: store.here, region: visible, total: total, base: base, inGroup: inGroup, filter: filter, only: seen.only)
+        let _ = Perf.shared.note(String(format: "附近算 %.2f ms，%ld 間", (CACurrentMediaTime() - t0) * 1000, n.places.count))
+        content(n)
     }
 
     // 「附近」只算看得到的那塊：搜尋列下緣到面板上緣（停好的位置）
@@ -1350,7 +1372,7 @@ struct NearbySheet: View {
         .task {
             try? await Task.sleep(for: .seconds(1.5))
             while mp.dragging { try? await Task.sleep(for: .milliseconds(300)) }
-            if !Task.isCancelled, !highUsed { highUsed = true }
+            if !Task.isCancelled, !highUsed, !Flag.on("-noHighPrebuild") { highUsed = true }
         }
     }
 
@@ -1546,7 +1568,9 @@ struct NearbySheet: View {
         // 中段上緣用算的（最低段下緣 − 中段高度），不受大卡、鍵盤影響（鏡頭 aim() 用）；先算好再通知地圖
         if mp.lowTop > 0 { mp.midTop = mp.lowTop + Self.lowH - midT }
         if grew { foot(mp.lowTop) }
-        if mp.stage != .high, probe.top > 0, abs(mp.top - probe.top) > 0.5 { mp.top = probe.top }
+        // 量測用 -holdTop（F3 對照，不加參數照舊）：選著店、停在中段時不更新面板上緣
+        let hold = Flag.on("-holdTop") && mp.stage == .mid && pins.sel != nil
+        if mp.stage != .high, !hold, probe.top > 0, abs(mp.top - probe.top) > 0.5 { mp.top = probe.top }
     }
 }
 
@@ -1616,6 +1640,7 @@ private struct NearRow: View {
     let place: Place
     var saver: String? = nil
     var body: some View {
+        let _ = Perf.shared.count("附近列")
         HStack(spacing: 12) {
             PhotoView(place: place, px: 200).frame(width: 64, height: 64).clipShape(.rect(cornerRadius: 14))
             VStack(alignment: .leading, spacing: 4) {
@@ -1655,6 +1680,7 @@ struct PickedCard: View {
     @State private var mp = MapPanel.shared
 
     var body: some View {
+        let _ = Perf.shared.count("大卡")
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 // 最低段只露這一行：放店名（中段照舊是「離你 350 m」，店名在下面卡片裡）
@@ -1820,6 +1846,7 @@ struct PickedCard: View {
     private(set) var again = 0
     func tap(_ id: String) {
         guard !moving else { Perf.shared.mark("地圖在動 不算點圖釘"); return }
+        Perf.shared.note("select 開始（點圖釘）")
         tapAt = CACurrentMediaTime()
         if sel == id { again += 1 } else { select(id) }
     }
@@ -1921,6 +1948,7 @@ struct FoodPin: View {
     }
 
     var body: some View {
+        let _ = Perf.shared.count("圖釘")
         let on = pins.sel == place.id
         // 選到的那根永遠不跟泡泡合、也不從泡泡飛（店名小牌子才會跟著圖釘）
         let merge = on ? nil : fx.to
@@ -2131,6 +2159,7 @@ struct MapCard: View {
     let place: Place, on: Bool
     var saver: String? = nil
     var body: some View {
+        let _ = Perf.shared.count("卡片")
         HStack(spacing: 12) {
             PhotoView(place: place, px: 300).frame(width: 84, height: 84).clipShape(.rect(cornerRadius: 16))
             VStack(alignment: .leading, spacing: 4) {
@@ -2381,6 +2410,11 @@ private struct MyDotView: View {
 @MainActor @Observable final class EmojiSlot { var img: UIImage? }
 
 @MainActor enum EmojiArt {
+    // DiceChip 的字型是 .subheadline：同一個字級下 UIKit 的 subheadline 是幾 pt，🎲 就畫幾 pt
+    static func diceSize(_ d: DynamicTypeSize) -> CGFloat {
+        UIFont.preferredFont(forTextStyle: .subheadline,
+                             compatibleWith: UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(d))).pointSize
+    }
     enum Part: String { case pin, bubble, dice }
     static let parts: Set<String> = {
         guard let v = Flag.value("-emojiImg") else { return Flag.on("-emojiImgSel") ? ["pin"] : [] }

@@ -19,6 +19,7 @@ struct PlaceDetail: View {
 
     var body: some View {
         let _ = Perf.shared.count("店家頁")
+        let _ = Perf.shared.note("店家頁重算")
         // 永遠顯示最新的那份（剛改的狀態、別台裝置改的都會跟上）
         let base = store.place(self.place.id) ?? self.place
         let place = picked.flatMap { store.place($0) } ?? base
@@ -419,12 +420,13 @@ struct MiniMap: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .task(id: key) {
                 guard width > 0 else { return }
-                if let c = Self.cache.object(forKey: key as NSString) { withAnimation(.easeOut(duration: 0.2)) { img = c }; return }
+                if let c = Self.cache.object(forKey: key as NSString) { Perf.shared.note("小地圖用快取"); withAnimation(.easeOut(duration: 0.2)) { img = c }; return }
                 // 第一次截圖等推頁動畫跑完再開始（在畫面外，晚一點出現看不到）；換分店時已經有舊圖，不用等
                 if img == nil {
                     try? await Task.sleep(for: .milliseconds(450))
                     guard !Task.isCancelled else { return }
                 }
+                Perf.shared.note("小地圖開始截圖")
                 let o = MKMapSnapshotter.Options()
                 o.region = MKCoordinateRegion(center: coord, latitudinalMeters: 700, longitudinalMeters: 700)
                 o.size = CGSize(width: width, height: 190)
@@ -432,6 +434,7 @@ struct MiniMap: View {
                 o.traitCollection = UITraitCollection(traitsFrom: [UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light), UITraitCollection(displayScale: scale)])
                 guard let snap = try? await MKMapSnapshotter(options: o).start(), !Task.isCancelled else { return }
                 Self.cache.setObject(snap.image, forKey: key as NSString)
+                Perf.shared.note("小地圖截圖到")
                 withAnimation(.easeOut(duration: 0.2)) { img = snap.image }
             }
     }

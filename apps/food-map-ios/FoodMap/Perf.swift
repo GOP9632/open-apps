@@ -27,6 +27,7 @@ import os
     @ObservationIgnored private var drops: [CFTimeInterval] = []
     @ObservationIgnored private var bodies: [String: [CFTimeInterval]] = [:]
     @ObservationIgnored private var shownAt: CFTimeInterval = 0
+    @ObservationIgnored private var tickedAt: CFTimeInterval = 0   // 上一次 tick 真正跑完的時間（l.timestamp 是 vsync，主執行緒卡住時比 tick 真正跑的時候早）
     @ObservationIgnored private var firstAfter: (name: String, at: CFTimeInterval)?   // 量測：手指按下或放開後主執行緒送出的第一幀
 
     // 量測用：只印到 Console、不上浮層（body 裡寫 let _ = Perf.shared.note("附近重算")）
@@ -85,7 +86,13 @@ import os
         let frame = max(l.targetTimestamp - l.timestamp, 1.0 / 120)
         if last > 0, now - last > frame * 1.5 {
             drops.append(now)
-            print(String(format: "[perf] 掉幀 %.0f ms（%.3f 到 %.3f）", (now - last) * 1000, last, now))
+            // 這一幀裡各畫面重算了幾次（body 開頭有 count 的才算），從上一次 tick 跑完算起
+            let since = tickedAt
+            let n = bodies.compactMap { (k, v) -> String? in
+                let c = v.filter { $0 >= since }.count
+                return c > 0 ? "\(k) \(c)" : nil
+            }.sorted().joined(separator: "・")
+            print(String(format: "[perf] 掉幀 %.0f ms（%.3f 到 %.3f）", (now - last) * 1000, last, now) + (n.isEmpty ? "" : "　重算 " + n))
         }
         if let f = firstAfter {
             firstAfter = nil
@@ -118,6 +125,7 @@ import os
             print("[perf] " + lines[0])
             if lines.count > 6 { lines.removeLast() }
         }
+        tickedAt = CACurrentMediaTime()
     }
 
     // CADisplayLink 會強引用 target，用一個小物件轉手，關掉時不會留著

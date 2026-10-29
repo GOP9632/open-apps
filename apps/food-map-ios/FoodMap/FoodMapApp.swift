@@ -34,6 +34,7 @@ struct Root: View {
 
     var body: some View {
         let _ = Perf.shared.count("App")
+        let _ = Perf.shared.note("App 重算")
         @Bindable var store = store
         Group {
             if store.loggedIn {
