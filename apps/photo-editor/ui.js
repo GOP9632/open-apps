@@ -130,7 +130,7 @@ export function nudge(dir, big) {
 // unit()：z=1 時照片實際顯示的倍率（照片一個像素佔幾個螢幕像素），
 // 照醒圖：實際倍率 5%～1200%，按鈕一格一格跳 STEPS
 const STEPS = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.2, 1.4, 1.6, 1.8, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 12];
-// 手機兩指捏合中：塗抹、推臉這些工具看到就先停筆（第二指放下時會發 pinchstart）
+// 手機兩指捏合中：塗抹、推臉這些工具看到就先停筆（第二指放下時會發 pinchstart，手指都放開發 pinchend）
 export const pinch = { on: false };
 // 照片現在放大幾倍：筆刷大小是照「螢幕上看起來多大」算的，放大照片筆刷就跟著變細，才能修細的地方
 export const stageZoom = { z: 1 };
@@ -209,7 +209,7 @@ export function canvasZoom({ stage, box, onChange, canPan, unit = () => 1 }) {
   });
   const up = e => {
     if (!pts.delete(e.pointerId)) return;
-    if (!pts.size) pinch.on = false;
+    if (!pts.size && pinch.on) { pinch.on = false; window.dispatchEvent(new Event('pinchend')); }
     stage.classList.remove('panning');
     g = pts.size === 2 ? (start(), g) : null;
   };

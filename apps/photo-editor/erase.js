@@ -324,14 +324,17 @@ function bindDraw() {
     if (st.tool !== 'box') { stroke(p, p); paintOverlay(); }
     showRing(p);
   });
+  // 選區一格畫面只重畫一次（iPhone 一格畫面可能來兩三個移動事件；筆跡每個事件都畫進遮罩，不會少）
+  let pv = 0, pvRect;
+  const paintSoon = rect => { pvRect = rect; if (!pv) pv = requestAnimationFrame(() => { pv = 0; if (drag) paintOverlay(pvRect); }); };
   ov.addEventListener('pointermove', e => {
     const p = pos(e);
     if (e.pointerType !== 'touch' || drag) showRing(p);
     if (!drag) return;
     if (st.tool === 'box') {
       const a = drag.a;
-      paintOverlay({ x: Math.min(a.x, p.x), y: Math.min(a.y, p.y), w: Math.abs(p.x - a.x), h: Math.abs(p.y - a.y) });
-    } else { stroke(drag.last, p); paintOverlay(); }
+      paintSoon({ x: Math.min(a.x, p.x), y: Math.min(a.y, p.y), w: Math.abs(p.x - a.x), h: Math.abs(p.y - a.y) });
+    } else { stroke(drag.last, p); paintSoon(); }
     drag.last = p;
   });
   const up = e => {

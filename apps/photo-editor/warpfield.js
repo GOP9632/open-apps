@@ -77,39 +77,54 @@ export class WarpField {
     if (key === this.key) return { tex: this.tex, step: this.step };
     this.key = key;
 
-    const pos = [], off = [], idx = [], tmp = [0, 0], near = bucket(moves, w, h);
-    let maxD = 0;
-    const grid = (x0, y0, x1, y1, nx, ny) => {
-      const base = pos.length / 2;
-      for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) {
-        const x = x0 + (x1 - x0) * i / nx, y = y0 + (y1 - y0) * j / ny;
-        evalField(near(x, y), pins, x, y, tmp);
-        pos.push(x + tmp[0], y + tmp[1]); off.push(-tmp[0], -tmp[1]);
-        maxD = Math.max(maxD, Math.abs(tmp[0]), Math.abs(tmp[1]));
-      }
-      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-        const a = base + j * (nx + 1) + i, b = a + 1, c = a + nx + 1, d = c + 1;
-        idx.push(a, b, c, b, d, c);
-      }
-    };
-    const n = 96, k = n / Math.max(w, h);
-    grid(0, 0, w, h, Math.max(2, Math.round(w * k)), Math.max(2, Math.round(h * k)));
+    // 網格：整張一張粗的，每張臉、推臉畫過的範圍各一張細的（[x0, y0, x1, y1, 橫幾格, 直幾格]）
+    const grids = [], n = 96, k = n / Math.max(w, h);
+    grids.push([0, 0, w, h, Math.max(2, Math.round(w * k)), Math.max(2, Math.round(h * k))]);
     for (const b of faceBoxes(faces)) {
       const x0 = Math.max(0, b.cx - b.half), x1 = Math.min(w, b.cx + b.half), y0 = Math.max(0, b.cy - b.half), y1 = Math.min(h, b.cy + b.half);
       if (x1 - x0 < 4 || y1 - y0 < 4) continue;
       const cell = Math.max(b.cell, (x1 - x0) / 220, (y1 - y0) / 220);
-      grid(x0, y0, x1, y1, Math.max(2, Math.round((x1 - x0) / cell)), Math.max(2, Math.round((y1 - y0) / cell)));
+      grids.push([x0, y0, x1, y1, Math.max(2, Math.round((x1 - x0) / cell)), Math.max(2, Math.round((y1 - y0) / cell))]);
     }
     // 重新塑形（液化）畫過的範圍也用細網格
     for (const b of boxes) {
       const x0 = Math.max(0, b.x0), x1 = Math.min(w, b.x1), y0 = Math.max(0, b.y0), y1 = Math.min(h, b.y1);
       if (x1 - x0 < 4 || y1 - y0 < 4) continue;
       const cell = Math.max(b.cell, (x1 - x0) / 200, (y1 - y0) / 200);
-      grid(x0, y0, x1, y1, Math.max(2, Math.round((x1 - x0) / cell)), Math.max(2, Math.round((y1 - y0) / cell)));
+      grids.push([x0, y0, x1, y1, Math.max(2, Math.round((x1 - x0) / cell)), Math.max(2, Math.round((y1 - y0) / cell))]);
+    }
+    // 網格形狀沒變（拖臉型滑桿時每一格都一樣）：三角形索引沿用、頂點陣列重複用，只重算位移。
+    // 評審 L10：以前每一格用一般陣列 push 十幾萬個頂點、六十幾萬個索引，兩張臉每格約 26ms
+    const gk = grids.map(g => g.join(',')).join(';'), gl = this.gl;
+    if (gk !== this.gk) {
+      let nv = 0, ni = 0;
+      for (const g of grids) { nv += (g[4] + 1) * (g[5] + 1); ni += g[4] * g[5] * 6; }
+      const idx = new Uint32Array(ni);
+      let v0 = 0, q = 0;
+      for (const [, , , , nx, ny] of grids) {
+        for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+          const a = v0 + j * (nx + 1) + i, b = a + 1, c = a + nx + 1, d = c + 1;
+          idx[q++] = a; idx[q++] = b; idx[q++] = c; idx[q++] = b; idx[q++] = d; idx[q++] = c;
+        }
+        v0 += (nx + 1) * (ny + 1);
+      }
+      this.gk = gk; this.ni = ni; this.pos = new Float32Array(nv * 2); this.off = new Float32Array(nv * 2);
+      gl.bindVertexArray(this.vao);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+      gl.bindVertexArray(null);
+    }
+    const pos = this.pos, off = this.off, tmp = [0, 0], near = bucket(moves, w, h);
+    let maxD = 0, q = 0;
+    for (const [x0, y0, x1, y1, nx, ny] of grids) {
+      for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) {
+        const x = x0 + (x1 - x0) * i / nx, y = y0 + (y1 - y0) * j / ny;
+        evalField(near(x, y), pins, x, y, tmp);
+        pos[q] = x + tmp[0]; pos[q + 1] = y + tmp[1]; off[q] = -tmp[0]; off[q + 1] = -tmp[1]; q += 2;
+        maxD = Math.max(maxD, Math.abs(tmp[0]), Math.abs(tmp[1]));
+      }
     }
     this.step = Math.max(maxD / 30000, 1e-4);
 
-    const gl = this.gl;
     const s = Math.min(1, MAX_TEX / Math.max(w, h)), tw = Math.max(1, Math.round(w * s)), th = Math.max(1, Math.round(h * s));
     if (tw !== this.tw || th !== this.th) {
       gl.bindTexture(gl.TEXTURE_2D, this.tex);
@@ -119,15 +134,14 @@ export class WarpField {
       this.tw = tw; this.th = th;
     }
     gl.bindVertexArray(this.vao);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.bPos); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pos), gl.DYNAMIC_DRAW);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.bOff); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(off), gl.DYNAMIC_DRAW);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(idx), gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.bPos); gl.bufferData(gl.ARRAY_BUFFER, pos, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.bOff); gl.bufferData(gl.ARRAY_BUFFER, off, gl.DYNAMIC_DRAW);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fb);
     gl.viewport(0, 0, tw, th);
     gl.clearColor(128 / 255, 128 / 255, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(this.p);
     gl.uniform2f(this.uSize, w, h); gl.uniform1f(this.uStep, this.step);
-    gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_INT, 0);
+    gl.drawElements(gl.TRIANGLES, this.ni, gl.UNSIGNED_INT, 0);
     gl.bindVertexArray(null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindBuffer(gl.ARRAY_BUFFER, null);

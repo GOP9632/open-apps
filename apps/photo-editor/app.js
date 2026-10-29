@@ -1,6 +1,6 @@
 import { Renderer, MAX_WARPS } from './gl.js';
-import { FILTERS, bakeLUT, thumb, filterFn, skinFilterFn, hairFilterFn } from './filters.js';
-import { loadXT, xtData, xtItem } from './xt.js';
+import { FILTERS, bakeLUT, bakeGrid, thumb, filterFn, skinFilterFn, hairFilterFn } from './filters.js';
+import { loadXT, xtData, xtItem, xtWeights } from './xt.js';
 import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor, beardSize } from './ai.js';
 import { COVERS, COVER_CATS, coverPixels } from './coverface.js';
 import { STICKERS, STICKER_CATS, EMOJIS, EMOJI_FONT, BLENDS, blendById, stickerAR, stickerURL, thumbURL, renderSticker, putCanvas, getCanvas, canvasURL, touchCanvas, ownImages, NET_PACKS, netURL, loadNetSticker, restoreCanvas } from './stickers.js';
@@ -722,7 +722,7 @@ function render(liqOnly) {
     const f = liveFilter(), lut = gradeOn(P) ? getGradeLut() : f === 'none' ? null : getLut(f);
     // 皮膚、頭髮另外一套顏色要用皮膚遮罩和分類圖，還沒找過臉就先找
     if ((lut?.skin || lut?.hair) && !base.facesP) findFaces();
-    R.setLut(lut?.c, lut?.skin, lut?.hair); R.setGlow(xtItem(f)?.glow, (P.filterAmt ?? 100) / 100);
+    R.setLut(lut); R.setGlow(xtItem(f)?.glow, (P.filterAmt ?? 100) / 100);
     draw();
     paintPop();
     if (curFrame()?.live) paintFrame();
@@ -762,6 +762,7 @@ function held() {
 // 存檔、合併、摳圖要原尺寸；其他時候畫預覽大小
 let holdFull = false;
 function draw(full) {
+  if (full || holdFull) gradeFull();
   syncTex(); syncHair(full || holdFull); syncShape();
   if (bodyOn(P) && !base.body) getBody(base);
   // 身體的變形要排在最前面（長腿會改到整張照片的上下位置）
@@ -861,8 +862,12 @@ let zoomZ = 1, dragging = false;
 // 預覽最多幾像素：iPhone 放大兩倍以上時，預覽原本會變成整張 1200 萬像素，光畫布就吃掉幾百 MB，
 // Safari 記憶體不夠就把 WebGL 收回、照片整個變黑（Anthony 2026-10-27）
 const FAST_PX = 1.5e6, VIEW_PX = LOW_MEM ? 6e6 : 16e6;
+let pinchT = 0;
 function syncView() {
   if (!R || !base) return;
+  // 兩指捏合中不換預覽解析度（畫面只是 CSS 放大縮小），手指放開（或停下來半秒）再畫清楚的一次。
+  // 評審 M12：以前捏合中每跨過一級解析度就整張重畫一次，捏合到一半停頓好幾次
+  if (pinch.on && performance.now() - lastInput < 500) { clearTimeout(pinchT); pinchT = setTimeout(syncView, 520); return; }
   const s = frameK * zoomZ * Math.min(3, devicePixelRatio || 1), px = base.canvas.width * base.canvas.height;
   const q = Math.min(1, 2 ** (Math.ceil(Math.log2(Math.max(s, 1e-3)) * 2) / 2), Math.sqrt(VIEW_PX / px));
   // 拖滑桿、推臉、拖燈的時候先畫小一點（最多約 150 萬像素），放開再畫回清楚的。
@@ -871,7 +876,7 @@ function syncView() {
   const f = dragging ? Math.min(1, Math.sqrt(FAST_PX / (px * q * q))) : 1;
   if (q !== R.view || f !== R.fast) { R.view = q; R.fast = f; render(); }
 }
-function setDragging(on) { if (dragging !== on) { dragging = on; syncView(); if (!on && (gradeLutKey.endsWith('|33') || skinFx?.stale)) render(); } }
+function setDragging(on) { if (dragging !== on) { dragging = on; if (on) gradeLazy = false; else gradeRelease(); syncView(); if (!on && skinFx?.stale) render(); } }
 // 開始拖：任何滑桿；打光（拖燈）時在照片上按下。放開手指就畫回清楚的。
 // 推臉不用：推的時候主 shader 不重畫，只重畫推到的那一塊（render(true)），整張清楚的照推
 addEventListener('rangestart', () => setDragging(true));
@@ -881,6 +886,7 @@ addEventListener('pointerdown', e => {
 addEventListener('pointerup', () => setDragging(false), true);
 addEventListener('pointercancel', () => setDragging(false), true);
 addEventListener('pinchstart', () => setDragging(false));
+addEventListener('pinchend', () => syncView());
 // 身體塑形：找人體關節，再用人像分割量身體寬度
 function getBody(b) {
   b.bodyP ||= Promise.all([detectBody(b.canvas), getSeg(b), findFaces()]).then(([body, s]) => {
@@ -903,8 +909,14 @@ function syncHair(full) {
   if (hairNeedsSeg(P) && !base.hair) getHair(base);
   if (skinOn(P) && !base.skin) getSkin(base);
   fxTrim(want, sWant);
-  // 預覽時用螢幕大小的照片算，存檔才用原尺寸
-  const src = (want || sWant) && !full ? previewOf(base.canvas) : base.canvas;
+  // 預覽時用螢幕大小的照片算，存檔才用原尺寸。
+  // 拖膚質、頭髮滑桿（這一格本來就要重算）：先用拖的時候的小圖算，放開再算清楚的（評審 M9：放大時預覽最多 600 萬像素，每格整張重算）。
+  // 拖別的滑桿時沿用已經算好的那張，不會為了換大小多算
+  let src = (want || sWant) && !full ? previewOf(base.canvas) : base.canvas;
+  if (src !== base.canvas && dragging && R.fast < 1) {
+    const small = previewOf(base.canvas, R.fast);
+    if (hairFor !== base || key !== hairKey || sKey !== skinKeyNow || hairSrc === small) src = small;
+  }
   // 拖頭髮時膚質的模糊圖先用舊的，放開手指這一格補算
   const restale = sWant && !dragging && skinFx?.stale;
   if (hairFor === base && hairSrc === src && key === hairKey && sKey === skinKeyNow && !restale) return;
@@ -963,18 +975,22 @@ function fxPrime() {
     }
   } catch (e) { console.warn(e); }
 }
-// 照片縮成預覽大小（跟著 R.view），每張照片、每種大小只縮一次
+// 照片縮成預覽大小（跟著 R.view），每張照片、每種大小只縮一次。
+// k < 1：拖的時候的小圖（R.fast），從預覽那張再縮；兩種大小各留一張
 const pvCache = new WeakMap();
-function previewOf(c) {
-  const s = R.view;
+function previewOf(c, k = 1) {
+  const s = R.view * k;
   if (s >= 1) return c;
   let v = pvCache.get(c);
-  if (v?.s !== s) {
+  if (!v) pvCache.set(c, v = {});
+  const slot = k < 1 ? 'f' : 'v';
+  if (v[slot]?.s !== s) {
+    const src = k < 1 && v.v?.s === R.view ? v.v.p : c;
     const p = newCanvas(Math.max(1, Math.round(c.width * s)), Math.max(1, Math.round(c.height * s)));
-    const x = p.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(c, 0, 0, p.width, p.height);
-    pvCache.set(c, v = { s, p });
+    const x = p.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(src, 0, 0, p.width, p.height);
+    v[slot] = { s, p };
   }
-  return v.p;
+  return v[slot].p;
 }
 // 膚質、祛皺：要皮膚分割和臉，同一張照片只準備一次
 let skinFx = null, skinKeyNow = '';
@@ -1091,7 +1107,9 @@ function effects() {
   return fx;
 }
 // 調色（HSL、曲線、分色）跟濾鏡合成一張 LUT，強度已經混在裡面
-let gradeLut = null, gradeLutKey = '';
+// gradeF：只有調色、還沒套濾鏡的格點 { k, n, d }（醒圖濾鏡、內插在 GPU 上做，見 gl.js bakeXt）
+// gradeLazy：剛放開滑桿，先沿用拖的時候的 33³，等停手再補完整的（評審 M10：以前放開那一格要等完整的烘完）
+let gradeLut = null, gradeLutKey = '', gradeF = null, gradeLazy = false;
 // 醒圖一鍵出片的「富士閃光」只對有人的照片有效，沒有臉的照片醒圖保持原樣，這裡也不套
 function liveFilter() {
   const x = xtItem(P.filter);
@@ -1101,25 +1119,54 @@ function getGradeLut() {
   // 拖滑桿時先烘 33³ 格點再內插（評審 2026-10-27：每格 26 萬次太慢），放開再烘完整的。
   // 顏色沒變就沿用（推臉、拖燈時不用換成粗的）
   const f = liveFilter(), k0 = gradeKey(P) + '|' + f + '|' + P.filterAmt + '|', n = dragging ? 33 : 64;
-  if (!gradeLutKey.startsWith(k0) || !(dragging || gradeLutKey.endsWith('|64'))) {
-    gradeLutKey = k0 + n; const sk = skinFilterFn(f), hr = hairFilterFn(f);
-    gradeLut = lutPair(bakeLUT(gradeFn(P, filterFn(f)), n), sk && bakeLUT(gradeFn(P, sk), n), hr && bakeLUT(gradeFn(P, hr), n));
+  if (!gradeLutKey.startsWith(k0) || !(dragging || gradeLazy || gradeLutKey.endsWith('|64'))) {
+    const xl = f === 'none' ? GRADE_ONLY : xtLut(f);
+    if (xl && R?.canXt) {
+      // 醒圖濾鏡、只有調色：CPU 只算調色的格點，濾鏡、強度在 GPU 上套，只拖強度連調色都不用重算（評審 M10）
+      // 只有調色時完整的那張先取整好，跟以前 CPU 烘的一模一樣（有濾鏡時取整在套完濾鏡之後）
+      const q = f === 'none', gk = gradeKey(P) + (q ? '|q' : '');
+      if (gradeF?.k !== gk || (!dragging && !gradeLazy && gradeF.n < 64)) gradeF = { k: gk, n, q: q && n === 64, d: bakeGrid(gradeFn(P, null), n, q && n === 64) };
+      gradeLutKey = k0 + gradeF.n;
+      gradeLut = { ...xl, grade: gradeF, amt: P.filterAmt / 100 };
+    } else {
+      gradeLutKey = k0 + n; const sk = skinFilterFn(f), hr = hairFilterFn(f);
+      gradeLut = lutPair(bakeLUT(gradeFn(P, filterFn(f)), n), sk && bakeLUT(gradeFn(P, sk), n), hr && bakeLUT(gradeFn(P, hr), n));
+    }
   }
   return gradeLut;
 }
+const GRADE_ONLY = { xt: [null], skin: false, hair: false };
+// 放開滑桿：等停手再把 33³ 換成完整的；存檔、合併這種要原尺寸的現在就換
+function gradeRelease() {
+  if (!gradeLutKey.endsWith('|33')) return;
+  gradeLazy = true;
+  whenStill(() => { if (!gradeLazy || dragging) return; gradeLazy = false; if (gradeLutKey.endsWith('|33')) render(); });
+}
+function gradeFull() { if (gradeLazy) { gradeLazy = false; if (gradeOn(P) && gradeLutKey.endsWith('|33')) R.setLut(getGradeLut()); } }
 // 一般顏色、皮膚那套、頭髮那套拼成一張 1536×512（沒有的那套就放一般顏色）
 function lutPair(a, b, h) {
   const c = document.createElement('canvas'); c.width = 1536; c.height = 512;
   const x = c.getContext('2d'); x.drawImage(a, 0, 0); x.drawImage(b || a, 512, 0); x.drawImage(h || a, 1024, 0);
   return { c, skin: !!b, hair: !!h };
 }
+// 醒圖風格濾鏡：色表在 GPU 上烘（gl.js bakeXt），這裡只記三套權重，不佔畫布；GPU 不行就回傳 null，照舊在 CPU 烘
+const xtLuts = new Map();
+function xtLut(id) {
+  if (!xtItem(id) || !R?.canXt) return null;
+  let v = xtLuts.get(id);
+  if (!v) { const xt = [xtWeights(id), xtWeights(id, 'skin'), xtWeights(id, 'hair')]; xtLuts.set(id, v = { xt, skin: !!xt[1], hair: !!xt[2] }); }
+  return v;
+}
+// 內建濾鏡（和 GPU 不行時的醒圖濾鏡）在 CPU 烘：留最近用的 8 張（評審 M11：以前只增不減，每張 3MB）
 function getLut(id) {
-  if (!lutCache.has(id)) {
-    const fn = filterFn(id); if (!fn) return null;
-    const sk = skinFilterFn(id), hr = hairFilterFn(id);
-    lutCache.set(id, lutPair(bakeLUT(fn), sk && bakeLUT(sk), hr && bakeLUT(hr)));
-  }
-  return lutCache.get(id);
+  const xl = xtLut(id); if (xl) return xl;
+  let v = lutCache.get(id);
+  if (v) { lutCache.delete(id); lutCache.set(id, v); return v; }
+  const fn = filterFn(id); if (!fn) return null;
+  const sk = skinFilterFn(id), hr = hairFilterFn(id);
+  lutCache.set(id, v = lutPair(bakeLUT(fn), sk && bakeLUT(sk), hr && bakeLUT(hr)));
+  if (lutCache.size > 8) lutCache.delete(lutCache.keys().next().value);
+  return v;
 }
 
 // ---------- 復原、重做 ----------
@@ -1493,18 +1540,27 @@ function tabFilter(box) {
   if (!xd) loadXT().then(d => { if (d && tab === 'filter') showTab('filter'); });
   if (xd && fCat === -1 && xtItem(P.filter)) fCat = xtItem(P.filter).cat;
   const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
-  [[-1, '基本'], ...(xd ? xd.cats.map((c, i) => [i, c]) : [])].forEach(([i, name]) => cats.append(item({
-    label: name, icon: name, cls: 'wide', on: fCat === i, set: i === -1 ? FILTERS.some(f => f.id === P.filter && f.id !== 'none') : xtItem(P.filter)?.cat === i,
-    onclick: () => { fCat = i; showTab('filter'); },
-  })));
+  const catEls = [[-1, '基本'], ...(xd ? xd.cats.map((c, i) => [i, c]) : [])].map(([i, name]) => {
+    const c = item({
+      label: name, icon: name, cls: 'wide', on: fCat === i, set: i === -1 ? FILTERS.some(f => f.id === P.filter && f.id !== 'none') : xtItem(P.filter)?.cat === i,
+      onclick: () => { fCat = i; showTab('filter'); },
+    });
+    cats.append(c); return [i, c];
+  });
   base.thumbs ||= {};
   const list = fCat === -1 || !xd ? FILTERS.map(f => ({ ...f, def: P0.filterAmt })) : [{ ...FILTERS[0], def: P0.filterAmt }, ...xd.items.filter(x => x.cat === fCat && (!x.hide || x.id === P.filter))];
   const els = list.map(f => {
     const el = item({
       label: f.name, cls: 'ft', on: P.filter === f.id, style: base.thumbs[f.id] ? `background-image:url(${base.thumbs[f.id]})` : '',
-      onclick: () => {
+      onclick: e => {
         if (P.filter === f.id && f.id !== 'none') return;
-        P.filter = f.id; P.filterAmt = f.def ?? P0.filterAmt; render(); commit(); showTab('filter');
+        P.filter = f.id; P.filterAmt = f.def ?? P0.filterAmt; render(); commit();
+        // 只換選中的那顆、分類上的點、強度滑桿，不整排重建（評審 L7：人像分類 210 個，以前每點一下全部重建、重排）
+        if (tab !== 'filter') return;
+        box.querySelector('.it.on')?.classList.remove('on'); e.currentTarget.classList.add('on');
+        catEls.forEach(([i, c]) => c.classList.toggle('set', i === -1 ? FILTERS.some(x => x.id === P.filter && x.id !== 'none') : xtItem(P.filter)?.cat === i));
+        filterSlider(); syncNav();
+        peekRow(box, e.currentTarget, box.scrollLeft); edgeFade(box);
       },
     });
     box.append(el); return el;
@@ -1523,6 +1579,9 @@ function tabFilter(box) {
     if (k < list.length) setTimeout(step, 0);
   };
   step();
+  filterSlider();
+}
+function filterSlider() {
   if (P.filter === 'none') hideSlider();
   else setSlider('強度', 0, 100, P.filterAmt, v => { P.filterAmt = v; render(); });
 }
@@ -1547,7 +1606,7 @@ async function mergeFilter() {
     P = { ...clone(P0), filter: now.filter, filterAmt: now.filterAmt, ...pre(now) };
     let out;
     try {
-      R.setLut(lut?.c, lut?.skin, lut?.hair); R.setGlow(xtItem(f)?.glow, (P.filterAmt ?? 100) / 100);
+      R.setLut(lut); R.setGlow(xtItem(f)?.glow, (P.filterAmt ?? 100) / 100);
       draw(true);
       out = photoCanvas(base.canvas.width, base.canvas.height);
       out.getContext('2d').drawImage($('#gl'), 0, 0);
@@ -3571,7 +3630,8 @@ if (R) showDrafts();
 $('#fileMulti').onchange = e => { const f = [...e.target.files]; e.target.value = ''; if (f.length) openCollage(multiFor, f); };
 initCollage({ loadFile, toast, busy });
 // 醒圖風格濾鏡的參數先在背景載入；載入前選到的（例如復原回來的）載好後重畫
-loadXT().then(d => { if (d && base && xtItem(P.filter)) { gradeLutKey = ''; render(); } });
+// 濾鏡資料到了：停手時先編好 GPU 烘色表的程式，第一次點濾鏡不用等編譯
+loadXT().then(d => { if (d && base && xtItem(P.filter)) { gradeLutKey = ''; render(); } if (d) whenStill(() => { if (R && !glLost) R.canXt; }); });
 ['#file', '#cam'].forEach(s => $(s).onchange = e => { loadFile(e.target.files[0]); e.target.value = ''; });
 addEventListener('dragover', e => e.preventDefault());
 addEventListener('drop', e => { e.preventDefault(); const f = [...e.dataTransfer.files].find(f => f.type.startsWith('image/')); if (f) loadFile(f); });
@@ -3624,4 +3684,4 @@ addEventListener('keyup', e => { if (e.key === ' ' && spaceCmp) { spaceCmp = fal
 addEventListener('blur', () => { if (spaceCmp) { spaceCmp = false; cmp(false); } });
 
 // 給自動測試用
-window.__editor = { toSrc: () => srcMapper(), loadFile, get P() { return P; }, get base() { return base; }, get stickers() { return stickers; }, get texts() { return texts; }, redraw: () => { drawTexts(); drawStickers(); }, showTab, save, render, thumb: () => draftThumb() };
+window.__editor = { toSrc: () => srcMapper(), loadFile, get P() { return P; }, get base() { return base; }, get stickers() { return stickers; }, get texts() { return texts; }, redraw: () => { drawTexts(); drawStickers(); }, showTab, save, render, thumb: () => draftThumb(), get R() { return R; } };
