@@ -13,6 +13,7 @@ import os
     var on = false { didSet { on ? start() : stop() } }
     private(set) var lines: [String] = []
     private(set) var hitches = 0
+    private(set) var renders = ""                   // 「重畫 地圖 2・行程面板 5」：2 秒內每個大畫面重算了幾次
 
     @ObservationIgnored private var touchDown: CFTimeInterval = 0
     @ObservationIgnored private var touchUp: CFTimeInterval = 0
@@ -20,6 +21,8 @@ import os
     @ObservationIgnored private var link: CADisplayLink?
     @ObservationIgnored private var last: CFTimeInterval = 0
     @ObservationIgnored private var drops: [CFTimeInterval] = []
+    @ObservationIgnored private var bodies: [String: [CFTimeInterval]] = [:]
+    @ObservationIgnored private var shownAt: CFTimeInterval = 0
 
     // 只在開發版、模擬器和 TestFlight 出現，App Store 版不會有
     static var allowed: Bool {
@@ -42,6 +45,12 @@ import os
         pending = (name, CACurrentMediaTime())
     }
 
+    // 大畫面的 body 開頭呼叫（let _ = Perf.shared.count("地圖")）：拖面板、縮放時哪個畫面在一直重算
+    func count(_ name: String) {
+        guard on else { return }
+        bodies[name, default: []].append(CACurrentMediaTime())
+    }
+
     private func start() {
         guard link == nil else { return }
         let l = CADisplayLink(target: Proxy(self), selector: #selector(Proxy.tick(_:)))
@@ -61,6 +70,15 @@ import os
         last = now
         drops.removeAll { now - $0 > 2 }
         if hitches != drops.count { hitches = drops.count }
+        // 重畫次數每 0.5 秒更新一次浮層（浮層自己不要每幀重畫）
+        if now - shownAt > 0.5 {
+            shownAt = now
+            let t = CACurrentMediaTime()
+            for k in bodies.keys { bodies[k]?.removeAll { t - $0 > 2 } }
+            let s = bodies.filter { !$0.value.isEmpty }.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value.count)" }.joined(separator: "・")
+            let r = s.isEmpty ? "" : "重畫 " + s
+            if r != renders { renders = r }
+        }
         if let p = pending {
             pending = nil
             // 從手指放開算；如果放開比狀態改變早超過 1 秒（例如自動觸發），就從狀態改變算
@@ -117,6 +135,7 @@ struct PerfHUD: View {
         if perf.on {
             VStack(alignment: .leading, spacing: 2) {
                 Text("掉幀（2 秒內）\(perf.hitches)").foregroundStyle(perf.hitches > 0 ? Color.sprYellow : .white)
+                if !perf.renders.isEmpty { Text(perf.renders) }
                 // 上次同步花多久、用的是一次拿全部（load_all）還是舊的 7 個請求
                 if let ms = store.syncMs { Text("同步 \(ms) ms（\(store.syncVia)）") }
                 ForEach(Array(perf.lines.enumerated()), id: \.offset) { Text($0.element) }

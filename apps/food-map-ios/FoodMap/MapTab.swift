@@ -15,7 +15,9 @@ struct MapTab: View {
     @State private var noAddr = false
     @State private var scoping = false
     // 地圖現在看到的範圍（移動、縮放停下來才更新）；點卡片／圖釘造成的移動不算，免得下面的卡片一直換
-    @State private var shownRegion: MKCoordinateRegion?
+    // 不放在 MapTab 自己的狀態：地圖每停一次就改，放這裡只有下面的面板跟著重算，整張地圖不用
+    @State private var seenBox = SeenBox()
+    private var shownRegion: MKCoordinateRegion? { seenBox.peek }
     @State private var selfMoved = false
     @State private var spot = BurstSpot()
     @State private var drawer = Drawer.shared
@@ -53,6 +55,7 @@ struct MapTab: View {
     private var points: [Place] { store.shown(store.mapF, in: store.mapBase).filter { $0.lat != nil && $0.lng != nil } }
 
     var body: some View {
+        let _ = Perf.shared.count("地圖")
         @Bindable var store = store
         // 篩選結果只算一次；有座標的店下面每個地方共用
         let all = store.shown(store.mapF, in: store.mapBase)
@@ -70,8 +73,7 @@ struct MapTab: View {
         let gone = pins.track(list)
         let _ = pins.cleared
         let gname = store.mapGroupName
-        let near = Nearby(list: list, here: store.here, region: seen(shownRegion), total: all.count)
-        let missing = all.count - list.count
+        let total = all.count
         NavigationStack(path: $store.mapPath) {
           ZStack {
             MapReader { proxy in
@@ -160,7 +162,8 @@ struct MapTab: View {
                 .onMapCameraChange { c in
                     trip.toScreen = { proxy.convert($0, to: .global) }
                     if let f = trip.afterFit { trip.afterFit = nil; f() }
-                    if selfMoved { selfMoved = false } else { shownRegion = c.region }
+                    // 行程模式時下面的附近面板收著，不用跟著重算（離開行程時補一次）
+                    if selfMoved { selfMoved = false } else { seenBox.set(c.region, publish: !trip.on) }
                     store.mapRegion = c.region
                     recluster(proxy)
                 }
@@ -211,7 +214,7 @@ struct MapTab: View {
             // 行程面板蓋在地圖上（標題列下面）；打開時從下面彈上來
             .overlay {
                 if let tid = trip.tid {
-                    TripPanel(tid: tid, pos: $pos)
+                    TripPanel(tid: tid, pos: $pos).equatable()
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
@@ -246,7 +249,10 @@ struct MapTab: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 // 下面那塊（三段）：行程模式時收起來但不拿掉（拿掉再建一次很慢）
                 // 行程、定位兩顆浮在面板上緣，跟著面板上下；地圖邊距只在面板停在中間段時才跟著量
-                NearbySheet(near: near, pins: pins, list: list, group: gname, draw: draw, panel: openPanel, choose: choose, dropKey: pins.dropKey, focus: focus,
+                // 「附近 N 間」在 NearbyHost 裡算：地圖停下來、面板上緣變了，只有這一塊重算
+                NearbyHost(seen: seenBox, list: list, total: total, headY: headY, mapRect: mapRect) { near in
+                    let missing = total - list.count
+                NearbySheet(near: near, pins: pins, list: list, group: store.mapGroupName, draw: draw, panel: openPanel, choose: choose, dropKey: pins.dropKey, focus: focus,
                             ceiling: headY + 8, top: AnyView(
                         VStack(alignment: .trailing, spacing: 10) {
                             // AI 在背景找剛新增的店
@@ -306,11 +312,13 @@ struct MapTab: View {
                         }
                         .animation(.snappy, value: store.pendingAdds.map(\.state))
                     ), foot: setFoot)
-                        .offset(y: trip.on ? 60 : 0)
-                        .opacity(trip.on ? 0 : 1)
-                        .frame(height: trip.on ? 0 : nil, alignment: .top)
-                        .allowsHitTesting(!trip.on)
-                        .accessibilityHidden(trip.on)
+                }
+                .equatable()
+                .offset(y: trip.on ? 60 : 0)
+                .opacity(trip.on ? 0 : 1)
+                .frame(height: trip.on ? 0 : nil, alignment: .top)
+                .allowsHitTesting(!trip.on)
+                .accessibilityHidden(trip.on)
             }
             // 長按圖釘：背景變暗、圖釘放大，旁邊彈出「加進行程／導航／看店家」
             .overlay { PinMenu(pins: pins, list: list, act: pinAct) }
@@ -357,6 +365,8 @@ struct MapTab: View {
             fit()
         }
         .onChange(of: list.count) { fit() }
+        // 離開行程：下面的附近面板補算一次地圖現在看的範圍（行程模式時沒跟著算）
+        .onChange(of: trip.on) { _, on in if !on { seenBox.set(seenBox.peek, publish: true) } }
         // 拿到一次目前位置就好（剛允許定位也會馬上更新「附近」），不一直開著 GPS
         .task {
             do { for try await u in CLLocationUpdate.liveUpdates() { if let l = u.location { store.here = l; break } } } catch {}
@@ -530,17 +540,6 @@ struct MapTab: View {
         guard !trip.on, MapPanel.shared.stage == .mid, !MapPanel.shared.dragging, abs(y - footY) > 0.5 else { return }
         quiet.hush()
         footY = y; trip.mapBottom = y
-    }
-
-    // 「附近」只算看得到的那塊：搜尋列下緣到面板上緣（停好的位置）
-    private func seen(_ r: MKCoordinateRegion?) -> MKCoordinateRegion? {
-        let bottom = MapPanel.shared.top
-        guard let r, mapRect.height > 1, bottom > headY, headY > mapRect.minY else { return r }
-        let t = (headY - mapRect.minY) / mapRect.height, b = min(1, (bottom - mapRect.minY) / mapRect.height)
-        let north = r.center.latitude + r.span.latitudeDelta / 2
-        let hi = north - r.span.latitudeDelta * Double(t), lo = north - r.span.latitudeDelta * Double(b)
-        return MKCoordinateRegion(center: .init(latitude: (hi + lo) / 2, longitude: r.center.longitude),
-                                  span: .init(latitudeDelta: max(hi - lo, 1e-6), longitudeDelta: r.span.longitudeDelta))
     }
 
     static var mapWidth: CGFloat {
@@ -760,6 +759,50 @@ struct MapTab: View {
 }
 
 // 下面那排要放哪些店：地圖現在看到的範圍裡的店，由近到遠（沒開定位就從地圖中心算）
+// 地圖現在看的範圍（手指移動、縮放停下來才更新）。peek 給 MapTab 的函式用（改了不重畫），
+// shown 只有 NearbyHost 讀：地圖每停一次只重算下面的面板
+@MainActor @Observable final class SeenBox {
+    private(set) var shown: MKCoordinateRegion?
+    @ObservationIgnored private(set) var peek: MKCoordinateRegion?
+    func set(_ r: MKCoordinateRegion?, publish: Bool) {
+        peek = r
+        guard publish, let r else { return }
+        if let o = shown, o.center.latitude == r.center.latitude, o.center.longitude == r.center.longitude, o.span.latitudeDelta == r.span.latitudeDelta { return }
+        shown = r
+    }
+}
+
+// 下面面板的「附近 N 間」：在這一小層算，地圖停下來或面板上緣變了只有這裡和面板重算。
+// MapTab 重算時，清單、版面都沒變就整個跳過（面板裡要的其他東西它自己會看）
+struct NearbyHost<C: View>: View, Equatable {
+    let seen: SeenBox
+    let list: [Place]
+    let total: Int
+    let headY: CGFloat
+    let mapRect: CGRect
+    @ViewBuilder let content: (Nearby) -> C
+    @Environment(Store.self) private var store
+
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        a.total == b.total && a.headY == b.headY && a.mapRect == b.mapRect && a.list == b.list
+    }
+
+    var body: some View {
+        content(Nearby(list: list, here: store.here, region: visible, total: total))
+    }
+
+    // 「附近」只算看得到的那塊：搜尋列下緣到面板上緣（停好的位置）
+    private var visible: MKCoordinateRegion? {
+        let bottom = MapPanel.shared.top
+        guard let r = seen.shown, mapRect.height > 1, bottom > headY, headY > mapRect.minY else { return seen.shown }
+        let t = (headY - mapRect.minY) / mapRect.height, b = min(1, (bottom - mapRect.minY) / mapRect.height)
+        let north = r.center.latitude + r.span.latitudeDelta / 2
+        let hi = north - r.span.latitudeDelta * Double(t), lo = north - r.span.latitudeDelta * Double(b)
+        return MKCoordinateRegion(center: .init(latitude: (hi + lo) / 2, longitude: r.center.longitude),
+                                  span: .init(latitudeDelta: max(hi - lo, 1e-6), longitudeDelta: r.span.longitudeDelta))
+    }
+}
+
 struct Nearby {
     let title: String, subtitle: String, places: [Place]
     var lead: String?                  // 「附近 」「這一帶 」：後面接間數（數字會滾動）
@@ -811,7 +854,8 @@ struct NearbySheet: View {
     @State private var scrolled: String?      // 卡片列停在哪一間
     @State private var skip: String?          // 自己捲過去的（關掉大卡），不用再移地圖
     @State private var mp = MapPanel.shared
-    @State private var pull: CGFloat = 0        // 手指拉了多少（往上為正）
+    @State private var lift = Lift()            // 手指拉了多少（往上為正）：只有套高度那層每幀重畫
+    @State private var tallPull: Bool?          // 拉的過程中跨過一半：換成直的清單（只在跨線時變）
     @State private var midH: CGFloat = 0        // 中間段的自然高度（卡片列或大卡片）
     @State private var bottomY: CGFloat = 0     // 面板內容下緣（螢幕座標）
     @State private var lowering = false         // 最高段清單捲到頂再往下拉過頭：放開時降一段
@@ -827,17 +871,15 @@ struct NearbySheet: View {
     private var midT: CGFloat { max(Self.lowH + 40, midH) }
     private var highT: CGFloat { ceiling > 0 && bottomY > 0 ? max(midT + 60, bottomY - ceiling) : midT + 60 }
     private func target(_ s: MapStage) -> CGFloat { s == .low ? Self.lowH : s == .mid ? midT : highT }
-    private var height: CGFloat { min(highT + 30, max(Self.lowH - 30, target(mp.stage) + pull)) }
+    private func clamp(_ h: CGFloat) -> CGFloat { min(highT + 30, max(Self.lowH - 30, h)) }
 
     var body: some View {
+        let _ = Perf.shared.count("附近面板")
         // 選到的那間（點圖釘或抽中）：下面換成那間的大卡片
         let picked = pins.sel.flatMap { id in list.first { $0.id == id } }
         let drawn = pins.drawn != nil && pins.drawn == pins.sel
-        let h = height
         // 拉過中間和最高的一半：內容換成直的清單
-        let tall = h > (midT + highT) / 2
-        // 快到最高時，上面的行程、定位兩顆淡掉
-        let fade = min(1, max(0, (highT - h - 40) / 80))
+        let tall = tallPull ?? (mp.stage == .high)
         VStack(spacing: 0) {
             Capsule().fill(Color.ink.opacity(0.15)).frame(width: 38, height: 5)
                 .frame(maxWidth: .infinity).padding(.top, 8).padding(.bottom, 10)
@@ -865,7 +907,7 @@ struct NearbySheet: View {
             }
             .animation(.easeOut(duration: 0.18), value: tall)
         }
-        .frame(height: h, alignment: .top)
+        .modifier(LiftHeight(lift: lift, base: target(mp.stage), lo: Self.lowH, hi: highT))
         .clipped()
         // 被裁掉的卡片列（最低段）不要還點得到
         .contentShape(.rect)
@@ -901,14 +943,19 @@ struct NearbySheet: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { v in if abs(v - topH) > 0.5 { topH = v } }
                     .offset(y: -(topH + 10))
                     .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in probe.foot = y; report() }
-                    .opacity(topH > 0 ? fade : 0)
-                    .allowsHitTesting(topH > 0 && fade > 0.5)
-                    .accessibilityHidden(fade < 0.5)
+                    // 快到最高時淡掉（跟著手指算，只有這層每幀重畫）
+                    .modifier(TopFade(lift: lift, base: target(mp.stage), lo: Self.lowH, hi: highT, shown: topH > 0))
             }
         }
         // 訊息條貼著停好的面板上緣（Root 讀這個值）
         .onChange(of: target(mp.stage), initial: true) { _, v in
             if abs(store.panelTop - (v + 82)) > 0.5 { store.panelTop = v + 82 }
+        }
+        // 整份清單閒下來先建好（藏著），第一次拉到最高不用當場建、不會頓一下
+        .task {
+            try? await Task.sleep(for: .seconds(1.5))
+            while mp.dragging { try? await Task.sleep(for: .milliseconds(300)) }
+            if !Task.isCancelled, !highUsed { highUsed = true }
         }
     }
 
@@ -1015,7 +1062,9 @@ struct NearbySheet: View {
 
     private func drag(_ up: CGFloat) {
         if !mp.dragging { mp.dragging = true }
-        pull = up
+        lift.y = up
+        let t = clamp(target(mp.stage) + up) > (midT + highT) / 2
+        if t != (tallPull ?? (mp.stage == .high)) { tallPull = t }
     }
 
     // 放開：停在最近的一段（甩得快就往甩的方向），換段輕震
@@ -1031,7 +1080,7 @@ struct NearbySheet: View {
         mp.dragging = false
         mp.calmUntil = CACurrentMediaTime() + 0.8
         if pick != mp.stage { Haptic.light() }
-        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { mp.stage = pick; pull = 0 }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { mp.stage = pick; lift.y = 0; tallPull = nil }
         // 停好之後量一次地圖邊距（拉的過程中都沒量）
         Task { try? await Task.sleep(for: .milliseconds(80)); report() }
     }
@@ -1040,7 +1089,7 @@ struct NearbySheet: View {
     private func released() {
         Task {
             await Task.yield()
-            if mp.dragging { settle(target(mp.stage) + pull) }
+            if mp.dragging { settle(target(mp.stage) + lift.y) }
         }
     }
 
@@ -1063,6 +1112,23 @@ extension NearbySheet {
 }
 
 // 量到的位置：每幀都會變，放在不會觸發重畫的物件裡
+// 行程、定位兩顆：面板快拉到最高時淡掉、不能按
+private struct TopFade: ViewModifier {
+    let lift: Lift
+    let base: CGFloat
+    let lo: CGFloat
+    let hi: CGFloat
+    let shown: Bool
+    func body(content: Content) -> some View {
+        let h = min(hi + 30, max(lo - 30, base + lift.y))
+        let fade = min(1, max(0, (hi - h - 40) / 80))
+        content
+            .opacity(shown ? fade : 0)
+            .allowsHitTesting(shown && fade > 0.5)
+            .accessibilityHidden(fade < 0.5)
+    }
+}
+
 private final class PanelProbe {
     var top: CGFloat = 0
     var foot: CGFloat = 0

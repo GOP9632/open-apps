@@ -16,6 +16,7 @@ struct TripTop: View {
     @State private var setting = false
 
     var body: some View {
+        let _ = Perf.shared.count("行程標題")
         let t = trips.trip(tid)
         HStack(spacing: 8) {
             if let t { capsule(t) } else { Spacer() }

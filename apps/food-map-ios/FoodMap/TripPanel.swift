@@ -17,7 +17,11 @@ struct TripPanel: View {
     @State private var trips = TripStore.shared
     @State private var router = TripRouter.shared
     @State private var expanded: String?
-    @State private var pull: CGFloat = 0
+    // 手指拉面板的量、拖一站的位移、往下拖加站卡的量：每幀在變，放在小物件裡（見 PanelLift.swift）
+    @State private var lift = Lift()
+    @State private var dragY = Lift()
+    @State private var cardLift = Lift()
+    @State private var pullDown = false         // 最低段往下拉超過 20：換成直的清單（跨過線才改，不是每幀）
     @State private var drag = RowDrag()
     @State private var size: CGSize = .zero
     @State private var top0: CGFloat = 0            // 面板頂端在螢幕上的位置
@@ -27,7 +31,6 @@ struct TripPanel: View {
     @State private var goTop: CGFloat = 0
     @State private var goBot: CGFloat = 0
     @State private var goSpan = 900.0 / 111_000     // 出發時鏡頭的緯度範圍（框鏡頭那塊），之後跟著走不再改
-    @State private var cardPull: CGFloat = 0
     @State private var loving = false
     @State private var placed = false
     @State private var checked = false          // 行程找不到時，已經重新跟伺服器確認過
@@ -45,7 +48,8 @@ struct TripPanel: View {
     @State private var navAsk: TripStop?
 
     var body: some View {
-        Group {
+        let _ = Perf.shared.count("行程面板")
+        return Group {
             if let t = trips.trip(tid) { content(t) } else { gone }
         }
         .task(id: tid) {
@@ -196,11 +200,12 @@ struct TripPanel: View {
     private func panelHeight() -> CGFloat {
         let hs = heights()
         let base: CGFloat = mode.level == .low ? hs.low : mode.level == .mid ? hs.mid : hs.high
-        return min(hs.high + 30, max(hs.low - 30, base + pull))
+        return min(hs.high + 30, max(hs.low - 30, base + lift.y))
     }
 
     private func panel(_ t: Trip, d: Int, base: [TripStop], order: [TripStop], legs: [Leg?], plan: DayPlan) -> some View {
-        let strip = mode.level == .low && pull >= -20
+        let strip = mode.level == .low && !pullDown
+        let hs = heights()
         return VStack(spacing: 0) {
             head(t, base: base, d: d, strip: strip)
             if strip {
@@ -227,7 +232,7 @@ struct TripPanel: View {
                         guard drag.id == nil else { return }
                         withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                             mode.level = mode.level == .high ? .mid : .low
-                            pull = 0
+                            lift.y = 0; pullDown = false
                         }
                     }
                     .onChange(of: mode.scrollTo, initial: true) { _, id in
@@ -242,7 +247,7 @@ struct TripPanel: View {
             if !base.isEmpty { actions(t, base: base) }
         }
         .frame(maxWidth: .infinity)
-        .frame(height: panelHeight(), alignment: .top)
+        .modifier(LiftHeight(lift: lift, base: settledHeight(), lo: hs.low, hi: hs.high))
         .background(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28).fill(Color.bg)
             .shadow(color: .black.opacity(0.14), radius: 14, y: -2).ignoresSafeArea(edges: .bottom))
         .animation(.snappy(duration: 0.25), value: strip)
@@ -293,8 +298,8 @@ struct TripPanel: View {
         .swipeBackBlocked()
         // 拉面板被系統取消（onEnded 不會來）：放回目前那段
         .onChange(of: pulling) { _, p in
-            guard !p, pull != 0 else { return }
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { pull = 0 }
+            guard !p, lift.y != 0 else { return }
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { lift.y = 0; pullDown = false }
         }
     }
 
@@ -355,9 +360,14 @@ struct TripPanel: View {
     private var sheetDrag: some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .global)
             .updating($pulling) { _, st, _ in st = true }
-            .onChanged { v in if drag.id == nil { pull = -v.translation.height } }
+            .onChanged { v in
+                guard drag.id == nil else { return }
+                lift.y = -v.translation.height
+                let down = mode.level == .low && lift.y < -20
+                if down != pullDown { pullDown = down }
+            }
             .onEnded { v in
-                guard drag.id == nil else { pull = 0; return }
+                guard drag.id == nil else { lift.y = 0; return }
                 let hs = heights()
                 let up = -v.predictedEndTranslation.height
                 let now: CGFloat = (mode.level == .low ? hs.low : mode.level == .mid ? hs.mid : hs.high) + up * 0.6
@@ -369,7 +379,7 @@ struct TripPanel: View {
                     if all.indices.contains(i) { pick = all[i] }
                 }
                 if pick != mode.level { Haptic.light() }
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { mode.level = pick; pull = 0 }
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { mode.level = pick; lift.y = 0; pullDown = false }
             }
     }
 
@@ -430,7 +440,8 @@ struct TripPanel: View {
         }
         .id(s.id)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { if drag.id == nil { mode.geo.rows[s.id] = $0 } }
-        .offset(y: dragging ? drag.dy : drag.shift(k))
+        .offset(y: dragging ? 0 : drag.shift(k))
+        .modifier(LiftOffset(lift: dragY, on: dragging))
         .scaleEffect(dragging ? 1.03 : 1)
         .shadow(color: .black.opacity(dragging ? 0.18 : 0), radius: 12, y: 6)
         .zIndex(dragging ? 10 : 0)
@@ -456,8 +467,10 @@ struct TripPanel: View {
                 guard case .second(true, let g) = v else { return }
                 if drag.id == nil { begin(s, k: k, size: mode.geo.rows[s.id]?.height ?? 80) }
                 guard let g else { return }
-                drag.dy = g.translation.height
-                drag.retarget(mode.geo, base: trips.stops(t.id, day: min(mode.day, t.days)))
+                // 位移只寫進 dragY（只有被拖的那列跟著動）；插到哪變了才改 drag（整個面板重畫一次）
+                dragY.y = g.translation.height
+                let to = drag.target(mode.geo, base: trips.stops(t.id, day: min(mode.day, t.days)), dy: dragY.y)
+                if to != drag.to { drag.to = to; Haptic.tick() }
                 overDay(g.location)
             }
             .onEnded { _ in drop(t) }
@@ -477,17 +490,18 @@ struct TripPanel: View {
         Perf.shared.mark("拿起一站")
         // 「第 N 天」的位置等標題列下面那排出來再量（舊的可能是別的天數）
         mode.geo.chips = [:]
+        dragY.y = 0
         withAnimation(.snappy(duration: 0.2)) { drag = RowDrag(id: s.id, from: k, to: k, h: h) }
     }
 
     private func drop(_ t: Trip) {
         mode.overDay = nil
-        guard let id = drag.id, var s = trips.stops.first(where: { $0.id == id }) else { drag = RowDrag(); return }
+        guard let id = drag.id, var s = trips.stops.first(where: { $0.id == id }) else { drag = RowDrag(); dragY.y = 0; return }
         let d = min(mode.day, t.days)
         if let nd = drag.overDay, nd != d {
             s.day = nd; s.pos = trips.nextPos(t.id, nd)
             Haptic.success()
-            withAnimation(.snappy) { trips.update(s, store: store); drag = RowDrag() }
+            withAnimation(.snappy) { trips.update(s, store: store); drag = RowDrag(); dragY.y = 0 }
             store.say("移到第 \(nd) 天", icon: .check)
             return
         }
@@ -504,7 +518,7 @@ struct TripPanel: View {
             }
         }
         Haptic.light()
-        withAnimation(.snappy(duration: 0.28)) { trips.update(s, store: store); drag = RowDrag() }
+        withAnimation(.snappy(duration: 0.28)) { trips.update(s, store: store); drag = RowDrag(); dragY.y = 0 }
     }
 
     // ----- 最低：一排橫向站卡 -----
@@ -524,7 +538,8 @@ struct TripPanel: View {
                         .contentShape(.rect)
                         .onTapGesture { mode.tap(s.id) }
                         .gesture(reorderX(t, s, k: k))
-                        .offset(x: dragging ? drag.dy : drag.shift(k))
+                        .offset(x: dragging ? 0 : drag.shift(k))
+                        .modifier(LiftOffset(lift: dragY, on: dragging, x: true))
                         .scaleEffect(dragging ? 1.06 : 1)
                         .shadow(color: .black.opacity(dragging ? 0.2 : 0), radius: 10, y: 5)
                         .zIndex(dragging ? 10 : 0)
@@ -548,8 +563,9 @@ struct TripPanel: View {
                 guard case .second(true, let g) = v else { return }
                 if drag.id == nil { begin(s, k: k, size: (mode.geo.cards[s.id]?.width ?? 150) + 8) }
                 guard let g else { return }
-                drag.dy = g.translation.width
-                drag.retargetX(mode.geo, base: trips.stops(t.id, day: min(mode.day, t.days)))
+                dragY.y = g.translation.width
+                let to = drag.targetX(mode.geo, base: trips.stops(t.id, day: min(mode.day, t.days)), dx: dragY.y)
+                if to != drag.to { drag.to = to; Haptic.tick() }
                 overDay(g.location)
             }
             .onEnded { _ in drop(t) }
@@ -675,12 +691,12 @@ struct TripPanel: View {
             cardH = h
             placeCand(t, order)
         }
-        .offset(y: cardPull)
+        .modifier(LiftOffset(lift: cardLift))
         .gesture(DragGesture(minimumDistance: 8, coordinateSpace: .global)
-            .onChanged { v in cardPull = max(0, v.translation.height) }
+            .onChanged { v in cardLift.y = max(0, v.translation.height) }
             .onEnded { v in
-                if cardPull > 80 || v.predictedEndTranslation.height > 200 { cancelCand() }
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { cardPull = 0 }
+                if cardLift.y > 80 || v.predictedEndTranslation.height > 200 { cancelCand() }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { cardLift.y = 0 }
             })
     }
 
@@ -1185,12 +1201,17 @@ struct TripPanel: View {
 }
 
 // 拖曳中的狀態：拿起哪一站、從第幾個到第幾個、手指移了多少
+// 地圖那層（MapTab）每次重算都會把行程面板也重建一次（$pos 這種 Binding 比不出一樣）。
+// 面板要的東西都自己從 TripMode／TripStore 讀，只有換行程才需要跟著重算
+extension TripPanel: Equatable {
+    nonisolated static func == (a: TripPanel, b: TripPanel) -> Bool { a.tid == b.tid }
+}
+
 struct RowDrag: Equatable {
     var id: String?
     var from = 0
     var to = 0
     var h: CGFloat = 0
-    var dy: CGFloat = 0
     var overDay: Int?
 
     // 別的站要讓位：拿起的那站後面的先往上補，插進去的位置之後的往下讓
@@ -1208,8 +1229,9 @@ struct RowDrag: Equatable {
         return l
     }
 
-    @MainActor mutating func retarget(_ geo: RowGeo, base: [TripStop]) {
-        guard let id, let f = geo.rows[id] else { return }
+    // 拖到這裡（dy：往下拖了多少）會插在第幾個
+    @MainActor func target(_ geo: RowGeo, base: [TripStop], dy: CGFloat) -> Int {
+        guard let id, let f = geo.rows[id] else { return to }
         let center = f.midY + dy
         var t = 0
         for (k, s) in base.enumerated() where s.id != id {
@@ -1217,20 +1239,20 @@ struct RowDrag: Equatable {
             let mid = k > from ? r.midY - h : r.midY
             if mid < center { t += 1 }
         }
-        if t != to { to = t; Haptic.tick() }
+        return t
     }
 
     // 最低那排站卡：左右拖（dy 當成橫向移了多少）
-    @MainActor mutating func retargetX(_ geo: RowGeo, base: [TripStop]) {
-        guard let id, let f = geo.cards[id] else { return }
-        let center = f.midX + dy
+    @MainActor func targetX(_ geo: RowGeo, base: [TripStop], dx: CGFloat) -> Int {
+        guard let id, let f = geo.cards[id] else { return to }
+        let center = f.midX + dx
         var t = 0
         for (k, s) in base.enumerated() where s.id != id {
             guard let r = geo.cards[s.id] else { continue }
             let mid = k > from ? r.midX - h : r.midX
             if mid < center { t += 1 }
         }
-        if t != to { to = t; Haptic.tick() }
+        return t
     }
 }
 

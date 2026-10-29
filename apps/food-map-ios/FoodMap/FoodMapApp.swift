@@ -31,6 +31,7 @@ struct Root: View {
     @State private var clip = ClipWatch.shared
 
     var body: some View {
+        let _ = Perf.shared.count("App")
         @Bindable var store = store
         Group {
             if store.loggedIn {
