@@ -228,7 +228,8 @@ struct Root: View {
     // 四個分頁疊在一起，只顯示目前這個（切換不重建，捲到哪、地圖看到哪都留著）
     @ViewBuilder private func page<V: View>(_ i: Int, @ViewBuilder _ v: () -> V) -> some View {
         if opened.contains(i) || store.tab == i {
-            v().opacity(store.tab == i ? 1 : 0)
+            v().environment(\.tabActive, store.tab == i)
+                .opacity(store.tab == i ? 1 : 0)
                 .offset(y: store.tab == i ? 0 : 8)
                 // 換頁：新的一頁從下面 8pt 淡入往上（0.15 秒），舊的直接藏起來，不做兩頁同時畫的交叉淡入
                 .animation(store.tab == i ? .easeOut(duration: 0.15) : nil, value: store.tab)

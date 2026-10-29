@@ -100,7 +100,14 @@ struct AddSheet: View {
     private func go() {
         focus = false
         Haptic.light()
-        store.startAdd(input.trimmingCharacters(in: .whitespacesAndNewlines), been: been, rating: been ? rating : nil)
+        let t = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 把邀請訊息貼進新增框：直接加入並打開群組，不走找店
+        if t.contains("anthony-apps.netlify.app/join") || t.contains("邀請碼"), let c = FoodGroup.code(in: t) {
+            Task { await store.openInvite(c) }
+            dismiss()
+            return
+        }
+        store.startAdd(t, been: been, rating: been ? rating : nil)
         dismiss()
     }
 }

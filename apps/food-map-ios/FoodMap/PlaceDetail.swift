@@ -99,8 +99,10 @@ struct PlaceDetail: View {
                 .overlay(alignment: .bottomTrailing) {
                     Text("\(place.cat.emoji) \(place.cat.name)").font(.footnote.weight(.heavy)).foregroundStyle(.white)
                         .padding(.horizontal, 11).frame(height: 30).background(place.cat.color, in: .capsule)
-                        .overlay(Capsule().strokeBorder(.white, lineWidth: 2)).padding(14)
-                        .allowsHitTesting(false)
+                        .overlay(Capsule().strokeBorder(.white, lineWidth: 2))
+                        // 點標籤本身什麼都不做：不讓點擊穿到下面去切喇叭（喇叭的點擊框貼在標籤上緣）
+                        .contentShape(.capsule).onTapGesture {}
+                        .padding(14)
                 }
         }
             // 看影片／看貼文：照片左下的黑色膠囊
@@ -156,12 +158,12 @@ struct PlaceDetail: View {
                     Badge(place: place)
                 }
                 // 朋友的店：一鍵加進自己的收藏
-                if store.alreadyMine(place) {
+                if store.alreadyMine(place) || store.copying.contains(store.copyKey(place)) {
                     Label("已在你的收藏", systemImage: "checkmark").font(.subheadline.weight(.heavy)).foregroundStyle(Color.sprMint)
                         .frame(maxWidth: .infinity).frame(height: 44)
                 } else {
                     Button { Task { await store.copyToMine(place) } } label: { Text("♥ 我也想去").frame(maxWidth: .infinity) }
-                        .buttonStyle(ChunkyStyle(color: .sprPink, edge: Color.sprPink.mix(with: .black, by: 0.2), radius: 14))
+                        .buttonStyle(ChunkyStyle(color: .sprPink, edge: Color.sprPink.mix(with: .black, by: 0.2), radius: 14, haptic: true))
                 }
             }
         }

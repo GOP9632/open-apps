@@ -16,7 +16,7 @@ struct SwipeDeck: View {
 
     struct Flying: Identifiable {
         let id = UUID()
-        let place: Place, from: CGSize, like: Bool
+        let place: Place, from: CGSize, like: Bool, vel: CGSize
     }
 
     var body: some View {
@@ -67,9 +67,10 @@ struct SwipeDeck: View {
             .overlay(alignment: .topTrailing) {
                 if top && armed == false { stamp("跳過", .sprPink).rotationEffect(.degrees(12)).padding(24).transition(stampIn) }
             }
-            .offset(offset)
+            // 先縮放、旋轉再位移：旋轉繞卡片自己的中心，卡片才會一直在手指底下（反過來會往下沉）
             .scaleEffect(scale)
             .rotationEffect(.degrees(angle))
+            .offset(offset)
             .onTapGesture { if top { onTap(p) } }
             .gesture(gesture, including: top ? .all : .subviews)
             .zIndex(Double(3 - i))
@@ -91,17 +92,19 @@ struct SwipeDeck: View {
                 }
             }
             .onEnded { v in
+                // 快甩看甩的方向（先往左拖一點再往右甩，是往右）
                 let fast = abs(v.predictedEndTranslation.width) > 260
-                if abs(v.translation.width) > 100 || fast { fling(v.translation.width > 0) }
+                let dir = fast ? v.predictedEndTranslation.width > 0 : v.translation.width > 0
+                if abs(v.translation.width) > 100 || fast { fling(dir, vel: v.velocity) }
                 else { withAnimation(.spring(response: 0.35, dampingFraction: 0.65)) { drag = .zero; armed = nil } }
             }
     }
 
-    private func fling(_ like: Bool) {
+    private func fling(_ like: Bool, vel: CGSize = .zero) {
         guard let top = deck.first else { return }
         like ? Haptic.medium() : Haptic.light()
-        // 這張交給飛走的複本，從手指放開的位置接著飛
-        flying.append(Flying(place: top, from: drag, like: like))
+        // 這張交給飛走的複本，從手指放開的位置、用手指的速度接著飛
+        flying.append(Flying(place: top, from: drag, like: like, vel: vel))
         var t = Transaction(); t.disablesAnimations = true
         withTransaction(t) { drag = .zero; armed = nil }
         // 下一張用彈簧從歪歪的位置轉正、放大到最上面，馬上可以拖
@@ -128,16 +131,25 @@ private struct FlyingCard: View {
     let f: SwipeDeck.Flying
     let done: () -> Void
     @State private var gone = false
+    @Environment(\.accessibilityReduceMotion) private var reduce
     var body: some View {
         let to = CGSize(width: f.like ? 700 : -700, height: f.from.height * 0.35 + 40)
-        let at = gone ? to : CGSize(width: f.from.width, height: f.from.height * 0.35)
+        // 減少動態：不飛，原地淡出
+        let at = gone && !reduce ? to : CGSize(width: f.from.width, height: f.from.height * 0.35)
         SwipeCard(place: f.place)
             .overlay(alignment: .topLeading) { if f.like { Stamp(text: "想吃！", color: .sprMint).rotationEffect(.degrees(-12)).padding(24) } }
             .overlay(alignment: .topTrailing) { if !f.like { Stamp(text: "跳過", color: .sprPink).rotationEffect(.degrees(12)).padding(24) } }
-            .offset(at)
             .rotationEffect(.degrees(Double(at.width / 16)))
+            .offset(at)
+            .opacity(reduce && gone ? 0 : 1)
             .onAppear {
-                withAnimation(.easeIn(duration: 0.26)) { gone = true } completion: { done() }
+                let dist = (f.like ? 700 : -700) - f.from.width
+                // 只接手指往飛走方向的速度；手指往回時從 0 開始，不要先倒退再飛
+                let v0 = f.vel == .zero ? 0 : max(0, Double(f.vel.width / dist))
+                let anim: Animation = reduce ? .easeOut(duration: 0.2)
+                    : f.vel == .zero ? .easeOut(duration: 0.28)
+                    : .interpolatingSpring(duration: 0.26, bounce: 0, initialVelocity: v0)
+                withAnimation(anim) { gone = true } completion: { done() }
             }
     }
 }

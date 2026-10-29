@@ -1437,7 +1437,8 @@ struct NearbySheet: View {
                     lowering = false
                     mp.go(.mid)
                 }
-                .swipeBackBlocked()
+                // 只在直的清單真的看得到時擋（中間段時它以 opacity 0 先建好掛著）
+                .swipeBackBlocked(tallPull ?? (mp.stage == .high))
             }
         }
     }

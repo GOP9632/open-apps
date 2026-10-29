@@ -619,14 +619,22 @@ struct Snapshot: Codable {
         }
     }
 
+    // 「我也想去」送出中（同名同分店，跟 alreadyMine 一樣；兩個朋友收同一間 id 不同）：防連按，按下就先顯示已在收藏
+    var copying: Set<String> = []
+    func copyKey(_ p: Place) -> String { p.name + "|" + (p.branch ?? "") }
+
     // 朋友的店：「我也想去」複製一份成自己的收藏
     @MainActor func copyToMine(_ p: Place) async {
+        let k = copyKey(p)
+        guard !alreadyMine(p), copying.insert(k).inserted else { return }
+        defer { copying.remove(k) }
         var n = Place(id: UUID().uuidString, name: p.name)
         n.branch = p.branch; n.address = p.address; n.city = p.city; n.district = p.district
         n.lat = p.lat; n.lng = p.lng; n.approx = p.approx; n.category = p.category; n.cuisine = p.cuisine
         n.price = p.price; n.meals = p.meals; n.hours = p.hours; n.dishes = p.dishes; n.tags = p.tags
         n.photo = p.photo; n.source_url = p.source_url; n.status = "want"
-        if await add(n) {
+        // 直接用 create()：add() 只留給手動新增；成功時 create() 已經先放進 places，按鈕不會閃回「我也想去」
+        if await create(n) != nil {
             Haptic.success()
             say("已加到你的收藏")
         }
@@ -896,8 +904,16 @@ struct Snapshot: Codable {
     @MainActor func unshare(_ gid: String, _ pid: String) async {
         let row = GroupPlace(group_id: gid, place_id: pid)
         groupPlaces.removeAll { $0 == row }
-        do { try await Supa.write("DELETE", "group_places", query: "group_id=eq.\(gid)&place_id=eq.\(pid)"); saveCache() }
-        catch { groupPlaces.append(row); say("失敗：" + error.localizedDescription) }
+        do {
+            let d = try await Supa.write("DELETE", "group_places", query: "group_id=eq.\(gid)&place_id=eq.\(pid)")
+            // 被權限擋掉時雲端回 200 加空陣列：放回去並說明
+            if (try? JSONSerialization.jsonObject(with: d) as? [Any])?.isEmpty == true {
+                if !groupPlaces.contains(row) { groupPlaces.append(row) }
+                say("只有分享的人可以移除")
+                return
+            }
+            saveCache()
+        } catch { groupPlaces.append(row); say("失敗：" + error.localizedDescription) }
     }
 
     // ----- 滑卡 -----

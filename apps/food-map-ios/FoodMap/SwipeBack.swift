@@ -59,6 +59,9 @@ enum SwipeBack {
     static func contains(_ p: CGPoint) -> Bool { rects.values.contains { $0.contains(p) } }
 }
 
+// 這一頁所在的分頁是不是正在顯示（Root.page 用 opacity 藏分頁，不會觸發 onDisappear）
+extension EnvironmentValues { @Entry var tabActive = true }
+
 private struct SwipeBackAllowed: ViewModifier {
     @State private var id = UUID()
     func body(content: Content) -> some View {
@@ -70,12 +73,15 @@ private struct SwipeBackAllowed: ViewModifier {
 
 private struct SwipeBackBlocked: ViewModifier {
     var on = true
+    // 藏起來的分頁登記的區域不算（不然別的分頁在同一塊右滑返回會失效）
+    @Environment(\.tabActive) private var active
     @State private var id = UUID()
     @State private var rect: CGRect?
     func body(content: Content) -> some View {
+        let live = on && active
         content
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rect = $0; SwipeBackBlock.set(id, on ? $0 : nil) }
-            .onChange(of: on) { SwipeBackBlock.set(id, on ? rect : nil) }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rect = $0; SwipeBackBlock.set(id, live ? $0 : nil) }
+            .onChange(of: live) { _, v in SwipeBackBlock.set(id, v ? rect : nil) }
             .onDisappear { SwipeBackBlock.set(id, nil) }
     }
 }

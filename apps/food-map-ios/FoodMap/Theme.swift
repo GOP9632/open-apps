@@ -16,6 +16,7 @@ struct ChunkyStyle: ButtonStyle {
     var edge: Color = .accentDeep
     var fg: Color = .white
     var radius: CGFloat = 14
+    var haptic = false   // 手指一按下就輕震
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
@@ -25,6 +26,7 @@ struct ChunkyStyle: ButtonStyle {
             .background(RoundedRectangle(cornerRadius: radius).fill(color).shadow(color: edge, radius: 0, y: configuration.isPressed ? 1 : 4))
             .offset(y: configuration.isPressed ? 3 : 0)
             .animation(.spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, down in if down && haptic { Haptic.light() } }
     }
 }
 

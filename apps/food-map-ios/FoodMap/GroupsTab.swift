@@ -81,14 +81,19 @@ struct GroupsTab: View {
         .candy()
     }
 
-    // 卡片上的「開始滑卡」：直接開一輪（預設條件），開好推進群組再推進滑卡
+    // 卡片上的「開始滑卡」：這輪還沒滑完就繼續、我滑完了就看結果（按下那一幀就推頁）；不然直接開一輪（預設條件），開好推進群組再推進滑卡
     private func quick(_ g: FoodGroup) {
-        guard starting == nil else { return }
-        Haptic.light()
-        starting = g.id
-        Task {
-            if let r = await store.quickRound(g.id) { path = NavigationPath([g]); path.append(r) }
-            starting = nil
+        switch store.roundAction(g.id) {
+        case .resume(let r, _), .result(let r):
+            Haptic.light(); path = NavigationPath([g]); path.append(r)
+        case .new:
+            guard starting == nil else { return }
+            Haptic.light()
+            starting = g.id
+            Task {
+                if let r = await store.quickRound(g.id) { path = NavigationPath([g]); path.append(r) }
+                starting = nil
+            }
         }
     }
 
@@ -132,6 +137,8 @@ struct GroupCard: View {
     var body: some View {
         let mem = store.membersOf(group.id)
         let count = store.placesIn(group.id).count
+        let act = store.roundAction(group.id)
+        let isNew: Bool = { if case .new = act { return true } else { return false } }()
         Button(action: open) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
@@ -147,7 +154,7 @@ struct GroupCard: View {
                     Spacer(minLength: 0)
                 }
                 status(mem)
-                    .padding(.trailing, 110)      // 右下留給「開始滑卡」
+                    .padding(.trailing, 150)      // 右下留給「開始滑卡／繼續滑 N 張」
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -158,8 +165,8 @@ struct GroupCard: View {
         .overlay(alignment: .bottomTrailing) {
             Button(action: start) {
                 HStack(spacing: 5) {
-                    if starting { ProgressView().controlSize(.small).tint(.white) } else { Image(systemName: "heart.fill").font(.system(size: 12, weight: .heavy)) }
-                    Text("開始滑卡").font(.system(size: 15, weight: .heavy))
+                    if starting { ProgressView().controlSize(.small).tint(.white) } else { Image(systemName: Self.icon(act)).font(.system(size: 12, weight: .heavy)) }
+                    Text(Self.label(act)).font(.system(size: 15, weight: .heavy))
                 }
                 .foregroundStyle(.white)
                 .padding(.horizontal, 12).frame(height: 36)
@@ -167,16 +174,30 @@ struct GroupCard: View {
                 .frame(minHeight: 44).contentShape(.rect)
             }
             .buttonStyle(PressStyle())
-            .disabled(count == 0 || starting)
-            .opacity(count == 0 ? 0.45 : 1)
+            .disabled((count == 0 && isNew) || starting)
+            .opacity(count == 0 && isNew ? 0.45 : 1)
             .padding(.trailing, 14).padding(.bottom, 12)
-            .accessibilityLabel("在「\(group.name)」開始滑卡")
+            .accessibilityLabel("在「\(group.name)」" + Self.label(act))
+        }
+    }
+
+    static func label(_ a: Store.RoundAction) -> String {
+        switch a {
+        case .resume(_, let n): "繼續滑 \(n) 張"
+        case .result: "看結果"
+        case .new: "開始滑卡"
+        }
+    }
+    static func icon(_ a: Store.RoundAction) -> String {
+        switch a {
+        case .result: "checkmark.circle.fill"
+        default: "heart.fill"
         }
     }
 
     // 最新那一輪：有配對就顯示配對幾間；還有人沒滑完就說誰還有幾張（自己優先）
     @ViewBuilder private func status(_ mem: [String]) -> some View {
-        if let r = store.roundsOf(group.id).first {
+        if let r = store.liveRound(group.id) {
             let hits = store.matches(r).filter(\.all).count
             let left = mem.map { u in (u, r.place_ids.count - Set(store.swipes.filter { $0.round_id == r.id && $0.user_id == u }.map(\.place_id)).count) }
                 .filter { $0.1 > 0 }
@@ -196,7 +217,9 @@ struct GroupCard: View {
             }
             .frame(minHeight: 24)
         } else {
-            Text("還沒開始滑卡").font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.4))
+            // 最新那輪超過 12 小時：當成結束了
+            Text(store.roundsOf(group.id).isEmpty ? "還沒開始滑卡" : "上一輪結束了，開新的一輪吧").font(.footnote.weight(.semibold)).foregroundStyle(Color.ink.opacity(0.4))
+                .lineLimit(1)
                 .frame(minHeight: 24)
         }
     }
@@ -238,6 +261,8 @@ struct GroupView: View {
 
     private func content(_ g: FoodGroup) -> some View {
         let mem = store.membersOf(gid), list = store.placesIn(gid), rounds = store.roundsOf(gid)
+        let act = store.roundAction(gid)
+        let isNew: Bool = { if case .new = act { return true } else { return false } }()
         let alone = mem.count < 2
         return ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -263,14 +288,15 @@ struct GroupView: View {
 
                 HStack(spacing: 10) {
                     // 直接用預設條件開一輪（這一餐、離你近的 10 張），不用先填表
+                    // 這輪還沒滑完：繼續；我滑完、別人還沒：看結果
                     Button { quick() } label: {
                         HStack(spacing: 6) {
-                            if starting { ProgressView().controlSize(.small).tint(.white) } else { Image(systemName: "heart.fill") }
-                            Text("開始滑卡")
+                            if starting { ProgressView().controlSize(.small).tint(.white) } else { Image(systemName: GroupCard.icon(act)) }
+                            Text({ if case .resume(_, let n) = act { return "繼續滑（剩 \(n) 張）" } else { return GroupCard.label(act) } }())
                         }
                         .frame(maxWidth: .infinity).frame(height: 44)
                     }
-                    .buttonStyle(ChunkyStyle(radius: 16)).disabled(list.isEmpty || starting)
+                    .buttonStyle(ChunkyStyle(radius: 16)).disabled((list.isEmpty && isNew) || starting)
                     Button("調整條件") { newRound = true }
                         .font(.subheadline.weight(.heavy)).foregroundStyle(Color.accentDeep)
                         .frame(minWidth: 44, minHeight: 44).contentShape(.rect)
@@ -335,7 +361,12 @@ struct GroupView: View {
                         NavigationLink(value: p) { PlaceCard(place: p) }
                             .buttonStyle(PressStyle { ReelCache.warm(p) })
                             .contextMenu {
-                                Button("從群組移除", systemImage: "minus.circle", role: .destructive) { Task { await store.unshare(gid, p.id) } }
+                                // 只有分享的人能收回（分享的人一定是店主，跟店家頁一樣用 isMine 判斷）
+                                if store.isMine(p) {
+                                    Button("從群組移除", systemImage: "minus.circle", role: .destructive) { Task { await store.unshare(gid, p.id) } }
+                                } else {
+                                    Text("只有分享的人可以移除")
+                                }
                             }
                     }
                 }
@@ -368,12 +399,17 @@ struct GroupView: View {
     }
 
     private func quick() {
-        guard !starting else { return }
-        Haptic.light()
-        starting = true
-        Task {
-            if let r = await store.quickRound(gid) { path.append(r) }
-            starting = false
+        switch store.roundAction(gid) {
+        case .resume(let r, _), .result(let r):
+            Haptic.light(); path.append(r)
+        case .new:
+            guard !starting else { return }
+            Haptic.light()
+            starting = true
+            Task {
+                if let r = await store.quickRound(gid) { path.append(r) }
+                starting = false
+            }
         }
     }
 
@@ -542,6 +578,7 @@ struct RoundView: View {
     @State private var match: Store.Match?
     @State private var dropping = false
     @State private var history: [String] = []
+    @State private var finishing = false      // 最後一張正在飛走：飛完才換結果頁
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -550,7 +587,20 @@ struct RoundView: View {
             else { ContentUnavailableView("這輪滑卡不見了", systemImage: "rectangle.stack") }
         }
         .navigationDestination(item: $detail) { PlaceDetail(place: $0) }
-        .overlay { if let m = match { MatchView(match: m) { withAnimation(.snappy) { match = nil } } .transition(.opacity) } }
+        // 配對成功蓋住整個畫面（導覽列的返回、看結果都蓋住，右滑返回也擋掉）；不用系統往上滑的轉場，MatchView 自己淡入淡出
+        .fullScreenCover(item: $match) { m in
+            MatchView(match: m) {
+                var t = Transaction(); t.disablesAnimations = true
+                withTransaction(t) { match = nil }
+            }
+            .presentationBackground(.clear)
+        }
+        // 驗收用 -fakeMatch：進來就跳一次配對畫面（沒有配對就拿第一張當配對）
+        .task {
+            guard Flag.on("-fakeMatch"), let r = store.rounds.first(where: { $0.id == rid }) else { return }
+            try? await Task.sleep(for: .seconds(1))
+            if let m = store.matches(r).first ?? store.todo(r).first.map({ Store.Match(place: $0, who: store.membersOf(r.group_id), all: true) }) { celebrate(m) }
+        }
         // 朋友滑的結果每幾秒拿一次，有新配對就跳出來
         .task {
             while !Task.isCancelled {
@@ -565,10 +615,13 @@ struct RoundView: View {
 
     private func content(_ r: Round) -> some View {
         let todo = store.todo(r)
-        return VStack {
-            if todo.isEmpty || showResult {
-                results(r, done: todo.isEmpty)
+        let showRes = (todo.isEmpty && !finishing) || showResult
+        // 用 ZStack 原地交叉淡入：VStack 裡新舊兩塊同時在，結果頁會先被擠到下半截再跳上去
+        return ZStack {
+            if showRes {
+                results(r, done: todo.isEmpty).transition(.opacity)
             } else {
+              VStack {
                 let mem = store.membersOf(r.group_id)
                 VStack(spacing: 8) {
                     SprinkleBar(progress: r.place_ids.isEmpty ? 0 : Double(r.place_ids.count - todo.count) / Double(r.place_ids.count))
@@ -591,10 +644,21 @@ struct RoundView: View {
                 }
                 .padding(.horizontal, 20).padding(.top, 6)
                 SwipeDeck(deck: todo, onSwipe: { p, liked in
+                    // 最後一張：等飛走的複本飛完（0.26 秒）再換結果頁（這裡的 todo 是滑之前的清單）
+                    let last = todo.count == 1
+                    if last { finishing = true }
                     store.swipe(r, p.id, liked: liked)
                     history.append(p.id)
+                    if last {
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(280))
+                            withAnimation(.snappy) { finishing = false }
+                        }
+                    }
                     if liked, let m = store.matches(r).first(where: { $0.place.id == p.id }), m.all { celebrate(m) }
                 }, onTap: { detail = $0 }, onUndo: history.isEmpty ? nil : { undo(r) })
+              }
+              .transition(.opacity)
             }
         }
         .background(Color.bg)
@@ -619,7 +683,7 @@ struct RoundView: View {
     private func undo(_ r: Round) {
         guard let pid = history.popLast() else { return }
         Haptic.light()
-        withAnimation(.snappy) { showResult = false }
+        withAnimation(.snappy) { showResult = false; finishing = false }
         Task { await store.unswipe(r, pid) }
     }
 
@@ -683,7 +747,8 @@ struct RoundView: View {
 
     private func celebrate(_ m: Store.Match) {
         Haptic.success()
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { match = m }
+        var t = Transaction(); t.disablesAnimations = true
+        withTransaction(t) { match = m }   // 關掉系統往上滑的轉場，由 MatchView 自己淡入
     }
 }
 
@@ -697,11 +762,12 @@ struct MatchView: View {
     @State private var met = false
     @State private var heart = false
     @State private var burst = 0
+    @State private var shown = false
     @Environment(\.accessibilityReduceMotion) private var reduce
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.75).ignoresSafeArea().onTapGesture(perform: close)
+            Color.black.opacity(0.75).ignoresSafeArea().onTapGesture(perform: leave)
             VStack(spacing: 18) {
                 PhotoView(place: match.place, px: 500).frame(width: 170, height: 170).clipShape(.circle)
                     .overlay(Circle().strokeBorder(Color.grad, lineWidth: 6))
@@ -725,13 +791,15 @@ struct MatchView: View {
                     Label("就去這間", systemImage: "location.fill").font(.headline).frame(width: 240, height: 52)
                         .background(.white, in: .capsule).foregroundStyle(.black)
                 }
-                Button(action: close) {
+                Button(action: leave) {
                     Text("繼續滑").font(.headline).foregroundStyle(.white).frame(width: 240, height: 48)
                         .overlay(Capsule().strokeBorder(.white.opacity(0.6), lineWidth: 1.5)).contentShape(.capsule)
                 }
             }
         }
+        .opacity(shown ? 1 : 0)
         .onAppear {
+            withAnimation(.easeOut(duration: 0.2)) { shown = true }
             if reduce { withAnimation(.easeOut(duration: 0.2)) { pop = true; heart = true }; Haptic.success(); return }
             withAnimation(.easeIn(duration: 0.45)) { met = true } completion: {
                 Haptic.success()
@@ -740,6 +808,11 @@ struct MatchView: View {
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.55)) { pop = true }
             }
         }
+    }
+
+    // 關掉也是淡出（fullScreenCover 拿掉時不帶動畫，不然會一下子被切掉）
+    private func leave() {
+        withAnimation(.easeOut(duration: 0.2)) { shown = false } completion: { close() }
     }
 }
 
@@ -819,6 +892,22 @@ extension Store {
         guard !l.isEmpty else { say("群組裡還沒有店"); return nil }
         let f: [String: AnyCodable] = ["cities": .a([]), "cats": .a([]), "meal": .s(used ?? ""), "price": .i(0)]
         return await startRound(gid, title: "一起決定吃什麼", pool: Array(l.prefix(10)), filters: f)
+    }
+
+    enum RoundAction { case resume(Round, Int), result(Round), new }
+    // 「開始滑卡」要做什麼：12 小時內開的最新那輪算有效；我還有卡就繼續，我滑完但別人還沒就看結果，其他情況開新的一輪
+    // （剛開、還沒同步的 created_at 是 nil，當成有效）
+    func roundAction(_ gid: String) -> RoundAction {
+        guard let r = liveRound(gid) else { return .new }
+        let mine = todo(r).count
+        if mine > 0 { return .resume(r, mine) }
+        let othersLeft = membersOf(gid).contains { u in u != me && r.place_ids.count > Set(swipes.filter { $0.round_id == r.id && $0.user_id == u }.map(\.place_id)).count }
+        return othersLeft ? .result(r) : .new
+    }
+    func liveRound(_ gid: String) -> Round? {
+        guard let r = roundsOf(gid).first else { return nil }
+        if let at = r.at, Date().timeIntervalSince(at) > 12 * 3600 { return nil }
+        return r
     }
 }
 

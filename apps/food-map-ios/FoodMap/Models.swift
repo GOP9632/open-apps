@@ -108,6 +108,7 @@ struct Round: Codable, Identifiable, Hashable {
     var title: String
     var place_ids: [String]
     var created_at: String?
+    var at: Date? { created_at.flatMap { $0.count >= 19 ? SwipeRow.fmt.date(from: String($0.prefix(19))) : nil } }
 }
 struct SwipeRow: Codable, Hashable {
     let round_id: String; var user_id: String; let place_id: String; var liked: Bool
@@ -117,7 +118,7 @@ struct SwipeRow: Codable, Hashable {
         guard let s = created_at, s.count >= 19 else { return nil }
         return SwipeRow.fmt.date(from: String(s.prefix(19)))
     }
-    private static let fmt: DateFormatter = {
+    static let fmt: DateFormatter = {
         let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = TimeZone(identifier: "UTC"); f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"; return f
     }()
 }

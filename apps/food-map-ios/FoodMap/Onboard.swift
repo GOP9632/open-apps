@@ -144,6 +144,12 @@ struct NotifyCard: View {
         UserDefaults.standard.set(0, forKey: "clipSkips")
         dismiss()
         guard let t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return }
+        // 朋友的邀請連結或整段邀請訊息：不當成店去找，直接加入或打開那個群組（膠囊只在登入後出現）
+        if t.contains("anthony-apps.netlify.app/join") || t.contains("邀請碼"), let c = FoodGroup.code(in: t) {
+            Haptic.light()
+            Task { await store.openInvite(c) }
+            return
+        }
         let k = Self.key(t)
         if store.mine.contains(where: { $0.source_url.map(Self.key) == k }) {
             Haptic.light()
