@@ -81,6 +81,7 @@ struct MapTab: View {
         // 篩選拿掉的，多畫 0.25 秒縮小淡掉
         let gone = pins.track(list)
         let _ = pins.cleared
+        let _ = pins.mapSync   // 不聽 MapKit 晚到的選取之後重畫一次，地圖才會把 sel 再設給 MapKit（跟上一行 cleared 同一個道理，見 PinState.mapLate）
         let gname = store.mapGroupName
         let total = all.count
         NavigationStack(path: $store.mapPath) {
@@ -109,10 +110,9 @@ struct MapTab: View {
                             pins.select(h)
                             return
                         }
-                    } else if CACurrentMediaTime() - pins.tapAt < 0.6, id != pins.sel {
-                        // 一般地圖也一樣：手指剛點過圖釘按鈕，MapKit 等完「是不是點兩下」才用手指的位置找圖釘，
-                        // 那時地圖已經開始移（收鍵盤、飛過去），會找到旁邊那根或空白：一下選兩間、選了又被 nil 取消。按鈕選的為準
-                        Perf.shared.mark("地圖選取略過 \(id.map { String($0.prefix(8)) } ?? "nil") \(Int((CACurrentMediaTime() - pins.tapAt) * 1000))ms")
+                    } else if pins.mapLate(id) {
+                        // 一般地圖：手指剛點過圖釘按鈕，MapKit 晚一步送來的 nil 或另一根不聽（疊在一起的兩根會一下選兩間；
+                        // 打字時點圖釘，MapKit 等完「是不是點兩下」才送 nil 和旁邊那根）。手指又按在地圖上就照聽。判斷和對照開關見 PinState.mapLate
                         return
                     }
                     pins.select(id)
@@ -283,7 +283,11 @@ struct MapTab: View {
                     // 抽一間還在跳（drawWin 還在）：等它跳完自己選中抽到的那間，這裡取消會把整次抽一間取消掉
                     if !trip.on, pins.drawWin == nil, let s = pins.sel, !s.hasPrefix("hit:"), !ids.contains(s) { pins.select(nil) }
                 }
-                .onChange(of: store.coachStep) { pinFrame(proxy) }
+                // 教學第一步圈的那根不合進泡泡：進、出第一步都重新分群（-noPinPair 照舊只量位置）
+                .onChange(of: store.coachStep) { old, now in
+                    pinFrame(proxy)
+                    if old == .pin || now == .pin, !Flag.on("-noPinPair") { recluster(proxy) }
+                }
                 // 選到一根圖釘：地圖移過去、放光圈（只有這個小觀察者看 sel，MapTab 本身不跟著重算）
                 // 選到時不重算泡泡（會讓整張地圖重畫，點圖釘變慢）；地圖移完停下來時會重算
                 .background { SelWatcher(pins: pins) { id in picked(id, list, proxy, hits: hits, extra: extraFound) } }
@@ -316,8 +320,14 @@ struct MapTab: View {
                 // 地圖上的圖釘不會跟著 MapTab 重畫，所以交給 PinState，每根自己看
                 .onChange(of: "\(trip.on)|\(foundIds.sorted().joined(separator: ","))", initial: true) {
                     quiet.hush()
+                    // 離開行程：圖釘從 0.65 倍長回原大小，單根對單根要照原大小重比（離開時鏡頭不動、名單也可能沒變，不會自己重新分群）。
+                    // 晚 60ms 再做，按「完成」那一幀不多做事；-noPinPair 照舊不重算
+                    let leaving: Bool = pins.dimAll && !trip.on
                     pins.dimAll = trip.on
                     pins.bright = foundIds
+                    if leaving, !Flag.on("-noPinPair") {
+                        Task { try? await Task.sleep(for: .milliseconds(60)); if !trip.on { recluster(proxy) } }
+                    }
                 }
             }
             // 量在 ignoresSafeArea 裡面才是地圖真正鋪開的範圍（整個螢幕）；量在外面只拿到 safe area 那塊，上下邊距會各少算 62、34
@@ -895,15 +905,19 @@ struct MapTab: View {
             return
         }
         // 格子釘在地圖上（不是螢幕上），大小只在縮放跨過 2 倍時才變：平移不會重組，縮放中也不會一直換人
+        let t0 = CACurrentMediaTime()     // 量測：下面「分群」記號用（從這裡算到合併迴圈結束）
         guard let r = store.mapRegion ?? shownRegion else { return }
         let cell = pow(2, ceil(log2(max(r.span.longitudeDelta / Double(Self.mapWidth) * 44, 1e-7))))
         var pts: [String: CGPoint] = [:]
         var cells: [String: [Place]] = [:]
         // 行程模式搜到的收藏不合進泡泡（要看得到）
         let keep: Set<String> = trip.on && trip.searchOn ? Set(trip.search.found.map(\.id)) : []
+        // 教學第一步圈的那根不合進泡泡（圈的是它的座標，合進去就圈到空地）；-noPinPair 照舊
+        let coaching: Bool = !Flag.on("-noPinPair") && store.coachStep == .pin
+        let coachId: String? = coaching ? store.coachPlace?.id : nil
         for p in currentList {
             if let pt = proxy.convert(CLLocationCoordinate2D(latitude: p.lat!, longitude: p.lng!), to: .local) { pts[p.id] = pt }
-            guard p.id != pins.sel, p.id != pins.extra, !keep.contains(p.id) else { continue }
+            guard p.id != pins.sel, p.id != pins.extra, !keep.contains(p.id), p.id != coachId else { continue }
             let y = log(tan(.pi / 4 + p.lat! * .pi / 360)) * 180 / .pi
             cells["\(Int((p.lng! / cell).rounded(.down))),\(Int((y / cell).rounded(.down)))", default: []].append(p)
         }
@@ -932,14 +946,90 @@ struct MapTab: View {
             }
             return CGRect(x: c.x - 22, y: c.y - 51, width: 44, height: 44)
         }
+        // 量測（-clusterBench）：同一份輸入先照 72ac06e 的舊迴圈跑一次、計時，跑完還原，分群結果不受影響。
+        // 這次分群會多做一次舊迴圈，量掉幀的那幾輪不要加
+        var oldMs: Double = -1
+        if Perf.shared.on && Flag.on("-clusterBench") {
+            let keepItems = items, keepSum = sum, keepCnt = cnt
+            let b0 = CACurrentMediaTime()
+            var q = 0
+            while q < items.count {
+                guard items[q].count >= 2, let a = box(q)?.insetBy(dx: -3, dy: -3),
+                      let j = items.indices.first(where: { $0 != q && box($0).map { a.intersects($0) } == true }) else { q += 1; continue }
+                items[q] += items[j]; sum[q].x += sum[j].x; sum[q].y += sum[j].y; cnt[q] += cnt[j]
+                items.remove(at: j); sum.remove(at: j); cnt.remove(at: j)
+                if j < q { q -= 1 }
+            }
+            oldMs = (CACurrentMediaTime() - b0) * 1000
+            items = keepItems; sum = keepSum; cnt = keepCnt
+        }
+        let t1 = CACurrentMediaTime()     // 量測：合併迴圈從這裡算（含下面 dr 的準備）
+        // 單根對單根比的框：圖釘畫出來的圓（44 的圓在座標點上面，底部尖角 7）。行程模式其他收藏縮成 0.65 倍
+        // （以底部尖端為準縮，跟 FoodPin 的 scaleEffect 一樣）；群組地圖有 owner 的店右上角多一個小頭像（往右多 6、往上多 4），
+        // 沒有 owner 的不畫頭像就不算。只有單根有，合成泡泡後清成 nil
+        let ps: CGFloat = trip.on ? 0.65 : 1
+        let grp: Bool = store.mapGroupName != nil
+        var dr: [CGRect?] = items.indices.map { (k: Int) -> CGRect? in
+            guard items[k].count == 1, cnt[k] == 1 else { return nil }
+            let f: CGFloat = grp && items[k][0].owner != nil ? 1 : 0
+            let c: CGPoint = sum[k]
+            let w: CGFloat = (44 + 6 * f) * ps
+            let h: CGFloat = (44 + 4 * f) * ps
+            return CGRect(x: c.x - 22 * ps, y: c.y - (51 + 4 * f) * ps, width: w, height: h)
+        }
+        // 量測對照 -noPinPair：恢復成只有泡泡會吃，兩根疊在一起的單根照舊不合
+        let pairs: Bool = !Flag.on("-noPinPair")
+        let n0: Int = items.count
+        let logPairs: Bool = Perf.shared.on && Flag.on("-clusterCheck")
+        var pairNames: [String] = []      // 量測（-clusterCheck）：單根對單根合起來的是哪兩間
         var i = 0
         while i < items.count {
-            // 只有泡泡會吃掉旁邊的（兩根單獨的圖釘靠近不合，交給格子）；吃了一個就重新量一次
-            guard items[i].count >= 2, let a = box(i)?.insetBy(dx: -3, dy: -3),
-                  let j = items.indices.first(where: { $0 != i && box($0).map { a.intersects($0) } == true }) else { i += 1; continue }
+            // 泡泡吃掉疊到的；兩根疊在一起的單根也合成一顆（跟 Apple 地圖一樣）。吃了一個就重新量一次。
+            // 比法：兩個都是單根照畫出來的圓（dr），有泡泡的照 box()，都外擴 3。照固定順序比完才往下，結束時任兩個都不疊
+            let d: CGRect? = pairs ? dr[i]?.insetBy(dx: -3, dy: -3) : nil
+            guard items[i].count >= 2 || d != nil, let a = box(i)?.insetBy(dx: -3, dy: -3),
+                  let j = items.indices.first(where: { (k: Int) -> Bool in
+                      if k == i { return false }
+                      if let s = d, let o = dr[k] { return s.intersects(o) }
+                      guard let bk = box(k) else { return false }
+                      return a.intersects(bk)
+                  }) else { i += 1; continue }
+            if logPairs, dr[i] != nil, dr[j] != nil, let x = items[i].first, let y = items[j].first {
+                pairNames.append(x.name + "＋" + y.name)
+            }
             items[i] += items[j]; sum[i].x += sum[j].x; sum[i].y += sum[j].y; cnt[i] += cnt[j]
-            items.remove(at: j); sum.remove(at: j); cnt.remove(at: j)
+            dr[i] = nil
+            items.remove(at: j); sum.remove(at: j); cnt.remove(at: j); dr.remove(at: j)
             if j < i { i -= 1 }
+        }
+        let t2 = CACurrentMediaTime()
+        // 量測（-perfOverlay）：分群花多久（合併迴圈另外算）、這時的經度寬、幾格合成幾個。加 -clusterCheck 再數結束時框還重疊的對數
+        // （跟迴圈同一條規則：兩根單根照 dr、有泡泡的照 box()），並列出單根對單根合起來的是哪幾對。
+        // 「框重疊」照證明一定是 0，只用來抓程式寫錯（dr 和 items 沒對齊之類）；畫面上有沒有疊要看截圖
+        if Perf.shared.on {
+            let ms: Double = (t2 - t0) * 1000
+            let loopMs: Double = (t2 - t1) * 1000
+            var tail = ""
+            if Flag.on("-clusterCheck") {
+                var bp = 0, pp = 0
+                for x in items.indices {
+                    for y in items.indices where y > x {
+                        if let p = dr[x], let q = dr[y] {
+                            if p.insetBy(dx: -3, dy: -3).intersects(q) { pp += 1 }
+                        } else if let p = box(x), let q = box(y), p.insetBy(dx: -3, dy: -3).intersects(q) {
+                            bp += 1
+                        }
+                    }
+                }
+                tail = "，框重疊 泡泡 \(bp)・單根 \(pp)"
+                if !pairNames.isEmpty { tail += "，單根合：" + pairNames.joined(separator: "、") }
+            }
+            let nb: Int = items.filter { $0.count >= 2 }.count
+            let head: String = String(format: "分群 %.2f ms（合併迴圈 %.3f ms），經度寬 %.4f，%ld 格合成 %ld 個（泡泡 %ld），合併 %ld 次",
+                                      ms, loopMs, r.span.longitudeDelta, n0, items.count, nb, n0 - items.count)
+            let old: String = oldMs >= 0 ? String(format: "，舊迴圈 %.3f ms", oldMs) : ""
+            let mode: String = pairs ? "" : "（-noPinPair）"
+            Perf.shared.note(head + old + tail + mode)
         }
         let groups = items.filter { $0.count >= 2 }
         // 行程模式：泡泡落在某站號碼上就往外推開（號碼要看得到）
@@ -1915,6 +2005,59 @@ struct PickedCard: View {
         Perf.shared.note("select 開始（點圖釘）")
         tapAt = CACurrentMediaTime()
         if sel == id { again += 1 } else { select(id) }
+    }
+
+    // 一般地圖（行程模式在 MapTab 的 Map(selection:) 裡另有擋法）：MapKit 自己送來的選取要不要不聽，回傳 true 就不聽。
+    // 手指點了圖釘按鈕之後，MapKit 會晚一步自己再選一次：疊在一起的兩根約 40ms 後送來另一根（M9 s1b 15 次都這樣）；
+    // 打字時點圖釘，MapKit 等完「是不是點兩下」才送 nil 和旁邊那根（a5eef80）。以按鈕選的為準：手指按下時壓扁、震動的就是那根。
+    // 點完圖釘 0.8 秒內、手指沒有再按在地圖上（面板、大卡、搜尋列不算），送來 nil 或另一根就不聽；
+    // 手指又按在地圖上（點空白、影子、名牌、圖釘按鈕外的範圍）一律照聽。
+    // 對照：-mapSelAll 一律照聽（＝72ac06e）；-mapSel06 照 a5eef80（點完圖釘 0.6 秒內跟目前不同的一律不聽、不對回）；
+    // -noMapResync 照樣不聽，但不請地圖對回（量測用）
+    @ObservationIgnored private var syncFor: CFTimeInterval = -1   // 為哪一下點擊（tapAt）請地圖對回過：同一下只對一次，不會來回
+    @ObservationIgnored private var syncAt: CFTimeInterval = 0     // 請地圖對回的時間：對回時 MapKit 再送來的 nil 也不聽
+    private(set) var mapSync = 0                                   // MapTab 看這個：不聽之後重畫一次，地圖把 sel 再設給 MapKit
+    func mapLate(_ id: String?) -> Bool {
+        if Flag.on("-mapSelAll") { return false }
+        let from = tapAt                                           // 從手指最後點圖釘按鈕的時間算
+        let now = CACurrentMediaTime()
+        let dt = now - from
+        let tag = id.map { String($0.prefix(8)) } ?? "nil"
+        let ms = dt < 10 ? "\(Int(dt * 1000))ms" : "-"
+        if Flag.on("-mapSel06") {
+            guard dt < 0.6, id != sel else { return false }
+            Perf.shared.mark("地圖選取略過 \(tag) \(ms)（0.6 秒）")
+            return true
+        }
+        if id == sel { return false }                              // 同一根：select 本來就會略過
+        if now - max(from, syncAt) >= 0.8 {
+            if dt < 2 { Perf.shared.note("地圖選取照聽 \(tag) \(ms) 過了 0.8 秒") }
+            return false
+        }
+        // 點完圖釘之後，手指有沒有再按在地圖看得到的那塊：搜尋列下緣到面板上緣。
+        // 面板在最高段不算；還沒量到面板上緣（0）就只看搜尋列
+        let p = Perf.shared.lastDownAt
+        let mp = MapPanel.shared
+        let belowBar = p.y > TripMode.shared.mapTop
+        let aboveSheet = mp.top <= 0 || p.y < mp.top
+        let onMap = mp.stage != .high && belowBar && aboveSheet
+        let pressed = Perf.shared.lastDown > from
+        if pressed && onMap {
+            Perf.shared.note("地圖選取照聽 \(tag) \(ms) 新的按下 y=\(Int(p.y))")
+            return false
+        }
+        var s = "地圖選取略過 \(tag) \(ms)"
+        if pressed { s += " 按在地圖外 y=\(Int(p.y)) 面板上緣 \(Int(mp.top))" }
+        Perf.shared.mark(s)
+        // MapKit 自己記的選取跟 sel 不一樣了：下一輪讓 MapTab 重畫一次，地圖把 sel 再設回 MapKit（同一下點擊只做一次）
+        if syncFor != from, !Flag.on("-noMapResync") {
+            syncFor = from
+            syncAt = now
+            let cur = sel.map { String($0.prefix(8)) } ?? "nil"
+            Perf.shared.note("地圖選取對回 \(cur)")
+            Task { @MainActor in self.mapSync += 1 }
+        }
+        return true
     }
 
     func fx(_ id: String) -> PinFX {

@@ -20,6 +20,10 @@ import os
 
     @ObservationIgnored private var touchDown: CFTimeInterval = 0
     @ObservationIgnored private var touchUp: CFTimeInterval = 0
+    // 手指最後一次按下的時間、位置（視窗座標）。不只量測用：地圖靠它分 MapKit 送來的選取是不是新的一次點擊（PinState.mapLate）。
+    // TouchClock 一直裝著（FoodMapApp.swift 裡 Root 的 .task），touched() 在 guard on 之前就記，正式版、沒開浮層也有值：TouchClock 不能改成只在量測時裝
+    @ObservationIgnored private(set) var lastDownAt: CGPoint = .zero
+    var lastDown: CFTimeInterval { touchDown }
     // 同一幀裡打了好幾個記號（例如按下去建畫面、畫面出現）：每個都留著，分開算
     @ObservationIgnored private var pending: [(name: String, at: CFTimeInterval)] = []
     @ObservationIgnored private var link: CADisplayLink?
@@ -45,9 +49,9 @@ import os
         #endif
     }
 
-    func touched(_ down: Bool) {
+    func touched(_ down: Bool, at p: CGPoint? = nil) {
         let t = CACurrentMediaTime()
-        if down { touchDown = t } else { touchUp = t }
+        if down { touchDown = t; if let p { lastDownAt = p } } else { touchUp = t }
         guard on else { return }
         firstAfter = (down ? "按下" : "放開", t)
         print(String(format: "[perf] %.3f 手指", t) + (down ? "按下" : "放開"))
@@ -151,7 +155,8 @@ final class TouchClock: UIGestureRecognizer, UIGestureRecognizerDelegate {
 
     override func touchesBegan(_ t: Set<UITouch>, with e: UIEvent) {
         MainActor.assumeIsolated {
-            Perf.shared.touched(true)
+            // 連按下的位置（視窗座標）一起記：地圖分手指按在地圖上，還是按在面板、大卡、搜尋列上（PinState.mapLate）
+            Perf.shared.touched(true, at: t.first?.location(in: nil))
         }
     }
 
