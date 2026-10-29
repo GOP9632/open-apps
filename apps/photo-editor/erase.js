@@ -2,9 +2,8 @@
 // MI-GAN（Picsart，MIT 授權）在瀏覽器裡跑，照片不會上傳。模型第一次用時下載約 28MB，之後瀏覽器會快取
 import { pinch, stageZoom } from './ui.js';
 import { segment } from './ai.js';
-import { blurred } from './cblur.js';
 import { LOW_MEM } from './matte.js';
-import { patchFill } from './patchfill.js';
+import { fillErase, growAlpha, softPatch } from './erasemix.js';
 
 const ORT = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
 const MODEL = 'https://huggingface.co/andraniksargsyan/migan/resolve/main/migan_pipeline_v2.onnx';
@@ -27,6 +26,9 @@ function session() {
 }
 
 const newCanvas = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; };
+// 選區（和下筆前的備份）放記憶體：按「立即消除」、橡皮擦放開時要讀回來，放 GPU 的話每讀一次都要等 GPU 把畫面畫完（評審 M51）。
+// 畫面上看到的選區是另一張（ov），塗的時候兩張一起畫
+const memCanvas = (w, h) => { const c = newCanvas(w, h); c.getContext('2d', { willReadFrequently: true }); return c; };
 
 // 選區的外框（用 alpha 判斷），沒有選區回傳 null。r：[x0, y0, x1, y1] 只看這一塊（選區畫布的像素）。
 // 整張 2048 像素的遮罩從 GPU 讀回來要幾十毫秒，塗完一筆放開時會頓一下，所以盡量只讀畫過的那一塊
@@ -134,8 +136,8 @@ function maskToView(src, r, map, W) {
   return [c, bx1 < 0 ? null : [X0 + bx0, Y0 + by0, X0 + bx1 + 1, Y0 + by1 + 1]];
 }
 
-// 把選區描邊變粗再暈開：補的範圍稍微蓋過物體邊緣，接縫也看不出來
-function grow(mask, w, h, px, blur) {
+// 把選區描邊變粗（路人遮罩往外長一點）
+function grow(mask, w, h, px) {
   const c = newCanvas(w, h), ctx = c.getContext('2d');
   const steps = 12;
   for (let i = 0; i < steps; i++) {
@@ -143,13 +145,14 @@ function grow(mask, w, h, px, blur) {
     ctx.drawImage(mask, Math.cos(a) * px, Math.sin(a) * px, w, h);
   }
   ctx.drawImage(mask, 0, 0, w, h);
-  return blur ? blurred(c, blur) : c;
+  return c;
 }
 
-// src：照片 canvas；mask：任意大小、跟照片同比例的選區（alpha > 0 的地方要消除）；r：選區大概在哪（見 maskBox）
-// 回傳一張新的 canvas，只有選區附近被換掉
-export async function inpaint(src, mask, r) {
-  const box = maskBox(mask, r);
+// src：照片 canvas；mask：任意大小、跟照片同比例的選區（alpha > 0 的地方要消除）；box：選區的外框（maskBox 算的）
+// fill：選區外擴、方塊補洞、做成要疊回的那塊（erasemix.js 的 fillErase；app 交給背景執行緒算）。
+// 回傳 { x, y, w, h, soft }：照片 (x, y) 開始 w×h 那塊要疊上去的 RGBA（選區以外透明、邊緣羽化，不預乘），
+// app 只換那一塊（評審 M51：以前在這裡用 canvas 外擴、模糊、疊回，再新建一整張照片重畫，按下去畫面停 0.6 秒以上）
+export async function inpaint(src, mask, box, fill = async a => fillErase(a)) {
   if (!box) return null;
   const W = src.width, H = src.height;
   // 取選區周圍一圈當參考，模型才知道背景長什麼樣
@@ -166,40 +169,25 @@ export async function inpaint(src, mask, r) {
   // 選區對到這塊範圍
   const mk = mask.width / W, mc = newCanvas(w, h), mctx = mc.getContext('2d', { willReadFrequently: true });
   mctx.drawImage(mask, x0 * mk, y0 * mk, cw * mk, ch * mk, 0, 0, w, h);
-  const hole = grow(mc, w, h, Math.max(2, Math.round(Math.max(w, h) / 200)), 0);
-  const md = hole.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
-
-  const oc = newCanvas(w, h), octx = oc.getContext('2d'), od = octx.createImageData(w, h);
+  const md = mctx.getImageData(0, 0, w, h).data, ma = new Uint8Array(n);
+  for (let i = 0; i < n; i++) ma[i] = md[i * 4 + 3];
+  // 補的範圍稍微蓋過物體邊緣（外擴），疊回去時邊緣羽化，接縫才看不出來
+  const a = { d: id, m: ma, w, h, cw, ch, px: Math.max(2, Math.round(Math.max(w, h) / 200)), feather: Math.max(1.5, Math.max(cw, ch) / 400) };
   if (ERASE_LITE) {
-    const holeM = new Uint8Array(n);
-    for (let i = 0; i < n; i++) holeM[i] = md[i * 4 + 3] > 10 ? 1 : 0;
     await new Promise(r => setTimeout(r, 30)); // 讓「消除中」先畫出來
-    od.data.set(patchFill(id, holeM, w, h));
-    for (let i = 0; i < n; i++) od.data[i * 4 + 3] = 255;
-  } else {
-    const { ort, s } = await session();
-    const img = new Uint8Array(3 * n), m = new Uint8Array(n);
-    for (let i = 0; i < n; i++) {
-      img[i] = id[i * 4]; img[n + i] = id[i * 4 + 1]; img[2 * n + i] = id[i * 4 + 2];
-      m[i] = md[i * 4 + 3] > 10 ? 0 : 255; // MI-GAN：0 = 要補的洞，255 = 保留
-    }
-    const r = (await s.run({ image: new ort.Tensor('uint8', img, [1, 3, h, w]), mask: new ort.Tensor('uint8', m, [1, 1, h, w]) })).result.data;
-    for (let i = 0; i < n; i++) {
-      od.data[i * 4] = r[i]; od.data[i * 4 + 1] = r[n + i]; od.data[i * 4 + 2] = r[2 * n + i]; od.data[i * 4 + 3] = 255;
-    }
+    return { x: x0, y: y0, w: cw, h: ch, soft: await fill(a) };
   }
-  octx.putImageData(od, 0, 0);
-
+  const { ort, s } = await session();
+  const g = growAlpha(ma, w, h, a.px), img = new Uint8Array(3 * n), m = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    img[i] = id[i * 4]; img[n + i] = id[i * 4 + 1]; img[2 * n + i] = id[i * 4 + 2];
+    m[i] = g[i] * 255 > 10 ? 0 : 255; // MI-GAN：0 = 要補的洞，255 = 保留
+  }
+  const r = (await s.run({ image: new ort.Tensor('uint8', img, [1, 3, h, w]), mask: new ort.Tensor('uint8', m, [1, 1, h, w]) })).result.data;
+  const out = new Uint8ClampedArray(n * 4);
+  for (let i = 0; i < n; i++) { out[i * 4] = r[i]; out[i * 4 + 1] = r[n + i]; out[i * 4 + 2] = r[2 * n + i]; out[i * 4 + 3] = 255; }
   // 只把選區（邊緣羽化）貼回原圖，其他地方保持原本的清晰度
-  const feather = Math.max(1.5, Math.max(cw, ch) / 400);
-  const soft = grow(hole, cw, ch, 0, feather), sctx = soft.getContext('2d');
-  sctx.globalCompositeOperation = 'source-in';
-  sctx.imageSmoothingQuality = 'high';
-  sctx.drawImage(oc, 0, 0, cw, ch);
-  const out = newCanvas(W, H), ctx = out.getContext('2d');
-  ctx.drawImage(src, 0, 0);
-  ctx.drawImage(soft, x0, y0);
-  return out;
+  return { x: x0, y: y0, w: cw, h: ch, soft: softPatch(out, g, w, h, cw, ch, a.feather) };
 }
 
 // 識別路人：人像分割切成一塊一塊，最大的一塊當主角，其他夠大的就是路人
@@ -232,7 +220,7 @@ export async function passersby(src) {
   if (!any) return null;
   ctx.putImageData(o, 0, 0);
   // 往外長一點，把頭髮、衣服邊緣也包進來
-  return grow(c, w, h, Math.max(2, Math.round(Math.max(w, h) / 150)), 0);
+  return grow(c, w, h, Math.max(2, Math.round(Math.max(w, h) / 150)));
 }
 
 // ---------- 面板 ----------
@@ -249,7 +237,7 @@ function state(b) {
   if (st?.b === b) return st;
   const W = b.canvas.width, H = b.canvas.height, k = Math.min(1, MASK_SIDE / Math.max(W, H));
   // 換照片或消除完，工具和畫筆大小沿用
-  st = { b, mask: newCanvas(W * k, H * k), bb: null, ppl: null, pplOn: false, pplP: null, tool: st?.tool || 'brush', size: st?.size ?? 20 };
+  st = { b, mask: memCanvas(W * k, H * k), bb: null, ppl: null, pplOn: false, pplP: null, tool: st?.tool || 'brush', size: st?.size ?? 20 };
   return st;
 }
 // 畫過的範圍（選區畫布的像素）：塗抹、框選、路人加進來，橡皮擦不縮（按「立即消除」時才在這一塊裡面算真正的外框）
@@ -326,7 +314,7 @@ function bindDraw() {
     e.preventDefault(); try { ov.setPointerCapture(e.pointerId); } catch {}
     const p = pos(e), m = st.mask;
     if (st.tool !== 'box') {
-      if (snap?.width !== m.width || snap.height !== m.height) snap = newCanvas(m.width, m.height);
+      if (snap?.width !== m.width || snap.height !== m.height) snap = memCanvas(m.width, m.height);
       const x = snap.getContext('2d'); x.clearRect(0, 0, m.width, m.height); x.drawImage(m, 0, 0);
     }
     if (ov.width !== m.width || ov.height !== m.height) paintOverlay();
@@ -421,19 +409,24 @@ export function tabErase(box, app) {
   } }));
   // 醒圖把「立即消除」做成面板上最顯眼的按鈕，手機上放第一個，不用往右滑才找得到
   const go = app.item({ label: '立即消除', icon: '立即消除', cls: 'wide', style: 'background:var(--accent);color:#fff;font-weight:600', onclick: async () => {
-    // 橡皮擦可能把選區整個擦掉了：在畫過的範圍裡算一次真正有沒有
-    if (!hasMask() || !maskBox(s.mask, s.bb)) { s.bb = null; s.ui(); return app.toast('先塗抹或框選要消除的地方'); }
+    const none = () => { s.bb = null; s.ui(); app.toast('先塗抹或框選要消除的地方'); };
+    if (!hasMask()) return none();
     app.busy(sessP || ERASE_LITE ? '消除中…' : '下載消除模型（約 28MB，只有第一次）…');
+    // 先讓「消除中…」畫出來再讀選區（讀選區要等 GPU，以前點下去畫面先停住、等一下才出現「消除中」，評審 M51）
+    await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+    let t;
     try {
-      const t = setTimeout(() => app.busy('消除中…'), 4000);
-      const map = app.toSrc?.(), out = await inpaint(s.b.canvas, ...(map ? maskToSrc(s.mask, map, s.b.canvas.width, s.bb) : [s.mask, s.bb]));
-      clearTimeout(t);
-      if (!out) return;
-      app.setBase(out); app.commit();
+      // 橡皮擦可能把選區整個擦掉了：在畫過的範圍裡算一次真正有沒有（算好的外框直接給 inpaint，不再讀一次）
+      const map = app.toSrc?.(), [m, r] = map ? maskToSrc(s.mask, map, s.b.canvas.width, s.bb) : [s.mask, s.bb], box = r && maskBox(m, r);
+      if (!box) return none();
+      t = setTimeout(() => app.busy('消除中…'), 4000);
+      const out = await inpaint(s.b.canvas, m, box, app.fill);
+      if (!out || app.base !== s.b) return;
+      app.erasePatch(out); app.commit();
       state(app.base);
       redraw();
     } catch (e) { console.error(e); app.toast(ERASE_LITE ? '消除失敗，再試一次' : '消除失敗，檢查一下網路再試一次'); }
-    finally { app.busy(); }
+    finally { clearTimeout(t); app.busy(); }
   } });
   box.prepend(go); s.ui();
 

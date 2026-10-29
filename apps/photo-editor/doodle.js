@@ -89,7 +89,8 @@ function bake(S, pts) {
     eachPx(L, dim, x0, y0, x1, y1, false, (t, j, i) => {
       const c = old[i] = t.cov[j], e = ma[i * 4 + 3] / 255;
       if (!c || !e) return;
-      for (let q = 0; q < 4; q++) a[i * 4 + q] = b[i * 4 + q] + (t.pre[j * 4 + q] - b[i * 4 + q]) * e + 0.5;
+      // 不加 0.5：Uint8ClampedArray 寫入時自己會四捨五入，加了以後整個擦掉（e = 1）時奇數色值會多 1（評審 L64）
+      for (let q = 0; q < 4; q++) a[i * 4 + q] = b[i * 4 + q] + (t.pre[j * 4 + q] - b[i * 4 + q]) * e;
       t.cov[j] = Math.round(c * (1 - e)); any = true;
     });
     // 擦的地方本來就沒畫過：不記一步

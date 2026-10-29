@@ -20,13 +20,14 @@ import { tabBeautyBrush, beautyBrushInput, bbRelease, bbWait, bbLeave } from './
 import { FONTS, T0, TEXT_COLORS, TEXT_FX, TEMPLATES, applyTemplate, upgradeText, loadFont, layout as textLayout, pad, drawText } from './text.js';
 import { initCollage, openCollage } from './collage.js';
 import { CATS as TPL_CATS } from './templates.js';
-import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightPosOf, lightGrad, flashStats } from './relight.js';
+import { buildDepth, LIGHT_CATS, LIGHTS, FLASHES, litParams, lightPosOf, lightGrad, flashStats, flashNetOk } from './relight.js';
 import { flashGrid, fullSize } from './flashnet.js';
 import { enhanceRanges, paintRange, setGrad, nudge, canvasZoom, pinch } from './ui.js';
 import { tabLooks } from './looks.js';
 import { perfReq, perfDrawn, perfBase, perfSkip } from './perf.js';
 import { STROKES, STROKE_COLORS, STROKE0, strokeLayer, alphaFromMatte, alphaBox } from './outline.js';
 import { SHAPES, MASK0, LAYER_LIMIT, shapePath, photoLayer, cutLayer, layerInfo, restoreLayer, cloneAlpha, compose as composeLayer, brush } from './layers.js';
+import { fillErase } from './erasemix.js';
 import { listDrafts, readDraft, writeDraft, deleteDraft, encode, encodeSmall } from './draft.js';
 import { POPS, POP_BGS, POP_P0, drawPop } from './popout.js';
 
@@ -235,7 +236,9 @@ async function loadFile(file, m) {
     const orig = saved ? { blob: m.origBlob, ready: Promise.resolve(m.origBlob) } : makeOrig(bmp, bmp.width, bmp.height);
     const om = saved ? m.om : [1 / w, 0, 0, 1 / h, 0, 0];
     m?.patches?.forEach(q => c.getContext('2d').putImageData(q.img, q.x, q.y));  // 草稿：照片疊上之後畫的每一筆
-    P = { ...P0, ...m?.P }; texts = m?.texts || []; selText = -1; stickers = m?.stickers || []; selSt = -1;
+    // 草稿存的時候增高拉著還沒離開：先照沒拉的照片開，再拉長（跟離開增高一樣多一步，復原就是不拉）
+    const bh = m?.P?.bmHeight || 0;
+    P = { ...P0, ...m?.P, bmHeight: 0 }; texts = m?.texts || []; selText = -1; stickers = m?.stickers || []; selSt = -1;
     hist = []; hi = -1;
     perfSkip(); setBase(c, { orig, om });
     if (!m) srcFile.set(c, file);
@@ -255,6 +258,7 @@ async function loadFile(file, m) {
         hist[0].first = true; hi = 1;
       }
       syncHist();
+      if (bh) { P.bmHeight = bh; bmBake(); }
       tab = ''; showTab(TABS_OK(m.tab) ? m.tab : 'beauty'); drawTexts(); drawStickers();
     } else {
       // 照 Hypic：人像照進來先停在「人像」；找不到臉就改停在濾鏡
@@ -346,26 +350,60 @@ function ensureSurf() {
   }
   return base.surf;
 }
-function paintPatch({ x, y, before, after, aux }) {
-  const old = base, S = ensureSurf();
+// redetect：照片內容換了（消除），臉、人像這些偵測結果不能沿用，跟換一張照片一樣重找（redetect 裡給的沿用）
+function paintPatch({ x, y, before, after, aux }, redetect) {
+  const old = base, S = ensureSurf(), kb = shelfBlob.get(S.canvas), v0 = S.ver;
   S.edits.length = S.ver;  // 復原後再畫：後面那些重做不到了
   const e = { x, y, img: before, aux, ses: aux?.ses };
   S.edits.push(e);
   S.canvas.getContext('2d').putImageData(after, x, y); draftPatch(S.canvas, S.ver, x, y, after); S.ver++;
   // 臉、人像這些偵測結果還是同一張照片，留著不用重算；照片的貼圖只傳改到的那一塊
-  const keep = { ...old }; delete keep.canvas; delete keep.thumbs;
+  const keep = redetect ? { orig: old.orig, om: old.om, surf: S, ...redetect } : { ...old }; delete keep.canvas; delete keep.thumbs;
   base = { canvas: S.canvas, ...BASE0, ...keep, ver: S.ver };
   pixelsChanged(S.canvas, [{ x, y, img: after, e }]);
-  render(); perfBase();
+  // 壓好的檔案是第幾筆的樣子還在這串裡（沒被這筆蓋掉）：留著，收起來時對調回那一筆直接用（評審 M49）
+  if (kb?.ver !== undefined && kb.ver <= v0) shelfBlob.set(S.canvas, kb);
+  if (redetect) applyDetect(); else render();
+  perfBase();
 }
-// 把 canvas 換到第 v 筆（復原、重做同一串裡的一步）
-function seekSurf(S, v) {
+// 消除（評審 M51）：以前補好的那塊疊到一整張新的照片上再整張換掉，按「立即消除」那下主執行緒停 0.6 秒，接著又停兩三下。
+// 現在跟美顏筆、塗鴉一樣只換選區那一塊、記成同一張 canvas 的一筆：復原、重做只對調那一塊
+// soft：照片 (x, y) 開始 w×h 那塊要疊上去的 RGBA（選區以外透明、邊緣羽化、不預乘，見 erase.js 的 inpaint）
+function erasePatch({ x, y, w, h, soft }) {
+  const S = ensureSurf(), before = S.canvas.getContext('2d').getImageData(x, y, w, h), after = new ImageData(w, h), b = before.data, o = after.data;
+  // 跟 canvas 疊上去（source-over）一樣算；照片不透明時就是照透明度混
+  for (let i = 0; i < o.length; i += 4) {
+    const a = soft[i + 3] / 255, ba = b[i + 3] / 255, oa = a + ba * (1 - a);
+    if (oa <= 0) continue;
+    const ks = a / oa, kb = 1 - ks;
+    o[i] = soft[i] * ks + b[i] * kb; o[i + 1] = soft[i + 1] * ks + b[i + 1] * kb; o[i + 2] = soft[i + 2] * ks + b[i + 2] * kb; o[i + 3] = oa * 255;
+  }
+  // 臉沒被消掉（消除的範圍蓋不到任何一張臉的三成，像去痘、消掉旁邊的東西）：臉還在原處，沿用不重找
+  // （找臉、五官遮罩在 iPhone 上要停好幾格）。消除只會讓臉變少、不會多出臉。
+  // 皮膚、人像這些跟照片內容有關的照樣重算，皮膚遮罩算好前先用原本的（不然磨皮、美白會閃掉一下）
+  const gone = (base.faces || []).some(f => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of f) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    const ix = Math.min(x1, x + w) - Math.max(x0, x), iy = Math.min(y1, y + h) - Math.max(y0, y);
+    return ix > 0 && iy > 0 && ix * iy > 0.3 * (x1 - x0) * (y1 - y0);
+  });
+  paintPatch({ x, y, before, after }, base.faces && !base.faceErr && !gone ? { faces: base.faces, geoms: base.geoms, mask2: base.mask2, mask: base.mask, flashSt: base.flashSt } : {});
+}
+// 把 canvas 換到第 v 筆（復原、重做同一串裡的一步）。quiet：馬上要收起來的，不用通知畫面
+function seekSurf(S, v, quiet) {
   if (S.ver === v) return;
-  const ctx = S.canvas.getContext('2d'), done = [];
+  const ctx = S.canvas.getContext('2d'), done = [], kb = shelfBlob.get(S.canvas);
   const swap = e => { const cur = ctx.getImageData(e.x, e.y, e.img.width, e.img.height); ctx.putImageData(e.img, e.x, e.y); done.push({ x: e.x, y: e.y, img: e.img, e }); e.img = cur; e.aux?.swap(); };
   while (S.ver > v) swap(S.edits[--S.ver]);
   while (S.ver < v) swap(S.edits[S.ver++]);
-  pixelsChanged(S.canvas, S === base.surf ? done : null);
+  if (!quiet) pixelsChanged(S.canvas, S === base.surf ? done : null);
+  // 壓好的檔案還是那一筆的樣子，留著（評審 M49：以前每復原、重做一次就忘掉，收起來重壓 JPEG，來回幾輪照片越來越糊）
+  if (kb?.ver !== undefined) shelfBlob.set(S.canvas, kb);
+}
+// 從 canvas 現在這筆對調得到第 v 筆嗎（中間每一筆的復原紀錄都還在）
+function canSeek(S, v) {
+  for (let k = Math.min(S.ver, v); k < Math.max(S.ver, v); k++) if (!S.edits[k]?.img) return false;
+  return true;
 }
 // 同一張 canvas 的內容變了：照 canvas 記住的預覽、皮膚、頭髮圖要重算。
 // rects：改到的那幾塊，照片的貼圖只傳這幾塊（整張重傳又慢又吃記憶體）。
@@ -449,14 +487,32 @@ function shelve(b) {
     return;
   }
   shelving.add(b);
-  c.toBlob(blob => {
+  encode(c, hasAlpha(c) || pngRoom(c) ? 'image/png' : 'image/jpeg').then(blob => {
     shelving.delete(b);
     if (!blob || b === base || b.canvas !== c) return;
     Object.assign(b, { canvas: null, blob, w: c.width, h: c.height });
     new Set(hist.map(h => h.base)).forEach(strip);
-  }, hasAlpha(c) ? 'image/png' : 'image/jpeg', 0.95);
+  });
 }
-// 美顏筆、塗鴉那串：整串共用一張 canvas，一起壓成一個檔案（記住壓的時候在第幾筆）
+// 收起來存 PNG（復原回來一模一樣）；PNG 一張 1200 萬像素約 20MB，全部加起來超過這麼多才改存 JPEG 0.95（評審 M49：
+// 以前一律 JPEG，衣服紋理變糊、藍紅條紋滲紫邊）。美顏筆、塗鴉那串一律 PNG
+// 壓檔案用草稿那個背景執行緒（draft.js encode）：Safari 的 toBlob 在主執行緒壓，1200 萬像素 PNG 要卡一兩秒
+const PNG_BUDGET = LOW_MEM ? 80e6 : 320e6;
+function pngRoom(c) {
+  let n = 0;
+  const seen = new Set();
+  for (const { base: b } of hist) {
+    const x = b.surf || b;
+    if (seen.has(x)) continue;
+    seen.add(x);
+    if (x.blob && !b.file && x.blob.type === 'image/png') n += x.blob.size;
+  }
+  return n + c.width * c.height * 2 < PNG_BUDGET;
+}
+
+// 美顏筆、塗鴉那串：整串共用一張 canvas，一起壓成一個檔案（記住壓的時候在第幾筆）。
+// 存 PNG 不存 JPEG：塗鴉的筆跡是銳利的色塊，JPEG 0.95 復原回來筆跡邊最多差 99 階、整張平均差 1.3（評審 L54）。
+// 一整串只壓一個檔案，PNG 大幾倍也只多一份
 function shelveSurf(S) {
   const c = S.canvas;
   if (!c || S === base.surf || shelving.has(S) || !hist.some(h => h.base.surf === S)) return;
@@ -465,14 +521,16 @@ function shelveSurf(S) {
     bbRelease(S); S.dd = null;  // 塗鴉那層也放掉（回來這張以後之前的塗鴉就擦不到了）
     hist.forEach(h => { if (h.base.surf === S) h.base.canvas = null; });
   };
+  // 上次解開的檔案還用得上：canvas 對調回那一筆，直接收那個檔案，不再壓一次（評審 M49）
   const kb = shelfBlob.get(c);
-  if (kb && kb.ver === S.ver) { put(kb.blob); return; }
+  if (kb?.ver !== undefined && canSeek(S, kb.ver)) { seekSurf(S, kb.ver, true); put(kb.blob); return; }
   shelving.add(S);
-  c.toBlob(blob => {
+  const v = S.ver;
+  encode(c, 'image/png').then(blob => {
     shelving.delete(S);
-    if (!blob || S === base.surf || S.canvas !== c) return;
+    if (!blob || S === base.surf || S.canvas !== c || S.ver !== v) return;
     put(blob);
-  }, hasAlpha(c) ? 'image/png' : 'image/jpeg', 0.95);
+  });
 }
 // 壓起來的舊照片：跟現在這張共用的偵測結果（臉、人像）留著；不共用的放掉，復原時再重算
 function strip(b) {
@@ -525,10 +583,15 @@ function alphaNow(c) {
 }
 function applyBase() {
   R.setImage(base.canvas);
+  applyDetect(true);
+}
+// 臉、人像這些偵測結果換成現在這個 base 的，還沒有的去找。lay：照片換了，重新排版
+function applyDetect(lay) {
   R.setMask(base.mask); R.setMask2(base.mask2);
   R.setSeg(base.matte || base.seg?.person); R.setSegB(base.segB); R.setFlashGrid(base.fnet?.grid || null);
-  layout(); render();
-  if (!base.faces) findFaces();
+  if (lay) layout();
+  render();
+  if (!base.facesP) findFaces();
   if (needSeg() && !base.seg) findPerson(P.bg === 'keep');
   if (needMatte()) getMatte(base);
 }
@@ -638,11 +701,27 @@ function getFlashNet(b = base) {
   // 背景執行緒做得到：照片整張複製過去在那邊縮（主執行緒 6ms）；記憶體小的裝置先在這裡縮（多 25ms，但不多一份 1200 萬像素）
   b.fnetP = prep('flashnet', async () => ({ W, H, geom, seg: segPart(seg, 'skin', 'hair'), img: await createImageBitmap(LOW_MEM ? small() : b.canvas), person: await createImageBitmap(seg.person), mask: await createImageBitmap(mask) }),
     () => flashGrid({ W, H, geom, seg, img: small(), person: seg.person, mask }))
-    .then(r => { b.fnet = r; if (share(b, 'fnetP', ['fnet'])) { R.setFlashGrid(r.grid); render(); } return r; })
+    .then(r => {
+      b.fnet = r;
+      if (share(b, 'fnetP', ['fnet'])) {
+        // 已經開著相機閃光燈（模型還沒好的那下先用公式畫）：換成模型那版時淡過去，不要一下跳過去（評審 L72）
+        if (FLASHES.find(F => F.id === P.flash)?.cam && flashNetOk(base)) fadeFrame();
+        R.setFlashGrid(r.grid); render();
+      }
+      return r;
+    })
     .catch(e => { console.warn('flashnet', e); b.fnetP = null; b.fnetErr = performance.now(); return null; });
   return b.fnetP;
 }
 // 畫完這一格再開始準備（縮照片、傳到背景執行緒要 15～20ms，不要算在點分頁那一下）
+// 畫面換算法的那下：現在這格拍下來蓋在上面，0.15 秒淡掉（底下已經是新的那格）
+function fadeFrame() {
+  const g = $('#gl'), c = newCanvas(g.width, g.height);
+  c.getContext('2d').drawImage(g, 0, 0);
+  c.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none';
+  g.after(c);
+  c.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 150, easing: 'ease-out' }).onfinish = () => { c.remove(); c.width = 0; };
+}
 let fnetSoon = 0;
 function flashNetSoon() {
   if (fnetSoon || base.fnetP) return;
@@ -651,12 +730,16 @@ function flashNetSoon() {
 function findFaces() {
   const b = base;
   if (b.facesP) return b.facesP;
-  b.facesP = detectFaces(b.canvas).then(async f => {
-    b.faces = f; b.geoms = f.map(faceGeom);
-    b.mask2 = f.length ? featureMask(f, b.canvas.width, b.canvas.height) : null;
-    const live = share(b, 'facesP', ['faces', 'geoms', 'mask2']);
-    if (live) { R.setMask2(b.mask2); render(); }
-    if (live && !f.length && landing && tab === 'beauty') { landing = false; showTab('filter'); }
+  // known：消除沒碰到臉，臉沿用（erasePatch），這裡只重算皮膚遮罩
+  const known = b.faces;
+  b.facesP = (known ? Promise.resolve(known) : detectFaces(b.canvas)).then(async f => {
+    if (!known) {
+      b.faces = f; b.geoms = f.map(faceGeom);
+      b.mask2 = f.length ? featureMask(f, b.canvas.width, b.canvas.height) : null;
+      const live = share(b, 'facesP', ['faces', 'geoms', 'mask2']);
+      if (live) { R.setMask2(b.mask2); render(); }
+      if (live && !f.length && landing && tab === 'beauty') { landing = false; showTab('filter'); }
+    }
     const seg = f.length ? await getSeg(b) : null, W = b.canvas.width, H = b.canvas.height, g = b.geoms[0];
     const r = !f.length ? null : await prep('face', async () => ({ faces: f, W, H, geom: g, ...seg && { seg: segPart(seg, 'skin', 'hair', 'bg'), img: await segPhoto(b, seg.w, seg.h), bimg: await segPhoto(b, ...beardSize(seg.w, seg.h)) } }), () => {
       const mask = skinMask(f, W, H, seg, b.canvas);
@@ -751,7 +834,7 @@ function render(liqOnly) {
     const f = liveFilter(), lut = gradeOn(P) ? getGradeLut() : f === 'none' ? null : getLut(f);
     // 皮膚、頭髮另外一套顏色要用皮膚遮罩和分類圖，還沒找過臉就先找
     if ((lut?.skin || lut?.hair) && !base.facesP) findFaces();
-    R.setLut(lut); R.setGlow(xtItem(f)?.glow, (P.filterAmt ?? 100) / 100);
+    R.setLut(lut); R.setGlow(xtItem(f)?.glow, (P.filterAmt ?? 100) / 100, xtItem(f)?.grain);
     draw();
     paintPop();
     if (curFrame()?.live) paintFrame();
@@ -1209,7 +1292,8 @@ function commit() {
   // 評審 M24、M26：跟現在這一步一模一樣就不記（調筆刷大小、強度只改筆，推臉輕點一下沒推動）：
   // 以前會多一步，第一下復原沒反應，還把可以重做的步驟砍掉、吃掉 50 步上限
   // 增高拉著還沒離開（照片還沒真的拉長）：先不記，離開增高 bmBake 拉長照片時才記一步；復原就是不拉
-  if (P.bmHeight) { syncHist(); return; }
+  // 草稿照存（評審 L66：以前這時候被收掉，草稿列表沒有這張）
+  if (P.bmHeight) { syncHist(); draft.on = true; draftSoon(); return; }
   const cur = hist[hi], e = snap(base, P, texts, stickers);
   if (cur && cur.base === base && cur.sP === e.sP && cur.sT === e.sT && cur.sS === e.sS && sameLiq(cur.P.liq, e.P.liq)) return;
   resetFrom = null;
@@ -1226,6 +1310,7 @@ function commit() {
   draftSoon(!!draft.pc && base.canvas !== draft.pc);
 }
 let restoring = false;
+const detOf = b => [b.facesP, b.faces, b.mask, b.mask2, b.matte, b.seg, b.segB, b.fnet];
 async function restore(i) {
   if (restoring) return;
   resetFrom = null;
@@ -1239,7 +1324,12 @@ async function restore(i) {
   hi = i;
   const fr = P.frame;
   P = cloneP(s.P); texts = clone(s.texts); stickers = clone(s.stickers); selText = -1; selSt = -1;
-  if (changed && s.base.surf && s.base.surf === base.surf) { seekSurf(s.base.surf, s.base.ver); base = s.base; render(); }
+  if (changed && s.base.surf && s.base.surf === base.surf) {
+    seekSurf(s.base.surf, s.base.ver);
+    // 跨過消除那一步：偵測結果不一樣，換成那一步的（美顏筆、塗鴉的每一步共用同一份，直接畫）
+    const old = base; base = s.base;
+    if (detOf(old).some((v, k) => v !== detOf(base)[k])) applyDetect(); else render();
+  }
   else if (changed) { if (s.base.surf) seekSurf(s.base.surf, s.base.ver); const old = base; base = s.base; holdFrame(t0); applyBase(); shelveLater(old); } else render();
   // 只差在邊框的兩步：照片的位置、大小跟著邊框變（評審 #144 中 2）
   if (P.frame !== fr) layout();
@@ -1565,7 +1655,10 @@ function paramRows(box, list) {
 }
 
 // 消除筆在 erase.js，這裡把它要用的東西傳過去
-const eraseApp = { get base() { return base; }, setBase, commit, item, hideSlider, showTab, toast, busy, toSrc: srcMapper };
+const eraseApp = {
+  get base() { return base; }, erasePatch, commit, item, hideSlider, showTab, toast, busy, toSrc: srcMapper,
+  fill: a => prep('erase', async () => a, () => fillErase(a)),
+};
 doodleInput($('#wrap'), { get base() { return base; }, tab: () => tab, surf: ensureSurf, paint: paintPatch, commit, toSrc: srcMapper });
 // queued：放開了一筆、還在算：復原先亮起來（按下去會等它算完再退回）；settled：都算完了，照實際的復原步數
 beautyBrushInput($('#wrap'), { get base() { return base; }, tab: () => tab, surf: ensureSurf, paint: paintPatch, commit, toSrc: srcMapper, toast, queued: () => { $('#bUndo').disabled = false; }, settled: syncHist });
@@ -1649,7 +1742,7 @@ async function mergeFilter() {
     P = { ...clone(P0), filter: now.filter, filterAmt: now.filterAmt, ...pre(now) };
     let out;
     try {
-      R.setLut(lut); R.setGlow(xtItem(f)?.glow, (P.filterAmt ?? 100) / 100);
+      R.setLut(lut); R.setGlow(xtItem(f)?.glow, (P.filterAmt ?? 100) / 100, xtItem(f)?.grain);
       draw(true);
       out = photoCanvas(base.canvas.width, base.canvas.height);
       out.getContext('2d').drawImage($('#gl'), 0, 0);
@@ -3582,18 +3675,23 @@ function saveDraft(mode) {
     plan = { ph: { c, i0: 0, n: 0, ib: 0, vb: ver, bytes: 0 }, base: null, puts: [], ptr: { i0: 0, pv: 0 } };
   }
   if (!plan && !d.ptr) { clearTimeout(draftT2); draftT2 = setTimeout(() => saveDraft('idle'), 6000); return draftQ; }  // 草稿裡還沒有照片：等停手再壓
-  if (slow || photo || !d.thumb) d.thumb = draftThumb();
+  // 縮圖要從 GPU 讀回畫面：停手 6 秒、切走時才更新（Promise，GPU 畫完才讀，寫進草稿前再等）。
+  // 以前第一次存、整張重壓時也馬上讀，剛消除、合併完那下要等 GPU 畫完，畫面停住（評審 M51）
+  if (slow) d.thumb = draftThumb();
   // 草稿裡的照片是不是原檔；不是的話原檔另外存一次（評審 #144 中 1）
   const p0 = d.p0 = plan?.base ? true : photo ? false : d.p0, file = !p0 && !d.fSaved && d.src;
-  // 增高拉著還沒離開：照片還沒拉長，草稿先存不拉的（照片跟參數對得上）
-  const meta = { id: d.id, t: Date.now(), P: { ...cloneP(P), bmHeight: 0 }, texts: clone(texts), stickers: clone(stickers), tab, thumb: d.thumb, ptr: plan ? plan.ptr : d.ptr, om: base.om, p0 };
+  // 增高拉著還沒離開：照片還沒拉長，存沒拉的照片加增高的值，打開時再拉（評審 L66）。
+  // 手動框先記下現在的位置（預設的照身體算，打開時身體還沒找到）
+  const mp = cloneP(P), W = c.width, H = c.height;
+  if (mp.bmHeight) for (const [key, k] of Object.entries(REG_OF)) if (key === 'bmHeight' || P[key]) mp[k] = manualRegion(key, base.body, P, W, H);
+  const meta = { id: d.id, t: Date.now(), P: mp, texts: clone(texts), stickers: clone(stickers), tab, thumb: d.thumb, ptr: plan ? plan.ptr : d.ptr, om: base.om, p0 };
   const assets = draftAssets(meta.stickers, meta.P), orig = !d.origSaved && base.orig;
   if (plan) { d.ph = plan.ph; d.ptr = plan.ptr; d.pc = c; }
   const puts = plan?.puts || [], blob = photo || (plan?.base ? Promise.resolve(plan.base) : null);
   return draftQ = draftQ.then(async () => {
     const b = blob && await blob;
     if (blob && !b) throw new Error('照片壓不起來');
-    meta.assets = await assets;
+    meta.assets = await assets; meta.thumb = await meta.thumb;
     const ob = orig && await orig.ready;
     await writeDraft(meta, { photo: b, puts, orig: ob, file });
     if (ob && d === draft) d.origSaved = true;
@@ -3603,9 +3701,10 @@ function saveDraft(mode) {
     if (photo) for (const k of d.pend.m.keys()) if (k < ver) d.pend.m.delete(k);
   }).catch(e => { console.warn('草稿存不了', e); if (d === draft && plan && d.ph === plan.ph) { d.ph = null; d.ptr = null; d.pc = null; } });
 }
-function draftThumb() {
+async function draftThumb() {
   // 畫面上的修圖結果在 GPU 上縮好再讀回小張（評審 L9）；不行的話照以前整張畫下來縮。看原圖時照片本身
-  if (!cmpOn) try { const im = R.thumb(160), t = newCanvas(im.width, im.height); t.getContext('2d').putImageData(im, 0, 0); return t.toDataURL('image/jpeg', 0.8); } catch {}
+  // 小張放記憶體裡的 canvas 壓 JPEG（GPU 上的要先等 GPU 畫完才讀得回來）
+  if (!cmpOn) try { const im = await R.thumb(160), t = newCanvas(im.width, im.height); t.getContext('2d', { willReadFrequently: true }).putImageData(im, 0, 0); return t.toDataURL('image/jpeg', 0.8); } catch {}
   try {
     const g = cmpOn ? base.canvas : $('#gl'), k = 160 / Math.max(g.width, g.height);
     const t = newCanvas(Math.max(1, Math.round(g.width * k)), Math.max(1, Math.round(g.height * k)));

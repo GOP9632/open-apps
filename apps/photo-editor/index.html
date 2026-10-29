@@ -205,6 +205,9 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 #protSw.on i::after{transform:translateX(10px)}
 #protSw.flash{animation:pflash .45s 4}
 @keyframes pflash{50%{box-shadow:0 0 0 2px var(--accent)}}
+/* 說明列右邊這幾顆只有 26px 高：樣子不變，可以點的範圍上下各多 7px（評審 L68：手指不好點） */
+#protSw,#bTabReset,.seg button{position:relative}
+#protSw::after,#bTabReset::after,.seg button::after{content:'';position:absolute;left:0;right:0;top:-7px;bottom:-7px}
 #bTabReset{flex:none;height:26px;padding:0 10px;border-radius:13px;background:var(--panel2);color:var(--text2);font-size:13px;margin-top:-4px}
 #bTabReset[hidden]{display:none}
 /* 兩邊／左／右：固定在說明那一列右邊，項目列不會因為多了三顆被推走（評審 H3） */
@@ -241,7 +244,8 @@ input[type=range].grad::-moz-range-progress{background:transparent}
 .tab .tdot{display:none;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:4px;vertical-align:middle}
 .tab.set .tdot{display:inline-block}
 .tab.out{display:none}
-.tabs.single{display:none}
+/* 只有一個分頁（範本）：藏起來但留著位置，進去照片才不會往下跳（評審 L67） */
+.tabs.single{visibility:hidden}
 .tab .chev{display:none}
 
 /* 快捷鍵說明 */
