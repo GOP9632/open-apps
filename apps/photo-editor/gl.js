@@ -30,11 +30,13 @@ const FS_DISP = `#version 300 es
 precision highp float; precision highp int;
 in vec2 vUV; uniform sampler2D uTex, uDisp, uSegB, uLiq, uGS, uGB; uniform vec2 uSize, uOut; uniform float uStep, uProtect, uLiqStep; out vec4 o;
 uniform vec4 uG1, uG2;  // 濾鏡的柔焦、光暈（見 glowBufs）：uG1 = 柔焦多少、光暈門檻、開關；uG2 = 光暈的顏色（RGB 各多少）
-uniform vec3 uGr;  // 濾鏡的底片顆粒（見 setGlow）：x 亮度顆粒、y 彩色顆粒（照片值）、z 照片短邊幾格
+uniform vec3 uGr;  // 濾鏡的底片顆粒（見 setGlow）：x 亮度顆粒、y 彩色顆粒（照片值）、z 照片短邊幾格（每個濾鏡不同）
 uniform vec3 uGs;  // 顆粒跟亮度的關係：L^x·(1−L)^y·z（z 讓最強的地方是 1；x = y = 1 就是 4L(1−L)，中間調最強）
 // 四份獨立的格點雜訊（-0.5～0.5），格子之間雙線性內插：格子跟著照片走，預覽、存檔看起來一樣粗
 vec4 gn(ivec2 c){ uvec2 v = uvec2(c) * 1664525u + 1013904223u; v.x += v.y * 1664525u; v.y += v.x * 1664525u; v ^= v >> 16u; v.x += v.y * 1664525u; v.y += v.x * 1664525u; v ^= v >> 16u; uint h = v.x ^ v.y; return vec4(uvec4(h, h >> 8u, h >> 16u, h >> 24u) & 255u) / 255.0 - 0.5; }
-vec4 grain(vec2 g){ ivec2 c = ivec2(floor(g)); vec2 f = fract(g); return mix(mix(gn(c), gn(c + ivec2(1, 0)), f.x), mix(gn(c + ivec2(0, 1)), gn(c + ivec2(1, 1)), f.x), f.y); }
+// 格點之間雙線性內插，再除以內插讓雜訊變弱的倍數 √(((1−fx)²+fx²)((1−fy)²+fy²))：格子中間跟格點上一樣強，
+// 不會一格一格看得到網格（評審 M48）
+vec4 grain(vec2 g){ ivec2 c = ivec2(floor(g)); vec2 f = fract(g), e = (1.0 - f) * (1.0 - f) + f * f; return mix(mix(gn(c), gn(c + ivec2(1, 0)), f.x), mix(gn(c + ivec2(0, 1)), gn(c + ivec2(1, 1)), f.x), f.y) * inversesqrt(e.x * e.y); }
 vec2 dec(vec4 e, float s){ e *= 255.0; return (vec2(e.r * 256.0 + e.b, e.g * 256.0 + e.a) - 32768.0) * s; }${LIQ_GLSL}
 void main(){
   // 推臉（重新塑形）在最上層：先照推臉的位移找到「臉型變形後的圖」上的哪一點，再照臉型的位移回原圖。
@@ -64,7 +66,8 @@ void main(){
   }
 }`;
 
-// 濾鏡顆粒的格子：照片短邊 450 格（醒圖預覽 896 寬上約 2 像素一顆，相鄰像素相關 0.5 跟醒圖一樣）
+// 濾鏡顆粒的格子：照片短邊幾格。每個濾鏡顆粒粗細不同，照醒圖答案的細、粗紋比例擬合在 filters.json 的 grain 第 5 個數
+// （300～1000，醒圖預覽 896 寬上約 1～3 像素一顆）；沒給的用 450
 const GRAIN_N = 450;
 
 // 推臉的位移場：每個像素記「要回（臉型變形後的）圖上哪裡取」，跟 warpfield 一樣用 RGBA8 存 16 位元。
@@ -1108,8 +1111,8 @@ export class Renderer {
   }
   // 濾鏡的柔焦、光暈（xt/filters.json 的 glow，照醒圖擬合）：q = [柔焦模糊, 柔焦多少, 光暈模糊, 光暈門檻, 光暈 R, G, B]，
   // 模糊是照片短邊的 %；k 是濾鏡強度（0～1），柔焦、光暈跟著變淡。q 為 null 就關掉
-  // gr：底片顆粒 [亮度, 彩色, p, q]（filters.json 的 grain，照醒圖擬合；評審 M48），也跟著強度變淡。
-  // p、q 是顆粒跟亮度的曲線 L^p·(1−L)^q（沒給是 1、1：4L(1−L)）
+  // gr：底片顆粒 [亮度, 彩色, p, q, N]（filters.json 的 grain，照醒圖擬合；評審 M48），也跟著強度變淡。
+  // p、q 是顆粒跟亮度的曲線 L^p·(1−L)^q（沒給是 1、1：4L(1−L)）；N 是照片短邊幾格（顆粒粗細，見 GRAIN_N）
   setGlow(q, k, gr) { this.glow = (q || gr) && k > 0 ? { q, k, gr } : null; }
   // 主 shader 的結果（fb）模糊兩份：fbGs 柔焦、fbGb 光暈。先一半一半縮小（每次 2×2 平均，小亮點不會閃爍），
   // 縮到模糊大約 2.3 格，再九點高斯兩次（一次約 1.64 格）；模糊 2～4.6 格的只縮一半、高斯一次（加寬一點補到一樣寬），
@@ -1402,7 +1405,7 @@ export class Renderer {
     const Q = G?.q;
     gl.uniform4f(d.u.uG1, Q ? Q[1] * G.k : 0, Q ? Q[3] : 1, Q ? 1 : 0, 0);
     gl.uniform4f(d.u.uG2, ...(Q ? Q.slice(4, 7).map(v => v * G.k) : [0, 0, 0]), 0);
-    gl.uniform3f(d.u.uGr, G?.gr ? G.gr[0] * G.k : 0, G?.gr ? G.gr[1] * G.k : 0, GRAIN_N);
+    gl.uniform3f(d.u.uGr, G?.gr ? G.gr[0] * G.k : 0, G?.gr ? G.gr[1] * G.k : 0, G?.gr?.[4] || GRAIN_N);
     const gp = G?.gr?.[2] ?? 1, gq = G?.gr?.[3] ?? 1, gm = gp / (gp + gq);
     gl.uniform3f(d.u.uGs, gp, gq, 1 / (gm ** gp * (1 - gm) ** gq));
     if (sc) { gl.enable(gl.SCISSOR_TEST); gl.scissor(...sc); }
@@ -1510,26 +1513,33 @@ export class Renderer {
     });
   }
   // 讀回 render(…, toFbo) 畫好的那張：先讀進 GPU 上的緩衝區、放柵欄，畫完才拿回來，不卡主執行緒。
-  // fbOut 照 FBO 的方向畫（第一列是照片最上面），不用翻；透明的地方是預乘過的，換回一般的（跟以前從畫面讀一樣）
-  readOut() {
+  // fbOut 照 FBO 的方向畫（第一列是照片最上面），不用翻；透明的地方是預乘過的，換回一般的（跟以前從畫面讀一樣）。
+  // 拿回來、換回一般的分幾段做（每段約 200 萬像素），中間讓轉圈走一格：1200 萬像素一次做完 iPhone 要停 0.1 秒多（評審 #159）
+  async readOut() {
     const gl = this.gl, f = this.fbOut, w = f.w, h = f.h, buf = gl.createBuffer(), n = w * h * 4;
     gl.bindFramebuffer(gl.FRAMEBUFFER, f.f);
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf); gl.bufferData(gl.PIXEL_PACK_BUFFER, n, gl.STREAM_READ);
     gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, 0);
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    return this.gpuDone().then(() => {
-      const d = new Uint8ClampedArray(n);
-      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf); gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, d);
-      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); gl.deleteBuffer(buf);
+    await this.gpuDone();
+    const d = new Uint8ClampedArray(n), step = Math.max(1, Math.ceil(2e6 / w)) * w * 4;
+    try {
+      for (let s = 0; s < n; s += step) {
+        const e = Math.min(n, s + step);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf); gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, s, d, s, e - s); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        for (let i = s + 3; i < e; i += 4) {
+          const a = d[i];
+          if (a === 255) continue;
+          if (a) { const k = 255 / a; d[i - 3] *= k; d[i - 2] *= k; d[i - 1] *= k; }
+        }
+        if (e < n) await new Promise(r => setTimeout(r));
+      }
+    } finally {
+      gl.deleteBuffer(buf);
       // 原尺寸的暫存很大（1200 萬像素 48MB），讀完就放掉
       this.sizeFbo(f, 1, 1);
-      for (let i = 3; i < n; i += 4) {
-        const a = d[i];
-        if (a === 255) continue;
-        if (a) { const k = 255 / a; d[i - 3] *= k; d[i - 2] *= k; d[i - 1] *= k; }
-      }
-      return new ImageData(d, w, h);
-    });
+    }
+    return new ImageData(d, w, h);
   }
   thumb(max) {
     const gl = this.gl, c = this.canvas, k = Math.min(1, max / Math.max(c.width, c.height));
