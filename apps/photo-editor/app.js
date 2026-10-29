@@ -376,7 +376,7 @@ function pixelsChanged(c, rects) {
   // 頭髮、膚質用的那份照片貼圖（R.srcTex）是這張或它的預覽：只補改到的那幾塊，不然下次整張重傳
   const keep = rects && R?.srcOf && (R.srcOf === c || R.srcOf === v?.p);
   if (R && !keep) R.srcOf = null;
-  alphaOf.delete(c);
+  alphaOf.delete(c); shelfBlob.delete(c);
   if (!rects) { pvCache.delete(c); return; }
   // 預覽縮圖只重畫改到的那幾塊（以前整張 1200 萬像素重縮）
   if (v) {
@@ -424,6 +424,9 @@ function pruneEdits() {
 // 復原紀錄裡的舊照片：一張原尺寸照片在 iPhone 要 50MB 左右，塗鴉、消除、美顏筆每畫一筆就多一張，
 // 存太多 Safari 會把整頁重新載入（修到一半跳回選照片）。不在畫面上的舊照片壓成檔案，復原時再解開
 const shelving = new WeakSet();
+// 解開過的舊照片記住原本那個檔案：沒再改過又要收起來時直接用，不再壓一次 JPEG（每壓一次掉一點，評審 L54）。
+// 改過像素（pixelsChanged）就忘掉；美顏筆、塗鴉那串另外要筆數一樣
+const shelfBlob = new WeakMap();
 function shelve(b) {
   if (b.surf) { shelveSurf(b.surf); return; }
   const c = b.canvas;
@@ -433,6 +436,13 @@ function shelve(b) {
   if (f) {
     if (b === base) return;
     Object.assign(b, { canvas: null, blob: f, file: true, w: c.width, h: c.height });
+    new Set(hist.map(h => h.base)).forEach(strip);
+    return;
+  }
+  const kb = shelfBlob.get(c);
+  if (kb && kb.ver === undefined) {
+    if (b === base) return;
+    Object.assign(b, { canvas: null, blob: kb.blob, w: c.width, h: c.height });
     new Set(hist.map(h => h.base)).forEach(strip);
     return;
   }
@@ -448,13 +458,18 @@ function shelve(b) {
 function shelveSurf(S) {
   const c = S.canvas;
   if (!c || S === base.surf || shelving.has(S) || !hist.some(h => h.base.surf === S)) return;
+  const put = blob => {
+    Object.assign(S, { canvas: null, blob, blobVer: S.ver, w: c.width, h: c.height });
+    bbRelease(S); S.dd = null;  // 塗鴉那層也放掉（回來這張以後之前的塗鴉就擦不到了）
+    hist.forEach(h => { if (h.base.surf === S) h.base.canvas = null; });
+  };
+  const kb = shelfBlob.get(c);
+  if (kb && kb.ver === S.ver) { put(kb.blob); return; }
   shelving.add(S);
   c.toBlob(blob => {
     shelving.delete(S);
     if (!blob || S === base.surf || S.canvas !== c) return;
-    Object.assign(S, { canvas: null, blob, blobVer: S.ver, w: c.width, h: c.height });
-    bbRelease(S); S.dd = null;  // 塗鴉那層也放掉（回來這張以後之前的塗鴉就擦不到了）
-    hist.forEach(h => { if (h.base.surf === S) h.base.canvas = null; });
+    put(blob);
   }, hasAlpha(c) ? 'image/png' : 'image/jpeg', 0.95);
 }
 // 壓起來的舊照片：跟現在這張共用的偵測結果（臉、人像）留著；不共用的放掉，復原時再重算
@@ -471,6 +486,7 @@ async function unshelve(b) {
     if (!S.canvas) {
       const bmp = await createImageBitmap(S.blob), c = photoCanvas(S.w, S.h);
       c.getContext('2d').drawImage(bmp, 0, 0); bmp.close?.();
+      shelfBlob.set(c, { blob: S.blob, ver: S.blobVer });
       Object.assign(S, { canvas: c, ver: S.blobVer, blob: null });
     }
     hist.forEach(h => { if (h.base.surf === S) h.base.canvas = S.canvas; });
@@ -488,6 +504,7 @@ async function unshelve(b) {
   }
   const bmp = await createImageBitmap(b.blob), c = photoCanvas(b.w, b.h);
   c.getContext('2d').drawImage(bmp, 0, 0); bmp.close?.();
+  shelfBlob.set(c, { blob: b.blob });
   b.canvas = c; b.blob = null;
 }
 // 結果記在 canvas 上（存草稿、壓舊照片都要問，12MP 縮一次在 iPhone 要幾十 ms，評審 L9）；畫過就重問（pixelsChanged）
@@ -705,7 +722,7 @@ function render(liqOnly) {
     const f = liveFilter(), lut = gradeOn(P) ? getGradeLut() : f === 'none' ? null : getLut(f);
     // 皮膚、頭髮另外一套顏色要用皮膚遮罩和分類圖，還沒找過臉就先找
     if ((lut?.skin || lut?.hair) && !base.facesP) findFaces();
-    R.setLut(lut?.c, lut?.skin, lut?.hair);
+    R.setLut(lut?.c, lut?.skin, lut?.hair); R.setGlow(xtItem(f)?.glow, (P.filterAmt ?? 100) / 100);
     draw();
     paintPop();
     if (curFrame()?.live) paintFrame();
@@ -1530,7 +1547,7 @@ async function mergeFilter() {
     P = { ...clone(P0), filter: now.filter, filterAmt: now.filterAmt, ...pre(now) };
     let out;
     try {
-      R.setLut(lut?.c, lut?.skin, lut?.hair);
+      R.setLut(lut?.c, lut?.skin, lut?.hair); R.setGlow(xtItem(f)?.glow, (P.filterAmt ?? 100) / 100);
       draw(true);
       out = photoCanvas(base.canvas.width, base.canvas.height);
       out.getContext('2d').drawImage($('#gl'), 0, 0);
@@ -3481,6 +3498,8 @@ function saveDraft(mode) {
   }).catch(e => { console.warn('草稿存不了', e); if (d === draft && plan && d.ph === plan.ph) { d.ph = null; d.ptr = null; d.pc = null; } });
 }
 function draftThumb() {
+  // 畫面上的修圖結果在 GPU 上縮好再讀回小張（評審 L9）；不行的話照以前整張畫下來縮。看原圖時照片本身
+  if (!cmpOn) try { const im = R.thumb(160), t = newCanvas(im.width, im.height); t.getContext('2d').putImageData(im, 0, 0); return t.toDataURL('image/jpeg', 0.8); } catch {}
   try {
     const g = cmpOn ? base.canvas : $('#gl'), k = 160 / Math.max(g.width, g.height);
     const t = newCanvas(Math.max(1, Math.round(g.width * k)), Math.max(1, Math.round(g.height * k)));
@@ -3605,4 +3624,4 @@ addEventListener('keyup', e => { if (e.key === ' ' && spaceCmp) { spaceCmp = fal
 addEventListener('blur', () => { if (spaceCmp) { spaceCmp = false; cmp(false); } });
 
 // 給自動測試用
-window.__editor = { toSrc: () => srcMapper(), loadFile, get P() { return P; }, get base() { return base; }, get stickers() { return stickers; }, get texts() { return texts; }, redraw: () => { drawTexts(); drawStickers(); }, showTab, save, render };
+window.__editor = { toSrc: () => srcMapper(), loadFile, get P() { return P; }, get base() { return base; }, get stickers() { return stickers; }, get texts() { return texts; }, redraw: () => { drawTexts(); drawStickers(); }, showTab, save, render, thumb: () => draftThumb() };
