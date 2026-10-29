@@ -668,7 +668,7 @@ export function tabBeautyBrush(box, app) {
       if (valid(S.bbSes, S)) kill(ses); else { bbRelease(S); S.bbSes = ses; }
     }
     await new Promise(f => setTimeout(f, 30)); if (!alive()) return;
-    gpuWarm(tool, !!RAD[tool]);
+    gpuWarm(tool, !!RAD[tool], S.bbSes?.mg);
     await new Promise(f => setTimeout(f, 30)); if (!alive()) return;
     const ses = S.bbSes;
     if (!MASKED.includes(tool) || !valid(ses, S)) return;
