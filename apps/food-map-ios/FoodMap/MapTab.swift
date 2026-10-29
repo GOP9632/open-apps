@@ -92,8 +92,7 @@ struct MapTab: View {
                             return
                         }
                         // 淡化的收藏圖釘框比畫出來的大，會蓋住旁邊的搜尋結果：手指其實比較靠近搜尋結果時，改選搜尋結果
-                        if let id, let h = preferHit(id, hits: hits, list: list + extraFound) {
-                            Perf.shared.mark("搜尋圖釘優先")
+                        if let id, let h = preferHit(id, hits: hits, list: list + extraFound, via: "地圖") {
                             pins.select(h)
                             return
                         }
@@ -213,7 +212,7 @@ struct MapTab: View {
                 .onChange(of: store.coachStep) { pinFrame(proxy) }
                 // 選到一根圖釘：地圖移過去、放光圈（只有這個小觀察者看 sel，MapTab 本身不跟著重算）
                 // 選到時不重算泡泡（會讓整張地圖重畫，點圖釘變慢）；地圖移完停下來時會重算
-                .background { SelWatcher(pins: pins) { id in picked(id, list, proxy) } }
+                .background { SelWatcher(pins: pins) { id in picked(id, list, proxy, hits: hits, extra: extraFound) } }
                 .overlay { PinBurst(spot: spot) }
                 // 長按圖釘的選單要知道圖釘在螢幕哪裡
                 .task {
@@ -533,7 +532,7 @@ struct MapTab: View {
     }
 
     // 選到一根圖釘之後：光圈、量測、地圖移過去（不改縮放）
-    private func picked(_ id: String?, _ list: [Place], _ proxy: MapProxy) {
+    private func picked(_ id: String?, _ list: [Place], _ proxy: MapProxy, hits: [MapHit] = [], extra: [Place] = []) {
         // 行程模式：點收藏的圖釘或搜到的地點 → 下面換成加站卡（地圖由面板框住前後兩站）
         if trip.on {
             trip.pickAt = CACurrentMediaTime()
@@ -542,6 +541,12 @@ struct MapTab: View {
                     Perf.shared.mark("picked nil 收加站卡")
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { trip.cand = nil }
                 }
+                return
+            }
+            // 按到的是收藏圖釘的按鈕（淡化圖釘的按鈕比畫出來的大），手指其實在旁邊的搜尋圖示上：改選搜尋結果。
+            // 地圖自己選的在 selection 那邊已經判斷過，這裡只管剛按下去的按鈕
+            if CACurrentMediaTime() - pins.tapAt < 0.3, let h = preferHit(id, hits: hits, list: list + extra, via: "按鈕") {
+                pins.select(h)
                 return
             }
             var c: TripCand?
@@ -676,8 +681,8 @@ struct MapTab: View {
         guard trip.on else { return }
         let t0 = CACurrentMediaTime()
         Task {
-            // 點在圖釘附近：MapKit 的選取要等約 0.3 秒（看是不是點兩下）才到，多等一下再判斷，不然會先把搜尋收掉
-            try? await Task.sleep(for: .milliseconds(near ? 450 : 180))
+            // 點在圖釘附近：MapKit 的選取要等 0.3–0.55 秒（看是不是點兩下）才到，多等一下再判斷，不然會先把卡、搜尋收掉
+            try? await Task.sleep(for: .milliseconds(near ? 650 : 180))
             // 點下去前後 0.22 秒內點過圖釘就不算點空白，用點下去當下的時間算：
             // 開第一張加站卡時主執行緒忙、這裡晚醒，也不會把剛開的卡當成點空白關掉
             guard trip.pickAt < t0 - 0.22 else { Perf.shared.mark("點空白略過"); return }
@@ -685,33 +690,41 @@ struct MapTab: View {
         }
     }
 
-    // 行程模式：手指點的地方有沒有圖釘（收藏、搜尋結果）。收藏的圖釘畫在座標點上面
+    // 行程模式：手指點的地方 MapKit 會不會選到圖釘（收藏、搜尋結果）。收藏的圖釘畫在座標點上面；
+    // MapKit 判斷點到的範圍比畫出來的大（模擬器量到圖釘下面 33pt 還會選到），這裡抓寬一點
     private func pinNear(_ p: CGPoint, hits: [MapHit], list: [Place]) -> Bool {
         guard let f = pins.locate else { return false }
         for h in hits {
-            if let q = f(h.coord), hypot(q.x - p.x, q.y - p.y) < 36 { return true }
+            if let q = f(h.coord), hypot(q.x - p.x, q.y - p.y) < 44 { return true }
         }
         for x in list {
             guard let la = x.lat, let lo = x.lng, let q = f(CLLocationCoordinate2D(latitude: la, longitude: lo)) else { continue }
-            if abs(q.x - p.x) < 26, p.y < q.y + 4, p.y > q.y - 56 { return true }
+            if abs(q.x - p.x) < 34, p.y < q.y + 36, p.y > q.y - 64 { return true }
         }
         return false
     }
 
     // 行程搜尋時 MapKit 自己選了一根收藏（不是按到圖釘的按鈕）：手指離某個搜尋結果圖示比離那根收藏近，就改選搜尋結果
-    private func preferHit(_ id: String, hits: [MapHit], list: [Place]) -> String? {
-        guard !id.hasPrefix("hit:"), !hits.isEmpty, let t = pins.touch, CACurrentMediaTime() - t.at < 1, let f = pins.locate,
-              let p = list.first(where: { $0.id == id }), let la = p.lat, let lo = p.lng,
+    private func preferHit(_ id: String, hits: [MapHit], list: [Place], via: String) -> String? {
+        guard !id.hasPrefix("hit:"), !hits.isEmpty else { return nil }
+        guard let t = pins.touch, CACurrentMediaTime() - t.at < 1 else {
+            Perf.shared.mark("\(via)選收藏 沒有手指位置")
+            return nil
+        }
+        guard let f = pins.locate, let p = list.first(where: { $0.id == id }), let la = p.lat, let lo = p.lng,
               let q = f(CLLocationCoordinate2D(latitude: la, longitude: lo)) else { return nil }
-        // 淡化的收藏圖釘：圓心在座標點上面約 22；搜尋結果圖示的圓心就在座標點
-        let dFav = hypot(q.x - t.p.x, q.y - 22 - t.p.y)
+        // 行程模式的收藏圖釘縮成 0.65 倍：圓心在座標點上面約 20；搜尋結果圖示的圓心就在座標點
+        let dFav = hypot(q.x - t.p.x, q.y - 20 - t.p.y)
         var best: (id: String, d: CGFloat)?
         for h in hits {
             guard let c = f(h.coord) else { continue }
             let d = hypot(c.x - t.p.x, c.y - t.p.y)
             if d < (best?.d ?? .infinity) { best = (h.id, d) }
         }
-        guard let b = best, b.d < dFav, b.d < 40 else { return nil }
+        // 手指就在搜尋圖示的圓裡（15 內），或比收藏近而且 45 內：選搜尋結果
+        let take = best.map { $0.d < 15 || ($0.d < dFav && $0.d < 45) } ?? false
+        Perf.shared.mark("\(via)選收藏 離收藏\(Int(dFav)) 離搜尋\(best.map { Int($0.d) } ?? -1)\(take ? " → 改搜尋" : "")")
+        guard take, let b = best else { return nil }
         return "hit:" + b.id
     }
 
