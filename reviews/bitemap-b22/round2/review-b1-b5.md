@@ -4,6 +4,8 @@
 
 第 3 批那 4 項已經做成 dabe07a，我逐行對過，跟這裡寫的一樣。下面第 1、2、4 批和滑順第 4 輪的 R 項可以一起做，都不用問 Anthony（R4-3 只要模擬器錄影，先不用改程式）。
 
+第 5 批的 R5-1、R5-2 在最後一節，也都不用問 Anthony。
+
 ## 第 3 批（f62e434、ccc1d96）
 
 9 項都做全了，-fakeRound 只有開發版和模擬器讀得到，不加參數時行為不變。審出 4 個問題，都要修，都不用問 Anthony。
@@ -287,3 +289,34 @@ Draw.swift 的 `.onChange(of: dice) { EmojiArt.render("🎲", dice, .dice) }` �
 跟 warm 的過濾一樣，加 -emojiImg 或 -emojiWarm 時行為不變。
 
 **模擬器**：只加 -perfOverlay，到設定把字級拉到 AX5 再切回 App，Console 不能出現「[emoji] 畫 🎲 dice」；加 -emojiImg dice 重跑 M14 (2)，🎲 還是圖。
+
+## 第 5 批（72ac06e）
+
+16 項和開頭的合併注意（合1 到合10）都做全了，滑順第 4 輪的改動和量測行也都還在（逐行對過 67b2858、465709d 加的每一行）。審出 2 個小問題，都要修，都不用問 Anthony。下面的行號在 a5eef80 還是一樣。
+
+commit 訊息有幾句跟實際行為不一樣，模擬器請照 batch5.md 各項的「模擬器驗收」做，不要照 commit 訊息：
+- U13：commit 寫「進行程時選著的圖釘保持放大、像站一樣有名字」，那是原本的錯。修好後是進行程時取消選取（加站卡開著時除外），離開行程時「這裡有 N 間」回到原樣。
+- U19：commit 寫「上移／下移」，程式和規格都是「往前移／往後移」，VoiceOver 要找的是後者。
+- U24：commit 寫「到最後一站會自己結束」。實際上自己按到最後一站會出現完成卡；只有別人刪了站、或別台裝置標成到了，讓下一站不見時，才自動結束出發。
+- U21 順便看：「出發」「✨ 排順序」兩顆按鈕外面多包了一層 UIKit 的拖曳手勢。按下那一幀要有壓下的樣子，往上推再放開不能開始出發。
+
+### R5-1 關掉「我的行程」後，地圖上的訊息條一下子冒出來（U60 帶出來的，要修）
+
+**原因**：FoodMapApp.swift:480-481 的 `.onAppear { store.toastSheets += 1 }`、`.onDisappear { store.toastSheets -= 1 }` 沒有動畫，而 Root 的訊息條只看 :91 的 `store.toastSheets == 0` 決定畫不畫。U60 之前，Root 那條一直畫在 sheet 下面，sheet 往下滑時它是被慢慢露出來的；現在 sheet 收完才叫 onDisappear，Root 那條沒有動畫可播，就直接冒出來。打開 sheet 時也一樣，Root 那條在 sheet 還沒蓋到之前就瞬間不見。程式照規格寫，錯在我規格的設計。
+
+**修法**：FoodMapApp.swift:480-481 換成：
+```swift
+        .onAppear { withAnimation(.snappy(duration: 0.3)) { store.toastSheets += 1 } }
+        .onDisappear { withAnimation(.snappy(duration: 0.3)) { store.toastSheets -= 1 } }
+```
+Root 那條就照它現有的 transition 從下面滑進、滑出。只有 Root 的 toastLayer 讀 toastSheets，sheet 裡那條、倒數（:58 只看 toast）、剩下的秒數和「復原」都不受影響。這是把我們自己弄出來的跳動修回滑順，不用問 Anthony。
+
+**模擬器**：用 -uitestSlowToasts 啟動。在「我的行程」左滑刪一個測試行程、按「刪除行程」，sheet 底部出現「已刪除「…」」後把 sheet 往下拉掉。錄影一格一格看：Root 那條是從下面滑進來，不是突然冒出來；剩下的秒數接著數，淡掉前按「復原」仍然有效（復原後確認測試行程回來）。再打開「我的行程」一次，Root 那條是滑出去，不是瞬間不見。
+
+### R5-2 評分卡量高度那行多一個 Swift 6 並行警告（編得過，小）
+
+TripPanel.swift:1388 的 onGeometryChange 在量的那個閉包裡讀了 MainActor 的 `MapTab.windowHeight`，會多一個「can not be referenced from a Sendable closure」警告（Swift 6 模式會變成錯誤）。把算式搬進 action，結果完全一樣：
+```swift
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in mode.goInset = max(0, MapTab.windowHeight - y - MapTab.safeBottom) }
+```
+**模擬器**：建置後 Issue navigator 裡 TripPanel.swift 這一行沒有那個警告。照 U23 驗收 (3) 走一次：出發、到第二站按「到了 ✓」跳出評分卡，「到了 …」訊息條貼在評分卡上緣上方約 8pt，沒壓到星星和 ✕；評分卡收掉後訊息條回到離底 24pt。
