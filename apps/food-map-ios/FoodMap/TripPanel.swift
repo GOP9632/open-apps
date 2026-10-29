@@ -1547,8 +1547,8 @@ struct StopCard: View {
             }
             .padding(12)
             .contentShape(.rect)
-            .onTapGesture(perform: tap)
-            .modifier(RowHoldIf(hold: hold))
+            .modifier(TapIf(on: !V11.noTap, tap: tap))
+            .modifier(RowHoldIf(hold: V11.noHold ? nil : hold))
             if open { StopEditor(stop: stop, place: place, arrive: row?.arrive).padding(.horizontal, 12).padding(.bottom, 12) }
         }
         .background {

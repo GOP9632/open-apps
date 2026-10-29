@@ -218,13 +218,13 @@ struct ListPullDown: UIViewRepresentable {
 // 診斷用（只有開發版）：手指放在清單上，按下記「觸」，移動 25pt 時記清單的 pan 和這根手指身上所有手勢的狀態。
 // 清單捲不動時一輪就看得出是誰拿走了手指。不攔截、不影響任何手勢
 final class TouchSpy: UIGestureRecognizer, UIGestureRecognizerDelegate {
-    private let name: String
+    private let list: String
     private weak var scroll: UIScrollView?
     private var start: CGPoint = .zero
     private var logged = false
 
     init(name: String, scroll: UIScrollView) {
-        self.name = name
+        self.list = name
         self.scroll = scroll
         super.init(target: nil, action: nil)
         cancelsTouchesInView = false
@@ -250,7 +250,7 @@ final class TouchSpy: UIGestureRecognizer, UIGestureRecognizerDelegate {
         start = p
         logged = false
         MainActor.assumeIsolated {
-            print("[B8] \(name) 觸 (\(Int(p.x)),\(Int(p.y))) y=\(Int(scroll?.contentOffset.y ?? -1))")
+            print("[B8] \(list) 觸 (\(Int(p.x)),\(Int(p.y))) y=\(Int(scroll?.contentOffset.y ?? -1))")
         }
     }
 
@@ -262,8 +262,8 @@ final class TouchSpy: UIGestureRecognizer, UIGestureRecognizerDelegate {
         let pan = scroll.map { Self.st($0.panGestureRecognizer) } ?? "-"
         let all = (u.gestureRecognizers ?? []).filter { $0 !== self }.map { "\(type(of: $0))=\(Self.st($0))" }.joined(separator: " ")
         MainActor.assumeIsolated {
-            Perf.shared.mark("觸動25 \(name) pan=\(pan)")
-            print("[B8] \(name) 動25 pan=\(pan) y=\(Int(scroll?.contentOffset.y ?? -1)) 手勢：\(all)")
+            Perf.shared.mark("觸動25 \(list) pan=\(pan)")
+            print("[B8] \(list) 動25 pan=\(pan) y=\(Int(scroll?.contentOffset.y ?? -1)) 手勢：\(all)")
         }
     }
 

@@ -63,3 +63,25 @@ struct RowHoldIf: ViewModifier {
         if let hold { content.gesture(hold) } else { content }
     }
 }
+
+// 診斷用（只有開發版）：啟動參數關掉站卡上的某個手勢，看清單從站卡上捲不動是誰擋的
+enum V11 {
+    static func off(_ arg: String) -> Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains(arg)
+        #else
+        return false
+        #endif
+    }
+    static let noHold = off("-v11NoHold")
+    static let noTap = off("-v11NoTap")
+}
+
+// on 為 false 時不掛點一下（診斷用）
+struct TapIf: ViewModifier {
+    let on: Bool
+    let tap: () -> Void
+    @ViewBuilder func body(content: Content) -> some View {
+        if on { content.onTapGesture(perform: tap) } else { content }
+    }
+}
