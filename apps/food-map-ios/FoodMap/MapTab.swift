@@ -206,7 +206,10 @@ struct MapTab: View {
                 }
             }
             // 量在 ignoresSafeArea 裡面才是地圖真正鋪開的範圍（整個螢幕）；量在外面只拿到 safe area 那塊，上下邊距會各少算 62、34
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { mapRect = $0; trip.mapBottom = footY > 0 ? footY : $0.maxY }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { r in
+                mapRect = r; trip.mapBottom = footY > 0 ? footY : r.maxY
+                showGeo(r, footY)
+            }
             .ignoresSafeArea()
             // 自己的位置：畫在地圖上面一層（地圖的標註會被南邊的圖釘蓋住）
             MyDotLayer(dot: dot)
@@ -241,6 +244,7 @@ struct MapTab: View {
                             guard !trip.on, abs(y - headY) > 0.5 else { return }
                             quiet.hush()
                             headY = y; trip.mapTop = y
+                            showGeo(mapRect, footY)
                         }
                         .opacity(trip.on ? 0 : 1)
                         .frame(height: trip.on ? 0 : nil, alignment: .top)
@@ -546,7 +550,13 @@ struct MapTab: View {
         guard !trip.on, abs(y - footY) > 0.5 else { return }
         quiet.hush()
         footY = y; trip.mapBottom = y
+        showGeo(mapRect, y)
         if !fitted { fit() }
+    }
+
+    // PerfHUD 顯示：地圖鋪開的範圍（應該是整個螢幕）、鏡頭框的上緣、下緣（Apple 標誌在下緣上面約 11pt）
+    private func showGeo(_ r: CGRect, _ foot: CGFloat) {
+        Perf.shared.setGeo("地圖 \(Int(r.minX)),\(Int(r.minY)) \(Int(r.width))×\(Int(r.height))・框 \(Int(headY))–\(Int(foot))")
     }
 
     // 鏡頭框的是 headY…footY；面板停在中段時下面一截被蓋住。把 r 換算成要交給地圖的區域，

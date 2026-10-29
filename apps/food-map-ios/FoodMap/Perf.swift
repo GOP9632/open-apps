@@ -14,6 +14,7 @@ import os
     private(set) var lines: [String] = []
     private(set) var hitches = 0
     private(set) var renders = ""                   // 「重畫 地圖 2・行程面板 5」：2 秒內每個大畫面重算了幾次
+    private(set) var geo = ""                       // 地圖量到的範圍、鏡頭框的上下緣（模擬器截圖對照用）
 
     @ObservationIgnored private var touchDown: CFTimeInterval = 0
     @ObservationIgnored private var touchUp: CFTimeInterval = 0
@@ -44,6 +45,8 @@ import os
         guard on else { return }
         pending = (name, CACurrentMediaTime())
     }
+
+    func setGeo(_ s: String) { if s != geo { geo = s } }
 
     // 大畫面的 body 開頭呼叫（let _ = Perf.shared.count("地圖")）：拖面板、縮放時哪個畫面在一直重算
     func count(_ name: String) {
@@ -136,6 +139,7 @@ struct PerfHUD: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("掉幀（2 秒內）\(perf.hitches)").foregroundStyle(perf.hitches > 0 ? Color.sprYellow : .white)
                 if !perf.renders.isEmpty { Text(perf.renders) }
+                if !perf.geo.isEmpty { Text(perf.geo) }
                 // 上次同步花多久、用的是一次拿全部（load_all）還是舊的 7 個請求
                 if let ms = store.syncMs { Text("同步 \(ms) ms（\(store.syncVia)）") }
                 ForEach(Array(perf.lines.enumerated()), id: \.offset) { Text($0.element) }
