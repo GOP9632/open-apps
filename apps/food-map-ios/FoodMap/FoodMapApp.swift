@@ -35,82 +35,9 @@ struct Root: View {
     var body: some View {
         let _ = Perf.shared.count("App")
         let _ = Perf.shared.note("App 重算")
-        @Bindable var store = store
         Group {
             if store.loggedIn {
-                ZStack {
-                    page(0) { MapTab() }
-                    page(1) { ListTab() }
-                    page(2) { GroupsTab() }
-                    page(3) { MeTab() }
-                }
-                .overlay(alignment: .bottom) {
-                    if !store.barHidden && !store.menuCover && !store.drawCover {
-                        TabBar().transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                }
-                .animation(.snappy, value: store.barHidden)
-                .animation(.spring(response: 0.3, dampingFraction: 0.85), value: store.menuCover || store.drawCover)
-                // 加進行程：兩個以上的行程時問加到哪個
-                .tripChooser()
-                .onChange(of: store.tab) { _, t in opened.insert(t); store.flushFresh() }
-                .task {
-                    if Flag.on("-shareVerdictTest") { ShareUpload.selfTest() }
-                    // 點「收藏好了」通知冷啟動：先到收藏頁
-                    if Store.openSavedPending { openSaved() }
-                    // 上次刪了、還沒送出就被關掉的：先補送完再同步（不然同步回來那筆又出現）
-                    await LaterDelete.flush(store)?.value
-                    await store.sync()
-                    await store.takePendingJoin()
-                    store.maybeStartCoach()
-                    store.askNotifyAfterShare()
-                    ClipWatch.shared.check(store)
-                    // 第一個畫面出來、空閒一下之後，先把另外三頁建好，第一次點過去不會頓
-                    try? await Task.sleep(for: .seconds(1))
-                    opened.formUnion([1, 2, 3])
-                }
-                // Apple／Google 登入：流程跑完、兩個問題都答完的那一刻，才接邀請連結、開教學、看剪貼簿（不跟 alert 疊在一起）
-                .onChange(of: store.askOld == nil && !store.askName && !store.authSettling) { _, free in
-                    guard free else { return }
-                    Task { await store.takePendingJoin(); store.maybeStartCoach(); ClipWatch.shared.check(store) }
-                }
-                // 分享選單存好了：重新同步，剛存的店馬上出現
-                .onReceive(NotificationCenter.default.publisher(for: .shareSaved)) { _ in Task { await store.sync() } }
-                // 點了「收藏好了」「之前收藏過了」通知：到收藏頁最上面
-                .onReceive(NotificationCenter.default.publisher(for: .openSaved)) { _ in openSaved() }
-                .overlay { CoachOverlay().ignoresSafeArea() }
-                // 問通知前的小卡（教學跑完才出來）
-                .overlay {
-                    if store.askNotify && store.coach.isEmpty {
-                        Color.black.opacity(0.25).ignoresSafeArea()
-                            .onTapGesture { store.snoozeNotify() }
-                            .transition(.opacity)
-                    }
-                }
-                .overlay(alignment: .bottom) {
-                    if store.askNotify && store.coach.isEmpty {
-                        NotifyCard().transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                }
-                // 剛用 Apple／Google 登入、帳號是空的：可能以前用 Email 註冊過
-                .alert("以前用 Email 註冊過嗎？", isPresented: Binding(get: { store.askOld != nil }, set: { _ in }),
-                       presenting: store.askOld) { p in
-                    Button("有，登入舊帳號") { Task { await store.useOld() } }
-                    Button("沒有，這是新帳號", role: .cancel) { store.keepNew() }
-                } message: { p in
-                    Text("這個帳號還是空的。以前的收藏在 Email 帳號裡：登入那個帳號，會幫你把 \(LoginKind(rawValue: p)?.name ?? p) 連過去，以後按 \(LoginKind(rawValue: p)?.name ?? p) 就能直接進去。")
-                }
-                .alert("你的名字", isPresented: $store.askName) {
-                    TextField("群組裡的朋友會看到這個名字", text: $myName)
-                    Button("之後再說", role: .cancel) {}
-                    Button("好") {
-                        let n = myName.trimmingCharacters(in: .whitespaces)
-                        if !n.isEmpty { Task { await store.setMyName(n) } }
-                    }
-                } message: {
-                    Text("Apple 沒有給名字，填一個朋友認得的（之後可以在「我的」改）")
-                }
-                .fullScreenCover(isPresented: $store.showIG) { IGTutorial() }
+                prompts(events(tabs))
             } else {
                 LoginView()
             }
@@ -229,6 +156,98 @@ struct Root: View {
                 Task { _ = try? await Supa.fresh(); await store.sync() }
             }
         }
+    }
+
+    // 登入後的畫面拆成三段（分頁、事件、彈出的卡和問題）：整串接在 body 裡，Release 建置時編譯器在合理時間內推不出型別
+    private var covered: Bool { store.menuCover || store.drawCover }
+    private var authFree: Bool { store.askOld == nil && !store.askName && !store.authSettling }
+
+    // 四個分頁和分頁列
+    private var tabs: some View {
+        ZStack {
+            page(0) { MapTab() }
+            page(1) { ListTab() }
+            page(2) { GroupsTab() }
+            page(3) { MeTab() }
+        }
+        .overlay(alignment: .bottom) {
+            if !store.barHidden && !store.menuCover && !store.drawCover {
+                TabBar().transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.snappy, value: store.barHidden)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: covered)
+        // 加進行程：兩個以上的行程時問加到哪個
+        .tripChooser()
+        .onChange(of: store.tab) { _, t in opened.insert(t); store.flushFresh() }
+        .task {
+            if Flag.on("-shareVerdictTest") { ShareUpload.selfTest() }
+            // 點「收藏好了」通知冷啟動：先到收藏頁
+            if Store.openSavedPending { openSaved() }
+            // 上次刪了、還沒送出就被關掉的：先補送完再同步（不然同步回來那筆又出現）
+            await LaterDelete.flush(store)?.value
+            await store.sync()
+            await store.takePendingJoin()
+            store.maybeStartCoach()
+            store.askNotifyAfterShare()
+            ClipWatch.shared.check(store)
+            // 第一個畫面出來、空閒一下之後，先把另外三頁建好，第一次點過去不會頓
+            try? await Task.sleep(for: .seconds(1))
+            opened.formUnion([1, 2, 3])
+        }
+    }
+
+    // 登入流程、分享、通知帶來的事件
+    private func events<V: View>(_ v: V) -> some View {
+        v
+            // Apple／Google 登入：流程跑完、兩個問題都答完的那一刻，才接邀請連結、開教學、看剪貼簿（不跟 alert 疊在一起）
+            .onChange(of: authFree) { _, free in
+                guard free else { return }
+                Task { await store.takePendingJoin(); store.maybeStartCoach(); ClipWatch.shared.check(store) }
+            }
+            // 分享選單存好了：重新同步，剛存的店馬上出現
+            .onReceive(NotificationCenter.default.publisher(for: .shareSaved)) { _ in Task { await store.sync() } }
+            // 點了「收藏好了」「之前收藏過了」通知：到收藏頁最上面
+            .onReceive(NotificationCenter.default.publisher(for: .openSaved)) { _ in openSaved() }
+    }
+
+    // 教學、問通知、登入後的兩個問題
+    private func prompts<V: View>(_ v: V) -> some View {
+        @Bindable var store = store
+        return v
+            .overlay { CoachOverlay().ignoresSafeArea() }
+            // 問通知前的小卡（教學跑完才出來）
+            .overlay {
+                if store.askNotify && store.coach.isEmpty {
+                    Color.black.opacity(0.25).ignoresSafeArea()
+                        .onTapGesture { store.snoozeNotify() }
+                        .transition(.opacity)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if store.askNotify && store.coach.isEmpty {
+                    NotifyCard().transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            // 剛用 Apple／Google 登入、帳號是空的：可能以前用 Email 註冊過
+            .alert("以前用 Email 註冊過嗎？", isPresented: Binding(get: { store.askOld != nil }, set: { _ in }),
+                   presenting: store.askOld) { p in
+                Button("有，登入舊帳號") { Task { await store.useOld() } }
+                Button("沒有，這是新帳號", role: .cancel) { store.keepNew() }
+            } message: { p in
+                Text("這個帳號還是空的。以前的收藏在 Email 帳號裡：登入那個帳號，會幫你把 \(LoginKind(rawValue: p)?.name ?? p) 連過去，以後按 \(LoginKind(rawValue: p)?.name ?? p) 就能直接進去。")
+            }
+            .alert("你的名字", isPresented: $store.askName) {
+                TextField("群組裡的朋友會看到這個名字", text: $myName)
+                Button("之後再說", role: .cancel) {}
+                Button("好") {
+                    let n = myName.trimmingCharacters(in: .whitespaces)
+                    if !n.isEmpty { Task { await store.setMyName(n) } }
+                }
+            } message: {
+                Text("Apple 沒有給名字，填一個朋友認得的（之後可以在「我的」改）")
+            }
+            .fullScreenCover(isPresented: $store.showIG) { IGTutorial() }
     }
 
     // 四個分頁疊在一起，只顯示目前這個（切換不重建，捲到哪、地圖看到哪都留著）
