@@ -238,7 +238,7 @@ FilterSync 的 :464-474（兩個 onChange）換成：
 
 **原因**：收藏頁藏著時畫的是 applied（背景同步要停 350ms，「我的」那條是切過來那一刻才改 listF），切進來那一下 front 變 true、改畫 listF，卡片和間數在同一次更新裡改變。這次更新是 Root 換分頁的 `withAnimation(.spring)`，所以 :70 的 `.animation(…, value: cards.map(\.id))` 和間數的 `.animation(.snappy, value: visible.count)` 都把它當成篩選改變來播。
 
-**修法**：這是一進來看到舊內容和疊字，不是新的樣子，直接修，不用問 Anthony。ListTab.swift 的 ScrollView 裡那個 VStack，在 `.padding(.top, 8).padding(.bottom, 24)` 後面加一行：
+**修法**：這是一進來看到舊內容和疊字，不是新的樣子，直接修，不用問 Anthony。ListTab.swift 的 ScrollView 裡那個 VStack，在 :83 `.padding(.top, 8).padding(.bottom, 24)` 後面加一行（行號是 fccc58f 的）：
 ```swift
                 // 切進收藏頁那一下：卡片、間數、篩選籤直接是新的樣子（不要跟著換分頁的 spring 播篩選動畫）；在收藏頁裡點籤、打字照舊有動畫
                 .transaction(value: front) { $0.animation = nil; $0.disablesAnimations = true }
