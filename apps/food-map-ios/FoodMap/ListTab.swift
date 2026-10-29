@@ -81,6 +81,8 @@ struct ListTab: View {
                     }
                 }
                 .padding(.top, 8).padding(.bottom, 24)
+                // 切進、切出收藏頁那一下不播篩選動畫（卡片換位、間數滾動）；整頁的淡入在 Root 外面照舊，頁裡點籤、打字的動畫也照舊
+                .transaction(value: front) { $0.animation = nil; $0.disablesAnimations = true }
             }
             .scrollDismissesKeyboard(.immediately)
             .scrollPosition($pos)
