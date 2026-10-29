@@ -91,6 +91,11 @@ struct MapTab: View {
                             if dt < 2 { Perf.shared.mark("地圖選取略過 \(id.map { String($0.prefix(8)) } ?? "nil") \(Int(dt * 1000))ms") }
                             return
                         }
+                        // 不是地圖上的收藏、也不是搜尋結果（關加站卡時 MapKit 偶爾送來別的 id）：不選，免得所有圖釘變淡
+                        if let id, !id.hasPrefix("hit:"), !list.contains(where: { $0.id == id }), !extraFound.contains(where: { $0.id == id }) {
+                            Perf.shared.mark("地圖選取不是圖釘 \(id.prefix(8))")
+                            return
+                        }
                         // 淡化的收藏圖釘框比畫出來的大，會蓋住旁邊的搜尋結果：手指其實比較靠近搜尋結果時，改選搜尋結果
                         if let id, let h = preferHit(id, hits: hits, list: list + extraFound, via: "地圖") {
                             pins.select(h)
@@ -229,7 +234,10 @@ struct MapTab: View {
                 }
                 .onChange(of: trip.cand?.id) { old, now in
                     // 量測浮層：加站卡關掉時記離最後點圖釘多久（太快關掉＝被誤關）
-                    if old != nil, now == nil { Perf.shared.mark("加站卡關掉 距點 \(Int((CACurrentMediaTime() - pins.tapAt) * 1000))ms") }
+                    if old != nil, now == nil {
+                        let dt = CACurrentMediaTime() - pins.tapAt
+                        Perf.shared.mark(dt < 10 ? "加站卡關掉 距點 \(Int(dt * 1000))ms" : "加站卡關掉")
+                    }
                     // 正在看要不要加的那間：圖釘放大（收藏用店的 id，搜到的地點用 hit: 開頭）
                     pins.select(trip.cand.map { $0.place != nil ? $0.id : "hit:" + $0.id })
                 }
