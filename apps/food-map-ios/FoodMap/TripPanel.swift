@@ -37,6 +37,14 @@ struct TripPanel: View {
     @State private var placed = false
     @State private var checked = false          // 行程找不到時，已經重新跟伺服器確認過
     @State private var held = RowHeld()         // 站卡長按拿起中／剛放下（UIKit 長按，見 RowHold.swift）
+    // 診斷用（只有開發版）：啟動參數 -v11NoListPull 關掉清單往下拉的備案拖曳，看站卡上捲不動是不是它擋的
+    private static let noListPull: Bool = {
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains("-v11NoListPull")
+        #else
+        return false
+        #endif
+    }()
     @GestureState private var pulling = false   // 拉面板的手勢還在（被系統取消時把面板放回一段）
     @State private var lowering = false         // 清單捲到頂又往下拉過頭：放開就降一段
     @State private var pickingStart = false     // 起點選單（按鈕＋底部選單：用 Menu 的話從這顆拉面板拉不動）
@@ -236,7 +244,7 @@ struct TripPanel: View {
                                                  changed: { up in guard drag.id == nil else { return }; lift.y = up },
                                                  ended: { up in guard drag.id == nil else { lift.y = 0; return }; settleSheet(up) }))
                         // 備案：手指按在站卡上時清單的 pan 可能根本沒開始（站卡有點一下、長按、左滑的手勢），改由這個拖曳接手
-                        .simultaneousGesture(listPull, including: drag.id == nil ? .all : .subviews)
+                        .simultaneousGesture(listPull, including: drag.id == nil && !Self.noListPull ? .all : .subviews)
                     }
                     .scrollDisabled(drag.id != nil)
                     .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top <= 1 } action: { _, top in pull.atTop = top }
