@@ -409,3 +409,10 @@ TripPanel.swift:1388 的 onGeometryChange 在量的那個閉包裡讀了 MainAct
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in mode.goInset = max(0, MapTab.windowHeight - y - MapTab.safeBottom) }
 ```
 **模擬器**：建置後 Issue navigator 裡 TripPanel.swift 這一行沒有那個警告。照 U23 驗收 (3) 走一次：出發、到第二站按「到了 ✓」跳出評分卡，「到了 …」訊息條貼在評分卡上緣上方約 8pt，沒壓到星星和 ✕；評分卡收掉後訊息條回到離底 24pt。
+
+### 第 5 批模擬器結果（584e384，Debug 版）
+
+- **R5-1 通過。** 錄影 R5-1b_small.mp4 我一格一格看過（10 fps 截圖）：拉掉 sheet 時，sheet 裡那條跟著 sheet 往下走；sheet 收完約 0.4 秒後 Root 那條從下面滑上來，倒數接著原本的數，畫面上沒有同時兩條。按「復原」後訊息條滑出淡掉，測試行程回來。sheet 收完到 Root 那條出現之間有約 0.4 秒沒有訊息條，這是 onDisappear 要等 sheet 收完才叫，屬於預期，不改。
+- **U23 (3) 通過。** 「到了 …」訊息條下緣在評分卡上緣上方約 9pt，沒壓到星星和 ✕；評分卡收掉後回到離底約 24pt（三張截圖看過）。「復原」在訊息條還在時按，Console 印「清掉 done_at」，回到第 3 站的站卡、那站不打勾、DB 的 done_at 是 null。上次 Release 版的失敗是等訊息條收掉才點，不是 bug。
+- **R5-2** 的建置警告還沒回報，下次建置時一起看。
+- 測完 DB 只剩 Anthony 的「測試」。
