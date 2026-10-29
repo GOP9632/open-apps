@@ -91,6 +91,12 @@ struct MapTab: View {
                             if dt < 2 { Perf.shared.mark("地圖選取略過 \(id.map { String($0.prefix(8)) } ?? "nil") \(Int(dt * 1000))ms") }
                             return
                         }
+                        // 淡化的收藏圖釘框比畫出來的大，會蓋住旁邊的搜尋結果：手指其實比較靠近搜尋結果時，改選搜尋結果
+                        if let id, let h = preferHit(id, hits: hits, list: list + extraFound) {
+                            Perf.shared.mark("搜尋圖釘優先")
+                            pins.select(h)
+                            return
+                        }
                     }
                     pins.select(id)
                 })) {
@@ -165,7 +171,10 @@ struct MapTab: View {
                 .safeAreaPadding(.top, max(0, headY - mapRect.minY))
                 .safeAreaPadding(.bottom, footY > 0 ? max(0, mapRect.maxY - footY) : 0)
                 // 行程模式點地圖空白處：收掉加站卡、搜尋（點到圖釘不算）
-                .simultaneousGesture(TapGesture().onEnded { blankTap() }, including: trip.on ? .all : .subviews)
+                .simultaneousGesture(SpatialTapGesture(coordinateSpace: .global).onEnded { v in
+                    pins.touch = (v.location, CACurrentMediaTime())
+                    blankTap(near: trip.on && pinNear(v.location, hits: hits, list: list))
+                }, including: trip.on ? .all : .subviews)
                 .onMapCameraChange(frequency: .continuous) { _ in
                     // 手指拖地圖：下面那塊降到一行（停下來不自動彈回）
                     let now = CACurrentMediaTime()
@@ -663,16 +672,47 @@ struct MapTab: View {
     }
 
     // 點地圖空白處：等一下看是不是其實點到圖釘（圖釘的點擊可能晚一點才到）
-    private func blankTap() {
+    private func blankTap(near: Bool) {
         guard trip.on else { return }
         let t0 = CACurrentMediaTime()
         Task {
-            try? await Task.sleep(for: .milliseconds(180))
+            // 點在圖釘附近：MapKit 的選取要等約 0.3 秒（看是不是點兩下）才到，多等一下再判斷，不然會先把搜尋收掉
+            try? await Task.sleep(for: .milliseconds(near ? 450 : 180))
             // 點下去前後 0.22 秒內點過圖釘就不算點空白，用點下去當下的時間算：
             // 開第一張加站卡時主執行緒忙、這裡晚醒，也不會把剛開的卡當成點空白關掉
             guard trip.pickAt < t0 - 0.22 else { Perf.shared.mark("點空白略過"); return }
             trip.blank()
         }
+    }
+
+    // 行程模式：手指點的地方有沒有圖釘（收藏、搜尋結果）。收藏的圖釘畫在座標點上面
+    private func pinNear(_ p: CGPoint, hits: [MapHit], list: [Place]) -> Bool {
+        guard let f = pins.locate else { return false }
+        for h in hits {
+            if let q = f(h.coord), hypot(q.x - p.x, q.y - p.y) < 36 { return true }
+        }
+        for x in list {
+            guard let la = x.lat, let lo = x.lng, let q = f(CLLocationCoordinate2D(latitude: la, longitude: lo)) else { continue }
+            if abs(q.x - p.x) < 26, p.y < q.y + 4, p.y > q.y - 56 { return true }
+        }
+        return false
+    }
+
+    // 行程搜尋時 MapKit 自己選了一根收藏（不是按到圖釘的按鈕）：手指離某個搜尋結果圖示比離那根收藏近，就改選搜尋結果
+    private func preferHit(_ id: String, hits: [MapHit], list: [Place]) -> String? {
+        guard !id.hasPrefix("hit:"), !hits.isEmpty, let t = pins.touch, CACurrentMediaTime() - t.at < 1, let f = pins.locate,
+              let p = list.first(where: { $0.id == id }), let la = p.lat, let lo = p.lng,
+              let q = f(CLLocationCoordinate2D(latitude: la, longitude: lo)) else { return nil }
+        // 淡化的收藏圖釘：圓心在座標點上面約 22；搜尋結果圖示的圓心就在座標點
+        let dFav = hypot(q.x - t.p.x, q.y - 22 - t.p.y)
+        var best: (id: String, d: CGFloat)?
+        for h in hits {
+            guard let c = f(h.coord) else { continue }
+            let d = hypot(c.x - t.p.x, c.y - t.p.y)
+            if d < (best?.d ?? .infinity) { best = (h.id, d) }
+        }
+        guard let b = best, b.d < dFav, b.d < 40 else { return nil }
+        return "hit:" + b.id
     }
 
     // 擠在一起的圖釘合成泡泡（選到的、抽中被篩掉的那根不合）：拆開的從泡泡飛回自己的位置，合起來的先飛進泡泡再收掉
@@ -1449,6 +1489,7 @@ struct PickedCard: View {
     var menu: String?                            // 長按開了選單的那根
     @ObservationIgnored var longFired = false    // 長按剛開過選單（放開手指時不要當成點一下）
     @ObservationIgnored var tapAt: CFTimeInterval = 0   // 手指最後點圖釘按鈕的時間（行程模式擋 MapKit 晚到的選取）
+    @ObservationIgnored var touch: (p: CGPoint, at: CFTimeInterval)?   // 最後一次點地圖的位置（螢幕座標）、時間
     @ObservationIgnored var countedKey: String?  // 「附近 N 間」已經為這次落下數過了
     var dimAll = false                           // 行程模式：圖釘縮小變淡
     var bright: Set<String> = []                 // 行程模式搜到的：照常大小
