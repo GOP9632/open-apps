@@ -555,10 +555,10 @@ struct TripPanel: View {
             }
             // 交通方式存在到達站上：前一站換了的站（拖的這站、原本在它後面的、現在在它後面的），手動選的方式回到自動
             s.mode = nil
-            var after: Set<String> = []
-            if let k = base.firstIndex(where: { $0.id == id }), k + 1 < base.count { after.insert(base[k + 1].id) }
-            if i + 1 < order.count { after.insert(order[i + 1].id) }
-            for sid in after where sid != id {
+            var reset: Set<String> = []
+            if let k = base.firstIndex(where: { $0.id == id }), k + 1 < base.count { reset.insert(base[k + 1].id) }
+            if i + 1 < order.count { reset.insert(order[i + 1].id) }
+            for sid in reset where sid != id {
                 if var x = trips.stops.first(where: { $0.id == sid }), x.mode != nil { x.mode = nil; trips.update(x, store: store) }
             }
         }
