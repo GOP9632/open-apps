@@ -257,3 +257,29 @@ s1b 本來就沒有字形載入，沒東西可省；-emojiWarm 量 1 次最長 1
 - **H2 的另一個提交者是 SwiftUI.AsyncRenderer**（s2b 47 個樣本，s1b 冷 7 個），沒有 VectorKit、AVFoundation 的執行緒在提交 CA。App 裡沒有 drawingGroup 或 rendersAsynchronously；用到 Canvas 的有 PinBurst（MapTab.swift:1924、:1928）和 Draw.swift:813，另有 4 個 TimelineView。M7 看 mutexwait 多的那幾幀時，順便記當時有沒有 PinBurst 在播。
 - **InsetLayoutComputer**：沒有 App 的 frame，分不出 :309 還是 :338，先不追。
 - **H5 冷比熱貴**：沒有單一熱點，多的是 Swift metadata 第一次查表、SwiftUI 圖第一次建、VectorKit。浮層「點圖釘」冷的是 86 到 148ms，熱的是 43 到 67ms。M3、M4 量完，冷的「放開後第一幀」如果常常超過 100ms，再考慮開 App 後在空檔先建一次大卡（改時機，要問 Anthony）。
+
+## 7. M1 到 M8 和 emoji 對照截圖（2026-10-29 18:05Z）
+
+數字在模擬器的回報裡，結論：
+
+- 按下那一幀沒問題（13 到 22ms）。重的是放開後狀態改變的那幾幀：選店那一幀（s1b 點圖釘冷中位 94，88 到 117；s2b 抽中前一幀 58 到 68）、第一次進店家頁（99 到 251，之後 54 到 83）、降落時附近清單（48 到 57）。這三個另外追了成本，修法另寫。
+- A：s1b 成立（all 5 次都 ≤90，-noEmoji 4 次比基準低），s2b 不成立。對照截圖看到一個要先修的問題（下面）。
+- B：M5 降落沒變差（飛完 47，不加 54），沒有重複建播放器，可以問 Anthony。
+- E：成本在附近清單，不在泡泡重組；照原樣延後只是把 33 到 60ms 搬到 0.6 秒後，整段最長沒降，所以先不問，改追怎麼讓它變便宜。
+- D、H2、H3、H5 結案：半空停下後 100ms 內沒有超過 50ms；降落後約 900ms 那幀沒重現；冷熱差多半是平移距離。
+- G setCategory：每次啟動後第一次進店家頁 25ms，照第 5 節 G 改 stop()，不用問。
+
+### emoji 換圖的泡泡數字折成兩行
+
+-emojiImg all 時，泡泡的家數會折成兩行（47 變成上 4 下 7，21、16、61 也一樣），全台和降落後都有。推論：圖是用 3.3 倍畫的，點數寬度經過像素取整後比文字寬一點點；地圖標註的大小在第一次排版（還是文字）時就定了，換成圖之後數字拿到的寬度比它要的少一點，Text 就折行。改法（只影響 -emojiImg，不加參數時畫面不變）：
+
+MapTab.swift:2105（ClusterBubble 的數字）改成：
+
+```swift
+                    Text("\(c.ids.count)").font(.system(size: 17, weight: .black)).foregroundStyle(.white)
+                        .lineLimit(1).fixedSize()
+```
+
+A 正式上線時，EmojiGlyph（MapTab.swift:2246）和 Draw.swift:203 的 Image 也要固定成跟文字一樣的點數大小，不要靠圖的像素大小：在 EmojiArt.render 用 `UIFont.systemFont(ofSize: size)` 量 `(e as NSString).size(withAttributes:)` 存進 slot，顯示時 `.resizable().interpolation(.high).frame(width:height:)`。
+
+修好後補拍（同一根圖釘、同一個泡泡，左右兩版同樣狀態）：兩位數和三位數（如果有）的泡泡、同一間店選中彈到最高、行程模式變淡的圖釘和小泡泡、減少動態、最大字級的 🎲。深色不用拍，App 鎖淺色。
