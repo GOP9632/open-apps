@@ -9,6 +9,7 @@ struct TripsList: View {
     @State private var trips = TripStore.shared
     @State private var adding = false
     @State private var showPast = false
+    @State private var asking: Trip?            // 左滑要刪的行程：跟行程選單的「刪除行程」一樣先問
 
     var body: some View {
         let today = TripDate.today
@@ -43,6 +44,30 @@ struct TripsList: View {
             .padding(.horizontal, 16).padding(.bottom, 30)
         }
         .background(Color.bg)
+        // 刪掉的「復原」：這張 sheet 蓋住了首頁的訊息條，在這裡也放一條（倒數照首頁那條，時間到一起收）
+        .overlay(alignment: .bottom) {
+            if let msg = store.toast, msg.hasPrefix("已刪除「"), let act = store.toastAction {
+                HStack(spacing: 10) {
+                    Image(systemName: "trash.fill").font(.system(size: 14, weight: .bold)).foregroundStyle(.white.opacity(0.8))
+                    Text(msg).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
+                    Spacer(minLength: 0)
+                    Button { act.run() } label: {
+                        Text(act.label).font(.subheadline.weight(.heavy)).foregroundStyle(Color.sprYellow)
+                            .padding(.horizontal, 10).frame(minWidth: 56, minHeight: 44).contentShape(.rect)
+                    }
+                    .padding(.trailing, -10)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 3)
+                .background(Color.ink.opacity(0.92), in: .capsule)
+                .padding(.horizontal, 24).padding(.bottom, 16)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.snappy, value: store.toast)
+        .confirmationDialog("刪除「\(asking?.title ?? "")」？每一站都會一起刪掉", isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } }),
+                            titleVisibility: .visible, presenting: asking) { t in
+            Button("刪除行程", role: .destructive) { delete(t) }
+        }
         .toolbarVisibility(.hidden, for: .navigationBar)
         .sheet(isPresented: $adding) { TripForm(trip: nil) { t in enterTrip(t) } }
         .task { await trips.load() }
@@ -61,13 +86,21 @@ struct TripsList: View {
     }
 
     private func card(_ t: Trip, today: Bool) -> some View {
-        SwipeToDelete(enabled: t.owner == nil || t.owner == store.me) {
-            trips.deleteWithUndo(t, store: store)
+        SwipeToDelete(enabled: t.owner == nil || t.owner == store.me, slideOut: false) {
+            asking = t
         } content: {
             Button { Haptic.light(); enterTrip(t) } label: { TripCard(trip: t, today: today) }
                 .buttonStyle(PressStyle())
         }
         .transition(.opacity.combined(with: .scale(scale: 0.95)))
+    }
+
+    // 刪的是正在排的行程：首頁先離開行程模式（不然標題列、面板留著「行程不見了」），再刪（跟行程選單一樣晚 0.45 秒）
+    private func delete(_ t: Trip) {
+        let mode = TripMode.shared
+        guard mode.tid == t.id else { trips.deleteWithUndo(t, store: store); return }
+        mode.close()
+        Task { try? await Task.sleep(for: .milliseconds(450)); trips.deleteWithUndo(t, store: store) }
     }
 
     // 關掉這張 sheet，首頁地圖變成這個行程
@@ -333,6 +366,7 @@ private let swipeOff: Bool = {
 // 上下捲動照常
 struct SwipeToDelete<C: View>: View {
     var enabled = true
+    var slideOut = true                       // false：刪之前要先問，卡片彈回原位、等問完再拿掉
     let onDelete: () -> Void
     @ViewBuilder let content: () -> C
     @State private var dx: CGFloat = 0
@@ -389,6 +423,7 @@ struct SwipeToDelete<C: View>: View {
     }
 
     private func delete() {
+        guard slideOut else { close(); onDelete(); return }
         open = false
         withAnimation(.easeIn(duration: 0.18)) { dx = -w - 40 }
         onDelete()
