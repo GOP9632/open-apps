@@ -135,9 +135,21 @@ function upNNF(C, cn, L) {
 }
 
 // 方塊差異（平方和），超過 best 就提早停
-function dist(L, p, s, best) {
-  const { w, h, img } = L, px = p % w, py = (p / w) | 0, sx = s % w, sy = (s / w) | 0;
+function dist(L, px, py, s, best) {
+  const { w, h, img } = L, sx = s % w, sy = (s / w) | 0;
   let d = 0, n = 0;
+  if (px >= R && py >= R && px < w - R && py < h - R) {
+    // 整個方塊在照片裡（大部分）：不用一格格檢查邊界，算法跟下面一樣
+    for (let dy = -R; dy <= R; dy++) {
+      let a = ((py + dy) * w + px - R) * 3, b = ((sy + dy) * w + sx - R) * 3;
+      for (let k = 0; k < 2 * R + 1; k++, a += 3, b += 3) {
+        const r = img[a] - img[b], g = img[a + 1] - img[b + 1], bl = img[a + 2] - img[b + 2];
+        d += r * r + g * g + bl * bl;
+      }
+      if (d > best) return Infinity;
+    }
+    return d * 49 / 49;  // 跟下面一樣除（n = 49），結果一模一樣
+  }
   for (let dy = -R; dy <= R; dy++) {
     const Y = py + dy; if (Y < 0 || Y >= h) continue;
     for (let dx = -R; dx <= R; dx++) {
@@ -153,12 +165,12 @@ function dist(L, p, s, best) {
 
 function search(L, nnf, it) {
   const { w, h, valid, targets } = L, D = L.D ||= new Float32Array(w * h);
-  for (const p of targets) D[p] = dist(L, p, nnf[p], Infinity);
+  for (const p of targets) D[p] = dist(L, p % w, (p / w) | 0, nnf[p], Infinity);
   const n = targets.length, rev = it & 1;
   for (let k = 0; k < n; k++) {
     const p = targets[rev ? n - 1 - k : k], x = p % w, y = (p / w) | 0, st = rev ? -1 : 1;
     let best = nnf[p], bd = D[p];
-    const tryS = s => { if (s < 0 || !valid[s] || s === best) return; const d = dist(L, p, s, bd); if (d < bd) { bd = d; best = s; } };
+    const tryS = s => { if (s < 0 || !valid[s] || s === best) return; const d = dist(L, x, y, s, bd); if (d < bd) { bd = d; best = s; } };
     // 鄰居的對應往這邊挪一格
     if (x - st >= 0 && x - st < w) { const q = nnf[p - st]; if (q >= 0) { const qx = q % w + st; if (qx >= 0 && qx < w) tryS(q + st); } }
     if (y - st >= 0 && y - st < h) { const q = nnf[p - st * w]; if (q >= 0) { const qy = ((q / w) | 0) + st; if (qy >= 0 && qy < h) tryS(q + st * w); } }
@@ -178,12 +190,29 @@ function vote(L, nnf, pct = 0.75) {
   const { w, h, img, hole, targets } = L;
   const D = L.D;
   let s2 = 0;
-  if (D) { const ds = Array.from(targets, p => D[p]).filter(Number.isFinite).sort((a, b) => a - b); s2 = ds[(ds.length * pct) | 0] || 1; }
-  const acc = new Float32Array(w * h * 3), ws = new Float32Array(w * h);
+  if (D) {
+    // 排序用 Float32Array（數字排序，比一般陣列快很多）；Infinity 排在最後，只取前面有限的那些
+    const ds = Float32Array.from(targets, p => D[p]).sort();
+    let n = ds.length; while (n > 0 && !Number.isFinite(ds[n - 1])) n--;
+    s2 = (n ? ds[(n * pct) | 0] : 0) || 1;
+  }
+  // 每一輪都要用：留著重用，不要每次新開（大照片每次要配好幾 MB）
+  const acc = L.acc ? L.acc.fill(0) : (L.acc = new Float32Array(w * h * 3)), ws = L.ws ? L.ws.fill(0) : (L.ws = new Float32Array(w * h));
   for (const p of targets) {
     const s = nnf[p]; if (s < 0) continue;
     const wt = D && s2 ? Math.exp(-D[p] / (2 * s2)) + 1e-4 : 1;
     const px = p % w, py = (p / w) | 0, sx = s % w, sy = (s / w) | 0;
+    if (px >= R && py >= R && px < w - R && py < h - R) {
+      // 整個方塊在照片裡：不用一格格檢查邊界（加的順序跟下面一樣）
+      for (let dy = -R; dy <= R; dy++) {
+        let q = (py + dy) * w + px - R, b = ((sy + dy) * w + sx - R) * 3;
+        for (let k = 0; k < 2 * R + 1; k++, q++, b += 3) {
+          if (!hole[q]) continue;
+          acc[q * 3] += wt * img[b]; acc[q * 3 + 1] += wt * img[b + 1]; acc[q * 3 + 2] += wt * img[b + 2]; ws[q] += wt;
+        }
+      }
+      continue;
+    }
     for (let dy = -R; dy <= R; dy++) {
       const Y = py + dy; if (Y < 0 || Y >= h) continue;
       for (let dx = -R; dx <= R; dx++) {

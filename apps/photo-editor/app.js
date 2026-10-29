@@ -1,5 +1,5 @@
 import { Renderer, MAX_WARPS } from './gl.js';
-import { FILTERS, bakeLUT, bakeGrid, thumb, filterFn, skinFilterFn, hairFilterFn } from './filters.js';
+import { FILTERS, bakeLUT, bakeGrid, thumbMaker, filterFn, skinFilterFn, hairFilterFn } from './filters.js';
 import { loadXT, xtData, xtItem, xtWeights } from './xt.js';
 import { detectFaces, segment, skinMask, faceWarps, featureMask, faceGeom, blurCanvas, faceAnchor, beardSize } from './ai.js';
 import { COVERS, COVER_CATS, coverPixels } from './coverface.js';
@@ -27,7 +27,6 @@ import { tabLooks } from './looks.js';
 import { perfReq, perfDrawn, perfBase, perfSkip } from './perf.js';
 import { STROKES, STROKE_COLORS, STROKE0, strokeLayer, alphaFromMatte, alphaBox } from './outline.js';
 import { SHAPES, MASK0, LAYER_LIMIT, shapePath, photoLayer, cutLayer, layerInfo, restoreLayer, cloneAlpha, compose as composeLayer, brush } from './layers.js';
-import { fillErase } from './erasemix.js';
 import { listDrafts, readDraft, writeDraft, deleteDraft, encode, encodeSmall } from './draft.js';
 import { POPS, POP_BGS, POP_P0, drawPop } from './popout.js';
 
@@ -871,11 +870,10 @@ function held() {
   if (layoutLater) { layoutLater = false; layout(); }
   return false;
 }
-// 存檔、合併、摳圖要原尺寸；其他時候畫預覽大小
-let holdFull = false;
-function draw(full) {
-  if (full || holdFull) gradeFull();
-  syncTex(); syncHair(full || holdFull); syncShape();
+// 存檔、合併、摳圖要原尺寸；其他時候畫預覽大小。toFbo：原尺寸畫在 GPU 暫存，不畫到畫面（儲存，見 composeFull）
+function draw(full, toFbo) {
+  if (full) gradeFull();
+  syncTex(); syncHair(full); syncShape();
   if (bodyOn(P) && !base.body) getBody(base);
   // 身體的變形要排在最前面（長腿會改到整張照片的上下位置）
   // 手動增高也會改整張照片的上下位置，排第一個
@@ -891,7 +889,7 @@ function draw(full) {
   let p = gradeOn(P) ? { ...P, filterAmt: 100 } : P;
   // 多張臉分開修：磨皮、美白這些顏色效果每張臉各一組數字，shader 照像素離哪張臉近決定用哪組
   if (pf) p = { ...p, faceAmts: base.faces.map((f, i) => { const g = base.geoms[i], q = PF(i); return { cx: g.cx, cy: g.cy, W: g.W, smooth: q.smooth, white: q.white, dark: q.dark, fold: q.fold, eyeb: q.eyeb, teeth: q.teeth }; }) };
-  R.render(p, warps, effects(), full || holdFull); lastWarps = warps;
+  R.render(p, warps, effects(), full, toFbo); lastWarps = warps;
 }
 // 畫面上看到的點 → 原圖上的點。瘦臉、臉型、推臉、身體、頭髮的變形開著時，畫面上的點不在原圖同一個位置，
 // 美顏筆、塗鴉放開時把筆跡換回原圖座標，才會畫在手指下面（評審 2026-10-27）。
@@ -1657,7 +1655,6 @@ function paramRows(box, list) {
 // 消除筆在 erase.js，這裡把它要用的東西傳過去
 const eraseApp = {
   get base() { return base; }, erasePatch, commit, item, hideSlider, showTab, toast, busy, toSrc: srcMapper,
-  fill: a => prep('erase', async () => a, () => fillErase(a)),
 };
 doodleInput($('#wrap'), { get base() { return base; }, tab: () => tab, surf: ensureSurf, paint: paintPatch, commit, toSrc: srcMapper });
 // queued：放開了一筆、還在算：復原先亮起來（按下去會等它算完再退回）；settled：都算完了，照實際的復原步數
@@ -1701,20 +1698,26 @@ function tabFilter(box) {
     });
     box.append(el); return el;
   });
-  // 縮圖分批算，不卡畫面
-  const job = ++thumbJob, src = base.thumbSrc ||= (() => { const c = document.createElement('canvas'); c.width = c.height = 96; const s = Math.min(base.canvas.width, base.canvas.height); c.getContext('2d').drawImage(base.canvas, (base.canvas.width - s) / 2, (base.canvas.height - s) / 2, s, s, 0, 0, 96, 96); return c; })();
-  let k = 0;
+  // 縮圖分批算，不卡畫面：每批最多 6ms，一張縮圖做到一半也先停（醒圖風格的一張要 20～30ms）；
+  // 第一批等這個分頁畫出來（下一格）才開始，點下去那幾格不擠縮圖（評審 L71）。畫過的建按鈕時就貼上了
+  const job = ++thumbJob, src = base.thumbSrc ||= (() => { const c = memCanvas(96, 96); const s = Math.min(base.canvas.width, base.canvas.height); c.getContext('2d').drawImage(base.canvas, (base.canvas.width - s) / 2, (base.canvas.height - s) / 2, s, s, 0, 0, 96, 96); return c; })();
+  let k = 0, mk = null;
   const step = () => {
     if (job !== thumbJob || tab !== 'filter') return;
-    const t0 = performance.now();
-    for (; k < list.length && performance.now() - t0 < 12; k++) {
+    const end = performance.now() + 6;
+    for (; k < list.length; k++) {
       const f = list[k];
-      if (!base.thumbs[f.id]) base.thumbs[f.id] = thumb(src, filterFn(f.id), 96);
-      els[k].querySelector('.ic').style.backgroundImage = `url(${base.thumbs[f.id]})`;
+      if (base.thumbs[f.id]) continue;
+      mk ||= thumbMaker(src, filterFn(f.id), 96);
+      const u = mk(end);
+      if (!u) break;
+      base.thumbs[f.id] = u; mk = null;
+      els[k].querySelector('.ic').style.backgroundImage = `url(${u})`;
+      if (performance.now() > end) { k++; break; }
     }
     if (k < list.length) setTimeout(step, 0);
   };
-  step();
+  if (list.some(f => !base.thumbs[f.id])) requestAnimationFrame(() => setTimeout(step, 0));
   filterSlider();
 }
 function filterSlider() {
@@ -2790,10 +2793,10 @@ const strokeThumbs = new Map();
 function strokeThumb(t, c) {
   const k = t + c;
   if (!strokeThumbs.has(k)) {
-    const g = newCanvas(64, 64), x = g.getContext('2d');
+    const g = memCanvas(64, 64), x = g.getContext('2d');
     x.fillStyle = '#c9c9d1'; x.beginPath(); x.arc(32, 23, 9, 0, 7); x.fill();
     x.beginPath(); x.ellipse(32, 52, 14, 13, 0, Math.PI, 0); x.fill(); x.fillRect(18, 52, 28, 12);
-    const o = newCanvas(64, 64), ox = o.getContext('2d');
+    const o = memCanvas(64, 64), ox = o.getContext('2d');
     if (t) { const sl = strokeLayer(g, { t, c, w: 100, o: 100 }); ox.drawImage(sl.canvas, -sl.pad, -sl.pad); }
     ox.drawImage(g, 0, 0);
     strokeThumbs.set(k, o.toDataURL());
@@ -2828,7 +2831,7 @@ function strokeSlider(st, change) {
 function strokeKChips(box) {
   [['w', '粗細'], ['o', '不透明度']].forEach(([k, lb]) => box.append(item({ label: lb, icon: lb, cls: 'wide', on: stK === k, onclick: () => { stK = k; showTab(tab); } })));
 }
-const shapeIcon = id => { const c = newCanvas(44, 44), x = c.getContext('2d'); x.translate(22, 22); x.fillStyle = '#fff'; shapePath(x, id, 34, 34, 30); x.fill(); return c.toDataURL(); };
+const shapeIcon = id => { const c = memCanvas(44, 44), x = c.getContext('2d'); x.translate(22, 22); x.fillStyle = '#fff'; shapePath(x, id, 34, 34, 30); x.fill(); return c.toDataURL(); };
 const SHAPE_ICONS = {};
 function tabCut(box) {
   const s = stickers[selSt]?.kind === 'cut' ? stickers[selSt] : null;
@@ -2895,8 +2898,8 @@ function tabCut(box) {
 const POP_CLASH = ['pop', 'mirror'];
 const popStroke = { key: '', v: null };
 // 畫出框圖：W×H 是要輸出的大小
-function popDraw(ctx, W, H) {
-  const gl = $('#gl');
+// gl：照片（調整後的），預設是畫面；儲存時是原尺寸讀回來的那張
+function popDraw(ctx, W, H, gl = $('#gl')) {
   let person = null, stroke = null, box = null;
   if (base.matte) {
     base.matteA ||= alphaFromMatte(base.matte);
@@ -2929,7 +2932,7 @@ function paintPop() {
 }
 function popThumb(id) {
   return thumbOf('pop' + id + (base.matte ? 'm' : ''), () => {
-    const s = small(), c = newCanvas(s.width, s.height), keep = P.pop;
+    const s = small(), c = memCanvas(s.width, s.height), keep = P.pop;
     P.pop = id;
     try { popDrawSmall(c.getContext('2d'), s); } finally { P.pop = keep; }
     return squareFit(c);
@@ -2941,14 +2944,14 @@ function popDrawSmall(ctx, s) {
   if (base.matte) {
     base.matteA ||= alphaFromMatte(base.matte); base.mBox ||= alphaBox(base.matteA);
     const k = W / base.canvas.width;
-    person = newCanvas(W, H); const pc = person.getContext('2d');
+    person = memCanvas(W, H); const pc = person.getContext('2d');
     pc.drawImage(s, 0, 0); pc.globalCompositeOperation = 'destination-in'; pc.drawImage(base.matteA, 0, 0, W, H);
     if (base.mBox) box = { x: base.mBox.x * k, y: base.mBox.y * k, w: base.mBox.w * k, h: base.mBox.h * k };
   }
   drawPop(ctx, W, H, { ...P, popBg: P.popBg }, s, person, null, box);
 }
 function squareFit(c) {
-  const o = newCanvas(124, 124), x = o.getContext('2d'), k = Math.max(124 / c.width, 124 / c.height);
+  const o = memCanvas(124, 124), x = o.getContext('2d'), k = Math.max(124 / c.width, 124 / c.height);
   x.drawImage(c, (124 - c.width * k) / 2, (124 - c.height * k) / 2, c.width * k, c.height * k);
   return o.toDataURL('image/jpeg', 0.8);
 }
@@ -3002,7 +3005,7 @@ const FX_ICON = { comic: '💥', pop: '🔴', sketch: '✏️', pencil: '🖍️
 function small() {
   if (!base.small) {
     const [w, h] = fitSize(base.canvas.width, base.canvas.height, 160);
-    base.small = newCanvas(w, h); base.small.getContext('2d').drawImage(base.canvas, 0, 0, w, h);
+    base.small = memCanvas(w, h); base.small.getContext('2d').drawImage(base.canvas, 0, 0, w, h);
   }
   return base.small;
 }
@@ -3015,14 +3018,14 @@ function thumbOf(key, make) {
 }
 const hasThumb = key => thumbCache.has(thumbKey(key));
 function squareThumb(draw) {
-  const c = newCanvas(124, 124), ctx = c.getContext('2d'), s = small();
+  const c = memCanvas(124, 124), ctx = c.getContext('2d'), s = small();
   const k = Math.max(124 / s.width, 124 / s.height);
   ctx.drawImage(s, (124 - s.width * k) / 2, (124 - s.height * k) / 2, s.width * k, s.height * k);
   draw?.(ctx);
   return c.toDataURL('image/jpeg', 0.8);
 }
-const ovThumb = o => thumbOf('ov' + o.id, () => squareThumb(ctx => { ctx.globalCompositeOperation = 'screen'; ctx.drawImage(paint(OVERLAYS, o.id, 124, 124), 0, 0); }));
-const listThumb = (list, id) => thumbOf('p' + id, () => paint(list, id, 124, 124).toDataURL('image/jpeg', 0.8));
+const ovThumb = o => thumbOf('ov' + o.id, () => squareThumb(ctx => { ctx.globalCompositeOperation = 'screen'; ctx.drawImage(paint(OVERLAYS, o.id, 124, 124, true), 0, 0); }));
+const listThumb = (list, id) => thumbOf('p' + id, () => paint(list, id, 124, 124, true).toDataURL('image/jpeg', 0.8));
 
 function tabFun(box) {
   const cats = $('#cats'); cats.hidden = false; cats.innerHTML = '';
@@ -3100,7 +3103,7 @@ async function setExOwn(file) {
 function frameThumb(f) {
   return thumbOf('f' + f.id, () => {
     const s = small(), g = f.geom(s.width, s.height), k = 124 / Math.max(g.W, g.H);
-    const c = newCanvas(124, 124), ctx = c.getContext('2d');
+    const c = memCanvas(124, 124), ctx = c.getContext('2d');
     ctx.fillStyle = '#2a2a2e'; ctx.fillRect(0, 0, 124, 124);
     ctx.translate((124 - g.W * k) / 2, (124 - g.H * k) / 2); ctx.scale(k, k);
     drawFrame(ctx, f, s.width, s.height, s, (cx, gg) => cx.drawImage(s, gg.x, gg.y));
@@ -3201,6 +3204,9 @@ function drawCrop() {
 })();
 
 function newCanvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+// 縮圖這類小張、畫完要讀回（toDataURL、getImageData）的 canvas：放記憶體。GPU 上的要等 GPU 把排在前面的整張照片畫完才讀得回來，
+// 第一次進濾鏡等了 2 秒、邊框 0.3 秒（評審 L71）
+function memCanvas(w, h) { const c = newCanvas(w, h); c.getContext('2d', { willReadFrequently: true }); return c; }
 // 照片本身的 canvas：放在記憶體（不是 GPU）。美顏筆、塗鴉每筆都要讀寫一小塊，電腦版 Chrome 的 GPU canvas
 // 每讀一次都要等 GPU，大筆刷放開要 1～2 秒（評審 2026-10-27）；放記憶體的讀寫是直接的
 const cpuCanvas = new WeakSet();
@@ -3326,7 +3332,7 @@ const TX_SECS = [['tpl', '範本'], ['font', '字型'], ['style', '樣式'], ['s
 const tplThumbs = new Map();
 function tplThumb(tp) {
   if (!tplThumbs.has(tp.id)) {
-    const c = newCanvas(92, 92), ctx = c.getContext('2d'), t = { ...T0, text: 'Aa' };
+    const c = memCanvas(92, 92), ctx = c.getContext('2d'), t = { ...T0, text: 'Aa' };
     applyTemplate(t, tp); t.text = 'Aa';
     ctx.translate(46, 46); drawText(ctx, t, 40);
     tplThumbs.set(tp.id, c.toDataURL());
@@ -3456,7 +3462,7 @@ function paintText(cv, t, fs) {
   drawText(ctx, t, fs, L);
 }
 function drawTexts() {
-  const layer = $('#texts'), wr = { width: $('#wrap').offsetWidth };
+  const layer = $('#texts');
   layer.innerHTML = '';
   texts.forEach((t, i) => {
     Object.assign(t, upgradeText(t));
@@ -3513,23 +3519,35 @@ $('#stage').addEventListener('pointerdown', e => {
 // 把目前的成品（含邊框、貼紙、文字）畫成一張 canvas，存檔和「拼貼／範本」共用
 async function compose() {
   if (bmBake()) { showTab(tab); await dataReady(base); }
-  holdFull = true;
-  try { return await composeFull(); } finally { holdFull = false; render(); }
+  // 原尺寸畫在 GPU 暫存上，等讀回的時候畫面照常畫預覽大小（以前畫面跟著放大，中間畫的每一格都是原尺寸）
+  try { return await composeFull(); } finally { render(); }
 }
 async function composeFull() {
   if (P.pop && !base.matte) await getMatte(base);
-  draw(true);
-  const W = base.canvas.width, H = base.canvas.height, gl = $('#gl'), f = P.frame ? frameById(P.frame) : null;
+  // 原尺寸畫在 GPU 的暫存上（畫面的 canvas 不用放大再縮回），GPU 畫完才讀回，不卡主執行緒（以前整段停住，轉圈也停，評審 L71）。
+  // 讀回來的、輸出的都放記憶體，壓 JPEG 不用再從 GPU 讀一次
+  draw(true, true);
+  // 讀回、放進 canvas、疊邊框分開幾下做（1200 萬像素每一步 30～70ms），中間讓轉圈走一格
+  const im = await R.readOut(), next = () => new Promise(r => setTimeout(r));
+  await next();
+  const W = base.canvas.width, H = base.canvas.height, f = P.frame ? frameById(P.frame) : null;
   const g = f ? f.geom(W, H) : { W, H, x: 0, y: 0 };
   // iPhone 的 canvas 最大約 1600 萬像素，邊框加大後超過就整張等比縮小
   const sc = Math.min(1, Math.sqrt(16e6 / (g.W * g.H)));
-  const out = newCanvas(g.W * sc, g.H * sc), ctx = out.getContext('2d');
-  ctx.scale(sc, sc);
-  // 出框要用原尺寸重畫一次（畫面上的是螢幕大小）
-  let photo = gl;
-  if (P.pop) { photo = newCanvas(W, H); popDraw(photo.getContext('2d'), W, H); }
-  if (f) drawFrame(ctx, f, W, H, gl, (c, gg) => c.drawImage(photo, gg.x, gg.y, W, H));
-  else ctx.drawImage(photo, 0, 0);
+  const out = memCanvas(g.W * sc, g.H * sc), ctx = out.getContext('2d');
+  // 沒有邊框、出框：直接放進輸出那張
+  if (!f && !P.pop && sc === 1) ctx.putImageData(im, 0, 0);
+  else {
+    const gl = memCanvas(im.width, im.height);
+    gl.getContext('2d').putImageData(im, 0, 0);
+    await next();
+    ctx.scale(sc, sc);
+    // 出框要用原尺寸重畫一次（畫面上的是螢幕大小）
+    let photo = gl;
+    if (P.pop) { photo = newCanvas(W, H); popDraw(photo.getContext('2d'), W, H, gl); }
+    if (f) drawFrame(ctx, f, W, H, gl, (c, gg) => c.drawImage(photo, gg.x, gg.y, W, H));
+    else ctx.drawImage(photo, 0, 0);
+  }
   ctx.save(); ctx.beginPath(); ctx.rect(g.x, g.y, W, H); ctx.clip(); ctx.translate(g.x, g.y);
   for (const s of stickers) {
     const w = s.size * W;
@@ -3560,8 +3578,10 @@ async function save() {
   try {
     await bbWait();
     const out = await compose();
-    const png = P.bg === 'clear';
-    const blob = await new Promise(r => out.toBlob(r, png ? 'image/png' : 'image/jpeg', 0.95));
+    const png = P.bg === 'clear', type = png ? 'image/png' : 'image/jpeg';
+    // 壓檔在背景執行緒做（不支援的瀏覽器照舊在這裡壓）
+    const blob = await prep('jpeg', async () => ({ img: await createImageBitmap(out), type, q: 0.95 }), () => new Promise(r => out.toBlob(r, type, 0.95)));
+    out.width = 0;
     const name = `隨手修-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.${png ? 'png' : 'jpg'}`;
     const file = new File([blob], name, { type: blob.type });
     if (navigator.canShare?.({ files: [file] }) && matchMedia('(pointer:coarse)').matches) {

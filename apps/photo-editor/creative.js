@@ -4,7 +4,8 @@
 function rng(seed) {
   return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
 }
-function canvas(w, h) { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; }
+// mem：放記憶體（第一次拿 context 就決定）。小張的、會被畫進縮圖再讀回的用這個，GPU 上的讀回要等 GPU 畫完（評審 L71）
+function canvas(w, h, mem) { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); if (mem) c.getContext('2d', { willReadFrequently: true }); return c; }
 // 跟照片同比例，長邊最多 max
 export function fitSize(w, h, max = 1280) { const k = Math.min(1, max / Math.max(w, h)); return [Math.round(w * k), Math.round(h * k)]; }
 function radial(ctx, x, y, r, stops) {
@@ -119,8 +120,9 @@ export const BG_PHOTOS = [
   ['whitecafe', '白色咖啡廳'], ['tokyo', '東京夜街'], ['rain', '雨夜街頭'], ['citylights', '城市光斑'],
 ].map(([id, name]) => ({ id, name, src: `bg/${id}.jpg` }));
 
-export function paint(list, id, w, h) {
-  const c = canvas(w, h), ctx = c.getContext('2d');
+// mem：縮圖這類要讀回的小張放記憶體（GPU 上的要等 GPU 畫完才讀得回來）
+export function paint(list, id, w, h, mem) {
+  const c = canvas(w, h, mem), ctx = c.getContext('2d');
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height);
   list.find(x => x.id === id).draw(ctx, c.width, c.height);
   return c;
@@ -138,17 +140,17 @@ function canvasFit(A) {
     return { W, H, x: (W - w) / 2, y: (H - h) / 2 };
   };
 }
-// 把照片放大鋪滿再糊掉：先縮很小再放大，iPhone 也能跑
+// 把照片放大鋪滿再糊掉：先縮很小再放大，iPhone 也能跑。中間這幾張都很小（最寬 800），放記憶體
 function blurBack(ctx, g, src) {
   const s = Math.min(1, 28 / Math.max(g.W, g.H));
-  let t = canvas(g.W * s, g.H * s);
+  let t = canvas(g.W * s, g.H * s, true);
   const k = Math.max(g.W / src.width, g.H / src.height), dw = src.width * k * s, dh = src.height * k * s;
-  const mid = canvas(Math.min(src.width, 128), Math.min(src.width, 128) * src.height / src.width);
+  const mid = canvas(Math.min(src.width, 128), Math.min(src.width, 128) * src.height / src.width, true);
   mid.getContext('2d').drawImage(src, 0, 0, mid.width, mid.height);
   t.getContext('2d').drawImage(mid, (t.width - dw) / 2, (t.height - dh) / 2, dw, dh);
   // 一次放大兩倍，放到夠大，邊緣才不會一格一格的
   while (t.width < 400 && t.width < g.W) {
-    const n = canvas(t.width * 2, t.height * 2), nc = n.getContext('2d');
+    const n = canvas(t.width * 2, t.height * 2, true), nc = n.getContext('2d');
     nc.imageSmoothingQuality = 'high'; nc.drawImage(t, 0, 0, n.width, n.height); t = n;
   }
   ctx.save(); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';

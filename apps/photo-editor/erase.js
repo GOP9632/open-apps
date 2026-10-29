@@ -3,10 +3,8 @@
 import { pinch, stageZoom } from './ui.js';
 import { segment } from './ai.js';
 import { LOW_MEM } from './matte.js';
-import { fillErase, growAlpha, softPatch } from './erasemix.js';
+import { fillErase, miganErase, ortSession } from './erasemix.js';
 
-const ORT = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
-const MODEL = 'https://huggingface.co/andraniksargsyan/migan/resolve/main/migan_pipeline_v2.onnx';
 const MASK_SIDE = 2048;  // 選區畫布最長邊
 const RUN_SIDE = 1024;   // 送進模型的範圍最長邊，太大手機記憶體不夠
 const PATCH_SIDE = 640;  // iPhone、iPad 改用方塊補洞時的範圍最長邊
@@ -15,14 +13,38 @@ const PATCH_SIDE = 640;  // iPhone、iPad 改用方塊補洞時的範圍最長�
 export const ERASE_LITE = LOW_MEM;
 const MASK_RGB = '255,64,110';
 
-let sessP;
-function session() {
-  sessP ||= import(ORT + 'ort.wasm.min.mjs').then(async ort => {
-    ort.env.wasm.wasmPaths = ORT;
-    ort.env.wasm.numThreads = 1; // GitHub Pages 沒有跨來源隔離，不能開多執行緒
-    return { ort, s: await ort.InferenceSession.create(MODEL, { executionProviders: ['wasm'] }) };
-  }).catch(e => { sessP = null; throw e; });
-  return sessP;
+// 消除自己一條背景執行緒（erasework.js，評審 M51）：補洞、外擴、羽化都在那裡算，按「立即消除」畫面不停。
+// 以前 iPhone 跟找臉、膚質、頭髮共用一條，開照片後那幾件還在算，消除要排在後面等 3～5 秒；電腦的 MI-GAN 在這裡跑，畫面停 1 秒。
+// 開不了（很舊的瀏覽器）、出錯或太久沒回應，就在這裡算
+let ew, eN = 0, modelOn = false;
+const eWait = new Map();
+function eraseWorker() {
+  if (ew !== undefined) return ew;
+  ew = false;
+  try {
+    const w = new Worker(new URL('./erasework.js', import.meta.url), { type: 'module' });
+    w.onmessage = e => { const r = eWait.get(e.data.id); eWait.delete(e.data.id); r?.(e.data); };
+    w.onerror = e => { console.warn('erasework', e.message); ew = false; eWait.forEach(r => r({ err: 'worker' })); eWait.clear(); };
+    ew = w;
+  } catch (e) { console.warn(e); }
+  return ew;
+}
+function work(op, a, ms) {
+  const w = eraseWorker();
+  if (!w) return Promise.resolve({ err: 'worker' });
+  return new Promise(res => {
+    const id = ++eN; eWait.set(id, res); setTimeout(() => eWait.delete(id) && res({ err: 'timeout' }), ms);
+    w.postMessage({ id, op, a });
+  });
+}
+// 進消除分頁先暖機：iPhone 用小圖補一次（頭一次跑特別慢）；電腦下載過模型的話先在背景建好（從瀏覽器快取讀，不用等網路）
+const MODEL_KEY = 'pe-migan';
+function warm() {
+  if (eN) return;
+  let had = false;
+  try { had = !ERASE_LITE && localStorage.getItem(MODEL_KEY) === '1'; } catch {}
+  if (had) modelOn = true;
+  if (ERASE_LITE || had) work('warm', { model: had }, 60000).then(r => { if (r.err) console.warn('erase warm', r.err); });
 }
 
 const newCanvas = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; };
@@ -149,10 +171,9 @@ function grow(mask, w, h, px) {
 }
 
 // src：照片 canvas；mask：任意大小、跟照片同比例的選區（alpha > 0 的地方要消除）；box：選區的外框（maskBox 算的）
-// fill：選區外擴、方塊補洞、做成要疊回的那塊（erasemix.js 的 fillErase；app 交給背景執行緒算）。
 // 回傳 { x, y, w, h, soft }：照片 (x, y) 開始 w×h 那塊要疊上去的 RGBA（選區以外透明、邊緣羽化，不預乘），
 // app 只換那一塊（評審 M51：以前在這裡用 canvas 外擴、模糊、疊回，再新建一整張照片重畫，按下去畫面停 0.6 秒以上）
-export async function inpaint(src, mask, box, fill = async a => fillErase(a)) {
+export async function inpaint(src, mask, box) {
   if (!box) return null;
   const W = src.width, H = src.height;
   // 取選區周圍一圈當參考，模型才知道背景長什麼樣
@@ -173,21 +194,12 @@ export async function inpaint(src, mask, box, fill = async a => fillErase(a)) {
   for (let i = 0; i < n; i++) ma[i] = md[i * 4 + 3];
   // 補的範圍稍微蓋過物體邊緣（外擴），疊回去時邊緣羽化，接縫才看不出來
   const a = { d: id, m: ma, w, h, cw, ch, px: Math.max(2, Math.round(Math.max(w, h) / 200)), feather: Math.max(1.5, Math.max(cw, ch) / 400) };
-  if (ERASE_LITE) {
-    await new Promise(r => setTimeout(r, 30)); // 讓「消除中」先畫出來
-    return { x: x0, y: y0, w: cw, h: ch, soft: await fill(a) };
-  }
-  const { ort, s } = await session();
-  const g = growAlpha(ma, w, h, a.px), img = new Uint8Array(3 * n), m = new Uint8Array(n);
-  for (let i = 0; i < n; i++) {
-    img[i] = id[i * 4]; img[n + i] = id[i * 4 + 1]; img[2 * n + i] = id[i * 4 + 2];
-    m[i] = g[i] * 255 > 10 ? 0 : 255; // MI-GAN：0 = 要補的洞，255 = 保留
-  }
-  const r = (await s.run({ image: new ort.Tensor('uint8', img, [1, 3, h, w]), mask: new ort.Tensor('uint8', m, [1, 1, h, w]) })).result.data;
-  const out = new Uint8ClampedArray(n * 4);
-  for (let i = 0; i < n; i++) { out[i * 4] = r[i]; out[i * 4 + 1] = r[n + i]; out[i * 4 + 2] = r[2 * n + i]; out[i * 4 + 3] = 255; }
-  // 只把選區（邊緣羽化）貼回原圖，其他地方保持原本的清晰度
-  return { x: x0, y: y0, w: cw, h: ch, soft: softPatch(out, g, w, h, cw, ch, a.feather) };
+  await new Promise(r => setTimeout(r, 30)); // 讓「消除中」先畫出來
+  // 補洞、外擴、羽化在背景執行緒（MI-GAN 第一次要下載 28MB，給久一點）
+  const r = await work(ERASE_LITE ? 'fill' : 'migan', a, ERASE_LITE ? 20000 : 180000);
+  if (r.err) console.warn('erase', r.err);
+  else if (!ERASE_LITE) { modelOn = true; try { localStorage.setItem(MODEL_KEY, '1'); } catch {} }
+  return { x: x0, y: y0, w: cw, h: ch, soft: r.err ? (ERASE_LITE ? fillErase(a) : await miganErase(a, ortSession)) : r.out };
 }
 
 // 識別路人：人像分割切成一塊一塊，最大的一塊當主角，其他夠大的就是路人
@@ -367,7 +379,7 @@ export function eraseLeave() {
 
 // app：{ base, setBase(canvas), commit(), item(opts), hideSlider(), showTab(t), toast(msg), busy(msg), toSrc() }
 export function tabErase(box, app) {
-  app.hideSlider();
+  app.hideSlider(); warm();
   const s = state(app.base);
   overlay().style.display = 'block';
   paintOverlay();
@@ -411,7 +423,7 @@ export function tabErase(box, app) {
   const go = app.item({ label: '立即消除', icon: '立即消除', cls: 'wide', style: 'background:var(--accent);color:#fff;font-weight:600', onclick: async () => {
     const none = () => { s.bb = null; s.ui(); app.toast('先塗抹或框選要消除的地方'); };
     if (!hasMask()) return none();
-    app.busy(sessP || ERASE_LITE ? '消除中…' : '下載消除模型（約 28MB，只有第一次）…');
+    app.busy(modelOn || ERASE_LITE ? '消除中…' : '下載消除模型（約 28MB，只有第一次）…');
     // 先讓「消除中…」畫出來再讀選區（讀選區要等 GPU，以前點下去畫面先停住、等一下才出現「消除中」，評審 M51）
     await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
     let t;
@@ -420,7 +432,7 @@ export function tabErase(box, app) {
       const map = app.toSrc?.(), [m, r] = map ? maskToSrc(s.mask, map, s.b.canvas.width, s.bb) : [s.mask, s.bb], box = r && maskBox(m, r);
       if (!box) return none();
       t = setTimeout(() => app.busy('消除中…'), 4000);
-      const out = await inpaint(s.b.canvas, m, box, app.fill);
+      const out = await inpaint(s.b.canvas, m, box);
       if (!out || app.base !== s.b) return;
       app.erasePatch(out); app.commit();
       state(app.base);

@@ -135,7 +135,8 @@ export async function detectBody(src) {
   if (k < 1) {
     img = document.createElement('canvas');
     img.width = Math.round(src.width * k); img.height = Math.round(src.height * k);
-    img.getContext('2d').drawImage(src, 0, 0, img.width, img.height);
+    // 縮在記憶體裡：照片在記憶體，畫進 GPU 的 canvas 再交給背景執行緒要等 GPU 讀回（評審 L71：點身體停 140ms）
+    img.getContext('2d', { willReadFrequently: true }).drawImage(src, 0, 0, img.width, img.height);
   }
   const res = await runTask('PoseLandmarker', POSE_OPTS, img) || (await landmarker()).detect(img);
   const lm = res.landmarks?.[0];

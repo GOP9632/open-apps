@@ -1289,16 +1289,20 @@ export class Renderer {
 
   // fx：{ lit: { lights: [{ pos, col, par }], ambS, ambB, bgDepth, haze, hazeCol }, flash: { amt, retro } }
   // full：畫原尺寸（存檔用）；平常只畫到螢幕看得到的解析度（this.view），手機才不會每動一下就算整張千萬像素
-  render(p, warps, fx = {}, full = false) {
+  // toFbo：畫到 fbOut（不畫到畫面），儲存用，readOut() 讀回。以前把畫面的 canvas 放大到原尺寸畫、畫完再縮回來，
+  // 縮回來那下要停 0.4 秒以上（評審 L71：儲存凍 311＋224ms），畫面上的也不用動
+  render(p, warps, fx = {}, full = false, toFbo = false) {
     const gl = this.gl, u = this.pMain.u;
     const s = full ? 1 : this.view, ho = this.h + this.ext, ow = Math.max(1, Math.round(this.w * s)), oh = Math.max(1, Math.round(ho * s));
-    if (this.canvas.width !== ow || this.canvas.height !== oh) { this.canvas.width = ow; this.canvas.height = oh; }
+    const out = toFbo ? (this.fbOut ||= this.fbo()) : null;
+    if (out) this.sizeFbo(out, ow, oh);
+    else if (this.canvas.width !== ow || this.canvas.height !== oh) { this.canvas.width = ow; this.canvas.height = oh; }
     if (fx.bokeh) this.bokeh(fx.bokeh);
     // 有臉型變形時先畫到暫存，最後再變形一次畫到畫面
     const lq = this.lq?.n ? this.lq : null, fast = !full && this.fast < 1, post = this.disp?.step > 0 || !!lq || fast || (this.keepPost && !full) || !!this.glow;
     const iw = fast ? Math.max(1, Math.round(ow * this.fast)) : ow, ih = fast ? Math.max(1, Math.round(oh * this.fast)) : oh, fb = fast ? this.fbFast : this.fbPost;
     if (post) this.sizeFbo(fb, iw, ih);
-    this.pass(this.pMain, post ? fb : null, iw, ih);
+    this.pass(this.pMain, post ? fb : out, iw, ih);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     const texs = [[this.tImg, 'uImg'], [this.tSmooth, 'uSmooth'], [this.tMask, 'uMask'], [this.tSeg, 'uSeg'], [this.tLut, 'uLut'], [this.tMask2, 'uMask2'], [this.tSegB, 'uSegB'],
       [this.fbS[0].t, 'uBlurS'], [this.fbM[0].t, 'uBgA'], [fx.bokeh ? this.fbK.t : this.fbL[0].t, 'uBgB'], [this.tOver, 'uOver'], [this.tEx, 'uEx'], [this.tBgImg, 'uBgImg'],
@@ -1377,15 +1381,15 @@ export class Renderer {
     const hex = p.bgColor || '#ffffff';
     gl.uniform3f(u.uBgColor, parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    this.mainFb = post ? { fb, ow, oh, fast: fast ? this.fast : 1 } : null;
+    this.mainFb = post && !out ? { fb, ow, oh, fast: fast ? this.fast : 1 } : null;
     if (this.glow?.q) this.glowBufs(fb);
-    if (post) this.postPass(p, fb, ow, oh, lq, null);
-    this.canvasOk = post;
+    if (post) this.postPass(p, fb, ow, oh, lq, null, out);
+    this.canvasOk = post && !out;
   }
   // 臉型位移、推臉位移場照 fb（主 shader 的結果）取樣畫到畫面上。sc：只畫這一塊（視窗座標 [x, y, w, h]）
-  postPass(p, fb, ow, oh, lq, sc) {
+  postPass(p, fb, ow, oh, lq, sc, out = null) {
     const gl = this.gl, d = this.pDisp;
-    this.pass(d, null, ow, oh, fb.t);
+    this.pass(d, out, ow, oh, fb.t);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.disp?.step > 0 ? this.disp.tex : null); gl.uniform1i(d.u.uDisp, 1);
     gl.uniform2f(d.u.uSize, this.w, this.h); gl.uniform2f(d.u.uOut, this.w, this.h + this.ext); gl.uniform1f(d.u.uStep, this.disp?.step > 0 ? this.disp.step : 0);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, lq ? lq.A.t : null); gl.uniform1i(d.u.uLiq, 3);
@@ -1493,6 +1497,40 @@ export class Renderer {
   }
   // 存草稿的縮圖（評審 L9）：畫面在 GPU 上先一半一半縮（每次 2×2 平均），最後縮到長邊 max，只讀回這一小張（回傳 Promise）。
   // 以前把整張畫面畫到 2D 畫布再縮，iPhone 要把一千多萬位元組從 GPU 讀回主執行緒，存草稿那一下會頓
+  // 等 GPU 把排好的畫完，不卡主執行緒：放一個柵欄，每 8ms 看一次（最多等 limit 毫秒）。
+  // 儲存時原尺寸畫完馬上讀回，主執行緒要停到 GPU 畫完（評審 L71：儲存凍 311＋224ms）
+  gpuDone(limit = 15000) {
+    const gl = this.gl, sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0), t0 = performance.now(); gl.flush();
+    return new Promise(res => {
+      const poll = () => {
+        if (!gl.isContextLost() && gl.clientWaitSync(sync, 0, 0) === gl.TIMEOUT_EXPIRED && performance.now() - t0 < limit) return setTimeout(poll, 8);
+        gl.deleteSync(sync); res();
+      };
+      poll();
+    });
+  }
+  // 讀回 render(…, toFbo) 畫好的那張：先讀進 GPU 上的緩衝區、放柵欄，畫完才拿回來，不卡主執行緒。
+  // fbOut 照 FBO 的方向畫（第一列是照片最上面），不用翻；透明的地方是預乘過的，換回一般的（跟以前從畫面讀一樣）
+  readOut() {
+    const gl = this.gl, f = this.fbOut, w = f.w, h = f.h, buf = gl.createBuffer(), n = w * h * 4;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, f.f);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf); gl.bufferData(gl.PIXEL_PACK_BUFFER, n, gl.STREAM_READ);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return this.gpuDone().then(() => {
+      const d = new Uint8ClampedArray(n);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf); gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, d);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); gl.deleteBuffer(buf);
+      // 原尺寸的暫存很大（1200 萬像素 48MB），讀完就放掉
+      this.sizeFbo(f, 1, 1);
+      for (let i = 3; i < n; i += 4) {
+        const a = d[i];
+        if (a === 255) continue;
+        if (a) { const k = 255 / a; d[i - 3] *= k; d[i - 2] *= k; d[i - 1] *= k; }
+      }
+      return new ImageData(d, w, h);
+    });
+  }
   thumb(max) {
     const gl = this.gl, c = this.canvas, k = Math.min(1, max / Math.max(c.width, c.height));
     const tw = Math.max(1, Math.round(c.width * k)), th = Math.max(1, Math.round(c.height * k));
