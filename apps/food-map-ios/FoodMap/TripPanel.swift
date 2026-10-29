@@ -36,8 +36,7 @@ struct TripPanel: View {
     @State private var loving = false
     @State private var placed = false
     @State private var checked = false          // 行程找不到時，已經重新跟伺服器確認過
-    // 拖曳手勢被系統取消時 onEnded 不會來（站卡那排會卡在拖到一半）：手勢一結束（含取消）就放下
-    @GestureState private var holding = false
+    @State private var held = RowHeld()         // 站卡長按拿起中／剛放下（UIKit 長按，見 RowHold.swift）
     @GestureState private var pulling = false   // 拉面板的手勢還在（被系統取消時把面板放回一段）
     @State private var lowering = false         // 清單捲到頂又往下拉過頭：放開就降一段
     @State private var pickingStart = false     // 起點選單（按鈕＋底部選單：用 Menu 的話從這顆拉面板拉不動）
@@ -155,7 +154,7 @@ struct TripPanel: View {
         .onChange(of: fitKey(d, base)) { fit(base, origin: origin, animated: true) }
         .onChange(of: mode.fitTick) {
             // 重新打開行程（店家頁「在行程裡」、訊息條）：不管之前拖到一半的狀態
-            if !holding && drag.id != nil { clearDrag(); mode.overDay = nil }
+            if !held.on && drag.id != nil { clearDrag(); mode.overDay = nil }
             fit(base, origin: origin, animated: true)
         }
         // 第一次量到大小（剛進行程模式）：0.5 秒縮放到這天的站（從店家頁進來的就飛到那站）
@@ -184,7 +183,6 @@ struct TripPanel: View {
         // 上一張是往下拖關掉的（還停在拖到的位置淡出）：下一張卡用新的位移，從 0 開始
         .onChange(of: mode.cand?.id) { _, id in if id != nil, cardLift.y != 0 { cardLift = Lift() } }
         .onChange(of: mode.sharing) { share(t) }
-        .onChange(of: holding) { _, h in if !h && drag.id != nil { drop(t) } }
         // 搜尋結果：地圖框住結果和這天的站
         .onChange(of: resultKey) { fit(base, origin: origin, animated: true) }
         .task(id: needKey(t, base, origin: origin)) { router.need(TripMath.needs(t, base, origin: origin)) }
@@ -506,6 +504,8 @@ struct TripPanel: View {
                 trips.deleteWithUndo(s, store: store)
             } content: {
                 StopCard(stop: s, n: i + 1, row: row, open: expanded == s.id, me: store.me, hot: mode.hot == s.id, tap: {
+                    // 長按拿起又放開，不算點一下
+                    guard drag.id == nil, !held.justEnded else { return }
                     // 第一下：地圖飛到這站；同一站再點一下才展開
                     if mode.hot == s.id {
                         Haptic.light()
@@ -514,7 +514,7 @@ struct TripPanel: View {
                         mode.tap(s.id)
                         if expanded != nil { withAnimation(.snappy) { expanded = nil } }
                     }
-                }, hold: AnyGesture(reorder(t, s, k: k).map { _ in () }))
+                }, hold: rowHold(t, s, k: k))
             }
         }
         .id(s.id)
@@ -537,24 +537,28 @@ struct TripPanel: View {
         mode.scrollTo = id
     }
 
-    // 長按 0.35 秒拿起來，拖到別的位置放開；拖到上面的「第 N 天」放開就換天
-    private func reorder(_ t: Trip, _ s: TripStop, k: Int) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.35)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
-            .updating($holding) { _, st, _ in st = true }
-            .onChanged { v in
-                guard case .second(true, let g) = v else { return }
-                // 正在把清單往下拉成拉面板：慢慢拉、停一下也不算長按拿起
-                guard drag.id != nil || (!pull.swift && !pull.uikit) else { return }
-                if drag.id == nil { begin(s, k: k, size: (mode.geo.rows[s.id]?.height ?? 80) - (mode.geo.gaps[s.id] ?? 0)) }
-                guard let g else { return }
-                // 位移只寫進 dragY（只有被拖的那列跟著動）；插到哪變了才改 drag（整個面板重畫一次）
-                dragY.y = g.translation.height
-                let to = drag.target(mode.geo, base: trips.stops(t.id, day: min(mode.day, t.days)), dy: dragY.y)
-                if to != drag.to { drag.to = to; Haptic.tick() }
-                overDay(t, g.location)
-            }
-            .onEnded { _ in drop(t) }
+    // 長按 0.35 秒拿起來，拖到別的位置放開；拖到上面的「第 N 天」放開就換天（UIKit 長按，見 RowHold.swift）
+    private func rowHold(_ t: Trip, _ s: TripStop, k: Int) -> RowHold {
+        RowHold(began: { _ in
+            held.on = true
+            // 正在把清單往下拉成拉面板：不算長按拿起
+            guard drag.id == nil, !pull.swift, !pull.uikit else { return }
+            begin(s, k: k, size: (mode.geo.rows[s.id]?.height ?? 80) - (mode.geo.gaps[s.id] ?? 0))
+        }, moved: { d, p in
+            guard drag.id == s.id else { return }
+            // 位移只寫進 dragY（只有被拖的那列跟著動）；插到哪變了才改 drag（整個面板重畫一次）
+            dragY.y = d.height
+            let to = drag.target(mode.geo, base: trips.stops(t.id, day: min(mode.day, t.days)), dy: dragY.y)
+            if to != drag.to { drag.to = to; Haptic.tick() }
+            overDay(t, p)
+        }, ended: { _ in
+            // 沒拿起來就失敗的（手指先動、清單在捲）不算
+            guard held.on else { return }
+            held.on = false
+            held.endedAt = CACurrentMediaTime()
+            // 放開或被系統取消都放下
+            if drag.id != nil { drop(t) }
+        })
     }
 
     private func overDay(_ t: Trip, _ p: CGPoint) {
@@ -632,8 +636,8 @@ struct TripPanel: View {
                         .id(s.id)
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { if drag.id == nil { mode.geo.cards[s.id] = $0 } }
                         .contentShape(.rect)
-                        .onTapGesture { mode.tap(s.id) }
-                        .gesture(reorderX(t, s, k: k))
+                        .onTapGesture { if drag.id == nil, !held.justEnded { mode.tap(s.id) } }
+                        .modifier(RowHoldIf(hold: rowHoldX(t, s, k: k)))
                         .offset(x: dragging ? 0 : drag.shift(k))
                         .modifier(LiftOffset(lift: dragY, on: dragging, x: true))
                         .scaleEffect(dragging ? 1.06 : 1)
@@ -656,21 +660,25 @@ struct TripPanel: View {
         .frame(height: 74)
     }
 
-    // 站卡長按拿起來左右拖：地圖上的號碼和路線跟著換
-    private func reorderX(_ t: Trip, _ s: TripStop, k: Int) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.35)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
-            .updating($holding) { _, st, _ in st = true }
-            .onChanged { v in
-                guard case .second(true, let g) = v else { return }
-                if drag.id == nil { begin(s, k: k, size: (mode.geo.cards[s.id]?.width ?? 150) + 8) }
-                guard let g else { return }
-                dragY.y = g.translation.width
-                let to = drag.targetX(mode.geo, base: trips.stops(t.id, day: min(mode.day, t.days)), dx: dragY.y)
-                if to != drag.to { drag.to = to; Haptic.tick() }
-                overDay(t, g.location)
-            }
-            .onEnded { _ in drop(t) }
+    // 站卡長按拿起來左右拖：地圖上的號碼和路線跟著換（UIKit 長按，橫的清單才捲得動）
+    private func rowHoldX(_ t: Trip, _ s: TripStop, k: Int) -> RowHold {
+        RowHold(began: { _ in
+            held.on = true
+            guard drag.id == nil else { return }
+            begin(s, k: k, size: (mode.geo.cards[s.id]?.width ?? 150) + 8)
+        }, moved: { d, p in
+            guard drag.id == s.id else { return }
+            dragY.y = d.width
+            let to = drag.targetX(mode.geo, base: trips.stops(t.id, day: min(mode.day, t.days)), dx: dragY.y)
+            if to != drag.to { drag.to = to; Haptic.tick() }
+            overDay(t, p)
+        }, ended: { _ in
+            // 沒拿起來就失敗的（手指先動、清單在捲）不算
+            guard held.on else { return }
+            held.on = false
+            held.endedAt = CACurrentMediaTime()
+            if drag.id != nil { drop(t) }
+        })
     }
 
     // ----- 加站卡：點了地圖上的收藏、或搜尋結果 -----
@@ -1490,7 +1498,7 @@ struct StopCard: View {
     var hot = false        // 地圖上正放大的那站
     // 點一下展開、長按拿起來換順序：只放在上面那排，展開後的停留滑桿、開關不會被吃掉
     var tap: () -> Void = {}
-    var hold: AnyGesture<Void> = AnyGesture(LongPressGesture(minimumDuration: 99).map { _ in () })
+    var hold: RowHold? = nil
 
     var body: some View {
         let color = TripColor.of(n - 1)
@@ -1532,7 +1540,7 @@ struct StopCard: View {
             .padding(12)
             .contentShape(.rect)
             .onTapGesture(perform: tap)
-            .gesture(hold)
+            .modifier(RowHoldIf(hold: hold))
             if open { StopEditor(stop: stop, place: place, arrive: row?.arrive).padding(.horizontal, 12).padding(.bottom, 12) }
         }
         .background {

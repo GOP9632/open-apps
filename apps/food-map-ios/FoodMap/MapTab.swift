@@ -182,6 +182,7 @@ struct MapTab: View {
                 .onMapCameraChange(frequency: .continuous) { _ in
                     // 手指拖地圖：下面那塊降到一行（停下來不自動彈回）
                     let now = CACurrentMediaTime()
+                    if pos.positionedByUser { pins.camAt = now }
                     if !trip.on, pos.positionedByUser, now > quiet.until, now > MapPanel.shared.calmUntil, !MapPanel.shared.dragging {
                         MapPanel.shared.go(.low)
                     }
@@ -678,6 +679,7 @@ struct MapTab: View {
 
     // 地圖上的號碼：地圖飛過去、清單捲到那站
     private func tapMark(_ id: String) {
+        guard !pins.moving else { Perf.shared.mark("地圖在動 不算點號碼"); return }
         trip.pickAt = CACurrentMediaTime()
         if trip.cand != nil { withAnimation(.snappy) { trip.cand = nil } }
         trip.tap(id)
@@ -845,6 +847,7 @@ struct MapTab: View {
 
     // 點泡泡：放大到框住這幾家
     private func zoom(_ c: PinCluster) {
+        guard !pins.moving else { Perf.shared.mark("地圖在動 不算點泡泡"); return }
         // 行程裡點泡泡放大：不是點空白（不收加站卡、不收搜尋）
         if trip.on { trip.pickAt = CACurrentMediaTime() }
         Haptic.light()
@@ -1509,6 +1512,9 @@ struct PickedCard: View {
     @ObservationIgnored private var merging: Set<String> = []
     var menu: String?                            // 長按開了選單的那根
     @ObservationIgnored var longFired = false    // 長按剛開過選單（放開手指時不要當成點一下）
+    // 手指移動、縮放地圖的最後一幀：兩指縮放放開時，手指底下的圖釘按鈕會收到「放開」，不能當成點一下
+    @ObservationIgnored var camAt: CFTimeInterval = 0
+    var moving: Bool { CACurrentMediaTime() - camAt < 0.12 }
     @ObservationIgnored var tapAt: CFTimeInterval = 0   // 手指最後點圖釘按鈕的時間（行程模式擋 MapKit 晚到的選取）
     @ObservationIgnored var touch: (p: CGPoint, at: CFTimeInterval)?   // 最後一次點地圖的位置（螢幕座標）、時間
     @ObservationIgnored var countedKey: String?  // 「附近 N 間」已經為這次落下數過了
@@ -1571,6 +1577,7 @@ struct PickedCard: View {
     // 手指點圖釘：點到已經選著的那根也通知一次（例如加站卡關掉後再點同一根）
     private(set) var again = 0
     func tap(_ id: String) {
+        guard !moving else { Perf.shared.mark("地圖在動 不算點圖釘"); return }
         tapAt = CACurrentMediaTime()
         if sel == id { again += 1 } else { select(id) }
     }

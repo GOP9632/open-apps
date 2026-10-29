@@ -320,6 +320,15 @@ struct TripForm: View {
     }
 }
 
+// 診斷用（只有開發版）：啟動參數 -b8NoSwipe 把左滑刪除整個關掉，看清單捲不動是不是它擋的
+private let swipeOff: Bool = {
+    #if DEBUG
+    return ProcessInfo.processInfo.arguments.contains("-b8NoSwipe")
+    #else
+    return false
+    #endif
+}()
+
 // 往左滑刪除（滑超過一半放開就刪，有復原）；上下捲動照常
 struct SwipeToDelete<C: View>: View {
     var enabled = true
@@ -363,6 +372,6 @@ struct SwipeToDelete<C: View>: View {
                 } else {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { dx = 0 }
                 }
-            }, including: enabled ? .all : .subviews)
+            }, including: enabled && !swipeOff ? .all : .subviews)
     }
 }
