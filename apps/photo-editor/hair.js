@@ -157,7 +157,8 @@ void main(){
     float r = clamp(luma(col) / lm, 0.0, 3.0);
     vec3 t = uDye * pow(r, 0.85);
     t += max(vec3(0.0), vec3(luma(t) - 1.0));
-    col = mix(col, clamp(t, 0.0, 1.0), uDyeAmt * h);
+    // 頭髮遮罩外面還有一點點（0.01 上下）：白衣服、背景會被染暗 1～2 階、偏紅（評審 L63），太淡的不染
+    col = mix(col, clamp(t, 0.0, 1.0), uDyeAmt * h * smoothstep(0.02, 0.08, h));
   }
   o = vec4(col, 1.0);
 }`;

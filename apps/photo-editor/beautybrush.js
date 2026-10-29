@@ -571,9 +571,12 @@ async function blemishStroke(ses, pts, R, k) {
 }
 // 除斑的橡皮擦：塗到的地方，「開始之前的照片」換回除斑改之前的樣子（O0），再跟其他筆一起重算
 async function blemishErase(ses, pts, R) {
-  const { W, H } = ses, F = bounds(pts, R + 2, 1, W, H), fw = F[2] - F[0], fh = F[3] - F[1];
+  // 擦的範圍比筆刷大一成半、邊緣四倍陡：除斑補的那層會暈到筆刷邊外面一點，以前同大小擦一次邊上留一圈（最多 35 階，
+  // 擦兩、三次還剩 15、7 階，評審 L61）。現在擦一次剩 1～3 階，擦一半的邊還是軟的
+  const { W, H } = ses, R2 = R * 1.15, F = bounds(pts, R2 + 2, 1, W, H), fw = F[2] - F[0], fh = F[3] - F[1];
   if (fw < 2 || fh < 2) return null;
-  const cov = stroke(pts, F[0], F[1], fw, fh, 1, R), before = readO(ses, F[0], F[1], F[2], F[3]), org = new Uint8ClampedArray(before);
+  const cov = stroke(pts, F[0], F[1], fw, fh, 1, R2), before = readO(ses, F[0], F[1], F[2], F[3]), org = new Uint8ClampedArray(before);
+  for (let i = 0; i < cov.length; i++) cov[i] = Math.min(1, cov[i] * 4);
   eachTile(ses, F[0], F[1], F[2], F[3], k => {
     const t = ses.O0.get(k);
     if (t) blit(t.d, t.x, t.y, t.w, org, F[0], F[1], fw, Math.max(F[0], t.x), Math.max(F[1], t.y), Math.min(F[2], t.x + t.w), Math.min(F[3], t.y + t.h));
@@ -613,13 +616,16 @@ function valid(ses, S) {
   for (let k = ses.v0; k < S.ver; k++) if (S.edits[k]?.ses !== ses) return false;
   return true;
 }
+// 離開美顏筆分頁：下次進來是塗抹
+export function bbLeave() { st.erase = false; }
 // 照片收起來（壓成檔案）時，這串存的原圖、遮罩一起放掉
 export function bbRelease(S) { if (S.bbSes) { kill(S.bbSes); S.bbSes = null; gpuFree(); } }
 
 export function tabBeautyBrush(box, app) {
   const { item, sliderRow, showTab } = app;
   BRUSHES.forEach(b => box.append(item({
-    label: b.name, icon: b.name, cls: 'wide', on: st.tool === b.id, onclick: () => { st.tool = b.id; showTab('bbrush'); },
+    // 換筆回到塗抹（以前擦除一直開著，換了筆、離開再回來都還在擦，評審 L62）
+    label: b.name, icon: b.name, cls: 'wide', on: st.tool === b.id, onclick: () => { if (st.tool !== b.id) st.erase = false; st.tool = b.id; showTab('bbrush'); },
   })));
   const b = BRUSHES.find(x => x.id === st.tool);
   // 塗抹、擦除（照 Hypic，切換只換這支筆）
@@ -705,6 +711,8 @@ export function beautyBrushInput(wrap, app) {
       if (!valid(S.bbSes, S)) { bbRelease(S); S.bbSes = session(S.canvas, S.ver); }
       const ses = S.bbSes, sp = job.map ? job.pts.map(job.map) : job.pts;
       r = await (job.tool !== 'blemish' ? maskStroke(ses, job.tool, sp, job.rd, job.k, job.erase) : job.erase ? blemishErase(ses, sp, job.rd) : blemishStroke(ses, sp, job.rd, job.k));
+      // 擦除沒擦到東西，但這張照片之前塗過別串美顏筆（中間畫過塗鴉、消除…，那串已經畫進照片）：說一聲，不然像壞了（評審 L62）
+      if (!r && job.erase && S.edits.slice(0, ses.v0).some(e => e?.ses?.mw && e.ses !== ses)) app.toast?.('之前塗的美顏筆中間做過別的修改，已經畫進照片，擦除只擦得到之後塗的；要拿掉請用復原。', 3500);
       // 算的時候照片被整張換掉（合併、裁切…）：這一筆不算
       if (r && !same(job)) { r.aux.swap(); r = null; }
     } finally {
