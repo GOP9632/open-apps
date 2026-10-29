@@ -3498,10 +3498,10 @@ function saveDraft(mode) {
   }).catch(e => { console.warn('草稿存不了', e); if (d === draft && plan && d.ph === plan.ph) { d.ph = null; d.ptr = null; d.pc = null; } });
 }
 function draftThumb() {
+  // 畫面上的修圖結果在 GPU 上縮好再讀回小張（評審 L9）；不行的話照以前整張畫下來縮。看原圖時照片本身
+  if (!cmpOn) try { const im = R.thumb(160), t = newCanvas(im.width, im.height); t.getContext('2d').putImageData(im, 0, 0); return t.toDataURL('image/jpeg', 0.8); } catch {}
   try {
-    // 畫面上的修圖結果在 GPU 上縮好再讀回小張（評審 L9）；看原圖時照片本身
-    if (!cmpOn) { const im = R.thumb(160), t = newCanvas(im.width, im.height); t.getContext('2d').putImageData(im, 0, 0); return t.toDataURL('image/jpeg', 0.8); }
-    const g = base.canvas, k = 160 / Math.max(g.width, g.height);
+    const g = cmpOn ? base.canvas : $('#gl'), k = 160 / Math.max(g.width, g.height);
     const t = newCanvas(Math.max(1, Math.round(g.width * k)), Math.max(1, Math.round(g.height * k)));
     t.getContext('2d').drawImage(g, 0, 0, t.width, t.height);
     return t.toDataURL('image/jpeg', 0.8);

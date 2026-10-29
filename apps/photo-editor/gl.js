@@ -1299,7 +1299,7 @@ export class Renderer {
     };
     while (w > tw * 2 && h > th * 2) blit(this.fbT[i++] ||= this.fbo(), Math.ceil(w / 2), Math.ceil(h / 2));
     blit(this.fbT[i] ||= this.fbo(), tw, th);
-    const d = new Uint8ClampedArray(tw * th * 4), row = tw * 4;
+    const d = new Uint8Array(tw * th * 4), row = tw * 4;
     gl.bindFramebuffer(gl.FRAMEBUFFER, src.f); gl.readPixels(0, 0, tw, th, gl.RGBA, gl.UNSIGNED_BYTE, d); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     // 讀回來是下面那列在前：上下翻過來；透明的地方跟以前一樣當成黑底（存成 JPEG）
     const out = new ImageData(tw, th);
