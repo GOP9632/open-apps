@@ -140,6 +140,15 @@ struct EditSheet: View {
         guard let base else { return false }
         return norm(place) != norm(base.0) || dishes != base.1 || tags != base.2
     }
+    // 取消：先收鍵盤，輸入框還沒交給綁定的字（選字中、剛刪掉的）交出來之後，再拿當下的欄位跟打開時比。
+    // 模擬器量到刪完 0.3 秒內按取消，比對還拿到刪之前的值，會誤跳「放棄這次的修改？」
+    private func cancel() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(60))
+            if dirty { quitting = true } else { dismiss() }
+        }
+    }
     // 打了字又刪掉、時段點開又關掉，不算改過（Place.row 本來就把 nil 存成空字串，存檔內容不變）
     private func norm(_ p: Place) -> Place {
         var p = p
@@ -226,7 +235,7 @@ struct EditSheet: View {
             .scrollContentBackground(.hidden).background(Color.bg)
             .navigationTitle(isNew ? "自己填" : "編輯").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("取消") { if dirty { quitting = true } else { dismiss() } } }
+                ToolbarItem(placement: .cancellationAction) { Button("取消", action: cancel) }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(busy ? "存檔中…" : "存檔", action: save).disabled(busy || place.name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
