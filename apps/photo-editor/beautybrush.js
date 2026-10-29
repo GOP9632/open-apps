@@ -16,6 +16,7 @@
 // 逐像素的迴圈都拆成小函式：放在大函式裡，瀏覽器很晚才最佳化，一個 30 萬像素的迴圈要 30～70ms（小函式 4～13ms）。
 import { pinch, stageZoom } from './ui.js';
 import { boxBlur } from './cblur.js';
+import { sstep, blur, done, wblur3, helSteps, helCalc, HELD, packHel } from './bbhel.js';
 import { gpuMix, gpuBlem, gpuWarm, gpuPrime, gpuFree } from './bbgpu.js';
 
 export const BRUSHES = [
@@ -36,41 +37,13 @@ const newCanvas = (w, h) => Object.assign(document.createElement('canvas'), { wi
 // 筆刷半徑（照片像素）：大小 1~100 → 照片沒放大時是短邊的 0.4%~12%；照片放大幾倍筆刷就細幾倍
 export const bbRadius = (size, W, H) => Math.min(W, H) * (0.003 + 0.117 * size / 100) / stageZoom.z;
 
-const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-const blur = (a, w, h, r) => boxBlur(new Float32Array(a), w, h, Math.max(1, r));
-// 生成器一口氣跑完（筆畫當場要用）；stepwise：一步一步跑，每步之間讓畫面走一格，alive() 變 false 就停、回傳 null
+
+// stepwise：生成器一步一步跑，每步之間讓畫面走一格，alive() 變 false 就停、回傳 null
 // （點開美顏筆時在背景先算的那些，iPhone 一口氣做完要停 0.1～0.2 秒，評審 #159）
-const done = g => { let r; while (!(r = g.next()).done); return r.value; };
 async function stepwise(g, alive) {
   let r;
   while (!(r = g.next()).done) { await new Promise(f => setTimeout(f)); if (!alive()) return null; }
   return r.value;
-}
-// 加權模糊：sum(a·wt) / sum(wt)；三個顏色共用一次權重的模糊（每模糊一次是一步）
-const wblur3 = (...a) => done(wblur3s(...a));
-function* wblur3s(c, wt, w, h, r) {
-  const ww = blur(wt, w, h, r), out = [];
-  yield;
-  for (const a of c) {
-    const b = boxBlur(mulW(a, wt), w, h, Math.max(1, r));
-    out.push(divW(b, ww, a)); yield;
-  }
-  return out;
-}
-// 生成器裡的逐像素迴圈瀏覽器很晚才最佳化（評審 #162：換黑眼圈那步 144ms），迴圈都放在下面這些小函式
-function mulW(a, wt) { const n = wt.length, o = new Float32Array(n); for (let i = 0; i < n; i++) o[i] = a[i] * wt[i]; return o; }
-function divW(b, ww, a) { for (let i = 0, n = b.length; i < n; i++) b[i] = ww[i] > 1e-6 ? b[i] / ww[i] : a[i]; return b; }
-function sqDiff(L, Lb) { const n = L.length, V = new Float32Array(n); for (let i = 0; i < n; i++) V[i] = (L[i] - Lb[i]) ** 2; return V; }
-function pow4(L) { const n = L.length, o = new Float32Array(n); for (let i = 0; i < n; i++) o[i] = L[i] ** 4 + 1e-4; return o; }
-function oilWt(L, Lb) { const n = L.length, o = new Float32Array(n); for (let i = 0; i < n; i++) o[i] = 1 - sstep(0.02, 0.1, L[i] - Lb[i]) * sstep(0.5, 0.8, L[i]) + 1e-4; return o; }
-function darkD(ref, low, cap) {
-  const n = ref[0].length, D = [0, 1, 2].map(() => new Float32Array(n));
-  for (let i = 0; i < n; i++) {
-    const dl = 0.299 * (ref[0][i] - low[0][i]) + 0.587 * (ref[1][i] - low[1][i]) + 0.114 * (ref[2][i] - low[2][i]);
-    const keep = 1 - sstep(cap, cap * 1.7, dl);
-    for (let j = 0; j < 3; j++) D[j][i] = Math.min(cap, Math.max(0, ref[j][i] - low[j][i])) * keep;
-  }
-  return D;
 }
 
 // 暫存陣列：每一塊都拿同一組，不要一直重配
@@ -121,7 +94,7 @@ function* sessionSteps(canvas, v0) {
   const ms = Math.min(1, Math.max(0.5, 1000 / Math.max(W, H))), hs = Math.min(1, 400 / S);
   const loc = [0.06, 0.03, 0.05].map(f => Math.max(1, Math.round(R0 * f)));  // 眼部亮白、調膚質、去油光的小模糊
   const ses = {
-    canvas, ctx: canvas.getContext('2d'), W, H, S, R0, v0,
+    id: ++sesN, canvas, ctx: canvas.getContext('2d'), W, H, S, R0, v0,
     mw: Math.max(1, Math.round(W * ms)), mh: Math.max(1, Math.round(H * ms)),
     hw: Math.max(1, Math.round(W * hs)), hh: Math.max(1, Math.round(H * hs)),
     ntx: Math.ceil(W / TS), A: {}, box: {}, O: new Map(), O0: new Map(), hel: {}, hp: [], dirty: [],
@@ -130,7 +103,11 @@ function* sessionSteps(canvas, v0) {
   ses.Oh = yield* shrink(canvas, ses.hw, ses.hh);
   return ses;
 }
-function kill(ses) { Object.assign(ses, { dead: true, canvas: null, ctx: null, O: null, O0: null, A: null, Oh: null, hel: null }); }
+function kill(ses) {
+  if (ses.wSeen !== undefined) bbWork('drop', { sid: ses.id });
+  Object.assign(ses, { dead: true, canvas: null, ctx: null, O: null, O0: null, A: null, Oh: null, hel: null });
+}
+let sesN = 0;
 // 縮小圖：一次縮一半（瀏覽器一次縮太多會跳格），回傳 [R, G, B, L]（0～1）。
 // 每一半照列分段畫（每段約 50 萬像素、剪裁框對齊像素，跟一次畫完一樣），每段是一步：1200 萬像素第一次縮一半 iPhone 要 40ms
 function* shrink(src, w, h) {
@@ -223,40 +200,46 @@ function hel(ses, t) {
   while (o.seen < ses.hp.length) helPatch(ses, t, o, ...ses.hp[o.seen++]);
   return o;
 }
-// 點開美顏筆時在背景先算 hel（每模糊一次讓畫面走一格）；筆畫比它先要用到，就照舊當場算（這邊算到一半的丟掉）。
-// 算的時候除斑改了小圖：seen 記開始那時候，改到的那幾塊之後 hel() 會補算
+// 點開美顏筆、換筆時先算 hel：交給背景執行緒（bbwork.js，連打包給 GPU 的那張一起），主執行緒不停；
+// 筆畫比它先要用到，就照舊當場算（背景算好的丟掉）。這串的小圖第一次要用時傳過去一份（seen 記那時候），
+// 之後除斑改了小圖，改到的那幾塊 hel() 會補算。背景執行緒開不了、出錯，就在這裡分步算（每模糊一次讓畫面走一格）
 async function helWarm(ses, t, alive) {
-  if (ses.hel[t]) return;
+  if (ses.hel[t] || !HEAVY.includes(t)) return;
+  if (bbWorker()) {
+    if (ses.wSeen === undefined) { ses.wSeen = ses.hp.length; bbWork('oh', { sid: ses.id, Oh: ses.Oh, hw: ses.hw, hh: ses.hh }); }
+    const r = await bbWork('hel', { sid: ses.id, t, R0: ses.R0, S: ses.S, k: ses.hw / ses.W });
+    if (!r.err) {
+      // 算好了就留著（換了筆也留，再換回來不用重算）
+      if (!ses.dead && !ses.hel[t]) { const o = r.out.o; o.seen = ses.wSeen; o.packed = r.out.d; ses.hel[t] = o; }
+      return;
+    }
+    console.warn('bbwork', r.err);
+  }
   const seen = ses.hp.length, o = await stepwise(helSteps(t, ses.Oh, ses.hw, ses.hh, ses.R0, ses.S, ses.hw / ses.W), () => alive() && !ses.dead && !ses.hel[t]);
   if (o && !ses.hel[t]) { o.seen = seen; ses.hel[t] = o; }
 }
-// O：小圖（R G B L）、w × h；k：小圖對原圖的比例
-const helCalc = (...a) => done(helSteps(...a));
-function* helSteps(t, O, w, h, R0, S, k) {
-  const c = O.slice(0, 3), L = O[3];
-  let o = {};
-  // 三個顏色各模糊一次，每次是一步
-  const blur3 = function* (r) { const out = []; for (const a of c) { out.push(blur(a, w, h, r)); yield; } return out; };
-  if (t === 'smooth') {
-    // 醒圖：短邊 324px 縮圖上 9 點方框、間距 1.5px，約短邊的 1.5%
-    const r = S * 0.015 * k, Lb = blur(L, w, h, r);
-    yield;
-    o = { B: yield* blur3(r), V: boxBlur(sqDiff(L, Lb), w, h, Math.max(1, r)) };
-  } else if (t === 'circle' || t === 'fold') {
-    // 跟周圍亮的皮膚比，暗多少補多少（只補低頻，紋理留著）；差太多的是眼珠、眉毛、嘴縫這種本來就黑的地方，不補
-    const fold = t === 'fold', cap = fold ? 0.3 : 0.2;
-    const ref = yield* wblur3s(c, pow4(L), w, h, R0 * (fold ? 0.7 : 0.6) * k);
-    const low = yield* blur3(R0 * 0.08 * k);
-    o = { D: darkD(ref, low, cap) };
-  } else if (t === 'oil') {
-    // 周圍不反光的皮膚是什麼顏色
-    const r = R0 * 0.4 * k, Lb = blur(L, w, h, r);
-    yield;
-    o = { Lb, ref: yield* wblur3s(c, oilWt(L, Lb), w, h, r) };
-  } else if (t === 'texture') {
-    o = { b2: yield* blur3(R0 * 0.25 * k) };
-  }
-  return o;
+// 小圖上有大範圍計算的筆（眼部亮白、牙齒美白沒有）
+const HEAVY = ['smooth', 'circle', 'fold', 'oil', 'texture'];
+let bw, bwN = 0;
+const bwWait = new Map();
+function bbWorker() {
+  if (bw !== undefined) return bw;
+  bw = false;
+  try {
+    const w = new Worker(new URL('./bbwork.js', import.meta.url), { type: 'module' });
+    w.onmessage = e => { const r = bwWait.get(e.data.id); bwWait.delete(e.data.id); r?.(e.data); };
+    w.onerror = e => { console.warn('bbwork', e.message); bw = false; bwWait.forEach(r => r({ err: 'worker' })); bwWait.clear(); };
+    bw = w;
+  } catch (e) { console.warn(e); }
+  return bw;
+}
+function bbWork(op, a) {
+  const w = bbWorker();
+  if (!w) return Promise.resolve({ err: 'worker' });
+  return new Promise(res => {
+    const id = ++bwN; bwWait.set(id, res); setTimeout(() => bwWait.delete(id) && res({ err: 'timeout' }), 20000);
+    w.postMessage({ id, op, a });
+  });
 }
 // 小圖上一個像素改了，各筆的效果最遠會影響到幾格（三次方框模糊一次影響 3r 格，模糊完再模糊就加起來）
 function helReach(t, R0, S, k) {
@@ -370,24 +353,18 @@ function pix(t, a, r, g, b, l, e) {
     P0 = r + (l - r) * dd; P0 += (1 - P0) * lift; P1 = g + (l - g) * dd; P1 += (1 - P1) * lift; P2 = b + (l - b) * dd; P2 += (1 - P2) * lift;
   }
 }
-const HELD = { smooth: hp => [hp.V, ...hp.B], circle: hp => hp.D, fold: hp => hp.D, oil: hp => hp.ref, texture: hp => hp.b2, eye: () => [], teeth: () => [] };
-// GPU 用：小圖上的效果打包成一張 RGBA 浮點貼圖（去油光多放周圍亮度 Lb），小模糊每個通道的半徑
-const PACK = { ...HELD, oil: hp => [...hp.ref, hp.Lb] }, RAD = { eye: s => [s.re, s.re, s.re, 0], texture: s => [s.rt, s.rt, s.rt, 0], oil: s => [2, 2, 2, s.ro] };
+// GPU 用：小模糊每個通道的半徑（小圖上的效果打包見 bbhel.js 的 PACK）
+const RAD = { eye: s => [s.re, s.re, s.re, 0], texture: s => [s.rt, s.rt, s.rt, 0], oil: s => [2, 2, 2, s.ro] };
 // GPU 上一支筆要的東西（見 gpuMix）
 function mkJob(ses, t) {
   const hp = hel(ses, t);
   // r：只打包小圖的 [r0,r2)×[r1,r3)
-  const pack = (r = [0, 0, ses.hw, ses.hh]) => {
-    const a = PACK[t](hp);
-    if (!a.length) return null;
-    const w = r[2] - r[0], d = new Float32Array(w * (r[3] - r[1]) * 4);
-    for (let k = 0; k < a.length; k++) packCh(a[k], d, k, ses.hw, r[0], r[1], w, r[3]);
-    return d;
+  // 背景執行緒算的那份已經打包好（之後除斑改了小圖就重打包）：直接拿去傳，用過就放掉
+  const pack = r => {
+    if (!r && hp.packed && !hp.v) { const d = hp.packed; hp.packed = null; return d; }
+    return packHel(t, hp, ses.hw, r || [0, 0, ses.hw, ses.hh]);
   };
   return { t, A: ses.A[t], m: null, box: ses.box[t], hel: hp, pack, rad: RAD[t]?.(ses) || null };
-}
-function packCh(c, d, k, hw, x0, y0, w, y1) {
-  for (let y = y0, o = k; y < y1; y++) for (let i = y * hw + x0, e = i + w; i < e; i++, o += 4) d[o] = c[i];
 }
 // 回傳 Promise（GPU 在算）或 null（不支援，用 CPU）
 function gpu(ses, x0, y0, x1, y1) {
