@@ -705,7 +705,7 @@ function render(liqOnly) {
     const f = liveFilter(), lut = gradeOn(P) ? getGradeLut() : f === 'none' ? null : getLut(f);
     // 皮膚、頭髮另外一套顏色要用皮膚遮罩和分類圖，還沒找過臉就先找
     if ((lut?.skin || lut?.hair) && !base.facesP) findFaces();
-    R.setLut(lut?.c, lut?.skin, lut?.hair);
+    R.setLut(lut?.c, lut?.skin, lut?.hair); R.setGlow(xtItem(f)?.glow, (P.filterAmt ?? 100) / 100);
     draw();
     paintPop();
     if (curFrame()?.live) paintFrame();
@@ -1530,7 +1530,7 @@ async function mergeFilter() {
     P = { ...clone(P0), filter: now.filter, filterAmt: now.filterAmt, ...pre(now) };
     let out;
     try {
-      R.setLut(lut?.c, lut?.skin, lut?.hair);
+      R.setLut(lut?.c, lut?.skin, lut?.hair); R.setGlow(xtItem(f)?.glow, (P.filterAmt ?? 100) / 100);
       draw(true);
       out = photoCanvas(base.canvas.width, base.canvas.height);
       out.getContext('2d').drawImage($('#gl'), 0, 0);

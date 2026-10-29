@@ -28,7 +28,8 @@ vec2 liq(sampler2D t, vec2 uv, float s){
 }`;
 const FS_DISP = `#version 300 es
 precision highp float; precision highp int;
-in vec2 vUV; uniform sampler2D uTex, uDisp, uSegB, uLiq; uniform vec2 uSize, uOut; uniform float uStep, uProtect, uLiqStep; out vec4 o;
+in vec2 vUV; uniform sampler2D uTex, uDisp, uSegB, uLiq, uGS, uGB; uniform vec2 uSize, uOut; uniform float uStep, uProtect, uLiqStep; out vec4 o;
+uniform vec4 uG1, uG2;  // 濾鏡的柔焦、光暈（見 glowBufs）：uG1 = 柔焦多少、光暈門檻、開關；uG2 = 光暈的顏色（RGB 各多少）
 vec2 dec(vec4 e, float s){ e *= 255.0; return (vec2(e.r * 256.0 + e.b, e.g * 256.0 + e.a) - 32768.0) * s; }${LIQ_GLSL}
 void main(){
   // 推臉（重新塑形）在最上層：先照推臉的位移找到「臉型變形後的圖」上的哪一點，再照臉型的位移回原圖。
@@ -39,7 +40,16 @@ void main(){
   if (uStep > 0.0) d += dec(texture(uDisp, q), uStep);
   // 背景保護（同主 shader）：位移乘上擴張羽化過的人像遮罩
   if (uProtect > 0.5) d *= smoothstep(0.02, 0.3, texture(uSegB, v).r);
-  o = texture(uTex, vUV + d / uOut);
+  vec2 p = vUV + d / uOut;
+  o = texture(uTex, p);
+  if (uG1.z > 0.0) {
+    // 柔焦：跟模糊過的混；光暈：比門檻亮的地方（大模糊那份）帶顏色暈開，濾色疊上去
+    vec3 c = o.rgb, h = texture(uGB, p).rgb;
+    c += (texture(uGS, p).rgb - c) * uG1.x;
+    float L = dot(h, vec3(0.299, 0.587, 0.114));
+    vec3 g = clamp(clamp((L - uG1.y) / max(1e-3, 1.0 - uG1.y), 0.0, 1.0) * h * uG2.rgb, 0.0, 1.0);
+    o.rgb = 1.0 - (1.0 - c) * (1.0 - g);
+  }
 }`;
 
 // 推臉的位移場：每個像素記「要回（臉型變形後的）圖上哪裡取」，跟 warpfield 一樣用 RGBA8 存 16 位元。
@@ -857,6 +867,7 @@ export class Renderer {
     this.fbBm = [this.fbo(), this.fbo()]; this.fbBf = [this.fbo(), this.fbo()];
     this.fbA = this.fbo(); this.fbB = this.fbo();
     this.fbS = [this.fbo(), this.fbo()]; this.fbM = [this.fbo(), this.fbo()]; this.fbL = [this.fbo(), this.fbo()];
+    this.fbGs = [this.fbo(), this.fbo()]; this.fbGb = [this.fbo(), this.fbo()]; this.glow = null;
     this.tMakeup = this.tex(); this.setMakeup(null);
     this.hasLut = false;
     this.view = 1;  // 預覽的解析度（相對原圖），見 render
@@ -974,6 +985,30 @@ export class Renderer {
     const w = Math.max(1, Math.round(W * k)), h = Math.max(1, Math.round(H * k));
     pair.forEach(f => this.sizeFbo(f, w, h));
   }
+  // 濾鏡的柔焦、光暈（xt/filters.json 的 glow，照醒圖擬合）：q = [柔焦模糊, 柔焦多少, 光暈模糊, 光暈門檻, 光暈 R, G, B]，
+  // 模糊是照片短邊的 %；k 是濾鏡強度（0～1），柔焦、光暈跟著變淡。q 為 null 就關掉
+  setGlow(q, k) { this.glow = q && k > 0 ? { q, k } : null; }
+  // 主 shader 的結果（fb）模糊兩份：fbGs 柔焦、fbGb 光暈。先一半一半縮小（每次 2×2 平均，小亮點不會閃爍），
+  // 縮到模糊大約 2.3 格，再九點高斯兩次（一次約 1.64 格）；很小的模糊照原尺寸做幾次。小圖做，每格多花不到兩次全圖複製
+  glowBufs(fb) {
+    const gl = this.gl, s = Math.min(fb.w, fb.h), q = this.glow.q;
+    this.fbH ||= [];
+    const blur = (pair, sig) => {
+      const px = sig / 100 * s, k = px >= 4.64 ? 2.32 / px : 1, n = k < 1 ? 2 : Math.max(1, Math.round((px / 1.64) ** 2));
+      const tw = Math.max(1, Math.round(fb.w * k)), th = Math.max(1, Math.round(fb.h * k));
+      let src = fb, i = 0;
+      while (src.w > tw * 2 && src.h > th * 2) {
+        const h = this.fbH[i] ||= this.fbo();
+        this.sizeFbo(h, Math.ceil(src.w / 2), Math.ceil(src.h / 2));
+        this.pass(this.pCopy, h, h.w, h.h, src.t); gl.drawArrays(gl.TRIANGLES, 0, 3);
+        src = h; i++;
+      }
+      pair.forEach(f => this.sizeFbo(f, tw, th));
+      this.pass(this.pCopy, pair[0], tw, th, src.t); gl.drawArrays(gl.TRIANGLES, 0, 3);
+      this.gauss(pair, n);
+    };
+    blur(this.fbGs, q[0]); blur(this.fbGb, q[2]);
+  }
   // 素描用的小模糊；背景虛化用的中、大模糊（扣掉人像）
   blurs() {
     if (!this.w) return;
@@ -1063,7 +1098,7 @@ export class Renderer {
     if (this.canvas.width !== ow || this.canvas.height !== oh) { this.canvas.width = ow; this.canvas.height = oh; }
     if (fx.bokeh) this.bokeh(fx.bokeh);
     // 有臉型變形時先畫到暫存，最後再變形一次畫到畫面
-    const lq = this.lq?.n ? this.lq : null, fast = !full && this.fast < 1, post = this.disp?.step > 0 || !!lq || fast || (this.keepPost && !full);
+    const lq = this.lq?.n ? this.lq : null, fast = !full && this.fast < 1, post = this.disp?.step > 0 || !!lq || fast || (this.keepPost && !full) || !!this.glow;
     const iw = fast ? Math.max(1, Math.round(ow * this.fast)) : ow, ih = fast ? Math.max(1, Math.round(oh * this.fast)) : oh, fb = fast ? this.fbFast : this.fbPost;
     if (post) this.sizeFbo(fb, iw, ih);
     this.pass(this.pMain, post ? fb : null, iw, ih);
@@ -1140,6 +1175,7 @@ export class Renderer {
     gl.uniform3f(u.uBgColor, parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     this.mainFb = post ? { fb, ow, oh, fast: fast ? this.fast : 1 } : null;
+    if (this.glow) this.glowBufs(fb);
     if (post) this.postPass(p, fb, ow, oh, lq, null);
     this.canvasOk = post;
   }
@@ -1153,6 +1189,11 @@ export class Renderer {
     gl.uniform1f(d.u.uLiqStep, lq ? lq.step : 0);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.tSegB); gl.uniform1i(d.u.uSegB, 2);
     gl.uniform1f(d.u.uProtect, p.bgProtect === 0 ? 0 : 1);
+    const G = this.glow;
+    gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.fbGs[0].t); gl.uniform1i(d.u.uGS, 4);
+    gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, this.fbGb[0].t); gl.uniform1i(d.u.uGB, 5);
+    gl.uniform4f(d.u.uG1, G ? G.q[1] * G.k : 0, G ? G.q[3] : 1, G ? 1 : 0, 0);
+    gl.uniform4f(d.u.uG2, ...(G ? G.q.slice(4, 7).map(v => v * G.k) : [0, 0, 0]), 0);
     if (sc) { gl.enable(gl.SCISSOR_TEST); gl.scissor(...sc); }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     if (sc) gl.disable(gl.SCISSOR_TEST);

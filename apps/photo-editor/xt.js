@@ -7,6 +7,7 @@
 // 權重存在 xt/filters.bin（int16，每個濾鏡一個縮放值），名稱、分類、預設強度在 xt/filters.json。
 // filters.json 的 hide 是暫時不列出的濾鏡：擬合時拿錯醒圖共用的輔助 LUT、跟別的濾鏡顏色一模一樣，或是同一個濾鏡換名字的重複項。
 // 醒圖很多濾鏡對皮膚另外調一套顏色，那套的權重在 xt/skin.bin（同樣的模型）；一鍵出片的風格頭髮也另外一套，同樣放在 skin.bin。
+// 柔光類濾鏡（燭光晚餐、失樂園…）醒圖還加了柔焦和光暈，參數在 filters.json 的 glow（濾鏡編號 → 7 個數，見 gl.js setGlow）。
 // 少數像熱感應、只留膚色那種顏色會突然跳的濾鏡（像素黃、數字彩虹、鎏金…），上面的模型跟不上，
 // 另外加一張「色相 × 亮度 × 鮮豔度」的格子（12×9×5，格子之間線性內插），權重在 xt/special.bin。
 
@@ -29,7 +30,7 @@ export function loadXT() {
     const sp = meta.sp, n = meta.items.length, hide = new Set(meta.hide || []);
     data = {
       cats: meta.cats,
-      items: [...meta.items.map(([name, cat, p, def, skin, hair], i) => ({ id: 'xt' + i, name, cat, p, def, skin, hair, hide: hide.has(i) })),
+      items: [...meta.items.map(([name, cat, p, def, skin, hair], i) => ({ id: 'xt' + i, name, cat, p, def, skin, hair, hide: hide.has(i), glow: meta.glow?.[i] || null })),
         ...(sp?.items || []).map(([name, cat, p, def, skin], i) => ({ id: 'xt' + (n + i), name, cat, p, def, skin, sp: true }))],
       w: deq(buf, meta.scale), ws: deq(sbuf, meta.skinScale),
       wx: sp ? deq(xbuf, sp.scale, sp.feat) : null, nfx: sp?.feat, grid: sp?.grid,
