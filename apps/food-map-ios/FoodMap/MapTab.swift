@@ -79,7 +79,12 @@ struct MapTab: View {
         NavigationStack(path: $store.mapPath) {
           ZStack {
             MapReader { proxy in
-                Map(position: $pos, selection: Binding(get: { pins.sel }, set: { pins.select($0) })) {
+                // 泡泡、行程站號沒有自己的 tag，MapKit 會拿它們的 id 當成可選：點泡泡放大後 sel 會變成「a,b」這種不是圖釘的 id，
+                // 所有圖釘一起變淡又沒有大卡。泡泡的 id 是幾間店的 id 用逗號串起來（搜到的地點 hit: 開頭，本身也有逗號，要收）
+                Map(position: $pos, selection: Binding(get: { pins.sel }, set: { id in
+                    if let id, (id.contains(",") && !id.hasPrefix("hit:")) || trip.marks.contains(where: { $0.id == id }) { return }
+                    pins.select(id)
+                })) {
                     ForEach(list.filter { !hidden.contains($0.id) }) { p in
                         Annotation(p.name, coordinate: .init(latitude: p.lat!, longitude: p.lng!), anchor: .bottom) {
                             FoodPin(place: p, pins: pins, reduce: reduce, saver: gname == nil ? nil : p.owner.map { ($0, store.name($0)) })
@@ -114,7 +119,8 @@ struct MapTab: View {
                         if let pv = trip.preview {
                             MapPolyline(coordinates: pv.coords).stroke(pv.color, style: StrokeStyle(lineWidth: 5, lineCap: .round, dash: [9, 9]))
                         }
-                        ForEach(trip.marks) { m in
+                        // 倒過來畫：好幾站疊在一起時，號碼小的在最上面
+                        ForEach(Array(trip.marks.reversed())) { m in
                             Annotation("", coordinate: m.coord, anchor: .center) {
                                 Button { tapMark(m.id) } label: { MarkView(m: m, hot: trip.hot == m.id) }
                                     .buttonStyle(PressStyle())
@@ -223,7 +229,10 @@ struct MapTab: View {
             }
             .ignoresSafeArea()
             // 自己的位置：畫在地圖上面一層（地圖的標註會被南邊的圖釘蓋住）
+            // 排行程時調淡（藍點畫在最上層，會蓋住站號）；出發中照常
             MyDotLayer(dot: dot)
+                .opacity(trip.on && !trip.going ? 0.35 : 1)
+                .animation(.easeOut(duration: 0.25), value: trip.on && !trip.going)
             // 搜尋列、卡片列、行程面板放在地圖上面另一層：它們的高度變了不會動到地圖
             Color.clear
             .allowsHitTesting(false)
@@ -528,7 +537,12 @@ struct MapTab: View {
             withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) { trip.cand = c }
             return
         }
-        guard let id, let p = list.first(where: { $0.id == id }) else { return }
+        // 名單可能是上一輪的（抽中被篩掉的店剛補畫上去）：找不到再用現在的名單找；
+        // 真的不是地圖上的店（淡出中的圖釘、沒想到的 id）就取消選取，不要停在「全部變淡、沒有大卡」
+        guard let id, let p = list.first(where: { $0.id == id }) ?? currentList.first(where: { $0.id == id }) else {
+            if id != nil { pins.select(nil) }
+            return
+        }
         Perf.shared.mark(pins.drawn == id ? "抽一間（抽中）" : "點圖釘")
         // 下面那塊升到中間段顯示大卡片；接下來地圖移過去不算拖地圖
         quiet.hush()
@@ -651,7 +665,23 @@ struct MapTab: View {
             let y = log(tan(.pi / 4 + p.lat! * .pi / 360)) * 180 / .pi
             cells["\(Int((p.lng! / cell).rounded(.down))),\(Int((y / cell).rounded(.down)))", default: []].append(p)
         }
-        let groups = cells.values.filter { $0.count >= 2 }
+        // 同一群店剛好落在格子邊界兩側會變成兩顆，泡泡（46pt）比格子大一定疊在一起：螢幕上太近的再合成一顆
+        var groups = cells.values.filter { $0.count >= 2 }
+        func ctr(_ g: [Place]) -> CGPoint? {
+            let ps = g.compactMap { pts[$0.id] }
+            guard !ps.isEmpty else { return nil }
+            return CGPoint(x: ps.map(\.x).reduce(0, +) / CGFloat(ps.count), y: ps.map(\.y).reduce(0, +) / CGFloat(ps.count))
+        }
+        var i = 0
+        while i < groups.count {
+            var hit = false, j = i + 1
+            while j < groups.count {
+                if let a = ctr(groups[i]), let b = ctr(groups[j]), hypot(a.x - b.x, a.y - b.y) < 46 {
+                    groups[i] += groups[j]; groups.remove(at: j); hit = true
+                } else { j += 1 }
+            }
+            if !hit { i += 1 }
+        }
         // 行程模式：泡泡落在某站號碼上就往外推開（號碼要看得到）
         let marks = trip.on ? trip.marks.compactMap { proxy.convert($0.coord, to: .local) } : []
         func aside(_ lat: Double, _ lng: Double) -> (Double, Double) {

@@ -18,7 +18,8 @@ import os
 
     @ObservationIgnored private var touchDown: CFTimeInterval = 0
     @ObservationIgnored private var touchUp: CFTimeInterval = 0
-    @ObservationIgnored private var pending: (name: String, at: CFTimeInterval)?
+    // 同一幀裡打了好幾個記號（例如按下去建畫面、畫面出現）：每個都留著，分開算
+    @ObservationIgnored private var pending: [(name: String, at: CFTimeInterval)] = []
     @ObservationIgnored private var link: CADisplayLink?
     @ObservationIgnored private var last: CFTimeInterval = 0
     @ObservationIgnored private var drops: [CFTimeInterval] = []
@@ -43,7 +44,7 @@ import os
     func mark(_ name: String) {
         Self.signposter.emitEvent("tap", "\(name, privacy: .public)")
         guard on else { return }
-        pending = (name, CACurrentMediaTime())
+        pending.append((name, CACurrentMediaTime()))
     }
 
     func setGeo(_ s: String) { if s != geo { geo = s } }
@@ -63,7 +64,7 @@ import os
     }
 
     private func stop() {
-        link?.invalidate(); link = nil; pending = nil
+        link?.invalidate(); link = nil; pending = []
     }
 
     fileprivate func tick(_ l: CADisplayLink) {
@@ -82,10 +83,14 @@ import os
             let r = s.isEmpty ? "" : "重畫 " + s
             if r != renders { renders = r }
         }
-        if let p = pending {
-            pending = nil
-            // 從手指放開算；如果放開比狀態改變早超過 1 秒（例如自動觸發），就從狀態改變算
-            let from = touchUp > 0 && p.at - touchUp < 1 ? touchUp : p.at
+        let ps = pending
+        pending = []
+        for p in ps {
+            // 從手指放開算；如果放開比狀態改變早超過 1 秒（例如自動觸發），就從狀態改變算。
+            // 手指還按著（長按成立、拖曳中）也從狀態改變算：不然會抓到上一次點擊的放開時間，把按住的時間算進去
+            // （在下一幀才判斷：按鈕的動作可能比視窗收到放開還早跑）
+            let held = touchDown > touchUp
+            let from = !held && touchUp > 0 && p.at - touchUp < 1 ? touchUp : p.at
             let ms = Int((CACurrentMediaTime() - from) * 1000)
             let press = touchUp > touchDown && touchDown > 0 && p.at - touchUp < 1 ? "，按住 \(Int((touchUp - touchDown) * 1000))" : ""
             lines.insert("\(p.name) \(ms) ms\(press)", at: 0)
@@ -125,7 +130,11 @@ final class TouchClock: UIGestureRecognizer, UIGestureRecognizerDelegate {
         state = .failed
     }
 
-    override func touchesCancelled(_ t: Set<UITouch>, with e: UIEvent) { state = .failed }
+    // 被系統取消（例如拉出通知中心）也算放開，不然之後都會被當成手指還按著
+    override func touchesCancelled(_ t: Set<UITouch>, with e: UIEvent) {
+        MainActor.assumeIsolated { Perf.shared.touched(false) }
+        state = .failed
+    }
 
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith o: UIGestureRecognizer) -> Bool { true }
 }
