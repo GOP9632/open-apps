@@ -509,16 +509,17 @@
 
   window.GR = {
     SW, SH, shopfront,
-    /* depth in card units (card width = 1000). Negative = behind the paper frame. */
+    /* depth in card units (card width = 1000). Negative = behind the paper frame.
+       box = the part of the sheet that is drawn on (window coordinates): the page only keeps that part in memory. */
     layers: (opts = {}) => [
       { id: 'mural',   name: 'Mural',          z: -330, kind: 'scene', dual: true,  html: mural },
       { id: 'wall',    name: 'Plaster wall',   z: -280, kind: 'scene', dual: true,  html: wall },
-      { id: 'gallery', name: 'Finished works', z: -245, kind: 'scene', dual: true,  html: gallery },
-      { id: 'words',   name: 'Headline',       z: -205, kind: 'scene', dual: false, html: words(opts.print) },
-      { id: 'easel',   name: 'Easel',          z: -165, kind: 'scene', dual: true,  html: easel },
-      { id: 'you',     name: 'You',            z: -125, kind: 'scene', dual: true,  html: you },
-      { id: 'lights',  name: 'Track lights',   z: -90,  kind: 'scene', dual: true,  html: lights },
-      { id: 'table',   name: 'Table',          z: -50,  kind: 'scene', dual: true,  html: table },
+      { id: 'gallery', name: 'Finished works', z: -245, kind: 'scene', dual: true,  html: gallery, box: [30, 452, 950, 886] },
+      { id: 'words',   name: 'Headline',       z: -205, kind: 'scene', dual: false, html: words(opts.print), box: [290, 220, 730, 480] },
+      { id: 'easel',   name: 'Easel',          z: -165, kind: 'scene', dual: true,  html: easel, box: [274, 444, 738, 1136] },
+      { id: 'you',     name: 'You',            z: -125, kind: 'scene', dual: true,  html: you, box: [48, 600, 1000, 1220] },
+      { id: 'lights',  name: 'Track lights',   z: -90,  kind: 'scene', dual: true,  html: lights, box: [0, 0, 1000, 1078] },
+      { id: 'table',   name: 'Table',          z: -50,  kind: 'scene', dual: true,  html: table, box: [0, 912, 1000, 1373] },
       { id: 'frame',   name: 'Paper frame',    z: 0,    kind: 'card',  dual: true,  html: frame(opts.print) },
       { id: 'fore',    name: 'Foreground',     z: 55,   kind: 'card',  dual: true,  html: foreground },
     ],
