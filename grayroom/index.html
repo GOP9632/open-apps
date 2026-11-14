@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gray Room Postcard</title>
+<meta name="description" content="A layered 3D postcard for Gray Room Paint &amp; Cafe in Zhongli. Tilt it, add your color, and pull the layers apart.">
+<meta name="theme-color" content="#1b1b1c">
+<meta property="og:title" content="Gray Room Paint &amp; Cafe: a 3D postcard">
+<meta property="og:description" content="The room is gray. The color is yours.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23bdbbb6'/%3E%3Cpath d='M16 56V30a16 16 0 0 1 32 0v26z' fill='%23ef6f4a'/%3E%3C/svg%3E">
+<link rel="preload" href="fonts/fraunces.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+@font-face{font-family:Fraunces;src:url(fonts/fraunces.woff2) format("woff2");font-weight:300 700;font-style:normal;font-display:swap}
+@font-face{font-family:Fraunces;src:url(fonts/fraunces-italic.woff2) format("woff2");font-weight:300 700;font-style:italic;font-display:swap}
+@font-face{font-family:Inter;src:url(fonts/inter.woff2) format("woff2");font-weight:400 700;font-style:normal;font-display:swap}
+
+:root{
+  color-scheme:dark;
+  --bg:#1b1b1c; --bg2:#2a2a2b; --ink:#f3efe7; --muted:#a9a69f; --line:rgba(255,255,255,.16);
+  --coral:#ef6f4a; --amber:#f8c865; --paper:#f4f1ea; --paper-ink:#262626;
+  --ease:cubic-bezier(.65,0,.25,1);
+  --sans:Inter,"PingFang TC","Noto Sans TC","Microsoft JhengHei",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --serif:Fraunces,Georgia,"Times New Roman",serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--bg);color:var(--ink);font-family:var(--sans);
+  -webkit-font-smoothing:antialiased;overflow:hidden;overscroll-behavior:none;
+  -webkit-tap-highlight-color:transparent;
+}
+button{font:inherit;color:inherit}
+
+.app{position:fixed;inset:0;display:flex;flex-direction:column;
+  padding:max(10px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+
+/* soft room light behind the card: gray at first, warm once colour arrives */
+.glow{position:fixed;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse 70% 55% at 50% 42%,#3a3a3b 0%,#222223 55%,#161617 100%)}
+.glow::after{content:"";position:absolute;inset:0;opacity:0;transition:opacity 2.6s var(--ease);
+  background:radial-gradient(ellipse 72% 56% at 50% 42%,#5a3b3f 0%,#2c2330 52%,#151318 100%)}
+body.is-color .glow::after{opacity:1}
+
+.top{position:relative;z-index:3;display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+  font-size:clamp(9px,2.6vw,11px);letter-spacing:.18em;text-transform:uppercase;color:var(--muted);min-height:18px;white-space:nowrap}
+.top b{color:var(--ink);font-weight:600}
+
+/* ---------- stage ---------- */
+.stage{position:relative;z-index:2;flex:1;min-height:0;display:grid;place-items:center;
+  touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
+.stage.dragging{cursor:grabbing}
+.rig{width:var(--W);height:calc(var(--W)*1.48);transition:transform 1.5s var(--ease)}
+.persp{position:relative;width:100%;height:100%;perspective:calc(var(--W)*2.6);perspective-origin:50% 46%}
+.card,.forecard{position:absolute;inset:0;transform-style:preserve-3d;will-change:transform}
+.forecard{pointer-events:none;transition:opacity .6s var(--ease)}
+body.mode-back .forecard{opacity:0}
+
+.layer{position:absolute;transform-style:preserve-3d;transition:transform 1.5s var(--ease);pointer-events:none}
+.layer.card-u{inset:0}
+.layer.fore-u{inset:-15%}
+.layer.fore-u svg{left:11.5385%;top:11.5385%;width:76.923%;height:76.923%}
+.layer.fore-u::after{inset:11.5385%}
+.layer.fore-u .tag{left:11.5385%;bottom:88.4615%}
+/* scene layers are sheets the size of the window in the paper frame (36,36,928,1274 of 1000x1480) */
+.layer.scene-u{left:3.6%;top:2.4324%;width:92.8%;height:86.0811%}
+.layer.scene-u svg{overflow:hidden}
+
+/* the room is a real box behind the paper: two side walls, ceiling, floor */
+.box{position:absolute;pointer-events:none;transition:opacity .7s var(--ease),width 1.5s var(--ease),height 1.5s var(--ease),filter 2.4s var(--ease);
+  filter:grayscale(1)}
+body.is-color .box{filter:grayscale(0)}
+.box.l,.box.r{top:2.4324%;height:86.0811%;width:var(--D)}
+.box.t,.box.b{left:3.6%;width:92.8%;height:var(--D)}
+.box.l{left:3.6%;transform-origin:0 50%;transform:rotateY(90deg);background:linear-gradient(90deg,#c9c5bd,#a8a49c 70%,#8c8880)}
+.box.r{right:3.6%;transform-origin:100% 50%;transform:rotateY(-90deg);background:linear-gradient(270deg,#d6d2c9,#b9b5ad 70%,#9a968e)}
+.box.t{top:2.4324%;transform-origin:50% 0;transform:rotateX(-90deg);background:linear-gradient(180deg,#e6e3dc,#c4c1ba 70%,#a9a69f)}
+.box.b{bottom:11.4865%;transform-origin:50% 100%;transform:rotateX(90deg);background:linear-gradient(0deg,#9a9894,#807e7a 70%,#6a6866)}
+body.mode-layers .box,body.mode-back .box{opacity:0}
+.layer > .copy{position:absolute;inset:0}
+.layer svg{position:absolute;inset:0;width:100%;height:100%;display:block;overflow:visible}
+
+.copy.g{filter:grayscale(1) contrast(.94) brightness(.97)}
+.copy.g .co,.copy.c .go{display:none}
+.copy.c{
+  -webkit-mask-image:radial-gradient(ellipse 100% 72% at 50% 53%,#000 calc(var(--r) - 16%),transparent var(--r));
+          mask-image:radial-gradient(ellipse 100% 72% at 50% 53%,#000 calc(var(--r) - 16%),transparent var(--r));
+}
+.all-gray .copy.c{display:none}
+.all-color .copy.c{-webkit-mask-image:none;mask-image:none}
+.all-color .copy.g{display:none}
+
+/* headline swap */
+.w-gray,.w-color{transition:opacity 1.4s var(--ease)}
+.w-color{opacity:0}
+.w-stroke{stroke-dasharray:100;stroke-dashoffset:100;transition:stroke-dashoffset 1.6s var(--ease) 1.2s}
+body.is-color .w-gray{opacity:0}
+body.is-color .w-color{opacity:1;transition-delay:.9s}
+body.is-color .w-stroke{stroke-dashoffset:0}
+
+/* layer outlines + labels for the pulled-apart view */
+.layer::after{content:"";position:absolute;inset:0;border:1px solid rgba(255,255,255,.5);border-radius:2px;
+  background:rgba(255,255,255,.035);opacity:0;transition:opacity .9s var(--ease)}
+.tag{position:absolute;left:0;bottom:100%;margin-bottom:calc(var(--W)*.012);white-space:nowrap;
+  font:700 calc(var(--W)*.044)/1 var(--sans);letter-spacing:.04em;color:var(--amber);
+  opacity:0;transition:opacity .9s var(--ease)}
+body.mode-layers .layer::after{opacity:1}
+body.mode-layers .tag{opacity:.95;transition-delay:.6s}
+
+/* dust in the light + steam: slow drifting, nothing flies in */
+.air{position:absolute;left:3.6%;top:2.4324%;width:92.8%;height:86.0811%;pointer-events:none;transform-style:preserve-3d;transition:transform 1.5s var(--ease),opacity .8s}
+.mote{position:absolute;width:3px;height:3px;border-radius:50%;background:#fff3d6;opacity:0;
+  animation:mote var(--d) linear var(--dl) infinite}
+@keyframes mote{0%{transform:translate3d(0,0,0);opacity:0}15%{opacity:var(--o)}85%{opacity:var(--o)}100%{transform:translate3d(var(--dx),var(--dy),0);opacity:0}}
+.steam{position:absolute;left:55.5%;top:82%;width:9%;height:9%;pointer-events:none}
+.steam span{position:absolute;bottom:0;width:18%;height:100%;border-radius:50%;
+  background:linear-gradient(to top,rgba(255,255,255,.5),rgba(255,255,255,0));filter:blur(3px);
+  transform-origin:50% 100%;opacity:0;animation:steam 5.5s ease-in-out infinite}
+.steam span:nth-child(1){left:18%}.steam span:nth-child(2){left:44%;animation-delay:1.8s}.steam span:nth-child(3){left:68%;animation-delay:3.4s}
+@keyframes steam{0%{transform:translateY(8%) scaleY(.5) skewX(0);opacity:0}30%{opacity:.75}100%{transform:translateY(-70%) scaleY(1.15) skewX(9deg);opacity:0}}
+body.mode-layers .air,body.mode-back .air{opacity:0}
+
+/* ---------- back of the card ---------- */
+.back{position:absolute;inset:0;transform:rotateY(180deg) translateZ(1px);backface-visibility:hidden;-webkit-backface-visibility:hidden;
+  background:linear-gradient(135deg,#f7f4ee,#ece8df);color:var(--paper-ink);border-radius:2.2cqw;
+  container-type:inline-size;overflow:hidden;opacity:0;transition:transform 1.5s var(--ease),opacity 0s linear .7s;pointer-events:none}
+body.mode-back .back{opacity:1;pointer-events:auto;transition:transform 1.5s var(--ease),opacity 0s}
+.back-in{position:absolute;inset:0;padding:5.4cqw 6.2cqw 5cqw;display:flex;flex-direction:column;font-size:3.1cqw;line-height:1.46}
+.b-top{display:flex;justify-content:space-between;align-items:flex-start;gap:3cqw}
+.b-kicker{font-size:2.5cqw;letter-spacing:.3em;text-transform:uppercase;color:#77736b;font-weight:600}
+.b-name{margin-top:1.6cqw;font:700 6.2cqw/1.05 var(--sans);letter-spacing:.1em;text-transform:uppercase;color:var(--paper-ink)}
+.b-name span{display:block;margin-top:1.6cqw;font-weight:500;font-size:3.6cqw;letter-spacing:.3em;color:#5b5750}
+.b-rate{margin-top:2.4cqw;font-size:2.8cqw;color:#5b5750}
+.b-rate b{color:#c8502f;font-weight:600}
+.stampbox{position:relative;width:36cqw;height:26.5cqw;flex:none}
+.stamp{position:absolute;right:0;top:0;width:31cqw;aspect-ratio:4/3;margin:0;background:#fff;padding:1.5cqw;transform:rotate(2.5deg);
+  box-shadow:0 .5cqw 1.8cqw rgba(0,0,0,.2);
+  outline:.5cqw dotted #cfc9bd;outline-offset:-.15cqw}
+.stamp svg,.stamp img{width:100%;height:100%;display:block;object-fit:cover}
+.postmark{position:absolute;left:0;bottom:0;width:15cqw;height:15cqw;opacity:.62;transform:rotate(-12deg)}
+.b-h{font-family:var(--serif);font-weight:500;font-size:7.3cqw;line-height:1.06;letter-spacing:-.025em;margin:2.6cqw 0 2.2cqw}
+.b-h em{font-style:italic;color:#c8502f}
+.b-p{margin:0;color:#4b4842}
+.facts{list-style:none;margin:3cqw 0 0;padding:0;display:grid;grid-template-columns:repeat(3,1fr);gap:2.4cqw}
+.facts li{border-top:.5cqw solid var(--paper-ink);padding-top:1.6cqw;font-size:2.75cqw;line-height:1.35;color:#5b5750}
+.facts b{display:block;font-family:var(--serif);font-weight:600;font-size:4.1cqw;line-height:1.15;color:var(--paper-ink);margin-bottom:.7cqw;letter-spacing:-.01em}
+.offer{margin:2.8cqw 0 0;padding:2.1cqw 3cqw;background:#262626;color:#f6efe2;border-radius:1.6cqw;font-size:2.95cqw;line-height:1.4}
+.offer b{color:var(--amber);font-weight:600}
+.info{margin:auto 0 0;display:grid;grid-template-columns:auto 1fr;gap:1.1cqw 3cqw;font-size:2.8cqw;line-height:1.38;color:#4b4842;
+  border-top:.25cqw solid #cfc9bd;padding-top:2.4cqw}
+.info dt{font-weight:600;letter-spacing:.14em;text-transform:uppercase;font-size:2.45cqw;color:#77736b;padding-top:.35cqw}
+.info dd{margin:0}
+.cta{display:grid;grid-template-columns:repeat(3,1fr);gap:2cqw;margin-top:2.6cqw}
+.cta a{display:flex;align-items:center;justify-content:center;min-height:11cqw;padding:0 1cqw;border-radius:99px;
+  text-decoration:none;font-weight:600;font-size:3cqw;color:var(--paper-ink);border:.4cqw solid var(--paper-ink);text-align:center}
+.cta a.primary{background:var(--coral);border-color:var(--coral);color:#fff}
+.cta a:focus-visible{outline:.6cqw solid #1c3f6e;outline-offset:.5cqw}
+.fine{margin:2.2cqw 0 0;font-size:2.1cqw;line-height:1.4;color:#8a857b}
+
+/* ---------- controls ---------- */
+.ui{position:relative;z-index:3;display:flex;flex-direction:column;align-items:center;gap:10px;padding-top:8px}
+.hint{margin:0;font-size:12.5px;line-height:1.5;color:var(--muted);min-height:3em;max-width:34em;text-align:center}
+.hint b{color:var(--amber);font-weight:600}
+.hint span{white-space:nowrap}
+.btns{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.btn{appearance:none;border:1px solid var(--line);background:rgba(255,255,255,.06);
+  min-height:46px;padding:0 18px;border-radius:99px;font-size:14px;font-weight:600;letter-spacing:.01em;cursor:pointer;
+  display:inline-flex;align-items:center;gap:9px;transition:background .35s,border-color .35s,color .35s,opacity .35s;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.btn:hover{background:rgba(255,255,255,.12)}
+.btn:focus-visible{outline:2px solid var(--amber);outline-offset:3px}
+.btn[aria-pressed="true"]{background:var(--ink);color:#1b1b1c;border-color:var(--ink)}
+.btn.primary{background:var(--coral);border-color:var(--coral);color:#fff}
+.btn.primary:hover{background:#f58460}
+.btn.primary[aria-pressed="true"]{background:rgba(255,255,255,.06);border-color:var(--line);color:var(--ink)}
+.dot{width:12px;height:12px;border-radius:50%;flex:none;
+  background:conic-gradient(#ef6f4a,#f8c865,#46a9a4,#1c3f6e,#d94a5c,#ef6f4a);box-shadow:0 0 0 2px rgba(255,255,255,.85)}
+.btn.primary[aria-pressed="true"] .dot{background:#9b9b9b}
+.credit{margin:0;font-size:10.5px;line-height:1.4;color:#77746e;text-align:center}
+
+@media (max-height:700px){.btn{min-height:42px}.ui{gap:7px}.hint{min-height:1.5em}}
+@media (orientation:landscape) and (max-height:540px){
+  .app{flex-direction:row;align-items:stretch;gap:18px}
+  .top{position:absolute;left:max(16px,env(safe-area-inset-left));right:max(16px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top))}
+  .stage{flex:1.1}
+  .ui{flex:1;justify-content:center;padding-top:22px}
+  .btns{flex-direction:column;align-items:stretch;width:min(100%,300px)}
+  .btn{justify-content:center}
+}
+body.print{background:linear-gradient(135deg,#f7f4ee,#ece8df);overflow:hidden}
+body.print .glow,body.print .top,body.print .ui,body.print .air{display:none}
+body.print .app{padding:0}
+body.print .rig,body.print .layer,body.print .box,body.print .back{transition:none!important}
+body.print .back{border-radius:0}
+.force-c .copy.c{display:block!important;-webkit-mask-image:none!important;mask-image:none!important}
+.force-c .copy.g{display:none!important}
+.arch-gray .lf{filter:grayscale(1) brightness(1.04)}
+.pscan{margin:3cqw 0 0;display:grid;grid-template-columns:auto 1fr;gap:3.6cqw;align-items:center;background:#262626;color:#f6efe2;border-radius:1.8cqw;padding:2.6cqw}
+.qr{width:23cqw}
+.qr svg{display:block;width:100%;height:auto;background:#fff;padding:2.2cqw;border-radius:1cqw;box-sizing:border-box}
+.scan{margin:0;font-family:var(--serif);font-size:4.15cqw;line-height:1.16;white-space:nowrap;letter-spacing:-.015em;font-weight:500}
+.scan em{display:block;font-style:italic;color:var(--amber)}
+.scan-s{margin:1.8cqw 0 0;font-size:2.55cqw;line-height:1.4;color:#d8d2c6}
+.scan-s b{display:block;margin-top:.7cqw;font-weight:600;font-size:2.4cqw;color:#fff;white-space:nowrap}
+body.print .info{margin:2.4cqw 0 0;border:0;padding:0;font-size:2.75cqw;gap:.7cqw 3cqw}
+body.print .back-in{padding-bottom:5.6cqw}
+body.print .b-h{font-size:7.1cqw;margin:1.6cqw 0 1.8cqw}
+body.print .facts{margin-top:2.6cqw}
+body.print .pscan{margin-top:2.6cqw}
+body.print .stampbox{height:25cqw}
+body.print-back .layer,body.print-back .box,body.print-back .forecard{display:none}
+body.print-back .card,body.print-back .back{transform:none!important;-webkit-backface-visibility:visible;backface-visibility:visible}
+.pfine{margin:auto 0 0;padding-top:2cqw;font-size:2.05cqw;line-height:1.35;color:#8a857b}
+@media (prefers-reduced-motion:reduce){
+  .rig,.layer,.air{transition-duration:.01s}
+  .mote,.steam span{animation:none}
+}
+</style>
+</head>
+<body class="mode-front">
+<div class="glow" aria-hidden="true"></div>
+<div class="app">
+  <header class="top"><span><b>Gray Room</b> Paint &amp; Cafe</span><span>Zhongli · Taoyuan</span></header>
+
+  <main class="stage" id="stage">
+    <div class="rig" id="rig">
+      <div class="persp" id="persp">
+        <div class="card all-gray" id="card" role="img" aria-label="A layered postcard of Gray Room Paint and Cafe: a gray concrete room with an arch, an easel, track lights and a table with paint and coffee.">
+          <article class="back" id="back">
+            <div class="back-in">
+              <div class="b-top">
+                <div>
+                  <div class="b-kicker">Postcard from</div>
+                  <div class="b-name">Gray Room<span>灰房間 畫畫咖啡廳</span></div>
+                  <div class="b-rate"><b>★ 4.9</b> on Google · 92 reviews</div>
+                </div>
+                <div class="stampbox">
+                  <figure class="stamp" id="photoSlot" aria-label="The Gray Room shopfront"></figure>
+                  <svg class="postmark" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="46" fill="none" stroke="#3a3a3a" stroke-width="2"/><circle cx="50" cy="50" r="30" fill="none" stroke="#3a3a3a" stroke-width="1.4"/><path id="pm" d="M50,50 m-37.5,0 a37.5,37.5 0 1,1 75,0 a37.5,37.5 0 1,1 -75,0" fill="none"/><text font-family="Inter,sans-serif" font-size="8" font-weight="600" letter-spacing="2.3" fill="#3a3a3a"><textPath href="#pm" startOffset="1%">PAINT · SIP · STAY · PAINT · SIP · STAY ·</textPath></text><text x="50" y="48" text-anchor="middle" font-family="Fraunces,serif" font-size="12.5" font-weight="600" fill="#3a3a3a">Zhongli</text><text x="50" y="60" text-anchor="middle" font-family="Inter,sans-serif" font-size="6.5" letter-spacing="1.6" fill="#3a3a3a">TAOYUAN</text></svg>
+                </div>
+              </div>
+              <h2 class="b-h">A quiet gray room, waiting for <em>your</em> color.</h2>
+              <p class="b-p">No talent required. Bring a picture you love and the teacher pencils the outline for you. Then paint, sip a coffee, and stay as long as you like.</p>
+              <ul class="facts">
+                <li><b>No time limit</b>Paint at your own pace.</li>
+                <li><b>From NT$660</b>Canvas, paints and brushes included.</li>
+                <li><b>Drinks from NT$130</b>Coffee, milk tea and croissant waffles.</li>
+              </ul>
+              <p class="offer"><b>Birthday month?</b> Tell us when you book and take 10% off your painting session.</p>
+              <dl class="info">
+                <dt>Find us</dt><dd>No. 12, Sanhe 1st St., Zhongli, Taoyuan · near CYCU</dd>
+                <dt>Book</dt><dd>Official LINE, Instagram, or 03-283-0069</dd>
+                <dt>Open</dt><dd>Mon–Fri 13:00–18:00 · Sat–Sun 12:00–19:00<br>By reservation. Closing days vary.</dd>
+              </dl>
+              <div class="cta">
+                <a class="primary" href="tel:+88632830069" aria-label="Call 03-283-0069 to book">Call to book</a>
+                <a href="https://www.google.com/maps/search/?api=1&query=Gray+Room+%E7%81%B0%E6%88%BF%E9%96%93+%E6%A1%83%E5%9C%92%E5%B8%82%E4%B8%AD%E5%A3%A2%E5%8D%80%E4%B8%89%E5%92%8C%E4%B8%80%E8%A1%9712%E8%99%9F" target="_blank" rel="noopener">Open in Maps</a>
+                <a href="https://www.instagram.com/grayroom_paintcafe/" target="_blank" rel="noopener">Instagram</a>
+              </div>
+            </div>
+          </article>
+        </div>
+        <div class="forecard all-gray" id="forecard" aria-hidden="true"></div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="ui">
+    <p class="hint" id="hint" aria-live="polite">The room is gray. Tap “Add your color”.</p>
+    <div class="btns">
+      <button class="btn primary" id="bColor" aria-pressed="false"><span class="dot" aria-hidden="true"></span><span class="lbl">Add your color</span></button>
+      <button class="btn" id="bLayers" aria-pressed="false">Pull the layers apart</button>
+      <button class="btn" id="bFlip" aria-pressed="false">Flip the card</button>
+    </div>
+    <p class="credit">Student project for Business English, CYCU. Not an official Gray Room ad. Confirm prices and hours with the shop.</p>
+  </footer>
+</div>
+
+<script src="scene.js"></script>
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const body = document.body, stage = $('#stage'), rig = $('#rig'), card = $('#card'), fore = $('#forecard');
+  const Q = new URLSearchParams(location.search), PRINT = Q.get('print'), STATE = Q.get('state') || 'arch';
+  const reduce = PRINT ? true : matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (PRINT) body.classList.add('print');
+  if (!/\bmode-/.test(body.className)) body.classList.add('mode-front');
+  const P = 2.6;                         // perspective distance in card widths
+  const MAXD = 330;                      // depth of the box, card units
+
+  /* ---------- build layers ---------- */
+  const layers = GR.layers({ print: !!PRINT });
+  const els = layers.map((L, i) => {
+    const el = document.createElement('div');
+    el.className = 'layer ' + (L.kind === 'scene' ? 'scene-u' : L.id === 'fore' ? 'fore-u' : 'card-u');
+    el.dataset.id = L.id;
+    // each copy needs its own gradient / clip ids
+    const ids = (html, sfx) => html.replace(/id="([\w-]+)"/g, `id="$1${sfx}"`).replace(/url\(#([\w-]+)\)/g, `url(#$1${sfx})`);
+    el.innerHTML = L.dual
+      ? `<div class="copy g">${ids(L.html, '-g')}</div><div class="copy c">${ids(L.html, '-c')}</div>`
+      : `<div class="copy">${L.html}</div>`;
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = String(i + 1).padStart(2, '0');
+    el.appendChild(tag);
+    if (L.id === 'fore') $('#forecard').appendChild(el); else card.insertBefore(el, $('#back'));
+    return el;
+  });
+
+  $('#photoSlot').innerHTML = GR.shopfront;
+  const box = ['l', 'r', 't', 'b'].map(k => {
+    const d = document.createElement('div'); d.className = 'box ' + k; card.insertBefore(d, card.firstChild); return d;
+  });
+
+  /* dust motes drifting in the light, steam over the coffee */
+  const air = document.createElement('div');
+  air.className = 'air';
+  let s = 7; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 16; i++) {
+    const m = document.createElement('i');
+    m.className = 'mote';
+    const size = 2 + rnd() * 2.5;
+    m.style.cssText = `left:${24 + rnd() * 52}%;top:${22 + rnd() * 48}%;width:${size}px;height:${size}px;` +
+      `--dx:${(rnd() * 26 - 13).toFixed(1)}px;--dy:${(-18 - rnd() * 34).toFixed(1)}px;` +
+      `--d:${(9 + rnd() * 9).toFixed(1)}s;--dl:${(-rnd() * 18).toFixed(1)}s;--o:${(.25 + rnd() * .45).toFixed(2)}`;
+    air.appendChild(m);
+  }
+  air.insertAdjacentHTML('beforeend', '<div class="steam"><span></span><span></span><span></span></div>');
+  card.insertBefore(air, $('#back'));
+
+  /* ---------- modes ---------- */
+  let mode = 'front';
+  const MODES = {
+    front:  { spread: 1,    rig: 'translate3d(0,0,0) scale(1)' },
+    layers: { spread: 3.0,  rig: 'translate3d(-13%,7%,0) scale(.74)' },
+    back:   { spread: 0.03, rig: 'translate3d(0,0,0) scale(1)' },
+  };
+  /* ---------- sizing ---------- */
+  let W = 360;
+  function size() {
+    const r = stage.getBoundingClientRect();
+    W = PRINT ? 500 : Math.max(200, Math.min(r.width * 0.93, (r.height - 34) / 1.48, 560));
+    if (PRINT) MODES.back.rig = 'none'; else
+    // the back is text: bring the card as close as the screen allows
+    MODES.back.rig = `translate3d(0,0,0) scale(${Math.max(1, Math.min((r.width - 6) / W, (r.height - 6) / (W * 1.48), 1.3)).toFixed(3)})`;
+    rig.style.setProperty('--W', W.toFixed(1) + 'px');
+    layout();
+  }
+
+  function layout() {
+    const m = MODES[mode], u = W / 1000;
+    layers.forEach((L, i) => {
+      els[i].style.transform = `translateZ(${(L.z * m.spread * u).toFixed(2)}px)`;
+    });
+    card.style.setProperty('--D', (MAXD * m.spread * u).toFixed(2) + 'px');
+    air.style.transform = `translateZ(${(-110 * m.spread * u).toFixed(2)}px)`;
+    $('#back').style.transform = `rotateY(180deg) translateZ(${(MAXD * m.spread * u + 1).toFixed(2)}px)`;
+    rig.style.transform = m.rig;
+  }
+  const HINTS = {
+    gray: 'The room is gray. Tap “Add your color”.',
+    front: 'Tilt your phone, or drag the card, to look around.',
+    layers: layers.map((L, i) => `<span><b>${String(i + 1).padStart(2, '0')}</b> ${L.name}</span>`).join(' · '),
+    back: 'Tap a button on the card to book or find the shop.',
+    turn: 'Turn your phone upright for a bigger card.',
+  };
+  function setHint() {
+    const low = innerWidth > innerHeight && innerHeight < 540;
+    $('#hint').innerHTML = mode === 'front' ? (colored ? (low ? HINTS.turn : HINTS.front) : HINTS.gray) : HINTS[mode];
+  }
+  function setMode(next) {
+    mode = next;
+    body.classList.remove('mode-front', 'mode-layers', 'mode-back');
+    body.classList.add('mode-' + mode);
+    $('#bLayers').setAttribute('aria-pressed', mode === 'layers');
+    $('#bLayers').textContent = mode === 'layers' ? 'Close the layers' : 'Pull the layers apart';
+    $('#bFlip').setAttribute('aria-pressed', mode === 'back');
+    $('#bFlip').textContent = mode === 'back' ? 'Back to the front' : 'Flip the card';
+    layout(); setHint();
+  }
+  $('#bLayers').addEventListener('click', () => setMode(mode === 'layers' ? 'front' : 'layers'));
+  $('#bFlip').addEventListener('click', () => setMode(mode === 'back' ? 'front' : 'back'));
+
+  /* ---------- colour bloom ---------- */
+  let colored = false, r = 0, rTarget = 0, rAnim = 0;
+  const R_MAX = 170;
+  function paintMask() {
+    card.style.setProperty('--r', r.toFixed(2) + '%');
+    fore.style.setProperty('--r', r.toFixed(2) + '%');
+    for (const c of [card, fore]) {
+      c.classList.toggle('all-gray', r <= 0.01);
+      c.classList.toggle('all-color', r >= R_MAX - 0.01);
+    }
+  }
+  function animateR() {
+    cancelAnimationFrame(rAnim);
+    const from = r, to = rTarget, dur = reduce ? 1 : 3400 * Math.abs(to - from) / R_MAX + 300, t0 = performance.now();
+    const ease = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    (function step(now) {
+      const t = Math.min(1, (now - t0) / dur);
+      r = from + (to - from) * ease(t);
+      paintMask();
+      if (t < 1) rAnim = requestAnimationFrame(step);
+    })(t0);
+  }
+  $('#bColor').addEventListener('click', () => {
+    askGyro();
+    colored = !colored;
+    body.classList.toggle('is-color', colored);
+    $('#bColor').setAttribute('aria-pressed', colored);
+    $('#bColor .lbl').textContent = colored ? 'Back to gray' : 'Add your color';
+    rTarget = colored ? R_MAX : 0;
+    animateR(); setHint();
+  });
+
+  /* ---------- look around: pointer, drag, gyro, gentle idle sway ---------- */
+  let tx = 0, ty = 0, cx = 0, cy = 0, lastInput = -1e9, dragging = false, px = 0, py = 0, curRy = 0, curRx = 0;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  stage.addEventListener('pointermove', e => {
+    if (e.pointerType === 'mouse' && !dragging) {
+      const b = stage.getBoundingClientRect();
+      tx = clamp((e.clientX - b.left) / b.width * 2 - 1, -1, 1);
+      ty = clamp((e.clientY - b.top) / b.height * 2 - 1, -1, 1);
+      lastInput = performance.now();
+    } else if (dragging) {
+      tx = clamp(tx + (e.clientX - px) / (W * 0.55), -1, 1);
+      ty = clamp(ty + (e.clientY - py) / (W * 0.8), -1, 1);
+      px = e.clientX; py = e.clientY; lastInput = performance.now();
+    }
+  });
+  stage.addEventListener('pointerdown', e => {
+    if (e.target.closest('a')) return;
+    dragging = true; px = e.clientX; py = e.clientY; stage.classList.add('dragging');
+    try { stage.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  const endDrag = () => { dragging = false; stage.classList.remove('dragging'); };
+  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointercancel', endDrag);
+  stage.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') { tx = 0; ty = 0; } });
+
+  let gyroOn = false, g0 = null;
+  function onGyro(e) {
+    if (e.gamma == null || e.beta == null || dragging) return;
+    if (!g0) g0 = { g: e.gamma, b: e.beta };
+    tx = clamp((e.gamma - g0.g) / 22, -1, 1);
+    ty = clamp((e.beta - g0.b) / 26, -1, 1);
+    lastInput = performance.now();
+  }
+  function askGyro() {
+    if (gyroOn || typeof DeviceOrientationEvent === 'undefined') return;
+    const start = () => { gyroOn = true; addEventListener('deviceorientation', onGyro); };
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().then(s => { if (s === 'granted') start(); }).catch(() => {});
+    } else start();
+  }
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission !== 'function') askGyro();
+
+  function frame(now) {
+    if (PRINT) { tx = ty = cx = cy = curRx = 0; curRy = mode === 'back' ? 180 : 0; }   // a still: never tilted
+    let gx = tx, gy = ty;
+    if (!reduce && !dragging && now - lastInput > 2600) {      // slow sway so the depth shows on its own
+      const t = now / 1000;
+      gx = Math.sin(t * 0.42) * 0.42; gy = Math.sin(t * 0.31 + 1.2) * 0.3;
+      tx += (gx - tx) * 0.02; ty += (gy - ty) * 0.02;
+    }
+    cx += (gx - cx) * 0.075; cy += (gy - cy) * 0.075;
+    let ry, rx;
+    if (mode === 'layers') { ry = -40 + cx * 24; rx = 8 - cy * 12; }
+    else if (mode === 'back') { ry = 180 + cx * 7; rx = -cy * 5; }
+    else { ry = cx * 13; rx = -cy * 9; }
+    curRy += (ry - curRy) * 0.085; curRx += (rx - curRx) * 0.085;
+    fore.style.transform = card.style.transform = `rotateX(${curRx.toFixed(3)}deg) rotateY(${curRy.toFixed(3)}deg)`;
+    requestAnimationFrame(frame);
+  }
+
+  addEventListener('resize', () => { size(); setHint(); });
+  size(); paintMask(); setHint();
+
+  if (PRINT) {
+    // paper version: a still of the card. "arch" = the room stays gray, colour waits behind the arch.
+    if (STATE === 'color') { r = R_MAX; body.classList.add('is-color'); paintMask(); }
+    if (STATE === 'arch') {
+      body.classList.add('arch-gray');
+      els.forEach((el, i) => { if (['mural', 'frame', 'fore', 'words'].includes(layers[i].id)) el.classList.add('force-c'); });
+    }
+    if (PRINT === 'back') {
+      setMode('back'); body.classList.add('print-back');
+      const sc = document.createElement('script');
+      sc.src = 'qr.js';
+      sc.onload = () => {
+        const q = window.GR_QR, info = $('.info');
+        info.insertAdjacentHTML('beforebegin', `<div class="pscan"><div class="qr"><svg viewBox="-0.5 -0.5 ${q.n + 1} ${q.n + 1}" shape-rendering="crispEdges" role="img" aria-label="QR code"><path d="${q.d}" stroke="#1d1d1d" stroke-width="1.02" fill="none"/></svg></div>` +
+          `<div><p class="scan">This card is gray on purpose.<em>Scan it and add your color.</em></p>` +
+          `<p class="scan-s">The room comes alive in 3D on your phone.<b>${q.url.replace('https://', '').replace(/\/$/, '')}</b></p></div></div>`);
+        info.innerHTML = '<dt>Find us</dt><dd>No. 12, Sanhe 1st St., Zhongli, Taoyuan · near CYCU</dd>' +
+          '<dt>Open</dt><dd>Mon–Fri 13:00–18:00 · Sat–Sun 12:00–19:00 (days vary)</dd>' +
+          '<dt>Book</dt><dd>Reserve via LINE, Instagram or 03-283-0069</dd>' +
+          '<dt>Offer</dt><dd>Birthday month? Take 10% off your painting session.</dd>';
+        $('.cta').outerHTML = '<p class="pfine">Student project for Business English, Chung Yuan Christian University. Not an official Gray Room advertisement. Please confirm prices, offers and hours with the shop.</p>';
+        $('.offer').remove();
+        body.dataset.ready = '1';
+      };
+      document.head.appendChild(sc);
+      curRy = 180;
+    } else body.dataset.ready = '1';
+    tx = ty = cx = cy = 0; lastInput = 1e15;
+  }
+  requestAnimationFrame(frame);
+
+  /* hooks used to take the screenshots and the print stills */
+  window.__gr = { setMode, tilt: (x, y) => { tx = x; ty = y; cx = x; cy = y; lastInput = 1e15; }, snap: () => { const m = mode; curRy = m === 'layers' ? -40 + cx * 24 : m === 'back' ? 180 + cx * 7 : cx * 13; curRx = m === 'layers' ? 8 - cy * 12 : m === 'back' ? -cy * 5 : -cy * 9; } };
+})();
+</script>
+</body>
+</html>
