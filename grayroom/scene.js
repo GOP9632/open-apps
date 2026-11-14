@@ -111,12 +111,15 @@
     <rect x="780" y="1002" width="282" height="8" fill="#000" opacity=".08"/>
   `);
 
-  /* ---------- 03 gallery: small works hanging beside the arch ---------- */
+  /* ---------- 03 the wall: works that guests took home, and a clock with no hands ---------- */
+  const ticks = Array.from({ length: 12 }, (_, i) => {
+    const a = i / 12 * Math.PI * 2, r1 = i % 3 ? 47 : 42, r2 = 51;
+    return `<path d="M${(112 + Math.sin(a) * r1).toFixed(1)},${(800 - Math.cos(a) * r1).toFixed(1)} L${(112 + Math.sin(a) * r2).toFixed(1)},${(800 - Math.cos(a) * r2).toFixed(1)}"/>`;
+  }).join('');
   const gallery = svg(`
     <defs>
       <clipPath id="gA"><rect x="88" y="528" width="96" height="136"/></clipPath>
       <clipPath id="gC"><rect x="818" y="486" width="96" height="112"/></clipPath>
-      <clipPath id="gB"><circle cx="134" cy="800" r="58"/></clipPath>
     </defs>
     <!-- A: texture painting, waves -->
     <rect x="80" y="528" width="120" height="160" fill="#000" opacity=".22" transform="translate(7,9)"/>
@@ -131,18 +134,11 @@
         <path d="M94,612 q10,-7 20,0"/><path d="M140,632 q10,-7 20,0"/><path d="M104,655 q10,-6 20,0"/>
       </g>
     </g>
-    <!-- B: round canvas, flowers -->
-    <circle cx="140" cy="808" r="62" fill="#000" opacity=".22"/>
-    <circle cx="134" cy="800" r="62" fill="#fbf7f0" stroke="#e6e0d6" stroke-width="5"/>
-    <g clip-path="url(#gB)">
-      <rect x="70" y="738" width="130" height="126" fill="#f7d9d2"/>
-      <g fill="#e2567a"><circle cx="112" cy="786" r="13"/><circle cx="131" cy="776" r="13"/><circle cx="131" cy="798" r="13"/><circle cx="150" cy="787" r="13"/></g>
-      <circle cx="131" cy="787" r="8" fill="#f8c865"/>
-      <g fill="#f08a4b"><circle cx="160" cy="826" r="9"/><circle cx="173" cy="818" r="9"/><circle cx="173" cy="834" r="9"/></g>
-      <circle cx="170" cy="826" r="5" fill="#fff3cf"/>
-      <path d="M131,800 C128,826 120,846 108,862 M170,838 C168,850 162,858 156,866" stroke="#3f8f6b" stroke-width="5" fill="none" stroke-linecap="round"/>
-      <path d="M121,832 q-18,-4 -24,8 q16,6 24,-8z" fill="#3f8f6b"/>
-    </g>
+    <!-- B: the clock has no hands: there is no time limit here -->
+    <circle cx="118" cy="808" r="60" fill="#000" opacity=".22"/>
+    <circle cx="112" cy="800" r="60" fill="#fbf7f0" stroke="#1d1d1d" stroke-width="7"/>
+    <g stroke="#1d1d1d" stroke-width="4" stroke-linecap="round">${ticks}</g>
+    <path d="M112,800 C100,782 78,784 78,800 C78,816 100,818 112,800 C124,782 146,784 146,800 C146,816 124,818 112,800 Z" fill="none" stroke="#ef6f4a" stroke-width="7" stroke-linejoin="round"/>
     <!-- C: pet portrait -->
     <rect x="806" y="474" width="120" height="136" fill="#000" opacity=".22" transform="translate(7,9)"/>
     <rect x="806" y="474" width="120" height="136" fill="#f6f3ee" stroke="#1d1d1d" stroke-width="6"/>
@@ -247,7 +243,70 @@
     </g>
   `);
 
-  /* ---------- 06 track lights ---------- */
+  /* ---------- 06 you: the guest paints, seen from behind; a dog watches ---------- */
+  const you = svg(`
+    <defs>
+      <linearGradient id="sw" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#45a6a0"/><stop offset="1" stop-color="#2f8581"/>
+      </linearGradient>
+    </defs>
+    <!-- stool -->
+    <ellipse cx="254" cy="1158" rx="128" ry="12" fill="#000" opacity=".24"/>
+    <path d="M200,1056 L180,1190 M308,1056 L328,1190" stroke="#8a6038" stroke-width="14" stroke-linecap="round"/>
+    <path d="M190,1126 H318" stroke="#7a5330" stroke-width="8" stroke-linecap="round"/>
+    <rect x="170" y="1036" width="168" height="26" rx="11" fill="#b98756"/>
+    <rect x="170" y="1053" width="168" height="9" rx="4.5" fill="#000" opacity=".16"/>
+    <!-- palette held in the left hand -->
+    <g transform="rotate(-16 138 968)">
+      <ellipse cx="138" cy="968" rx="66" ry="40" fill="#ecd0a2"/>
+      <circle cx="104" cy="956" r="10" fill="#ef6f4a"/><circle cx="130" cy="944" r="10" fill="#f8c865"/>
+      <circle cx="158" cy="950" r="10" fill="#46a9a4"/><circle cx="112" cy="984" r="9" fill="#d94a5c"/>
+      <ellipse cx="162" cy="980" rx="12" ry="8" fill="#b98f5c"/>
+    </g>
+    <!-- body in a sweater -->
+    <path d="M166,1042 C156,958 146,862 176,810 C196,778 224,772 254,772 C284,772 312,778 332,810 C362,862 352,958 342,1042 Z" fill="url(#sw)"/>
+    <path d="M166,1042 C160,990 154,936 158,884 C176,948 200,1004 236,1042 Z" fill="#000" opacity=".10"/>
+    <!-- apron: straps crossing on the back, tied in a bow -->
+    <g fill="none" stroke="#f6efe2" stroke-linecap="round">
+      <path d="M210,782 L300,1004 M298,782 L208,1004" stroke-width="13"/>
+      <path d="M163,1006 H345" stroke-width="18"/>
+      <path d="M254,1006 C226,976 202,984 214,1004 C222,1016 240,1012 254,1006 C282,976 306,984 294,1004 C286,1016 268,1012 254,1006 M250,1010 L236,1040 M258,1010 L274,1040" stroke-width="8"/>
+    </g>
+    <!-- right arm reaching for the canvas -->
+    <path d="M324,822 C350,858 372,884 394,892 C420,880 434,846 446,812" fill="none" stroke="url(#sw)" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M394,892 C420,880 434,846 446,812" fill="none" stroke="#000" stroke-opacity=".08" stroke-width="46" stroke-linecap="round"/>
+    <!-- brush, then the hand that holds it -->
+    <g transform="rotate(-33 452 794)">
+      <rect x="430" y="789" width="104" height="9" rx="4.5" fill="#2b2b33"/>
+      <rect x="530" y="786" width="18" height="15" fill="#c9c9cc"/><rect x="536" y="786" width="3" height="15" fill="#8f8f95"/>
+      <path d="M548,786 Q570,788 580,793.5 Q570,799 548,801 Z" fill="#ef6f4a"/>
+    </g>
+    <circle cx="452" cy="794" r="20" fill="#e8b998"/>
+    <path d="M440,786 q12,-9 24,0" fill="none" stroke="#c9946f" stroke-width="3" stroke-linecap="round"/>
+    <!-- neck, head and a bun -->
+    <rect x="237" y="744" width="34" height="42" rx="13" fill="#e8b998"/>
+    <ellipse cx="202" cy="716" rx="8" ry="12" fill="#e8b998"/><ellipse cx="306" cy="716" rx="8" ry="12" fill="#e8b998"/>
+    <circle cx="254" cy="704" r="53" fill="#3b2a25"/>
+    <circle cx="254" cy="645" r="28" fill="#3b2a25"/>
+    <path d="M229,664 Q254,679 279,664" fill="none" stroke="#ef6f4a" stroke-width="10" stroke-linecap="round"/>
+    <path d="M222,690 Q232,668 252,664 M236,734 Q262,744 284,728" fill="none" stroke="#fff" stroke-opacity=".12" stroke-width="5" stroke-linecap="round"/>
+    <!-- the dog: pets are welcome -->
+    <g transform="translate(12,0)">
+      <ellipse cx="900" cy="1158" rx="76" ry="10" fill="#000" opacity=".24"/>
+      <path d="M946,1122 C984,1106 982,1056 954,1050" fill="none" stroke="#d99a55" stroke-width="20" stroke-linecap="round"/>
+      <path d="M852,1158 C844,1100 850,1040 882,1010 C914,998 946,1030 954,1086 C958,1118 956,1140 952,1158 Z" fill="#d99a55"/>
+      <path d="M852,1052 C844,1084 846,1114 856,1136 C868,1104 872,1072 874,1040 Z" fill="#f3dcb4"/>
+      <path d="M866,1066 L858,1158 H888 L892,1076 Z" fill="#c98a48"/>
+      <path d="M852,1012 Q876,1028 906,1012" fill="none" stroke="#ef6f4a" stroke-width="11" stroke-linecap="round"/>
+      <circle cx="874" cy="972" r="43" fill="#d99a55"/>
+      <path d="M842,962 C816,958 800,970 798,984 C798,1000 818,1006 850,1000 Z" fill="#ecc086"/>
+      <circle cx="802" cy="980" r="7.5" fill="#2b2b33"/>
+      <circle cx="852" cy="960" r="4.6" fill="#2b2b33"/>
+      <path d="M880,932 C910,928 924,956 914,994 C896,986 884,964 880,932 Z" fill="#b87535"/>
+    </g>
+  `);
+
+  /* ---------- 07 track lights ---------- */
   const head = (x, rot) => `
     <g transform="translate(${x},38)">
       <rect x="-3" y="0" width="6" height="26" fill="#161616"/>
@@ -277,7 +336,7 @@
     ${head(212, -14)}${head(812, 14)}
   `);
 
-  /* ---------- 07 table ---------- */
+  /* ---------- 08 table ---------- */
   const blob = (cx, cy, rx, ry, c) => `
     <ellipse cx="${cx}" cy="${cy + 3}" rx="${rx}" ry="${ry}" fill="#000" opacity=".14"/>
     <ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="${c}"/>
@@ -365,14 +424,14 @@
     </g>
   `);
 
-  /* ---------- 08 frame (card units 1000 x 1480) ---------- */
+  /* ---------- 09 frame (card units 1000 x 1480) ---------- */
   const frame = (print) => svg(`
     <defs>
       <linearGradient id="pp" x1="0" y1="0" x2="1" y2="1">
         <stop offset="0" stop-color="#f7f4ee"/><stop offset="1" stop-color="#ece8df"/>
       </linearGradient>
     </defs>
-    <path fill-rule="evenodd" fill="url(#pp)" d="M0,22 Q0,0 22,0 H978 Q1000,0 1000,22 V1458 Q1000,1480 978,1480 H22 Q0,1480 0,1458 Z M36,36 V1310 H964 V36 Z"/>
+    <path fill-rule="evenodd" fill="url(#pp)" d="${print ? 'M-40,-40 H1040 V1520 H-40 Z' : 'M0,22 Q0,0 22,0 H978 Q1000,0 1000,22 V1458 Q1000,1480 978,1480 H22 Q0,1480 0,1458 Z'} M36,36 V1310 H964 V36 Z"/>
     <path d="M36,36 H964 V1310 H36 Z" fill="none" stroke="#000" stroke-opacity=".28" stroke-width="3"/>
     <path d="M36,1310 V36 H964" fill="none" stroke="#000" stroke-opacity=".22" stroke-width="7" transform="translate(3,3)"/>
     <!-- colour spilling onto the paper -->
@@ -387,13 +446,23 @@
     ${print ? `<text x="946" y="1440" text-anchor="end" font-family="Fraunces, Georgia, serif" font-style="italic" font-weight="500" font-size="27" fill="#c8502f">Flip. Scan. Add your color.</text>` : ''}
   `, 1000, 1480);
 
-  /* ---------- 09 foreground (card units, in front of the paper frame) ---------- */
+  /* ---------- 10 foreground (card units, in front of the paper frame) ---------- */
   const leaf = (d, c, vein) => `<path d="${d}" fill="${c}"/><path d="${vein}" fill="none" stroke="#000" stroke-opacity=".18" stroke-width="3" stroke-linecap="round"/>`;
   const foreground = svg(`
     <g class="lf">
       ${leaf('M-90,120 C-10,40 120,10 250,58 C170,92 110,150 20,170 C-20,178 -60,160 -90,120 Z', '#2f6b4f', 'M-70,128 C20,96 130,70 240,60')}
       ${leaf('M-80,250 C-30,170 80,150 196,214 C120,246 70,300 -10,300 C-44,300 -70,282 -80,250 Z', '#3f8f6b', 'M-66,256 C10,232 100,214 188,216')}
       ${leaf('M-70,24 C-10,-60 110,-80 220,-20 C150,10 100,60 20,66 C-20,68 -50,52 -70,24 Z', '#245640', 'M-56,28 C20,0 120,-18 212,-20')}
+    </g>
+    <!-- seal: the two promises of the shop -->
+    <g transform="rotate(-12 858 318)">
+      <circle cx="862" cy="324" r="78" fill="#000" opacity=".2"/>
+      <circle cx="858" cy="318" r="78" fill="#ef6f4a"/>
+      <circle cx="858" cy="318" r="71" fill="none" stroke="#fff3e2" stroke-opacity=".55" stroke-width="1.6"/>
+      <path id="seal" d="M858,318 m-55,0 a55,55 0 1,1 110,0 a55,55 0 1,1 -110,0" fill="none"/>
+      <text font-family="Inter, Helvetica, Arial, sans-serif" font-size="12.6" font-weight="700" letter-spacing="2.2" fill="#fff6ea"><textPath href="#seal" startOffset="0" textLength="340" lengthAdjust="spacing">NO TALENT NEEDED &#8226; NO TIME LIMIT &#8226;</textPath></text>
+      <text x="858" y="313" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-weight="500" font-size="33" fill="#fff6ea">you</text>
+      <text x="858" y="340" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="4" fill="#fff6ea">PAINT</text>
     </g>
     <!-- the brush that just painted the stroke under the name, lying off the bottom edge -->
     <g transform="translate(492,1440) rotate(21)">
@@ -442,15 +511,16 @@
     SW, SH, shopfront,
     /* depth in card units (card width = 1000). Negative = behind the paper frame. */
     layers: (opts = {}) => [
-      { id: 'mural',   name: 'Mural',        z: -330, kind: 'scene', dual: true,  html: mural },
-      { id: 'wall',    name: 'Plaster wall', z: -270, kind: 'scene', dual: true,  html: wall },
-      { id: 'gallery', name: 'Gallery',      z: -235, kind: 'scene', dual: true,  html: gallery },
-      { id: 'words',   name: 'Headline',     z: -195, kind: 'scene', dual: false, html: words(opts.print) },
-      { id: 'easel',   name: 'Easel',        z: -150, kind: 'scene', dual: true,  html: easel },
-      { id: 'lights',  name: 'Track lights', z: -105, kind: 'scene', dual: true,  html: lights },
-      { id: 'table',   name: 'Table',        z: -55,  kind: 'scene', dual: true,  html: table },
-      { id: 'frame',   name: 'Paper frame',  z: 0,    kind: 'card',  dual: true,  html: frame(opts.print) },
-      { id: 'fore',    name: 'Foreground',   z: 55,   kind: 'card',  dual: true,  html: foreground },
+      { id: 'mural',   name: 'Mural',          z: -330, kind: 'scene', dual: true,  html: mural },
+      { id: 'wall',    name: 'Plaster wall',   z: -280, kind: 'scene', dual: true,  html: wall },
+      { id: 'gallery', name: 'Finished works', z: -245, kind: 'scene', dual: true,  html: gallery },
+      { id: 'words',   name: 'Headline',       z: -205, kind: 'scene', dual: false, html: words(opts.print) },
+      { id: 'easel',   name: 'Easel',          z: -165, kind: 'scene', dual: true,  html: easel },
+      { id: 'you',     name: 'You',            z: -125, kind: 'scene', dual: true,  html: you },
+      { id: 'lights',  name: 'Track lights',   z: -90,  kind: 'scene', dual: true,  html: lights },
+      { id: 'table',   name: 'Table',          z: -50,  kind: 'scene', dual: true,  html: table },
+      { id: 'frame',   name: 'Paper frame',    z: 0,    kind: 'card',  dual: true,  html: frame(opts.print) },
+      { id: 'fore',    name: 'Foreground',     z: 55,   kind: 'card',  dual: true,  html: foreground },
     ],
   };
 })();
