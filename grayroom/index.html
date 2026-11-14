@@ -50,13 +50,19 @@ body.is-color .glow::after{opacity:1}
 .stage{position:relative;z-index:2;flex:1;min-height:0;display:grid;place-items:center;
   touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
 .stage.dragging{cursor:grabbing}
-.rig{width:var(--W);height:calc(var(--W)*1.48);transition:transform 1.5s var(--ease)}
-.persp{position:relative;width:100%;height:100%;perspective:calc(var(--W)*2.6);perspective-origin:50% 46%}
-.card,.forecard{position:absolute;inset:0;transform-style:preserve-3d;will-change:transform}
-.forecard{pointer-events:none;transition:opacity .6s var(--ease)}
-body.mode-back .forecard{opacity:0}
+.rig{width:var(--W);height:calc(var(--W)*1.48);opacity:0;transition:transform 1.5s var(--ease),opacity .8s var(--ease)}
+body.ready .rig{opacity:1}
+.persp{position:relative;width:100%;height:100%;perspective:calc(var(--W)*var(--P,2.6));perspective-origin:50% 46%}
+.card,.forecard,.backfield{position:absolute;inset:0;transform-style:preserve-3d;will-change:transform}
+.backfield{pointer-events:none;z-index:0}
+.card{z-index:1}
+.forecard{z-index:2}
+body.facing-back .forecard{z-index:0}
+[hidden]{display:none!important}
+.forecard{pointer-events:none}
 
-.layer{position:absolute;transform-style:preserve-3d;transition:transform 1.5s var(--ease);pointer-events:none}
+.layer{position:absolute;transform-style:preserve-3d;transition:transform 1.5s var(--ease),opacity .55s var(--ease);pointer-events:none}
+.layer.dim{opacity:.07}
 .layer.card-u{inset:0}
 .layer.fore-u{inset:-15%}
 .layer.fore-u svg{left:11.5385%;top:11.5385%;width:76.923%;height:76.923%}
@@ -76,18 +82,22 @@ body.is-color .box{filter:grayscale(0)}
 .box.r{right:3.6%;transform-origin:100% 50%;transform:rotateY(-90deg);background:linear-gradient(270deg,#d6d2c9,#b9b5ad 70%,#9a968e)}
 .box.t{top:2.4324%;transform-origin:50% 0;transform:rotateX(-90deg);background:linear-gradient(180deg,#e6e3dc,#c4c1ba 70%,#a9a69f)}
 .box.b{bottom:11.4865%;transform-origin:50% 100%;transform:rotateX(90deg);background:linear-gradient(0deg,#9a9894,#807e7a 70%,#6a6866)}
-body.mode-layers .box,body.mode-back .box{opacity:0}
+body.mode-layers .box,body.mode-layers .shell{opacity:0}
+/* paper sides: the card is a solid block when you turn it */
+.shell{position:absolute;pointer-events:none;transition:opacity .7s var(--ease),width 1.5s var(--ease),height 1.5s var(--ease)}
+.shell.l,.shell.r{top:.9%;height:98.2%;width:var(--D)}
+.shell.t,.shell.b{left:1.3%;width:97.4%;height:var(--D)}
+.shell.l{left:0;transform-origin:0 50%;transform:rotateY(90deg);background:linear-gradient(90deg,#dcd8cf,#cbc7be)}
+.shell.r{right:0;transform-origin:100% 50%;transform:rotateY(-90deg);background:linear-gradient(270deg,#e4e0d7,#d2cec5)}
+.shell.t{top:0;transform-origin:50% 0;transform:rotateX(-90deg);background:linear-gradient(180deg,#f3f0e9,#e2ded5)}
+.shell.b{bottom:0;transform-origin:50% 100%;transform:rotateX(90deg);background:linear-gradient(0deg,#c9c5bc,#b7b3aa)}
 .layer > .copy{position:absolute;inset:0}
 .layer svg{position:absolute;inset:0;width:100%;height:100%;display:block;overflow:visible}
 
 .copy.g{filter:grayscale(1) contrast(.94) brightness(.97)}
 .copy.g .co,.copy.c .go{display:none}
-.copy.c{
-  -webkit-mask-image:radial-gradient(ellipse 100% 72% at 50% 53%,#000 calc(var(--r) - 16%),transparent var(--r));
-          mask-image:radial-gradient(ellipse 100% 72% at 50% 53%,#000 calc(var(--r) - 16%),transparent var(--r));
-}
 .all-gray .copy.c{display:none}
-.all-color .copy.c{-webkit-mask-image:none;mask-image:none}
+.all-color .copy.c{-webkit-clip-path:none!important;clip-path:none!important}
 .all-color .copy.g{display:none}
 
 /* headline swap */
@@ -99,13 +109,17 @@ body.is-color .w-color{opacity:1;transition-delay:.9s}
 body.is-color .w-stroke{stroke-dashoffset:0}
 
 /* layer outlines + labels for the pulled-apart view */
-.layer::after{content:"";position:absolute;inset:0;border:1px solid rgba(255,255,255,.5);border-radius:2px;
-  background:rgba(255,255,255,.035);opacity:0;transition:opacity .9s var(--ease)}
+.layer::after{content:"";position:absolute;inset:0;border:1.5px solid rgba(255,255,255,.62);border-radius:2px;
+  background:rgba(255,255,255,.045);opacity:0;transition:opacity .9s var(--ease)}
 .tag{position:absolute;left:0;bottom:100%;margin-bottom:calc(var(--W)*.012);white-space:nowrap;
-  font:700 calc(var(--W)*.044)/1 var(--sans);letter-spacing:.04em;color:var(--amber);
+  font:600 calc(var(--W)*.046)/1 var(--sans);letter-spacing:.02em;color:var(--ink);
   opacity:0;transition:opacity .9s var(--ease)}
 body.mode-layers .layer::after{opacity:1}
 body.mode-layers .tag{opacity:.95;transition-delay:.6s}
+.tag b{color:var(--amber);font-weight:700}
+.tag span{display:none}
+.layer.on .tag span{display:inline}
+.rays.dim{opacity:0!important;transition-duration:1.5s,.4s}
 
 /* dust in the light + steam: slow drifting, nothing flies in */
 .air{position:absolute;left:3.6%;top:2.4324%;width:92.8%;height:86.0811%;pointer-events:none;transform-style:preserve-3d;transition:transform 1.5s var(--ease),opacity .8s}
@@ -118,13 +132,59 @@ body.mode-layers .tag{opacity:.95;transition-delay:.6s}
   transform-origin:50% 100%;opacity:0;animation:steam 5.5s ease-in-out infinite}
 .steam span:nth-child(1){left:18%}.steam span:nth-child(2){left:44%;animation-delay:1.8s}.steam span:nth-child(3){left:68%;animation-delay:3.4s}
 @keyframes steam{0%{transform:translateY(8%) scaleY(.5) skewX(0);opacity:0}30%{opacity:.75}100%{transform:translateY(-70%) scaleY(1.15) skewX(9deg);opacity:0}}
-body.mode-layers .air,body.mode-back .air{opacity:0}
+body.mode-layers .air{opacity:0}
+
+
+/* ---------- light, paint and atmosphere ---------- */
+.no-anim .rig,.no-anim .layer,.no-anim .box,.no-anim .rays,.no-anim .air{transition:none!important}
+body.intro .tag{opacity:0!important}
+/* a streak of light that slides over paper and glass as the card turns */
+.glare{position:absolute;inset:0;overflow:hidden;border-radius:2.2% / 1.5%;pointer-events:none;transition:opacity .6s var(--ease);filter:grayscale(1)}
+body.is-color .glare{filter:none}
+.glare i{position:absolute;top:-30%;bottom:-30%;left:-50%;width:200%;will-change:transform;
+  background:linear-gradient(112deg,transparent 38%,rgba(255,120,170,.10) 43%,rgba(255,226,150,.14) 46.5%,rgba(255,255,255,.30) 50%,rgba(140,220,255,.14) 53.5%,rgba(150,130,255,.10) 57%,transparent 62%)}
+body.mode-layers .glare{opacity:0}
+/* the mural's sun throws slow turning rays through the arch once there is colour */
+.rays{position:absolute;left:3.6%;top:2.4324%;width:92.8%;height:86.0811%;overflow:hidden;pointer-events:none;opacity:0;
+  transition:transform 1.5s var(--ease),opacity 2.4s var(--ease)}
+body.is-color .rays{opacity:1}
+.rays i{position:absolute;left:50%;top:53.5%;width:116%;aspect-ratio:1;margin:-58% 0 0 -58%;border-radius:50%;transform:scale(2);
+  background:repeating-conic-gradient(from 0deg,rgba(255,238,196,0) 0deg,rgba(255,238,196,.34) 5deg,rgba(255,238,196,0) 10deg,rgba(255,238,196,0) 15deg,rgba(255,214,150,.2) 19deg,rgba(255,238,196,0) 24deg);
+  -webkit-mask-image:radial-gradient(circle,#000 6%,rgba(0,0,0,.5) 26%,transparent 58%);mask-image:radial-gradient(circle,#000 6%,rgba(0,0,0,.5) 26%,transparent 58%);
+  animation:spin 80s linear infinite}
+@keyframes spin{from{transform:scale(2) rotate(0deg)}to{transform:scale(2) rotate(360deg)}}
+/* each touch leaves a ring of wet paint */
+.fx{position:absolute;inset:0;pointer-events:none}
+.ring{position:absolute;aspect-ratio:1;border-radius:50%;border:calc(var(--W)*.009) solid;transform:translate(-50%,-50%) scale(.08);opacity:0;
+  animation:ring 1.05s cubic-bezier(.16,.7,.2,1) forwards}
+@keyframes ring{0%{transform:translate(-50%,-50%) scale(.08);opacity:.95}100%{transform:translate(-50%,-50%) scale(1.14);opacity:0}}
+/* colour leaks out of the card into the whole page */
+.aura{position:fixed;inset:0;overflow:hidden;pointer-events:none;opacity:0;transition:opacity 3s var(--ease)}
+body.is-color .aura{opacity:1}
+.aura i{position:absolute;width:26vmax;height:26vmax;border-radius:50%;left:var(--x);top:var(--y);margin:-13vmax 0 0 -13vmax;
+  background:radial-gradient(circle,var(--c) 0,transparent 64%);opacity:var(--o);will-change:transform;
+  animation:aura var(--d) ease-in-out var(--dl) infinite alternate}
+@keyframes aura{0%{transform:translate3d(-9vmax,-6vmax,0) scale(2.7)}50%{transform:translate3d(7vmax,5vmax,0) scale(3.25)}100%{transform:translate3d(12vmax,-8vmax,0) scale(2.9)}}
+.aura i{transform:scale(3)}
+/* slow device: keep the picture, drop the moving extras */
+body.lite .bokeh{display:none}
+body.lite .aura i,body.lite .rays i{animation-play-state:paused}
+/* specks of paint floating in front of and behind the card */
+.bokeh{position:absolute;inset:-48%;container-type:inline-size;pointer-events:none;opacity:0;transition:opacity 2.6s var(--ease)}
+body.is-color .bokeh{opacity:1}
+body.mode-layers .bokeh.f,body.facing-back .bokeh.f{opacity:0;transition-duration:.5s}
+.bokeh i{position:absolute;border-radius:50%;background:radial-gradient(circle,var(--c) 0,var(--c) 30%,transparent 70%);opacity:0;will-change:transform,opacity;
+  animation:drift var(--d) linear var(--dl) infinite}
+@keyframes drift{0%{transform:translate3d(0,0,0);opacity:0}18%{opacity:var(--o)}82%{opacity:var(--o)}100%{transform:translate3d(var(--dx),var(--dy),0);opacity:0}}
+body.print .glare,body.print .rays,body.print .aura,body.print .bokeh,body.print .fx{display:none}
+body.print .rig{opacity:1;transition:none}
 
 /* ---------- back of the card ---------- */
 .back{position:absolute;inset:0;transform:rotateY(180deg) translateZ(1px);backface-visibility:hidden;-webkit-backface-visibility:hidden;
   background:linear-gradient(135deg,#f7f4ee,#ece8df);color:var(--paper-ink);border-radius:2.2cqw;
-  container-type:inline-size;overflow:hidden;opacity:0;transition:transform 1.5s var(--ease),opacity 0s linear .7s;pointer-events:none}
-body.mode-back .back{opacity:1;pointer-events:auto;transition:transform 1.5s var(--ease),opacity 0s}
+  container-type:inline-size;overflow:hidden;transition:transform 1.5s var(--ease);pointer-events:none}
+body.facing-back .back{pointer-events:auto}
+body:not(.print) .back{border-radius:0}
 .back-in{position:absolute;inset:0;padding:5.4cqw 6.2cqw 5cqw;display:flex;flex-direction:column;font-size:3.1cqw;line-height:1.46}
 .b-top{display:flex;justify-content:space-between;align-items:flex-start;gap:3cqw}
 .b-kicker{font-size:2.5cqw;letter-spacing:.3em;text-transform:uppercase;color:#77736b;font-weight:600}
@@ -162,6 +222,14 @@ body.mode-back .back{opacity:1;pointer-events:auto;transition:transform 1.5s var
 .hint{margin:0;font-size:12.5px;line-height:1.5;color:var(--muted);min-height:3em;max-width:34em;text-align:center}
 .hint b{color:var(--amber);font-weight:600}
 .hint span{white-space:nowrap}
+.chips{display:flex;gap:6px;max-width:100%;min-height:3em;align-items:center;overflow-x:auto;padding:2px 2px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.chips::-webkit-scrollbar{display:none}
+.chip{appearance:none;flex:none;min-height:32px;padding:0 12px;border-radius:99px;border:1px solid var(--line);background:rgba(255,255,255,.06);
+  font-size:12.5px;font-weight:500;white-space:nowrap;cursor:pointer;transition:background .3s,color .3s,border-color .3s}
+.chip b{color:var(--amber);font-weight:700;margin-right:2px}
+.chip[aria-pressed="true"]{background:var(--ink);color:#1b1b1c;border-color:var(--ink)}
+.chip[aria-pressed="true"] b{color:#b4502d}
+.chip:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 .btns{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
 .btn{appearance:none;border:1px solid var(--line);background:rgba(255,255,255,.06);
   min-height:46px;padding:0 18px;border-radius:99px;font-size:14px;font-weight:600;letter-spacing:.01em;cursor:pointer;
@@ -178,13 +246,17 @@ body.mode-back .back{opacity:1;pointer-events:auto;transition:transform 1.5s var
 .btn.primary[aria-pressed="true"] .dot{background:#9b9b9b}
 .credit{margin:0;font-size:10.5px;line-height:1.4;color:#77746e;text-align:center}
 
-@media (max-height:700px){.btn{min-height:42px}.ui{gap:7px}.hint{min-height:1.5em}}
+@media (max-height:700px){.btn{min-height:42px}.ui{gap:7px}}
+@media (max-width:410px){.btn{padding:0 13px;font-size:13.5px;gap:7px}.btns{gap:6px}}
 @media (orientation:landscape) and (max-height:540px){
   .app{flex-direction:row;align-items:stretch;gap:18px}
   .top{position:absolute;left:max(16px,env(safe-area-inset-left));right:max(16px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top))}
   .stage{flex:1.1}
   .ui{flex:1;justify-content:center;padding-top:22px}
   .btns{flex-direction:column;align-items:stretch;width:min(100%,300px)}
+  .ui{min-width:0}
+  .chips{flex-wrap:wrap;justify-content:center;overflow:visible}
+  .chip{min-height:28px;padding:0 9px;font-size:11.5px}
   .btn{justify-content:center}
 }
 body.print{background:linear-gradient(135deg,#f7f4ee,#ece8df);overflow:hidden}
@@ -192,7 +264,7 @@ body.print .glow,body.print .top,body.print .ui,body.print .air{display:none}
 body.print .app{padding:0}
 body.print .rig,body.print .layer,body.print .box,body.print .back{transition:none!important}
 body.print .back{border-radius:0}
-.force-c .copy.c{display:block!important;-webkit-mask-image:none!important;mask-image:none!important}
+.force-c .copy.c{display:block!important;-webkit-clip-path:none!important;clip-path:none!important}
 .force-c .copy.g{display:none!important}
 .arch-gray .lf{filter:grayscale(1) brightness(1.04)}
 .pscan{margin:3cqw 0 0;display:grid;grid-template-columns:auto 1fr;gap:3.6cqw;align-items:center;background:#262626;color:#f6efe2;border-radius:1.8cqw;padding:2.6cqw}
@@ -212,19 +284,22 @@ body.print-back .layer,body.print-back .box,body.print-back .forecard{display:no
 body.print-back .card,body.print-back .back{transform:none!important;-webkit-backface-visibility:visible;backface-visibility:visible}
 .pfine{margin:auto 0 0;padding-top:2cqw;font-size:2.05cqw;line-height:1.35;color:#8a857b}
 @media (prefers-reduced-motion:reduce){
-  .rig,.layer,.air{transition-duration:.01s}
-  .mote,.steam span{animation:none}
+  .rig,.layer,.air,.rays{transition-duration:.01s}
+  .mote,.steam span,.rays i,.aura i,.bokeh i,.ring{animation:none}
+  .bokeh i{opacity:var(--o)}
 }
 </style>
 </head>
 <body class="mode-front">
 <div class="glow" aria-hidden="true"></div>
+<div class="aura" aria-hidden="true"><i style="--c:#ef6f4a;--x:12%;--y:18%;--o:.34;--d:19s;--dl:-4s"></i><i style="--c:#6b3a78;--x:88%;--y:30%;--o:.5;--d:23s;--dl:-11s"></i><i style="--c:#46a9a4;--x:82%;--y:88%;--o:.28;--d:27s;--dl:-7s"></i><i style="--c:#f8c865;--x:14%;--y:84%;--o:.24;--d:21s;--dl:-15s"></i></div>
 <div class="app">
   <header class="top"><span><b>Gray Room</b> Paint &amp; Cafe</span><span>Zhongli · Taoyuan</span></header>
 
   <main class="stage" id="stage">
     <div class="rig" id="rig">
       <div class="persp" id="persp">
+        <div class="backfield" id="backfield" aria-hidden="true"></div>
         <div class="card all-gray" id="card" role="img" aria-label="A layered postcard of Gray Room Paint and Cafe: a gray concrete room with an arch, an easel, track lights and a table with paint and coffee.">
           <article class="back" id="back">
             <div class="back-in">
@@ -266,11 +341,11 @@ body.print-back .card,body.print-back .back{transform:none!important;-webkit-bac
   </main>
 
   <footer class="ui">
-    <p class="hint" id="hint" aria-live="polite">The room is gray. Tap “Add your color”.</p>
+    <p class="hint" id="hint" aria-live="polite">Nine layers of paper, one gray room.</p>
+    <div class="chips" id="chips" role="group" aria-label="Layers" hidden></div>
     <div class="btns">
       <button class="btn primary" id="bColor" aria-pressed="false"><span class="dot" aria-hidden="true"></span><span class="lbl">Add your color</span></button>
       <button class="btn" id="bLayers" aria-pressed="false">Pull the layers apart</button>
-      <button class="btn" id="bFlip" aria-pressed="false">Flip the card</button>
     </div>
     <p class="credit">Student project for Business English, CYCU. Not an official Gray Room ad. Confirm prices and hours with the shop.</p>
   </footer>
@@ -280,165 +355,381 @@ body.print-back .card,body.print-back .back{transform:none!important;-webkit-bac
 <script>
 (() => {
   const $ = s => document.querySelector(s);
-  const body = document.body, stage = $('#stage'), rig = $('#rig'), card = $('#card'), fore = $('#forecard');
+  const body = document.body, stage = $('#stage'), rig = $('#rig'), card = $('#card'), fore = $('#forecard'), bfield = $('#backfield'), back = $('#back');
   const Q = new URLSearchParams(location.search), PRINT = Q.get('print'), STATE = Q.get('state') || 'arch';
   const reduce = PRINT ? true : matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (PRINT) body.classList.add('print');
-  if (!/\bmode-/.test(body.className)) body.classList.add('mode-front');
-  const P = 2.6;                         // perspective distance in card widths
-  const MAXD = 330;                      // depth of the box, card units
+  if (PRINT) body.classList.add('print', 'ready');
+  const P = PRINT ? 2.6 : 2.3;           // perspective distance in card widths
+  const MAXD = 330, FRONTZ = 55;         // depth of the box behind the paper, and of the foreground in front of it (card units)
+  const DEG = Math.PI / 180, TAU = Math.PI * 2;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const mk = (tag, cls) => { const e = document.createElement(tag); e.className = cls; return e; };
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  rig.style.setProperty('--P', P);
 
   /* ---------- build layers ---------- */
   const layers = GR.layers({ print: !!PRINT });
   const els = layers.map((L, i) => {
-    const el = document.createElement('div');
-    el.className = 'layer ' + (L.kind === 'scene' ? 'scene-u' : L.id === 'fore' ? 'fore-u' : 'card-u');
+    const el = mk('div', 'layer ' + (L.kind === 'scene' ? 'scene-u' : L.id === 'fore' ? 'fore-u' : 'card-u'));
     el.dataset.id = L.id;
     // each copy needs its own gradient / clip ids
     const ids = (html, sfx) => html.replace(/id="([\w-]+)"/g, `id="$1${sfx}"`).replace(/url\(#([\w-]+)\)/g, `url(#$1${sfx})`);
     el.innerHTML = L.dual
       ? `<div class="copy g">${ids(L.html, '-g')}</div><div class="copy c">${ids(L.html, '-c')}</div>`
       : `<div class="copy">${L.html}</div>`;
-    const tag = document.createElement('span');
-    tag.className = 'tag';
-    tag.textContent = String(i + 1).padStart(2, '0');
+    const tag = mk('span', 'tag');
+    tag.innerHTML = `<b>${String(i + 1).padStart(2, '0')}</b><span> ${L.name}</span>`;
     el.appendChild(tag);
-    if (L.id === 'fore') $('#forecard').appendChild(el); else card.insertBefore(el, $('#back'));
+    if (L.id === 'fore') fore.appendChild(el); else card.insertBefore(el, back);
     return el;
   });
-
   $('#photoSlot').innerHTML = GR.shopfront;
-  const box = ['l', 'r', 't', 'b'].map(k => {
-    const d = document.createElement('div'); d.className = 'box ' + k; card.insertBefore(d, card.firstChild); return d;
-  });
+
+  // the room is a box behind the paper; the shell gives the whole card real thickness when you turn it
+  ['l', 'r', 't', 'b'].forEach(k => card.insertBefore(mk('div', 'box ' + k), card.firstChild));
+  if (!PRINT) ['l', 'r', 't', 'b'].forEach(k => card.insertBefore(mk('div', 'shell ' + k), card.firstChild));
 
   /* dust motes drifting in the light, steam over the coffee */
-  const air = document.createElement('div');
-  air.className = 'air';
-  let s = 7; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
-  for (let i = 0; i < 16; i++) {
-    const m = document.createElement('i');
-    m.className = 'mote';
-    const size = 2 + rnd() * 2.5;
+  const air = mk('div', 'air');
+  for (let i = 0; i < 22; i++) {
+    const m = mk('i', 'mote'), size = 2 + rnd() * 2.5;
     m.style.cssText = `left:${24 + rnd() * 52}%;top:${22 + rnd() * 48}%;width:${size}px;height:${size}px;` +
       `--dx:${(rnd() * 26 - 13).toFixed(1)}px;--dy:${(-18 - rnd() * 34).toFixed(1)}px;` +
       `--d:${(9 + rnd() * 9).toFixed(1)}s;--dl:${(-rnd() * 18).toFixed(1)}s;--o:${(.25 + rnd() * .45).toFixed(2)}`;
     air.appendChild(m);
   }
   air.insertAdjacentHTML('beforeend', '<div class="steam"><span></span><span></span><span></span></div>');
-  card.insertBefore(air, $('#back'));
+  card.insertBefore(air, back);
 
-  /* ---------- modes ---------- */
-  let mode = 'front';
-  const MODES = {
-    front:  { spread: 1,    rig: 'translate3d(0,0,0) scale(1)' },
-    layers: { spread: 3.0,  rig: 'translate3d(-13%,7%,0) scale(.74)' },
-    back:   { spread: 0.03, rig: 'translate3d(0,0,0) scale(1)' },
-  };
-  /* ---------- sizing ---------- */
-  let W = 360;
+  /* light and atmosphere (screen only) */
+  const PAL = ['#ef6f4a', '#f8c865', '#46a9a4', '#d94a5c', '#7f9cf0'];
+  let rays = null, glare = null, fx = null, bokF = null, bokB = null;
+  if (!PRINT) {
+    rays = mk('div', 'rays'); rays.appendChild(mk('i', ''));
+    card.insertBefore(rays, els[1]);                       // between the mural and the wall
+    glare = mk('div', 'glare'); glare.appendChild(mk('i', '')); card.insertBefore(glare, back);
+    fx = mk('div', 'fx'); card.insertBefore(fx, back);
+    const field = (cls, n, s0, s1) => {
+      const f = mk('div', 'bokeh ' + cls);
+      for (let i = 0; i < n; i++) {
+        const d = mk('i', ''), size = s0 + rnd() * (s1 - s0);
+        d.style.cssText = `left:${(rnd() * 100).toFixed(1)}%;top:${(8 + rnd() * 88).toFixed(1)}%;width:${size.toFixed(2)}cqw;height:${size.toFixed(2)}cqw;` +
+          `--c:${i % 3 === 2 ? '#fff3d6' : PAL[i % PAL.length]};--o:${(.22 + rnd() * .5).toFixed(2)};` +
+          `--dx:${(rnd() * 16 - 8).toFixed(1)}cqw;--dy:${(-10 - rnd() * 22).toFixed(1)}cqw;--d:${(11 + rnd() * 13).toFixed(1)}s;--dl:${(-rnd() * 24).toFixed(1)}s`;
+        f.appendChild(d);
+      }
+      return f;
+    };
+    bokB = field('b', 10, 1.8, 4.6); bfield.appendChild(bokB);
+    bokF = field('f', 5, .9, 2.2); fore.appendChild(bokF);
+  }
+
+  /* ---------- modes: the closed card, or its layers pulled apart ---------- */
+  let mode = 'front', focus = -1, W = 360, spreadL = 3.4, scaleL = .7, shiftL = [0, 0], yawL = -40, pitchL = 12;
+  const spreadOf = () => mode === 'layers' ? spreadL : 1;
+  const pivot = sp => PRINT ? 0 : -(MAXD - FRONTZ) / 2 * sp;      // turn around the middle of the stack
+  let pv = 0, pvT = 0;
+
   function size() {
     const r = stage.getBoundingClientRect();
-    W = PRINT ? 500 : Math.max(200, Math.min(r.width * 0.93, (r.height - 34) / 1.48, 560));
-    if (PRINT) MODES.back.rig = 'none'; else
-    // the back is text: bring the card as close as the screen allows
-    MODES.back.rig = `translate3d(0,0,0) scale(${Math.max(1, Math.min((r.width - 6) / W, (r.height - 6) / (W * 1.48), 1.3)).toFixed(3)})`;
+    if (PRINT) W = 500;
+    else {
+      // the back comes closer to the eye than the front when the card is turned, so size for that
+      const near = P * 1000 / (P * 1000 - (MAXD + pivot(1)));
+      W = clamp(Math.min(r.width * 0.96 / near, (r.height - 26) * .95 / 1.48 / near, 560), 180, 560);
+      fitLayers(r);
+    }
     rig.style.setProperty('--W', W.toFixed(1) + 'px');
-    layout();
+    if (bokF) { bokF.style.transform = `translateZ(${(170 * W / 1000).toFixed(1)}px)`; bokB.style.transform = `translateZ(${(-620 * W / 1000).toFixed(1)}px)`; }
+    layout(mode);
+    if (paint === 'partial' && !paintRaf) renderPaint(performance.now());
   }
 
-  function layout() {
-    const m = MODES[mode], u = W / 1000;
+  // pulled apart: as much air between the sheets as the screen has room for, measured through the perspective
+  function fitLayers(r) {
+    const wide = r.width > r.height * 1.1;
+    yawL = wide ? -48 : -40; pitchL = wide ? 8 : 12;
+    const u = W / 1000, D = P * W, o = -0.04 * 1480 * u, minK = wide ? .7 : .66;
+    const cy = Math.cos(yawL * DEG), sy = Math.sin(yawL * DEG), cp = Math.cos(pitchL * DEG), sn = Math.sin(pitchL * DEG);
+    const box = spread => {
+      let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+      for (const z of [FRONTZ, 0, -MAXD]) for (const X of [-500, 500]) for (const Y of [-740, 740]) {
+        const x = X * u, y = Y * u, zz = (z * spread - pivot(spread)) * u;
+        const xr = x * cy + zz * sy, zr = -x * sy + zz * cy, yr = y * cp - zr * sn, zf = y * sn + zr * cp, f = D / (D - zf);
+        const px = xr * f, py = (yr - o) * f + o;
+        x0 = Math.min(x0, px); x1 = Math.max(x1, px); y0 = Math.min(y0, py); y1 = Math.max(y1, py);
+      }
+      return [x0, x1, y0, y1];
+    };
+    let best = null;
+    for (let sp = 4.4; sp > 2.99; sp -= .2) {
+      const [x0, x1, y0, y1] = box(sp), k = Math.min(1, r.width * .95 / (x1 - x0), r.height * .93 / (y1 - y0));
+      best = { sp, k, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+      if (k >= minK) break;
+    }
+    spreadL = best.sp; scaleL = best.k; shiftL = [-best.cx * best.k, -best.cy * best.k];
+  }
+
+  function layout(prev) {
+    const sp = spreadOf(), u = W / 1000, n = layers.length;
+    const stag = reduce || body.classList.contains('no-anim') ? 0 : mode === 'layers' && prev !== 'layers' ? 1 : mode !== 'layers' && prev === 'layers' ? -1 : 0;
     layers.forEach((L, i) => {
-      els[i].style.transform = `translateZ(${(L.z * m.spread * u).toFixed(2)}px)`;
+      els[i].style.transitionDelay = stag ? ((stag > 0 ? i : n - 1 - i) * 45) + 'ms' : '0ms';   // the sheets leave one after another
+      els[i].style.transform = `translateZ(${(L.z * sp * u).toFixed(2)}px)`;
     });
-    card.style.setProperty('--D', (MAXD * m.spread * u).toFixed(2) + 'px');
-    air.style.transform = `translateZ(${(-110 * m.spread * u).toFixed(2)}px)`;
-    $('#back').style.transform = `rotateY(180deg) translateZ(${(MAXD * m.spread * u + 1).toFixed(2)}px)`;
-    rig.style.transform = m.rig;
+    card.style.setProperty('--D', (MAXD * sp * u).toFixed(2) + 'px');
+    air.style.transform = `translateZ(${(-110 * sp * u).toFixed(2)}px)`;
+    if (rays) rays.style.transform = `translateZ(${(-322 * sp * u).toFixed(2)}px)`;
+    back.style.transform = `rotateY(180deg) translateZ(${((mode === 'layers' ? (MAXD + 46) * sp : MAXD + 1) * u).toFixed(2)}px)`;
+    // one sheet picked out: it comes to the middle of the screen, larger, and the stack turns around it
+    const f = mode === 'layers' && focus >= 0;
+    rig.style.transform = mode !== 'layers' ? 'none' : f ? `scale(${Math.min(1, Math.max(scaleL, .9)).toFixed(3)})` : `translate(${shiftL[0].toFixed(1)}px,${shiftL[1].toFixed(1)}px) scale(${scaleL.toFixed(3)})`;
+    pvT = (f ? layers[focus].z * sp : pivot(sp)) * u;
   }
-  const HINTS = {
-    gray: 'The room is gray. Tap “Add your color”.',
-    front: 'Tilt your phone, or drag the card, to look around.',
-    layers: layers.map((L, i) => `<span><b>${String(i + 1).padStart(2, '0')}</b> ${L.name}</span>`).join(' · '),
-    back: 'Tap a button on the card to book or find the shop.',
-    turn: 'Turn your phone upright for a bigger card.',
-  };
-  function setHint() {
-    const low = innerWidth > innerHeight && innerHeight < 540;
-    $('#hint').innerHTML = mode === 'front' ? (colored ? (low ? HINTS.turn : HINTS.front) : HINTS.gray) : HINTS[mode];
-  }
-  function setMode(next) {
-    mode = next;
-    body.classList.remove('mode-front', 'mode-layers', 'mode-back');
-    body.classList.add('mode-' + mode);
-    $('#bLayers').setAttribute('aria-pressed', mode === 'layers');
-    $('#bLayers').textContent = mode === 'layers' ? 'Close the layers' : 'Pull the layers apart';
-    $('#bFlip').setAttribute('aria-pressed', mode === 'back');
-    $('#bFlip').textContent = mode === 'back' ? 'Back to the front' : 'Flip the card';
-    layout(); setHint();
-  }
-  $('#bLayers').addEventListener('click', () => setMode(mode === 'layers' ? 'front' : 'layers'));
-  $('#bFlip').addEventListener('click', () => setMode(mode === 'back' ? 'front' : 'back'));
 
-  /* ---------- colour bloom ---------- */
-  let colored = false, r = 0, rTarget = 0, rAnim = 0;
-  const R_MAX = 170;
-  function paintMask() {
-    card.style.setProperty('--r', r.toFixed(2) + '%');
-    fore.style.setProperty('--r', r.toFixed(2) + '%');
-    for (const c of [card, fore]) {
-      c.classList.toggle('all-gray', r <= 0.01);
-      c.classList.toggle('all-color', r >= R_MAX - 0.01);
+  /* ---------- hint line and layer chips ---------- */
+  const hint = $('#hint'), chipBox = $('#chips'), bLayers = $('#bLayers'), bColor = $('#bColor');
+  const HINTS = {
+    intro: 'Nine layers of paper, one gray room.',
+    gray: 'The room is gray. <b>Tap it</b> to paint it. <b>Drag</b> to turn the card around.',
+    color: '<b>Drag</b> to turn the card around. The shop details are on the back.',
+    back: 'Tap a button on the card to book or find the shop.',
+  };
+  let colored = false, facingBack = false;
+  function setHint() {
+    const lay = mode === 'layers' && !body.classList.contains('intro');
+    hint.hidden = lay; chipBox.hidden = !lay;
+    if (!lay) hint.innerHTML = body.classList.contains('intro') ? HINTS.intro : facingBack ? HINTS.back : colored ? HINTS.color : HINTS.gray;
+  }
+  const chips = [];
+  [-1, ...layers.keys()].forEach(i => {
+    const b = mk('button', 'chip');
+    b.type = 'button';
+    b.innerHTML = i < 0 ? 'All layers' : `<b>${String(i + 1).padStart(2, '0')}</b> ${layers[i].name}`;
+    b.addEventListener('click', () => { stopWalk(); setFocus(focus === i ? -1 : i); });
+    chipBox.appendChild(b); chips.push(b);
+  });
+  const turn = y => Math.round(y / 360) * 360;
+  function setFocus(i, keepView) {
+    focus = i;
+    els.forEach((el, j) => { el.classList.toggle('dim', i >= 0 && j !== i); el.classList.toggle('on', j === i); });
+    if (rays) rays.classList.toggle('dim', i > 0);
+    chips.forEach((c, j) => c.setAttribute('aria-pressed', j - 1 === i));
+    if (i >= 0 && !chipBox.hidden) { const c = chips[i + 1]; chipBox.scrollTo({ left: c.offsetLeft - (chipBox.clientWidth - c.offsetWidth) / 2, behavior: reduce ? 'auto' : 'smooth' }); }
+    if (!keepView && mode === 'layers') {      // one sheet on its own is shown more head-on
+      goalYaw = turn(yaw) + (i >= 0 ? yawL * .55 : yawL); goalPitch = i >= 0 ? pitchL * .6 : pitchL; vyaw = vpitch = 0;
+      layout(mode);
     }
   }
-  function animateR() {
-    cancelAnimationFrame(rAnim);
-    const from = r, to = rTarget, dur = reduce ? 1 : 3400 * Math.abs(to - from) / R_MAX + 300, t0 = performance.now();
-    const ease = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-    (function step(now) {
-      const t = Math.min(1, (now - t0) / dur);
-      r = from + (to - from) * ease(t);
-      paintMask();
-      if (t < 1) rAnim = requestAnimationFrame(step);
-    })(t0);
+  let walkT = 0, walked = false;
+  const stopWalk = () => clearTimeout(walkT);
+  function walk() {          // first time the layers open: light them up one by one
+    let i = 0;
+    const step = () => {
+      if (mode !== 'layers') return;
+      if (i >= layers.length) { setFocus(-1); return; }
+      setFocus(i++); walkT = setTimeout(step, 1000);
+    };
+    walkT = setTimeout(step, 2100);
   }
-  $('#bColor').addEventListener('click', () => {
-    askGyro();
-    colored = !colored;
-    body.classList.toggle('is-color', colored);
-    $('#bColor').setAttribute('aria-pressed', colored);
-    $('#bColor .lbl').textContent = colored ? 'Back to gray' : 'Add your color';
-    rTarget = colored ? R_MAX : 0;
-    animateR(); setHint();
-  });
 
-  /* ---------- look around: pointer, drag, gyro, gentle idle sway ---------- */
-  let tx = 0, ty = 0, cx = 0, cy = 0, lastInput = -1e9, dragging = false, px = 0, py = 0, curRy = 0, curRx = 0;
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  function setMode(next) {
+    const prev = mode; mode = next; stopWalk();
+    body.classList.toggle('mode-front', mode === 'front');
+    body.classList.toggle('mode-layers', mode === 'layers');
+    bLayers.setAttribute('aria-pressed', mode === 'layers');
+    bLayers.textContent = mode === 'layers' ? 'Close the layers' : 'Pull the layers apart';
+    setFocus(-1, true);
+    if (mode === 'layers') { goalYaw = turn(yaw) + yawL; goalPitch = pitchL; if (!walked && !reduce && !body.classList.contains('intro')) { walked = true; walk(); } }
+    else { goalYaw = turn(yaw); goalPitch = 0; }
+    vyaw = vpitch = 0;
+    layout(prev); setHint();
+  }
+  bLayers.addEventListener('click', () => { if (endIntro()) return; setMode(mode === 'layers' ? 'front' : 'layers'); });
+
+  /* ---------- paint: colour lands as splats where the card is touched ---------- */
+  const DUAL = layers.map((L, i) => L.dual ? { L, c: els[i].querySelector('.copy.c') } : null).filter(Boolean);
+  const ORG = { x: 500, y: 0.46 * 1480 };                         // perspective origin, card units
+  const boxOf = L => L.kind === 'scene' ? [36, 36] : L.id === 'fore' ? [-150, -222] : [0, 0];
+  let paint = 'gray', pending = '', splats = [], paintRaf = 0, paintN = 0, flooding = false, tapN = 0, hue = 0;
+  const setAll = st => { for (const c of [card, fore]) { c.classList.toggle('all-gray', st === 'gray'); c.classList.toggle('all-color', st === 'color'); } };
+  const outCubic = t => 1 - Math.pow(1 - t, 3), inOut = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  const f1 = v => v.toFixed(1);
+
+  function blob(x, y, R, sp, t) {          // a wobbly closed curve, drawn clockwise
+    const n = 14, pt = [];
+    for (let i = 0; i < n; i++) {
+      const a = i / n * TAU;
+      const rr = R * (1 + sp.a[0] * Math.sin(2 * a + sp.p[0] + t * 1.4) + sp.a[1] * Math.sin(3 * a + sp.p[1] - t * 1.1) + sp.a[2] * Math.sin(5 * a + sp.p[2] + t * .8));
+      pt.push([x + Math.cos(a) * rr, y + Math.sin(a) * rr]);
+    }
+    const mid = i => [(pt[i % n][0] + pt[(i + 1) % n][0]) / 2, (pt[i % n][1] + pt[(i + 1) % n][1]) / 2];
+    let m = mid(0), d = `M${f1(m[0])},${f1(m[1])}`;
+    for (let i = 1; i <= n; i++) { const c = pt[i % n]; m = mid(i); d += `Q${f1(c[0])},${f1(c[1])} ${f1(m[0])},${f1(m[1])}`; }
+    return d + 'Z';
+  }
+  const dot = (x, y, r) => `M${f1(x - r)},${f1(y)}a${f1(r)},${f1(r)} 0 1,1 ${f1(2 * r)},0a${f1(r)},${f1(r)} 0 1,1 ${f1(-2 * r)},0Z`;
+
+  function renderPaint(now) {
+    const u = W / 1000, t = now / 1000, dist = P * 1000 + pivot(1);
+    for (const { L, c } of DUAL) {
+      // a sheet further back looks smaller, so its share of the splat is drawn larger: on screen the edges line up
+      const s = dist / (dist - L.z), [bx, by] = boxOf(L), k = u / s;
+      let d = '';
+      for (const sp of splats) {
+        if (sp.r < 1) continue;
+        const X = ORG.x + (sp.x - ORG.x) / s - bx, Y = ORG.y + (sp.y - ORG.y) / s - by;
+        d += blob(X * u, Y * u, sp.r * k, sp, t);
+        if (sp.drops) {
+          const g = clamp((sp.r / sp.R - .5) / .5, 0, 1);
+          if (g > 0) for (const q of sp.drops) d += dot((X + Math.cos(q[0]) * q[1] * sp.R / s) * u, (Y + Math.sin(q[0]) * q[1] * sp.R / s) * u, q[2] * sp.R * g * k);
+        }
+      }
+      const v = d ? `path("${d}")` : 'inset(50%)';
+      c.style.webkitClipPath = v; c.style.clipPath = v;
+    }
+  }
+  function paintTick(now) {
+    let live = false;
+    for (const sp of splats) {
+      const tt = (now - sp.t0) / sp.dur;
+      if (tt < 0) { live = true; continue; }
+      sp.r = sp.from + (sp.to - sp.from) * sp.ease(Math.min(1, tt));
+      if (tt < 1) live = true;
+    }
+    if (!live || (paintN++ & 1) === 0) renderPaint(now);           // redraw the paint edge every other frame: plenty for a spreading blob
+    if (live) { paintRaf = requestAnimationFrame(paintTick); return; }
+    paintRaf = 0;
+    if (pending === 'color') { paint = 'color'; setAll('color'); splats = []; flooding = false; }
+    if (pending === 'gray') { paint = 'gray'; setAll('gray'); splats = []; tapN = 0; }
+    pending = '';
+  }
+  const kick = () => { if (!paintRaf) paintRaf = requestAnimationFrame(paintTick); };
+  function addSplat(x, y, R, delay, flood) {
+    if (paint === 'gray') { paint = 'partial'; setAll('partial'); }
+    const sp = {
+      x, y, R, r: 0, from: 0, to: R, t0: performance.now() + (delay || 0), dur: reduce ? 1 : flood ? 1900 : 1050, ease: flood ? inOut : outCubic, flood: !!flood,
+      a: [.05 + rnd() * .05, .03 + rnd() * .04, .02 + rnd() * .025], p: [rnd() * TAU, rnd() * TAU, rnd() * TAU],
+      drops: flood ? null : [0, 1, 2].map(i => [(i + rnd()) / 3 * TAU, 1.14 + rnd() * .3, .05 + rnd() * .07]),
+    };
+    splats.push(sp); kick();
+  }
+  function ring(x, y, R, delay) {
+    if (reduce || !fx) return;
+    const el = mk('i', 'ring'), col = PAL[hue++ % PAL.length];
+    el.style.cssText = `left:${x / 10}%;top:${y / 14.8}%;width:${R / 5}%;border-color:${col};background:${col}2b;animation-delay:${delay || 0}ms`;
+    fx.appendChild(el);
+    el.addEventListener('animationend', () => el.remove());
+  }
+  const coverage = () => {
+    let n = 0, tot = 0;
+    for (let gx = 50; gx < 1000; gx += 100) for (let gy = 50; gy < 1480; gy += 100) { tot++; if (splats.some(s => Math.hypot(gx - s.x, gy - s.y) < s.R)) n++; }
+    return n / tot;
+  };
+  function setColored(v) {
+    colored = v;
+    body.classList.toggle('is-color', v);
+    bColor.setAttribute('aria-pressed', v);
+    bColor.querySelector('.lbl').textContent = v ? 'Back to gray' : 'Add your color';
+    setHint();
+  }
+  function flood(x, y, delay) {          // the colour takes over the whole card
+    if (flooding) return;
+    flooding = true; pending = 'color';
+    addSplat(x, y, 2300, delay, true);
+    setTimeout(() => { if (flooding || paint === 'color') setColored(true); }, reduce ? 0 : (delay || 0) + 250);
+  }
+  function uncolor() {
+    const now = performance.now();
+    flooding = false; setColored(false);
+    if (paint === 'color') {
+      paint = 'partial'; setAll('partial'); splats = [];
+      addSplat(500, 700, 1900, 0, true);
+      Object.assign(splats[0], { r: 1900, from: 1900, to: 0, dur: reduce ? 1 : 1500 });
+    } else for (const s of splats) Object.assign(s, { from: s.r, to: 0, t0: now, dur: reduce ? 1 : 800, ease: inOut });
+    pending = 'gray'; kick();
+  }
+  const AUTO = [[500, 650, 340], [240, 1190, 300], [830, 430, 280], [170, 320, 250], [810, 1240, 270]];
+  bColor.addEventListener('click', () => {
+    endIntro(); askGyro();
+    if (colored || flooding) { uncolor(); return; }
+    if (paint === 'gray' && !reduce) {
+      AUTO.forEach(([x, y, R], i) => { addSplat(x, y, R, i * 210); ring(x, y, R, i * 210); });
+      flood(500, 650, 1150);
+    } else flood(500, 650, 0);
+  });
+  function tap(e) {
+    if (PRINT || mode !== 'front' || Math.cos(curRy * DEG) < .35) return;
+    const [x, y] = toCard(e);
+    if (x < 8 || x > 992 || y < 8 || y > 1472) return;
+    const R = 300 + rnd() * 70;
+    ring(x, y, R);
+    if (paint === 'color' || flooding) return;
+    addSplat(x, y, R); tapN++;
+    if (coverage() > .5 || tapN >= 6) flood(x, y, 380);
+  }
+
+  /* ---------- turning the card: drag to spin it freely, with a little momentum ---------- */
+  let yaw = 0, pitch = 0, vyaw = 0, vpitch = 0, goalYaw = null, goalPitch = null, rotK = .09;
+  let tx = 0, ty = 0, offX = 0, offY = 0, curRy = 0, curRx = 0;
+  let dragging = false, moved = false, px = 0, py = 0, sx0 = 0, sy0 = 0, lastInput = -1e9, lastTurn = -1e9;
+
+  function toCard(e) {       // where a screen point lands on the paper, through the perspective and the current turn
+    const b = rig.getBoundingClientRect(), u = b.width / 1000, D = P * 1000;
+    const inv = v => {
+      let x = v[0] - 500, y = v[1] - 740, z = v[2];
+      const cx = Math.cos(-curRx * DEG), sx = Math.sin(-curRx * DEG), cy = Math.cos(-curRy * DEG), sy = Math.sin(-curRy * DEG);
+      [y, z] = [y * cx - z * sx, y * sx + z * cx];
+      [x, z] = [x * cy + z * sy, -x * sy + z * cy];
+      return [x + 500, y + 740, z + pv / u];
+    };
+    const E = inv([ORG.x, ORG.y, D]), S = inv([(e.clientX - b.left) / u, (e.clientY - b.top) / u, 0]);
+    const t = E[2] / (E[2] - S[2]);
+    return [E[0] + (S[0] - E[0]) * t, E[1] + (S[1] - E[1]) * t];
+  }
+
+  stage.addEventListener('pointerdown', e => {
+    if (e.target.closest('a')) return;
+    endIntro(); stopWalk();
+    dragging = true; moved = false; px = sx0 = e.clientX; py = sy0 = e.clientY; vyaw = vpitch = 0;
+    try { stage.setPointerCapture(e.pointerId); } catch (_) {}
+  });
   stage.addEventListener('pointermove', e => {
-    if (e.pointerType === 'mouse' && !dragging) {
+    if (dragging) {
+      if (!moved && Math.hypot(e.clientX - sx0, e.clientY - sy0) > 7) { moved = true; goalYaw = goalPitch = null; stage.classList.add('dragging'); }
+      if (moved) {
+        const k = 165 / (W * 1.05);
+        vyaw = (e.clientX - px) * k; vpitch = -(e.clientY - py) * k * .8;
+        yaw += vyaw; pitch = clamp(pitch + vpitch, -55, 55);
+        lastTurn = performance.now();
+      }
+      px = e.clientX; py = e.clientY; lastInput = performance.now();
+    } else if (e.pointerType === 'mouse') {
       const b = stage.getBoundingClientRect();
       tx = clamp((e.clientX - b.left) / b.width * 2 - 1, -1, 1);
       ty = clamp((e.clientY - b.top) / b.height * 2 - 1, -1, 1);
       lastInput = performance.now();
-    } else if (dragging) {
-      tx = clamp(tx + (e.clientX - px) / (W * 0.55), -1, 1);
-      ty = clamp(ty + (e.clientY - py) / (W * 0.8), -1, 1);
-      px = e.clientX; py = e.clientY; lastInput = performance.now();
     }
   });
-  stage.addEventListener('pointerdown', e => {
-    if (e.target.closest('a')) return;
-    dragging = true; px = e.clientX; py = e.clientY; stage.classList.add('dragging');
-    try { stage.setPointerCapture(e.pointerId); } catch (_) {}
-  });
-  const endDrag = () => { dragging = false; stage.classList.remove('dragging'); };
+  const endDrag = e => {
+    if (!dragging) return;
+    dragging = false; stage.classList.remove('dragging');
+    if (!moved && e.type === 'pointerup') tap(e);
+    if (performance.now() - lastInput > 80) vyaw = vpitch = 0;      // held still before letting go: no throw
+  };
   stage.addEventListener('pointerup', endDrag);
   stage.addEventListener('pointercancel', endDrag);
-  stage.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') { tx = 0; ty = 0; } });
+  stage.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse' && !dragging) { tx = 0; ty = 0; } });
+  stage.addEventListener('click', () => askGyro());
+  addEventListener('keydown', e => {
+    const d = { ArrowLeft: [-30, 0], ArrowRight: [30, 0], ArrowUp: [0, 15], ArrowDown: [0, -15] }[e.key];
+    if (!d || e.target.closest('.chips')) return;
+    endIntro();
+    goalYaw = (goalYaw == null ? yaw : goalYaw) + d[0]; goalPitch = clamp((goalPitch == null ? pitch : goalPitch) + d[1], -60, 60);
+    lastTurn = performance.now(); e.preventDefault();
+  });
 
-  let gyroOn = false, g0 = null;
+  let gyroOn = false, gyroAsked = false, g0 = null;
   function onGyro(e) {
     if (e.gamma == null || e.beta == null || dragging) return;
     if (!g0) g0 = { g: e.gamma, b: e.beta };
@@ -447,7 +738,8 @@ body.print-back .card,body.print-back .back{transform:none!important;-webkit-bac
     lastInput = performance.now();
   }
   function askGyro() {
-    if (gyroOn || typeof DeviceOrientationEvent === 'undefined') return;
+    if (gyroOn || gyroAsked || typeof DeviceOrientationEvent === 'undefined') return;
+    gyroAsked = true;
     const start = () => { gyroOn = true; addEventListener('deviceorientation', onGyro); };
     if (typeof DeviceOrientationEvent.requestPermission === 'function') {
       DeviceOrientationEvent.requestPermission().then(s => { if (s === 'granted') start(); }).catch(() => {});
@@ -455,36 +747,83 @@ body.print-back .card,body.print-back .back{transform:none!important;-webkit-bac
   }
   if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission !== 'function') askGyro();
 
+  let slow = 0, lastF = 0;
   function frame(now) {
-    if (PRINT) { tx = ty = cx = cy = curRx = 0; curRy = mode === 'back' ? 180 : 0; }   // a still: never tilted
-    let gx = tx, gy = ty;
-    if (!reduce && !dragging && now - lastInput > 2600) {      // slow sway so the depth shows on its own
-      const t = now / 1000;
-      gx = Math.sin(t * 0.42) * 0.42; gy = Math.sin(t * 0.31 + 1.2) * 0.3;
-      tx += (gx - tx) * 0.02; ty += (gy - ty) * 0.02;
+    // a device that cannot keep up gets the picture without the floating extras
+    if (!PRINT && Q.get('fx') !== '1' && lastF && !paintRaf && colored) {
+      slow = now - lastF > 42 ? slow + 1 : Math.max(0, slow - 2);
+      if (slow > 150) { body.classList.add('lite'); slow = -1e9; }
     }
-    cx += (gx - cx) * 0.075; cy += (gy - cy) * 0.075;
-    let ry, rx;
-    if (mode === 'layers') { ry = -40 + cx * 24; rx = 8 - cy * 12; }
-    else if (mode === 'back') { ry = 180 + cx * 7; rx = -cy * 5; }
-    else { ry = cx * 13; rx = -cy * 9; }
-    curRy += (ry - curRy) * 0.085; curRx += (rx - curRx) * 0.085;
-    fore.style.transform = card.style.transform = `rotateX(${curRx.toFixed(3)}deg) rotateY(${curRy.toFixed(3)}deg)`;
+    lastF = now;
+    if (PRINT) { yaw = pitch = tx = ty = offX = offY = pv = 0; goalYaw = goalPitch = null; }   // a still: never turned
+    else {
+      if (!dragging) {
+        if (goalYaw == null) {
+          yaw += vyaw; pitch = clamp(pitch + vpitch, -55, 55); vyaw *= .94; vpitch *= .9;
+          if (Math.abs(vyaw) > .05) lastTurn = now;
+          // left nearly face-on, the closed card squares itself up; at any other angle it stays where you put it
+          const face = Math.round(yaw / 180) * 180;
+          if (mode === 'front' && now - lastTurn > 1500 && Math.abs(vyaw) < .05 && Math.abs(yaw - face) < 40 && (Math.abs(yaw - face) > .05 || Math.abs(pitch) > .05)) { goalYaw = face; goalPitch = 0; }
+        } else {
+          yaw += (goalYaw - yaw) * rotK; pitch += (goalPitch - pitch) * rotK;
+        }
+      }
+      let gx = tx, gy = ty;
+      if (!reduce && !dragging && now - lastInput > 2600) {      // slow sway so the depth shows on its own
+        const t = now / 1000;
+        gx = Math.sin(t * 0.42) * 0.5; gy = Math.sin(t * 0.31 + 1.2) * 0.34;
+        tx += (gx - tx) * 0.02; ty += (gy - ty) * 0.02;
+      }
+      offX += (gx - offX) * 0.075; offY += (gy - offY) * 0.075;
+      pv += (pvT - pv) * 0.07;
+    }
+    const fb = Math.cos(yaw * DEG) < 0;
+    if (fb !== facingBack) { facingBack = fb; body.classList.toggle('facing-back', fb); setHint(); }
+    const ax = fb ? 6 : mode === 'layers' ? 9 : 16, ay = fb ? 4 : mode === 'layers' ? 6 : 10;
+    curRy = yaw + offX * ax; curRx = pitch - offY * ay;
+    const tf = `rotateX(${curRx.toFixed(3)}deg) rotateY(${curRy.toFixed(3)}deg) translateZ(${(-pv).toFixed(2)}px)`;
+    card.style.transform = tf; fore.style.transform = tf; bfield.style.transform = tf;
+    if (glare) {
+      const g = clamp(-.55 + curRy / 13 - curRx / 30, -3, 3);
+      glare.firstChild.style.transform = `translate3d(${(g * 25).toFixed(2)}%,0,0)`;
+    }
     requestAnimationFrame(frame);
   }
 
+  /* ---------- opening: the layers start apart and settle into one card ---------- */
+  let introT = [];
+  function endIntro() {
+    if (!body.classList.contains('intro')) return false;
+    introT.forEach(clearTimeout);
+    body.classList.remove('intro'); rotK = .09;
+    if (mode === 'layers') setMode('front'); else setHint();      // interrupted: the card simply closes
+    return true;
+  }
+  const INTRO = !PRINT && !reduce;
+  body.classList.add('no-anim');
+  if (INTRO) {
+    body.classList.add('intro');
+    mode = 'layers'; body.classList.remove('mode-front'); body.classList.add('mode-layers');
+    bLayers.setAttribute('aria-pressed', 'true'); bLayers.textContent = 'Close the layers';
+  }
   addEventListener('resize', () => { size(); setHint(); });
-  size(); paintMask(); setHint();
+  if (!PRINT && window.ResizeObserver) {      // the footer can grow by a line; keep the card inside the space that is left
+    let sw = 0, sh = 0;
+    new ResizeObserver(en => { const c = en[0].contentRect; if (Math.abs(c.width - sw) > 1 || Math.abs(c.height - sh) > 1) { sw = c.width; sh = c.height; size(); } }).observe(stage);
+  }
+  size(); setAll('gray'); setHint();
+  if (INTRO) { yaw = yawL - 13; pitch = pitchL + 4; goalYaw = yawL; goalPitch = pitchL; rotK = .012; pv = pvT; }
+  else pv = pvT;
 
   if (PRINT) {
     // paper version: a still of the card. "arch" = the room stays gray, colour waits behind the arch.
-    if (STATE === 'color') { r = R_MAX; body.classList.add('is-color'); paintMask(); }
+    if (STATE === 'color') { body.classList.add('is-color'); setAll('color'); }
     if (STATE === 'arch') {
       body.classList.add('arch-gray');
       els.forEach((el, i) => { if (['mural', 'frame', 'fore', 'words'].includes(layers[i].id)) el.classList.add('force-c'); });
     }
     if (PRINT === 'back') {
-      setMode('back'); body.classList.add('print-back');
+      body.classList.add('print-back');
       const sc = document.createElement('script');
       sc.src = 'qr.js';
       sc.onload = () => {
@@ -501,14 +840,30 @@ body.print-back .card,body.print-back .back{transform:none!important;-webkit-bac
         body.dataset.ready = '1';
       };
       document.head.appendChild(sc);
-      curRy = 180;
     } else body.dataset.ready = '1';
-    tx = ty = cx = cy = 0; lastInput = 1e15;
+  } else {
+    const go = () => {
+      if (body.classList.contains('ready')) return;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        body.classList.remove('no-anim'); body.classList.add('ready');
+        if (INTRO && body.classList.contains('intro')) {
+          introT.push(setTimeout(() => { rotK = .045; setMode('front'); }, 1700));
+          introT.push(setTimeout(endIntro, 3700));
+        }
+      }));
+    };
+    (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(go);
+    setTimeout(go, 1500);
   }
   requestAnimationFrame(frame);
 
-  /* hooks used to take the screenshots and the print stills */
-  window.__gr = { setMode, tilt: (x, y) => { tx = x; ty = y; cx = x; cy = y; lastInput = 1e15; }, snap: () => { const m = mode; curRy = m === 'layers' ? -40 + cx * 24 : m === 'back' ? 180 + cx * 7 : cx * 13; curRx = m === 'layers' ? 8 - cy * 12 : m === 'back' ? -cy * 5 : -cy * 9; } };
+  /* hooks used to take the screenshots */
+  window.__gr = {
+    setMode: m => { endIntro(); walked = true; setMode(m); }, setFocus: i => { stopWalk(); setFocus(i); }, endIntro,
+    view: (y, p, x = 0, yy = 0) => { endIntro(); yaw = y; pitch = p; goalYaw = y; goalPitch = p; vyaw = vpitch = 0; tx = offX = x; ty = offY = yy; lastInput = 1e15; lastTurn = 1e15; pv = pvT; },
+    color: () => { endIntro(); splats = []; paint = 'color'; setAll('color'); setColored(true); },
+    state: () => ({ mode, paint, colored, yaw, pitch, W, spreadL, scaleL, facingBack, n: splats.length }),
+  };
 })();
 </script>
 </body>
