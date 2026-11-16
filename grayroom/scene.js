@@ -452,7 +452,7 @@
         <stop offset="0" stop-color="#f7f4ee"/><stop offset="1" stop-color="#ece8df"/>
       </linearGradient>
     </defs>
-    <path fill-rule="evenodd" fill="url(#pp)" d="${print ? 'M-40,-40 H1040 V1520 H-40 Z' : 'M0,22 Q0,0 22,0 H978 Q1000,0 1000,22 V1458 Q1000,1480 978,1480 H22 Q0,1480 0,1458 Z'} M36,36 V1310 H964 V36 Z"/>
+    <path fill-rule="evenodd" fill="url(#pp)" d="${print ? 'M-80,-40 H1080 V1520 H-80 Z' : 'M0,22 Q0,0 22,0 H978 Q1000,0 1000,22 V1458 Q1000,1480 978,1480 H22 Q0,1480 0,1458 Z'} M36,36 V1310 H964 V36 Z"/>
     <path d="M36,36 H964 V1310 H36 Z" fill="none" stroke="#000" stroke-opacity=".28" stroke-width="3"/>
     <path d="M36,1310 V36 H964" fill="none" stroke="#000" stroke-opacity=".22" stroke-width="7" transform="translate(3,3)"/>
     <!-- colour spilling onto the paper -->

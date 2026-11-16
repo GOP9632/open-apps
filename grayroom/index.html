@@ -543,6 +543,10 @@ body.print .story{height:auto}
 body.print .app{position:fixed;inset:0;height:auto;min-height:0;padding:0}
 body.print .rig,body.print .layer,body.print .box,body.print .back{transition:none!important}
 body.print .back{border-radius:0}
+/* the paper runs past the card edge: A6 is 2.5 mm wider on each side, plus 3 mm of bleed */
+body.print:not(.print-back) .rig::before{content:"";position:absolute;left:-8%;top:-2.7027%;width:116%;height:105.4054%;background:linear-gradient(to bottom right,#f7f4ee,#ece8df)}   /* same gradient as the frame's paper (-80,-40,1160,1560 in card units) */
+body.print .back{background:none;overflow:visible}
+body.print .back::before{content:"";position:absolute;inset:-3% -8%;z-index:-1;background:linear-gradient(135deg,#f7f4ee,#ece8df)}
 .force-c .copy.c{-webkit-clip-path:none!important;clip-path:none!important}
 .force-c .copy.g{display:none!important}
 .arch-gray .lf{filter:grayscale(1) brightness(1.04)}
@@ -1622,7 +1626,7 @@ body.print-back .card,body.print-back .back{transform:none!important;-webkit-bac
   const loader = $('#loader');
   if (PRINT) {
     // paper version: a still of the card. "arch" = the room stays gray, colour waits behind the arch.
-    if (STATE === 'color') { body.classList.add('is-color'); setAll('color'); }
+    if (STATE === 'color') { body.classList.add('is-color'); setAll('color'); els.forEach(el => el.classList.add('force-c')); }   // no paint mask: the paper runs past the card edge for the A6 trim and the bleed
     if (STATE === 'arch') {
       body.classList.add('arch-gray');
       els.forEach((el, i) => { if (['mural', 'frame', 'fore', 'words'].includes(layers[i].id)) el.classList.add('force-c'); });
