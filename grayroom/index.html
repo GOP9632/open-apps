@@ -1,0 +1,1746 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gray Room Postcard</title>
+<meta name="description" content="A layered 3D postcard for Gray Room Paint &amp; Cafe in Zhongli. Turn it, paint it, and scroll through the story of the shop.">
+<meta name="theme-color" content="#161617">
+<meta property="og:title" content="Gray Room Paint &amp; Cafe: a 3D postcard">
+<meta property="og:description" content="The room is gray. The color is yours.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23bdbbb6'/%3E%3Cpath d='M16 56V30a16 16 0 0 1 32 0v26z' fill='%23ef6f4a'/%3E%3C/svg%3E">
+<link rel="preload" href="fonts/fraunces.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+@font-face{font-family:Fraunces;src:url(fonts/fraunces.woff2) format("woff2");font-weight:300 700;font-style:normal;font-display:swap}
+@font-face{font-family:Fraunces;src:url(fonts/fraunces-italic.woff2) format("woff2");font-weight:300 700;font-style:italic;font-display:swap}
+@font-face{font-family:Inter;src:url(fonts/inter.woff2) format("woff2");font-weight:400 700;font-style:normal;font-display:swap}
+
+:root{
+  color-scheme:dark;
+  --bg:#161617; --ink:#f3efe7; --muted:#a29f98; --line:rgba(255,255,255,.16);
+  --coral:#ef6f4a; --amber:#f8c865; --teal:#46a9a4; --paper:#f1eee7; --paper-ink:#1d1d1d; --paper-muted:#6f6b63; --paper-line:#cfc9bd;
+  --ease:cubic-bezier(.65,0,.25,1); --out:cubic-bezier(.16,1,.3,1); --lt:1.5s;
+  --sans:Inter,"PingFang TC","Noto Sans TC","Microsoft JhengHei",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --serif:Fraunces,Georgia,"Times New Roman",serif;
+  --gut:max(20px,env(safe-area-inset-left),env(safe-area-inset-right));
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow-x:hidden;-webkit-tap-highlight-color:transparent}
+button{font:inherit;color:inherit}
+a{color:inherit}
+[hidden]{display:none!important}
+::selection{background:var(--coral);color:#fff}
+
+/* ---------- opening curtain ---------- */
+.loader{position:fixed;inset:0;z-index:100;background:#101011;color:var(--ink);display:grid;grid-template-rows:auto 1fr auto;
+  padding:max(14px,env(safe-area-inset-top)) var(--gut) max(18px,env(safe-area-inset-bottom));
+  transition:transform 1.15s cubic-bezier(.76,0,.24,1),visibility 0s linear 1.15s}
+.loader.out{transform:translateY(-100%);visibility:hidden}
+html.loading{overflow:hidden}
+/* if the script never runs, the curtain still leaves */
+.loader{animation:ldgone .01s linear 8s forwards}
+@keyframes ldgone{to{visibility:hidden;opacity:0}}
+.ld-top{display:flex;justify-content:space-between;gap:12px;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.ld-top b{color:var(--ink);font-weight:600}
+.ld-say{align-self:center;margin:0;font-family:var(--serif);font-weight:400;font-size:clamp(34px,7.4vw,92px);line-height:1;letter-spacing:-.035em;
+  transition:transform 1.15s cubic-bezier(.76,0,.24,1)}
+.ld-say em{font-style:italic;color:#8d8b86;transition:color .9s var(--ease)}
+.loader.full .ld-say em{color:var(--coral)}
+.loader.out .ld-say{transform:translateY(38vh)}
+.ld-row{display:flex;align-items:flex-end;justify-content:space-between;gap:16px}
+.ld-num{font-family:var(--serif);font-weight:300;font-size:clamp(84px,21vw,260px);line-height:.78;letter-spacing:-.05em;font-variant-numeric:tabular-nums}
+.ld-lab{padding-bottom:6px;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);text-align:right}
+.ld-bar{position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--coral);transform:scaleX(0);transform-origin:0 50%}
+body.print .loader,body.print .grain,body.print .cur,body.print .big,body.print .flood,body.print .meta,body.print .caps,body.print .prog,body.print .site-foot{display:none}
+
+/* ---------- film grain, room light, colour leaking into the page ---------- */
+.grain{position:fixed;inset:0;z-index:40;pointer-events:none;opacity:.085;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .9 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E")}
+.glow{position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse 70% 55% at 50% 44%,#343435 0%,#1f1f20 55%,#131314 100%)}
+/* the paint that takes over the page: three sheets of colour opening from the point that was touched */
+.flood{position:absolute;inset:0;pointer-events:none;overflow:hidden;visibility:hidden;transition:opacity .8s var(--ease)}
+.flood.on{visibility:visible}
+body.mode-layers .flood{opacity:0}
+.flood i{position:absolute;inset:0;will-change:opacity;-webkit-clip-path:circle(0px at 50% 50%);clip-path:circle(0px at 50% 50%)}
+.flood i:nth-child(1){background:#f8c865}
+.flood i:nth-child(2){background:#2a2466}
+.flood i:nth-child(3){background:radial-gradient(ellipse 72% 58% at 50% 44%,#f78d66 0%,#ef6f4a 58%,#e65f3a 100%)}
+.flood.full i{-webkit-clip-path:none;clip-path:none}
+.flood.full i:nth-child(-n+2){display:none}      /* the two rings are under the last sheet now */
+/* once the page is painted, what is written on it turns to ink */
+body.ink .app{--ink:#1b1512;--muted:rgba(27,21,18,.68);--line:rgba(27,21,18,.3)}
+.top,.top b,.top a,.hint,.hint b,.more,.meta,.meta b,.tag{transition:color .7s var(--ease)}
+
+/* ---------- cursor (mouse only) ---------- */
+.cur{display:contents}
+.cur i{position:fixed;left:0;top:0;z-index:60;pointer-events:none;border-radius:50%;will-change:translate,scale;translate:-200px -200px}
+.cur-d{width:10px;height:10px;margin:-5px;background:#fff;mix-blend-mode:difference;opacity:0;transition:opacity .4s,scale .35s var(--out),width .35s var(--out),height .35s var(--out),margin .35s var(--out)}
+.cur.on .cur-d{opacity:1}
+.cur.link .cur-d{width:46px;height:46px;margin:-23px}
+.cur-r{width:78px;height:78px;margin:-39px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.55);background:rgba(20,20,21,.35);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);font-style:normal;font-size:10.5px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ink);
+  opacity:0;scale:.3;transition:opacity .35s var(--out),scale .45s var(--out)}
+.cur.on.card .cur-r{opacity:1;scale:1}
+.cur.card .cur-d{scale:0}
+.cur.grab .cur-r{scale:.74}
+
+/* ---------- the pinned postcard ---------- */
+.story{position:relative;height:640vh;height:640svh}
+.mark{position:absolute;left:0;width:1px;height:1px;top:calc(var(--k)*100vh);top:calc(var(--k)*100svh)}
+.app{position:sticky;top:0;height:100vh;height:100svh;overflow:hidden}
+@media (orientation:portrait){.app{min-height:480px}}
+.top{position:absolute;z-index:4;left:0;right:0;top:0;display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:max(12px,env(safe-area-inset-top)) var(--gut) 8px;
+  font-size:clamp(9.5px,2.6vw,11px);letter-spacing:.18em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.top b{color:var(--ink);font-weight:600}
+.top nav{display:flex;gap:clamp(12px,3vw,26px)}
+.top a{position:relative;display:inline-flex;align-items:center;min-height:30px;text-decoration:none;color:var(--ink)}
+.top a::after{content:"";position:absolute;left:0;right:0;bottom:5px;height:1px;background:currentColor;transform:scaleX(0);transform-origin:100% 50%;transition:transform .5s var(--out)}
+.top a:hover::after,.top a:focus-visible::after{transform:scaleX(1);transform-origin:0 50%}
+.top > span,.top nav{padding:5px 11px;margin:-5px -11px;border-radius:99px;transition:background .6s var(--ease)}
+body.in-dive .top > span,body.in-dive .top nav{background:rgba(247,244,238,.92)}
+body.in-dive .top{--ink:#1b1512;--muted:rgba(27,21,18,.68)}
+
+/* the headline, as large as the screen allows: either side of the card on wide screens, above it on a phone */
+.big{position:absolute;inset:0;z-index:1;pointer-events:none;opacity:0;transition:opacity .9s var(--ease)}
+body.ready .big{opacity:1}
+body.in-story .big,body.mode-layers .big,body.intro .big,body.facing-back .big{opacity:0;transition-duration:.45s}
+.bl{position:absolute;left:0;right:0;top:var(--hy,20%);margin:0;text-align:center;white-space:nowrap;
+  font-family:var(--serif);font-weight:400;font-size:var(--hf,44px);line-height:1;letter-spacing:-.045em}
+.bl em{font-style:italic}
+.bl.g{color:#3b3b3d;transition:opacity .7s var(--ease) .25s}
+.bl.g em{color:#55555a}
+.bl.c{color:#1b1512;opacity:0;transition:opacity .22s linear}
+.bl.c em{color:#fff1dc}
+body.ink .bl.g{opacity:0;transition:opacity .22s linear}
+body.ink .bl.c{opacity:1;transition:opacity .7s var(--ease) .2s}
+@media (min-aspect-ratio:11/10){
+  .bl{top:0;left:0;right:0}
+  .bl span{position:absolute;top:var(--hy,44vh);transform:translateY(-50%)}
+  .bl span:first-child{right:calc(50% + var(--Wh,360px)*.5 + var(--hg,40px))}
+  .bl span:last-child{left:calc(50% + var(--Wh,360px)*.5 + var(--hg,40px))}
+}
+@media (min-aspect-ratio:11/10) and (max-height:540px){.big{display:none}}
+/* small print in the corners on wide screens */
+.meta{position:absolute;z-index:3;bottom:26px;margin:0;max-width:17em;font-size:11px;line-height:1.7;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);
+  opacity:0;transition:opacity .8s var(--ease);pointer-events:none;display:none}
+.meta b{display:block;margin-bottom:8px;color:var(--ink);font-weight:600}
+.meta.l{left:var(--gut)}
+.meta.r{right:var(--gut);text-align:right}
+body.ready .meta{opacity:1}
+body.in-story .meta,body.mode-layers .meta,body.intro .meta{opacity:0}
+@media (min-width:1000px) and (min-height:600px){.meta{display:block}}
+
+.stage{position:absolute;inset:0;z-index:2;touch-action:pan-y;cursor:grab;user-select:none;-webkit-user-select:none}
+.stage.dragging{cursor:grabbing}
+.rig{position:absolute;left:50%;top:50%;width:var(--W);height:calc(var(--W)*1.48);margin:calc(var(--W)*-.74) 0 0 calc(var(--W)*-.5);
+  opacity:0;transition:transform 1.4s var(--ease),opacity 1s var(--ease);touch-action:pan-y}
+body.ready .rig{opacity:1}
+.rig.led{transition:opacity 1s var(--ease)}            /* between chapters the script moves it (see layoutRig) */
+/* will-change:transform tells Chrome to keep a sheet's texture while it moves. Taken away for one frame once the lens
+   has stopped, it lets Chrome redraw the sheets at their new size, at a moment when a short pause cannot be seen. */
+body.settle .card,body.settle .forecard,body.settle .backfield{will-change:auto}
+.persp{position:relative;width:100%;height:100%;perspective:calc(var(--W)*var(--P,2.3));perspective-origin:50% 46%}
+.shade{position:absolute;left:4%;right:4%;top:97%;height:10%;border-radius:50%;pointer-events:none;will-change:transform;
+  background:radial-gradient(ellipse at 50% 50%,rgba(0,0,0,.55) 0,rgba(0,0,0,.2) 45%,transparent 70%);transition:opacity .8s var(--ease)}
+body.mode-layers .shade,body.in-dive .shade{opacity:0}
+.card,.forecard,.backfield{position:absolute;inset:0;transform-style:preserve-3d;will-change:transform}
+.backfield{pointer-events:none;z-index:0}
+.card{z-index:1}
+.forecard{z-index:2;pointer-events:none}
+body.facing-back .forecard{z-index:0}
+
+.layer{position:absolute;transform-style:preserve-3d;transition:transform var(--lt) var(--ease),opacity .55s var(--ease);pointer-events:none}
+.layer.dim{opacity:.07}
+.layer.card-u{inset:0}
+.layer.fore-u{inset:-15%}
+.layer.fore-u svg{left:11.5385%;top:11.5385%;width:76.923%;height:76.923%}
+.layer.fore-u::after{left:11.5385%;top:11.5385%;width:76.923%;height:76.923%}
+.layer.fore-u .tag{left:11.5385%;bottom:88.4615%}
+.layer.scene-u{inset:0}
+.layer.scene-u svg{overflow:hidden}
+.layer > .copy{position:absolute;inset:0;will-change:opacity}   /* a layer of its own: moving the paint edge never repaints the drawing */
+.layer svg{position:absolute;inset:0;width:100%;height:100%;display:block;overflow:visible}
+/* the one line of lettering that stays text (the rest are outlines, see scene.js): x 946 right-aligned, baseline 1412 of 1000 x 1480.
+   Set ten times too big and scaled down, so it does not snap to whole pixels and sits exactly where the drawing has it at any size. */
+.layer .zh{position:absolute;right:5.4%;bottom:4.3835%;white-space:nowrap;color:#6a6a6a;transform-origin:100% 100%;transform:scale(calc(var(--u,1)*.1));
+  font:400 230px/1 Inter,"PingFang TC","Noto Sans TC","Microsoft JhengHei","WenQuanYi Zen Hei",sans-serif;letter-spacing:24px}
+.copy.g .zh{color:#686868}
+
+/* the window in the paper (36,36,928,1274 of 1000x1480). Closed, it is a portal: the room behind it is drawn
+   through the window only, so the card itself stays as thin as paper. Pulled apart, the sheets are real 3D. */
+.win{position:absolute;left:3.6%;top:2.4324%;width:92.8%;height:86.0811%;transform-style:preserve-3d;pointer-events:none}
+.card.portal .win{transform-style:flat;overflow:hidden;transform:translateZ(-.4px)}
+.box{position:absolute;pointer-events:none;opacity:0;
+  transition:opacity .5s var(--ease),width var(--lt) var(--ease),height var(--lt) var(--ease)}
+.card.portal .box,body.print .box{opacity:1}
+.box.l,.box.r{top:0;height:100%;width:var(--D)}
+.box.t,.box.b{left:0;width:100%;height:var(--D)}
+.box.l{left:0;transform-origin:0 50%;transform:rotateY(90deg);background:linear-gradient(90deg,#c6c6c4,#a5a5a3 70%,#898987)}
+.box.r{right:0;transform-origin:100% 50%;transform:rotateY(-90deg);background:linear-gradient(270deg,#d3d3d0,#b6b6b3 70%,#979795)}
+.box.t{top:0;transform-origin:50% 0;transform:rotateX(-90deg);background:linear-gradient(180deg,#e4e4e1,#c2c2bf 70%,#a7a7a4)}
+.box.b{bottom:0;transform-origin:50% 100%;transform:rotateX(90deg);background:linear-gradient(0deg,#999997,#7f7f7d 70%,#696968)}
+body.is-color .box.l{background:linear-gradient(90deg,#c9c5bd,#a8a49c 70%,#8c8880)}
+body.is-color .box.r{background:linear-gradient(270deg,#d6d2c9,#b9b5ad 70%,#9a968e)}
+body.is-color .box.t{background:linear-gradient(180deg,#e6e3dc,#c4c1ba 70%,#a9a69f)}
+body.is-color .box.b{background:linear-gradient(0deg,#9a9894,#807e7a 70%,#6a6866)}
+/* the paper's own edge: a card, not a box */
+.edge{position:absolute;pointer-events:none;transition:opacity .6s var(--ease)}
+.edge.l,.edge.r{top:.9%;height:98.2%;width:var(--T)}
+.edge.t,.edge.b{left:1.3%;width:97.4%;height:var(--T)}
+.edge.l{left:0;transform-origin:0 50%;transform:rotateY(90deg);background:linear-gradient(90deg,#e4e0d7,#cfcbc2)}
+.edge.r{right:0;transform-origin:100% 50%;transform:rotateY(-90deg);background:linear-gradient(270deg,#ebe7de,#d6d2c9)}
+.edge.t{top:0;transform-origin:50% 0;transform:rotateX(-90deg);background:linear-gradient(180deg,#f6f3ec,#e4e0d7)}
+.edge.b{bottom:0;transform-origin:50% 100%;transform:rotateX(90deg);background:linear-gradient(0deg,#cfcbc2,#bdb9b0)}
+body.mode-layers .edge{opacity:0}
+
+.copy.g{transition:opacity .55s linear,visibility 0s linear 0s}   /* drawn in gray inks by the script: no filter */
+.copy.g .co,.copy.c .go{display:none}
+.copy.c{-webkit-clip-path:inset(50%);clip-path:inset(50%)}
+.all-gray .layer:not(.force-c) > .copy.c{opacity:0}       /* nothing painted yet: not drawn at all, so no mask either */
+.all-color .copy.g{opacity:0;visibility:hidden;transition:opacity .55s linear,visibility 0s linear .55s}
+body.print .copy.g{transition:none}
+/* colour coming up all at once (scrolling into the story from gray): the gray copy stays put underneath while the colour copy fades in over it */
+body.wash .layer > .copy.c{transition:opacity .9s var(--ease)}
+body.wash .all-color .copy.g{opacity:1;visibility:visible;transition:none}
+body.wash0 .flood{opacity:0;transition:none}
+
+/* headline swap */
+/* kept on their own layer for good: otherwise the words change weight for one frame when the fade ends */
+.w-gray,.w-color{will-change:opacity;transition:opacity 1.4s var(--ease)}
+.w-color{opacity:0}
+.w-stroke{stroke-dasharray:100;stroke-dashoffset:100;transition:stroke-dashoffset 1.6s var(--ease) 1.2s}
+body.is-color .w-gray{opacity:0}
+body.is-color .w-color{opacity:1;transition-delay:.9s}
+body.is-color .w-stroke{stroke-dashoffset:0}
+
+/* layer outlines + labels for the pulled-apart view */
+.layer::after{content:"";position:absolute;left:var(--ax,0%);top:var(--ay,0%);width:var(--aw,100%);height:var(--ah,100%);box-sizing:border-box;
+  border:1.5px solid rgba(255,255,255,.62);border-radius:2px;background:rgba(255,255,255,.045);display:none}
+@keyframes pane{from{opacity:0}to{opacity:1}}
+.tag{position:absolute;left:var(--ax,0%);bottom:calc(100% - var(--ay,0%));margin-bottom:calc(var(--W)*.012);white-space:nowrap;
+  font:600 calc(var(--W)*.046)/1 var(--sans);letter-spacing:.02em;color:var(--ink);opacity:0;transition:opacity .6s var(--ease)}
+body.mode-layers .card:not(.portal) .layer::after,body.mode-layers .card:not(.portal) ~ .forecard .layer::after{display:block;animation:pane .9s var(--ease) both}
+body.mode-layers .card:not(.portal) .tag,body.mode-layers .card:not(.portal) ~ .forecard .tag{opacity:.95;transition-delay:.6s}
+.tag b{color:var(--amber);font-weight:700}
+.tag span{display:none}
+.layer.on .tag span{display:inline}
+.rays.dim{opacity:0!important;transition-duration:1.5s,.4s}
+
+/* dust in the light + steam: slow drifting, nothing flies in */
+.air{position:absolute;inset:0;pointer-events:none;transform-style:preserve-3d;transition:transform var(--lt) var(--ease),opacity .8s}
+.mote{position:absolute;width:3px;height:3px;border-radius:50%;background:#fff3d6;opacity:0;animation:mote var(--d) linear var(--dl) infinite}
+@keyframes mote{0%{transform:translate3d(0,0,0);opacity:0}15%{opacity:var(--o)}85%{opacity:var(--o)}100%{transform:translate3d(var(--dx),var(--dy),0);opacity:0}}
+.steam{position:absolute;left:55.5%;top:82%;width:9%;height:9%;pointer-events:none}
+.steam span{position:absolute;bottom:0;width:26%;margin-left:-4%;height:100%;border-radius:50%;
+  background:radial-gradient(ellipse 50% 50% at 50% 55%,rgba(255,255,255,.5),rgba(255,255,255,.22) 45%,rgba(255,255,255,0) 100%);
+  transform-origin:50% 100%;opacity:0;animation:steam 5.5s ease-in-out infinite}
+.steam span:nth-child(1){left:18%}.steam span:nth-child(2){left:44%;animation-delay:1.8s}.steam span:nth-child(3){left:68%;animation-delay:3.4s}
+@keyframes steam{0%{transform:translateY(8%) scaleY(.5) skewX(0);opacity:0}30%{opacity:.75}100%{transform:translateY(-70%) scaleY(1.15) skewX(9deg);opacity:0}}
+body.mode-layers .air{opacity:0}
+
+/* ---------- light, paint and atmosphere ---------- */
+.no-anim .rig,.no-anim .layer,.no-anim .box,.no-anim .rays,.no-anim .air{transition:none!important}
+body.intro .tag{opacity:0!important}
+.glare{position:absolute;inset:0;overflow:hidden;border-radius:2.2% / 1.5%;pointer-events:none;transition:opacity .6s var(--ease)}
+.glare i{position:absolute;top:-30%;bottom:-30%;left:-50%;width:200%;will-change:transform;
+  background:linear-gradient(112deg,transparent 38%,rgba(170,170,170,.10) 43%,rgba(224,224,224,.14) 46.5%,rgba(255,255,255,.30) 50%,rgba(205,205,205,.14) 53.5%,rgba(142,142,142,.10) 57%,transparent 62%)}
+body.is-color .glare i{background:linear-gradient(112deg,transparent 38%,rgba(255,120,170,.10) 43%,rgba(255,226,150,.14) 46.5%,rgba(255,255,255,.30) 50%,rgba(140,220,255,.14) 53.5%,rgba(150,130,255,.10) 57%,transparent 62%)}
+body.mode-layers .glare,body.in-dive .glare{opacity:0}
+.rays{position:absolute;inset:0;overflow:hidden;pointer-events:none;opacity:0;transition:transform var(--lt) var(--ease),opacity 2.4s var(--ease)}
+body.is-color .rays{opacity:1}
+.rays .ry{position:absolute;left:50%;top:53.5%;width:116%;height:auto;aspect-ratio:1;margin:-58% 0 0 -58%;transform:scale(2);will-change:transform;
+  animation:spin 80s linear infinite}
+@keyframes spin{from{transform:scale(2) rotate(0deg)}to{transform:scale(2) rotate(360deg)}}
+.fx{position:absolute;inset:0;pointer-events:none}
+.ring{position:absolute;aspect-ratio:1;border-radius:50%;border:calc(var(--W)*.009) solid;transform:translate(-50%,-50%) scale(.08);opacity:0;
+  animation:ring 1.05s cubic-bezier(.16,.7,.2,1) forwards}
+@keyframes ring{0%{transform:translate(-50%,-50%) scale(.08);opacity:.95}100%{transform:translate(-50%,-50%) scale(1.14);opacity:0}}
+body.lite .bokeh,body.lite .grain{display:none}
+body.lite .rays .ry{animation-play-state:paused}
+body.lite .air,body.lite .glare{display:none}
+body.away .mote,body.away .steam span,body.away .rays .ry,body.away .bokeh i,body.away .more i::after{animation-play-state:paused}
+.bokeh{position:absolute;inset:-48%;container-type:inline-size;pointer-events:none;opacity:0;transition:opacity 2.6s var(--ease)}
+body.is-color .bokeh{opacity:1}
+body.mode-layers .bokeh.f,body.facing-back .bokeh.f,body.in-dive .bokeh{opacity:0;transition-duration:.5s}
+.forecard .layer{transition:transform var(--lt) var(--ease),opacity .7s var(--ease)}
+body.in-dive .forecard .layer{opacity:0;visibility:hidden;transition:transform var(--lt) var(--ease),opacity .7s var(--ease),visibility 0s linear .7s}
+body.in-dive .back,body.in-dive .glare{visibility:hidden;transition:visibility 0s linear 1.5s}
+.bokeh i{position:absolute;border-radius:50%;background:radial-gradient(circle,var(--c) 0,var(--c) 30%,transparent 70%);opacity:0;will-change:transform,opacity;
+  animation:drift var(--d) linear var(--dl) infinite}
+@keyframes drift{0%{transform:translate3d(0,0,0);opacity:0}18%{opacity:var(--o)}82%{opacity:var(--o)}100%{transform:translate3d(var(--dx),var(--dy),0);opacity:0}}
+body.print .glare,body.print .rays,body.print .bokeh,body.print .fx,body.print .shade{display:none}
+body.print .rig{opacity:1;transition:none}
+
+/* ---------- back of the card ---------- */
+.back{position:absolute;inset:0;transform:rotateY(180deg) translateZ(1px);backface-visibility:hidden;-webkit-backface-visibility:hidden;
+  background:linear-gradient(135deg,#f7f4ee,#ece8df);color:var(--paper-ink);border-radius:2.2cqw;
+  container-type:inline-size;overflow:hidden;transition:transform var(--lt) var(--ease);pointer-events:none}
+body.facing-back .back{pointer-events:auto}
+body:not(.print) .back{border-radius:0}
+.back-in{position:absolute;inset:0;padding:7.4cqw 7.6cqw 6.6cqw;display:flex;flex-direction:column;font-size:3.3cqw;line-height:1.5}
+.b-top{display:flex;justify-content:space-between;align-items:flex-start;gap:3cqw}
+.b-kicker{font-size:2.5cqw;letter-spacing:.3em;text-transform:uppercase;color:#77736b;font-weight:600}
+.b-name{margin-top:1.6cqw;font:700 6.2cqw/1.05 var(--sans);letter-spacing:.1em;text-transform:uppercase;color:var(--paper-ink)}
+.b-name span{display:block;margin-top:1.6cqw;font-weight:500;font-size:3.6cqw;letter-spacing:.3em;color:#5b5750}
+.b-rate{margin-top:2.4cqw;font-size:2.8cqw;color:#5b5750}
+.b-rate b{color:#c8502f;font-weight:600}
+.stampbox{position:relative;width:36cqw;height:26.5cqw;flex:none}
+.stamp{position:absolute;right:0;top:0;width:31cqw;aspect-ratio:4/3;margin:0;background:#fff;padding:1.5cqw;transform:rotate(2.5deg);
+  box-shadow:0 .5cqw 1.8cqw rgba(0,0,0,.2);outline:.5cqw dotted #cfc9bd;outline-offset:-.15cqw}
+.stamp svg,.stamp img{width:100%;height:100%;display:block;object-fit:cover}
+.postmark{position:absolute;left:0;bottom:0;width:15cqw;height:15cqw;opacity:.62;transform:rotate(-12deg)}
+.b-mid{margin:auto 0;padding:3cqw 0}
+.b-h{font-family:var(--serif);font-weight:500;font-size:9.8cqw;line-height:1.03;letter-spacing:-.03em;margin:0}
+.b-h em{font-style:italic;color:#c8502f}
+.b-p{margin:4.2cqw 0 0;color:#6a665e;font-size:3.5cqw;letter-spacing:.01em}
+.b-foot{border-top:.25cqw solid #cfc9bd;padding-top:4.2cqw}
+.b-addr{margin:0;color:#5b5750;font-size:3.2cqw;line-height:1.62}
+.b-addr b{font-weight:600;color:var(--paper-ink)}
+.cta{display:grid;grid-template-columns:repeat(3,1fr);gap:2.2cqw;margin-top:4.4cqw}
+.cta a{display:flex;align-items:center;justify-content:center;min-height:11.4cqw;padding:0 1cqw;border-radius:99px;
+  text-decoration:none;font-weight:600;font-size:3.05cqw;color:var(--paper-ink);border:.4cqw solid var(--paper-ink);text-align:center}
+.cta a.primary{background:var(--coral);border-color:var(--coral);color:#fff}
+.cta a:focus-visible{outline:.6cqw solid #1c3f6e;outline-offset:.5cqw}
+
+/* ---------- controls under the card (top of the page only) ---------- */
+.ui{position:absolute;z-index:3;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;gap:9px;
+  padding:6px var(--gut) max(12px,env(safe-area-inset-bottom));transition:opacity .6s var(--ease),transform .9s var(--out),visibility 0s linear 0s}
+body.in-story .ui{opacity:0;transform:translateY(14px);visibility:hidden;transition:opacity .45s var(--ease),transform .6s var(--ease),visibility 0s linear .5s}
+.hint{margin:0;font-size:12.5px;line-height:1.5;color:var(--muted);min-height:3em;max-width:34em;text-align:center}
+.hint b{color:var(--amber);font-weight:600}
+body.ink .hint b{color:var(--ink)}
+.chips{display:flex;gap:6px;max-width:100%;min-height:3em;align-items:center;overflow-x:auto;padding:2px 2px;scrollbar-width:none;-webkit-overflow-scrolling:touch;touch-action:pan-x}
+.chips::-webkit-scrollbar{display:none}
+.chip{appearance:none;flex:none;min-height:32px;padding:0 12px;border-radius:99px;border:1px solid var(--line);background:rgba(255,255,255,.06);
+  font-size:12.5px;font-weight:500;white-space:nowrap;cursor:pointer;transition:background .3s,color .3s,border-color .3s}
+.chip b{color:var(--amber);font-weight:700;margin-right:2px}
+.chip[aria-pressed="true"]{background:var(--ink);color:#1b1b1c;border-color:var(--ink)}
+.chip[aria-pressed="true"] b{color:#b4502d}
+.chip:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.btns{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.btn{appearance:none;border:1px solid var(--line);background:rgba(255,255,255,.06);
+  min-height:46px;padding:0 18px;border-radius:99px;font-size:14px;font-weight:600;letter-spacing:.01em;cursor:pointer;text-decoration:none;
+  display:inline-flex;align-items:center;gap:9px;transition:background .35s,border-color .35s,color .35s,opacity .35s}
+.btn:hover{background:rgba(255,255,255,.12)}
+.btn:focus-visible{outline:2px solid var(--amber);outline-offset:3px}
+.btn[aria-pressed="true"]{background:var(--ink);color:#1b1b1c;border-color:var(--ink)}
+.btn.primary{background:var(--coral);border-color:var(--coral);color:#fff}
+.btn.primary:hover{background:#f58460}
+.btn.primary[aria-pressed="true"]{background:rgba(255,255,255,.06);border-color:var(--line);color:var(--ink)}
+.dot{width:12px;height:12px;border-radius:50%;flex:none;
+  background:conic-gradient(#ef6f4a,#f8c865,#46a9a4,#1c3f6e,#d94a5c,#ef6f4a);box-shadow:0 0 0 2px rgba(255,255,255,.85)}
+.btn.primary[aria-pressed="true"] .dot{background:#9b9b9b}
+body.ink .ui .btn{background:#1b1512;border-color:#1b1512;color:#fff3e4}
+body.ink .ui .btn:hover{background:#33251e}
+body.ink .ui .btn.primary[aria-pressed="true"]{background:transparent;border-color:rgba(27,21,18,.55);color:#1b1512}
+body.ink .ui .btn[aria-pressed="true"]:not(.primary){background:#fff3e4;border-color:#fff3e4;color:#1b1512}
+body.ink .chip{background:rgba(27,21,18,.08)}
+body.ink .chip b,body.ink .tag b{color:#fff1dc}
+body.ink .chip[aria-pressed="true"]{color:#fff3e4}
+body.ink .chip[aria-pressed="true"] b{color:#f8c865}
+body.ink .more i{background:rgba(27,21,18,.3)}
+body.ink .more i::after{background:#1b1512}
+.more{display:inline-flex;align-items:center;gap:9px;min-height:32px;padding:0 12px;font-size:10.5px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);text-decoration:none;transition:color .3s}
+.more:hover{color:var(--ink)}
+.more:focus-visible{outline:2px solid var(--amber);outline-offset:2px;border-radius:99px}
+.more i{position:relative;width:1px;height:22px;background:rgba(255,255,255,.22);overflow:hidden}
+.more i::after{content:"";position:absolute;left:0;top:0;width:100%;height:100%;background:var(--amber);animation:cue 2.4s var(--ease) infinite}
+@keyframes cue{0%{transform:translateY(-100%)}55%{transform:translateY(0)}100%{transform:translateY(100%)}}
+
+/* ---------- the story: the camera goes into the room; the words sit on a sheet of colour beside it ---------- */
+/* The sheet opens like a sliding door, with two moves that cancel out: the frame (.cap) slides in from the edge and the sheet
+   inside it (.cs) slides the other way by as much, so the words stand still while the edge passes over them. Only positions
+   change, so nothing is redrawn while it opens. (A clip-path wipe redraws the whole sheet on every frame.) */
+/* opacity just under 1: Chrome otherwise assumes this sheet hides more of the room than it does and leaves holes beside it
+   while the sheets are being redrawn. Safari does not need it and would pay for it on every frame. */
+.caps{position:absolute;z-index:3;left:0;right:0;bottom:0;height:clamp(254px,35%,310px);pointer-events:none;overflow:hidden;opacity:.999}
+@supports (font:-apple-system-body){.caps{opacity:1}}
+.cap{position:absolute;inset:0;margin:0;color:var(--pi,#1b1512);visibility:hidden;overflow:hidden;transform:translate3d(0,100%,0);
+  transition:transform .8s var(--ease),visibility 0s linear .8s}
+.cs{position:absolute;inset:0;background:var(--pb,transparent);transform:translate3d(0,-100%,0);transition:transform .8s var(--ease)}
+.cap.on{transform:none;visibility:visible;z-index:2;pointer-events:auto;transition:transform 1.05s var(--ease) .12s,visibility 0s linear 0s}
+.cap.on .cs{transform:none;transition:transform 1.05s var(--ease) .12s}
+.cap.under{transform:none;visibility:visible;z-index:1;transition:none}
+.cap.under .cs{transform:none;transition:none}
+.cap[data-k="1"]{--pb:#2a2466;--pi:#f4efe6;--pe:#f8c865;--pm:rgba(244,239,230,.78)}
+.cap[data-k="2"]{--pb:#f6c453;--pi:#1b1512;--pe:#ad3a16;--pm:rgba(27,21,18,.76)}
+.cap[data-k="3"]{--pb:#17807a;--pi:#f6f2e9;--pe:#ffd98a;--pm:rgba(246,242,233,.82)}
+.cap[data-k="4"]{--pb:#ef6f4a;--pi:#1b1512;--pe:#fff1dc;--pm:rgba(27,21,18,.78)}
+.cap[data-k="5"]{--pi:#1b1512;--pe:#fff1dc;--pm:rgba(27,21,18,.78)}
+/* the last words sit on the page itself, with no sheet to slide: they fade */
+.cap[data-k="5"],.cap[data-k="5"] .cs{transform:none!important}
+.ci{position:absolute;left:var(--gut);right:var(--gut);top:clamp(18px,3.4vh,30px);opacity:0;transform:translateY(14px);will-change:opacity,transform;
+  transition:opacity .35s var(--ease),transform .5s var(--ease)}
+.cap.on .ci{opacity:1;transform:none;transition:opacity .8s var(--out) .5s,transform 1s var(--out) .5s}
+.cap-n{display:flex;align-items:center;gap:10px;margin:0 0 10px;font-size:10.5px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--pe)}
+.cap-n::after{content:"";flex:none;width:34px;height:1px;background:currentColor;opacity:.6}
+.cap-n span{order:2;color:var(--pm)}
+.cap h2{margin:0;font-family:var(--serif);font-weight:400;font-size:clamp(33px,10vw,50px);line-height:.98;letter-spacing:-.04em;text-wrap:balance}
+.cap h2 em{font-style:italic;color:var(--pe)}
+.cap p{margin:10px 0 0;max-width:36ch;font-size:14px;line-height:1.5;color:var(--pm)}
+.cap .btns{justify-content:flex-start;margin-top:12px}
+.cap .btn{min-height:42px;padding:0 16px;font-size:13.5px;background:#1b1512;border-color:#1b1512;color:#fff3e4}
+.cap .btn:hover{background:#33251e}
+.cap .btn:not(.primary){background:transparent;border-color:rgba(27,21,18,.55);color:#1b1512}
+.cap .btn:not(.primary):hover{background:rgba(27,21,18,.08)}
+.prog{position:absolute;z-index:4;left:0;right:0;bottom:0;height:3px;background:rgba(27,21,18,.16);opacity:0;transition:opacity .6s var(--ease);pointer-events:none}
+body.in-story .prog{opacity:1}
+.prog i{position:absolute;inset:0;background:#1b1512;box-shadow:0 -1px 0 rgba(255,241,220,.55);transform:scaleX(0);transform-origin:0 50%;will-change:transform}
+
+@media (max-height:700px){.btn{min-height:42px}.ui{gap:6px}}
+@media (max-width:410px){.btn{padding:0 13px;font-size:13.5px;gap:7px}.btns{gap:6px}}
+/* wide screens: the room on the left, the words on the right */
+@media (min-aspect-ratio:11/10){
+  .caps{left:54%;right:0;top:0;bottom:0;height:auto}
+  .cap{transform:translate3d(100%,0,0)}
+  .cs{transform:translate3d(-100%,0,0)}
+  .cap.on,.cap.under,.cap.on .cs,.cap.under .cs{transform:none}
+  .ci{left:clamp(28px,4.6vw,84px);right:clamp(24px,4vw,70px);top:50%;transform:translateY(calc(-50% + 14px))}
+  .cap.on .ci{transform:translateY(-50%)}
+  .cap h2{font-size:clamp(38px,6.3vw,120px)}
+  .cap p{font-size:clamp(14px,1.3vw,19px);margin-top:clamp(14px,1.8vw,26px)}
+  .cap-n{margin-bottom:clamp(12px,1.6vw,24px)}
+  .cap .btns{margin-top:clamp(16px,2vw,30px)}
+}
+@media (min-aspect-ratio:11/10) and (max-height:540px){
+  .ui{left:auto;width:44%;top:0;justify-content:center;padding-top:30px}
+  .btns{flex-direction:column;align-items:stretch;width:min(100%,280px)}
+  .btn{justify-content:center}
+  .chips{flex-wrap:wrap;justify-content:center;overflow:visible}
+  .chip{min-height:28px;padding:0 9px;font-size:11.5px}
+  .cap h2{font-size:clamp(26px,4.6vw,42px)}
+  .cap p{font-size:13px;margin-top:8px}
+  .cap .btns{flex-direction:row;width:auto}
+}
+
+/* ---------- the shop, below the postcard ---------- */
+.sec{position:relative;z-index:2}
+.wrap{max-width:1240px;margin:0 auto;padding-left:var(--gut);padding-right:var(--gut)}
+.lab{display:flex;align-items:center;gap:12px;margin:0;font-size:11px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--amber)}
+.lab span{color:var(--muted);font-variant-numeric:tabular-nums}
+.lab::after{content:"";flex:1;height:1px;background:var(--line)}
+.disp{margin:clamp(22px,4vw,44px) 0 0;font-family:var(--serif);font-weight:400;font-size:clamp(40px,8.6vw,128px);line-height:.98;letter-spacing:-.04em}
+.disp em{font-style:italic;color:var(--coral)}
+/* words rise out of their own line as the heading comes into view */
+.w{display:inline-block;overflow:hidden;vertical-align:top;padding:.04em .07em .2em 0;margin:-.04em -.07em -.2em 0}
+.w > span{display:inline-block;transform:translateY(112%);transition:transform 1.15s var(--out);transition-delay:calc(var(--wi,0)*42ms)}
+.in .w > span{transform:none}
+[data-rv]{opacity:0;transform:translateY(24px);transition:opacity 1s var(--out),transform 1.2s var(--out);transition-delay:calc(var(--i,0)*80ms)}
+[data-rv].in{opacity:1;transform:none}
+
+.about{padding:clamp(72px,12vw,170px) 0 clamp(56px,9vw,120px);background:var(--bg)}
+.about-g{display:grid;grid-template-columns:1fr 1fr;gap:clamp(28px,6vw,96px);margin-top:clamp(36px,6vw,84px);align-items:start}
+.lead{margin:0;font-family:var(--serif);font-weight:400;font-size:clamp(19px,2.2vw,28px);line-height:1.34;letter-spacing:-.012em;color:#e4e0d8;max-width:26em}
+.steps{list-style:none;margin:0;padding:0}
+.steps li{display:grid;grid-template-columns:clamp(56px,7vw,96px) 1fr;gap:6px 14px;align-items:baseline;padding:clamp(16px,2vw,24px) 0;border-top:1px solid var(--line);font-size:14.5px;line-height:1.55;color:#bdb9b1}
+.steps li:last-child{border-bottom:1px solid var(--line)}
+.steps i{font-style:normal;font-family:var(--serif);font-weight:300;font-size:clamp(34px,4.4vw,60px);line-height:.9;letter-spacing:-.04em;color:var(--ink);grid-row:span 2}
+.steps b{font-family:var(--serif);font-weight:500;font-size:clamp(20px,2vw,26px);line-height:1.15;letter-spacing:-.015em;color:var(--ink)}
+.steps span{grid-column:2}
+
+.band{position:relative;z-index:2;overflow:hidden;padding:clamp(10px,2vw,26px) 0 clamp(22px,4vw,54px);background:var(--bg)}
+.band-in{display:flex;width:max-content;will-change:transform;font-family:var(--serif);font-weight:300;font-size:clamp(64px,14.5vw,220px);line-height:1;letter-spacing:-.045em;white-space:nowrap;color:var(--ink)}
+.band-in span{flex:none;padding-right:.22em}
+.band-in em{font-style:italic;color:transparent;-webkit-text-stroke:1px rgba(255,255,255,.5)}
+.band-in i{font-style:normal;display:inline-block;width:.36em;height:.36em;margin:0 .22em .12em;border-radius:50%;background:var(--coral);vertical-align:middle}
+
+.menu-sec{background:var(--paper);color:var(--paper-ink);padding:clamp(64px,10vw,150px) 0 clamp(64px,10vw,140px);border-radius:clamp(18px,3vw,40px) clamp(18px,3vw,40px) 0 0}
+.menu-sec .lab{color:#b4502d}
+.menu-sec .lab span{color:var(--paper-muted)}
+.menu-sec .lab::after{background:var(--paper-line)}
+.menu-sec .disp em{color:#c8502f}
+.menus{display:grid;grid-template-columns:1.2fr 1fr;gap:clamp(34px,7vw,110px);margin-top:clamp(40px,7vw,96px);align-items:start}
+.menu{min-width:0}
+.menu h3{margin:0;display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding-bottom:14px;border-bottom:1.5px solid var(--paper-ink);
+  font-family:var(--serif);font-weight:400;font-size:clamp(30px,3.8vw,52px);line-height:1;letter-spacing:-.03em}
+.menu h3 small{font:500 12px/1.3 var(--sans);letter-spacing:.02em;color:var(--paper-muted);text-align:right}
+.menu h4{margin:clamp(26px,3vw,40px) 0 2px;font:600 11px/1.4 var(--sans);letter-spacing:.2em;text-transform:uppercase;color:#b4502d}
+.menu h4 span{font-weight:500;letter-spacing:.1em;color:var(--paper-muted);margin-left:8px}
+.menu ul{list-style:none;margin:0;padding:0}
+.menu li{display:flex;align-items:baseline;gap:12px;padding:13px 0;border-bottom:1px solid var(--paper-line);font-size:clamp(15px,1.3vw,18px);line-height:1.35;transition:padding .5s var(--out),color .3s}
+.menu li > span{flex:1;min-width:0}
+.menu li small{display:block;margin-top:2px;font-size:12.5px;color:var(--paper-muted)}
+.menu li b{flex:none;font-family:var(--serif);font-weight:500;font-size:clamp(17px,1.5vw,21px);white-space:nowrap;font-variant-numeric:tabular-nums}
+@media (hover:hover){.menu li:hover{padding-left:12px;color:#b4502d}}
+.menu .note{margin:18px 0 0;font-size:13px;line-height:1.6;color:var(--paper-muted);max-width:46ch}
+.know{margin-top:clamp(64px,10vw,140px)}
+.know ol{list-style:none;margin:clamp(26px,4vw,48px) 0 0;padding:0;display:grid;grid-template-columns:repeat(3,1fr);gap:0 clamp(22px,4vw,56px);counter-reset:k}
+.know li{counter-increment:k;padding:18px 0 22px;border-top:1px solid var(--paper-line);font-size:15px;line-height:1.5;color:#3d3a35}
+.know li::before{content:"0" counter(k);display:block;margin-bottom:10px;font:600 11px/1 var(--sans);letter-spacing:.18em;color:#b4502d}
+.know li b{display:block;margin-bottom:4px;font-family:var(--serif);font-weight:500;font-size:clamp(20px,1.9vw,25px);line-height:1.15;letter-spacing:-.015em;color:var(--paper-ink)}
+
+.visit{background:var(--coral);color:#1b1512;padding:clamp(64px,10vw,150px) 0 clamp(56px,8vw,110px)}
+.visit .lab{color:#1b1512}
+.visit .lab span{color:rgba(27,21,18,.62)}
+.visit .lab::after{background:rgba(27,21,18,.3)}
+.visit .disp{font-size:clamp(46px,11vw,176px)}
+.visit .disp em{color:#fff3e4}
+.visit-g{display:grid;grid-template-columns:repeat(3,1fr) auto;gap:clamp(22px,4vw,56px);margin-top:clamp(40px,7vw,96px);align-items:start}
+.visit-g > div{border-top:1.5px solid #1b1512;padding-top:14px;min-width:0}
+.visit h3{margin:0 0 12px;font:600 11px/1.4 var(--sans);letter-spacing:.2em;text-transform:uppercase}
+.visit p{margin:0 0 8px;font-size:15px;line-height:1.5}
+.visit p b{display:block;font-family:var(--serif);font-weight:500;font-size:clamp(20px,2vw,27px);line-height:1.18;letter-spacing:-.015em}
+.visit .tel{user-select:all;-webkit-user-select:all;font-weight:600}
+.visit-g > .cta-cell{border-top:0;padding-top:0}
+.round{display:grid;place-content:center;width:clamp(132px,15vw,188px);aspect-ratio:1;border-radius:50%;background:#1b1512;color:#fff3e4;text-decoration:none;text-align:center;
+  font-family:var(--serif);font-size:clamp(19px,1.9vw,25px);line-height:1.1;letter-spacing:-.01em;will-change:transform;transition:background .4s,color .4s}
+.round span{display:block;margin-bottom:7px;font:600 10.5px/1 var(--sans);letter-spacing:.2em;text-transform:uppercase;opacity:.75}
+.round:hover{background:#fff3e4;color:#1b1512}
+.round:focus-visible{outline:3px solid #1b1512;outline-offset:4px}
+.links{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.links a{display:inline-flex;align-items:center;min-height:42px;padding:0 16px;border-radius:99px;border:1.5px solid #1b1512;font-size:13.5px;font-weight:600;text-decoration:none;transition:background .3s,color .3s}
+.links a:hover{background:#1b1512;color:#fff3e4}
+.links a:focus-visible{outline:3px solid #1b1512;outline-offset:3px}
+
+.site-foot{position:relative;z-index:2;background:var(--bg);padding:clamp(40px,6vw,84px) 0 max(22px,env(safe-area-inset-bottom))}
+.wordmark{display:block;width:100%;height:auto;overflow:visible}
+.wordmark text{font:700 150px/1 var(--sans);fill:var(--ink)}
+.foot-row{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;margin-top:clamp(22px,3vw,40px);padding-top:16px;border-top:1px solid var(--line)}
+.legal{margin:0;font-size:12px;line-height:1.6;color:#8d8a84;max-width:64ch}
+.up{flex:none;display:inline-flex;align-items:center;min-height:40px;font-size:10.5px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--ink);text-decoration:none}
+.up:focus-visible{outline:2px solid var(--amber);outline-offset:3px}
+@media (max-width:820px){
+  .about-g,.menus{grid-template-columns:1fr}
+  .know ol{grid-template-columns:1fr 1fr}
+  .visit-g{grid-template-columns:1fr 1fr}
+  .visit-g > .cta-cell{grid-column:1 / -1}
+}
+@media (max-width:520px){
+  .know ol{grid-template-columns:1fr}
+  .visit-g{grid-template-columns:1fr}
+  .foot-row{flex-direction:column;align-items:flex-start}
+}
+
+/* ---------- paper version ---------- */
+body.print{background:#f2eee7;min-height:100vh;overflow:hidden}
+body.print .glow,body.print .top,body.print .ui,body.print .air,body.print .sec,body.print .band{display:none}
+body.print .story{height:auto}
+body.print .app{position:fixed;inset:0;height:auto;min-height:0;padding:0}
+body.print .rig,body.print .layer,body.print .box,body.print .back{transition:none!important}
+body.print .back{border-radius:0}
+.force-c .copy.c{-webkit-clip-path:none!important;clip-path:none!important}
+.force-c .copy.g{display:none!important}
+.arch-gray .lf{filter:grayscale(1) brightness(1.04)}
+.pscan{display:grid;grid-template-columns:auto 1fr;gap:6cqw;align-items:center}
+.qr{width:27cqw}
+.qr svg{display:block;width:100%;height:auto;background:#fff;padding:2.2cqw;border-radius:1cqw;box-sizing:border-box;box-shadow:0 0 0 .25cqw #ddd7cb}
+.scan{margin:0;font-family:var(--serif);font-size:6.6cqw;line-height:1.06;letter-spacing:-.025em;font-weight:500;color:var(--paper-ink)}
+.scan em{display:block;font-style:italic;color:#c8502f}
+.scan-s{margin:2.6cqw 0 0;font-size:2.4cqw;letter-spacing:.02em;color:#77736b;white-space:nowrap}
+.poffer{margin:0 0 1.8cqw;font-size:3.1cqw;font-weight:600;color:#c8502f}
+body.print .back-in{padding:8cqw 8cqw 5.6cqw;justify-content:space-between}
+body.print .b-rate{display:none}
+body.print .b-mid{margin:0;padding:0}
+body.print .b-h{font-size:9.6cqw}
+body.print .b-p{margin-top:3.6cqw;font-size:3.4cqw}
+body.print .b-foot{padding-top:3.6cqw}
+body.print .b-addr{font-size:3cqw;line-height:1.6}
+body.print .stampbox{height:25cqw}
+body.print-back .layer,body.print-back .box,body.print-back .win,body.print-back .forecard{display:none}
+body.print-back .card,body.print-back .back{transform:none!important;-webkit-backface-visibility:visible;backface-visibility:visible}
+.pfine{margin:2.4cqw 0 0;font-size:1.9cqw;line-height:1.35;color:#9a958b}
+@media (prefers-reduced-motion:reduce){
+  .rig,.layer,.air,.rays{transition-duration:.01s}
+  .mote,.steam span,.rays .ry,.bokeh i,.ring,.more i::after{animation:none}
+  .bokeh i{opacity:var(--o)}
+  .w > span,[data-rv]{transform:none!important;opacity:1!important;transition:none!important}
+  .loader{transition-duration:.01s}
+}
+</style>
+</head>
+<body class="mode-front">
+<div class="loader" id="loader" aria-hidden="true">
+  <div class="ld-top"><span><b>Gray Room</b></span><span>Paint &amp; Cafe · Zhongli</span></div>
+  <p class="ld-say">The room is <em>gray.</em></p>
+  <div class="ld-row"><span class="ld-num" id="ldNum">0</span><span class="ld-lab">Opening<br>the room</span></div>
+  <i class="ld-bar" id="ldBar"></i>
+</div>
+<div class="grain" aria-hidden="true"></div>
+<div class="cur" id="cur" aria-hidden="true"><i class="cur-d"></i><i class="cur-r">Drag</i></div>
+
+<div class="story" id="top">
+  <i class="mark" id="ch1" style="--k:1"></i>
+  <div class="app" id="app">
+    <div class="glow" aria-hidden="true"></div>
+    <div class="flood" id="flood" aria-hidden="true"><i></i><i></i><i></i></div>
+    <header class="top" id="hdr"><span><b>Gray Room</b> Paint &amp; Cafe</span><nav aria-label="Sections"><a href="#menu" data-go="menu">Menu</a><a href="#visit" data-go="visit">Visit</a></nav></header>
+    <p class="meta l"><b>Postcard No. 1</b>Ten layers of paper,<br>one gray room</p>
+    <p class="meta r"><b>Zhongli, Taoyuan</b>Paint and coffee,<br>by reservation</p>
+    <div class="big" id="big" aria-hidden="true"><p class="bl g"><span>The room</span> <span>is <em>gray.</em></span></p><p class="bl c"><span>The color</span> <span>is <em>yours.</em></span></p></div>
+
+    <main class="stage" id="stage">
+      <div class="rig" id="rig">
+        <div class="persp" id="persp">
+          <div class="shade" id="shade" aria-hidden="true"></div>
+          <div class="backfield" id="backfield" aria-hidden="true"></div>
+          <div class="card all-gray" id="card" role="img" aria-label="A layered postcard of Gray Room Paint and Cafe: a guest paints at an easel in a gray concrete room while a dog watches, with paint, coffee and a waffle on the table.">
+            <article class="back" id="back">
+              <div class="back-in">
+                <div class="b-top">
+                  <div>
+                    <div class="b-kicker">Postcard from</div>
+                    <div class="b-name">Gray Room<span>灰房間 畫畫咖啡廳</span></div>
+                    <div class="b-rate"><b>★ 4.9</b> on Google · 92 reviews</div>
+                  </div>
+                  <div class="stampbox">
+                    <figure class="stamp" id="photoSlot" aria-label="The Gray Room shopfront"></figure>
+                    <svg class="postmark" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="46" fill="none" stroke="#3a3a3a" stroke-width="2"/><circle cx="50" cy="50" r="30" fill="none" stroke="#3a3a3a" stroke-width="1.4"/><path d="M12.41,49.46L6.61,48.97L6.8,46.8Q6.85,46.13 7.14,45.7Q7.43,45.27 7.88,45.07Q8.34,44.87 8.89,44.92Q9.45,44.97 9.86,45.24Q10.27,45.51 10.48,45.99Q10.69,46.47 10.63,47.14L10.51,48.58L9.65,48.51L9.76,47.21Q9.8,46.81 9.68,46.55Q9.57,46.29 9.34,46.15Q9.11,46.01 8.8,45.98Q8.49,45.96 8.24,46.05Q8,46.15 7.84,46.39Q7.69,46.63 7.65,47.03L7.57,48L12.5,48.42ZM12.91,43.36L7.86,39.83L8.22,38.55L14.38,38.14L14.07,39.24L10.88,39.41Q10.39,39.43 9.78,39.43Q9.16,39.42 8.38,39.41L8.44,39.2Q9.12,39.59 9.65,39.91Q10.18,40.22 10.58,40.48L13.22,42.27ZM11.84,41.83L11.03,41.61L11.87,38.65L12.67,38.88ZM10.52,32.16L15.8,34.62L15.36,35.56L10.08,33.11ZM17.08,31.71L12.27,28.43L12.94,27.46L16.72,27.6Q16.96,27.61 17.24,27.63Q17.53,27.66 17.87,27.71Q18.22,27.76 18.61,27.85L18.55,27.94Q18.26,27.78 17.96,27.61Q17.66,27.43 17.4,27.26Q17.14,27.1 16.96,26.98L14.44,25.26L15.04,24.38L19.85,27.66L19.18,28.64L15.77,28.51Q15.45,28.5 15.14,28.47Q14.83,28.45 14.45,28.4Q14.07,28.35 13.53,28.29L13.61,28.17Q13.98,28.39 14.3,28.59Q14.63,28.78 14.89,28.94Q15.14,29.1 15.29,29.2L17.68,30.83ZM18.13,21.78L17.51,21.15L20.85,17.93L21.46,18.56L20.17,19.81L23.6,23.36L22.85,24.09L19.42,20.53ZM29.94,15.8Q29.71,15.92 29.47,15.85Q29.22,15.78 29.09,15.55Q28.97,15.33 29.04,15.08Q29.11,14.83 29.34,14.71Q29.57,14.58 29.82,14.65Q30.06,14.72 30.19,14.95Q30.32,15.18 30.25,15.42Q30.18,15.67 29.94,15.8ZM40.04,13.93Q39.39,14.09 38.85,14.01Q38.31,13.92 37.95,13.6Q37.58,13.28 37.41,12.73L38.41,12.48Q38.51,12.77 38.72,12.92Q38.93,13.08 39.21,13.11Q39.5,13.14 39.82,13.06Q40.15,12.98 40.38,12.82Q40.61,12.65 40.71,12.43Q40.81,12.21 40.75,11.97Q40.69,11.75 40.53,11.63Q40.37,11.52 40.11,11.48Q39.86,11.44 39.53,11.44L38.85,11.43Q38.1,11.43 37.61,11.16Q37.12,10.89 36.97,10.29Q36.85,9.79 37.02,9.35Q37.2,8.91 37.61,8.58Q38.03,8.26 38.62,8.11Q39.22,7.96 39.73,8.06Q40.23,8.15 40.58,8.45Q40.93,8.76 41.06,9.23L40.08,9.47Q39.95,9.12 39.61,8.99Q39.28,8.86 38.82,8.97Q38.5,9.05 38.29,9.21Q38.09,9.36 38.01,9.56Q37.93,9.76 37.98,9.97Q38.04,10.21 38.22,10.32Q38.41,10.44 38.65,10.48Q38.89,10.51 39.14,10.51L39.7,10.51Q40.03,10.51 40.36,10.56Q40.69,10.62 40.97,10.75Q41.25,10.88 41.46,11.12Q41.67,11.35 41.76,11.72Q41.88,12.22 41.73,12.66Q41.57,13.1 41.14,13.43Q40.72,13.76 40.04,13.93ZM45.53,6.91L46.07,12.7L45.03,12.8L44.49,7.01ZM49.09,12.39L49.41,6.58L51.59,6.7Q52.25,6.74 52.69,7.01Q53.14,7.29 53.35,7.74Q53.56,8.18 53.53,8.74Q53.49,9.3 53.24,9.72Q52.98,10.14 52.5,10.36Q52.03,10.58 51.36,10.55L49.92,10.47L49.96,9.61L51.27,9.68Q51.66,9.7 51.92,9.58Q52.18,9.46 52.31,9.22Q52.44,8.99 52.46,8.68Q52.48,8.37 52.37,8.13Q52.27,7.88 52.02,7.73Q51.78,7.59 51.38,7.56L50.4,7.51L50.13,12.45ZM61.39,12.02Q61.14,11.94 61.02,11.71Q60.91,11.48 60.99,11.23Q61.07,10.99 61.3,10.87Q61.53,10.76 61.78,10.84Q62.03,10.92 62.15,11.15Q62.26,11.37 62.18,11.62Q62.1,11.87 61.87,11.99Q61.64,12.1 61.39,12.02ZM69.66,18.16Q69.09,17.79 68.79,17.34Q68.48,16.89 68.47,16.4Q68.45,15.91 68.75,15.41L69.61,15.98Q69.46,16.25 69.49,16.5Q69.52,16.76 69.69,17Q69.86,17.23 70.14,17.4Q70.42,17.59 70.7,17.65Q70.98,17.7 71.21,17.63Q71.44,17.55 71.57,17.34Q71.7,17.15 71.67,16.95Q71.64,16.76 71.5,16.54Q71.35,16.33 71.13,16.09L70.67,15.58Q70.16,15.03 70.03,14.49Q69.89,13.95 70.23,13.43Q70.51,13 70.95,12.83Q71.4,12.65 71.92,12.74Q72.44,12.82 72.95,13.15Q73.47,13.49 73.74,13.93Q74.02,14.36 74.03,14.82Q74.05,15.29 73.79,15.7L72.94,15.15Q73.12,14.81 72.98,14.48Q72.84,14.15 72.45,13.89Q72.18,13.71 71.92,13.66Q71.67,13.62 71.47,13.69Q71.27,13.77 71.15,13.95Q71.01,14.16 71.06,14.37Q71.1,14.58 71.24,14.79Q71.38,14.99 71.54,15.17L71.92,15.58Q72.15,15.82 72.33,16.1Q72.52,16.37 72.62,16.67Q72.71,16.97 72.68,17.28Q72.65,17.6 72.44,17.91Q72.16,18.34 71.73,18.53Q71.3,18.71 70.77,18.62Q70.24,18.54 69.66,18.16ZM77.08,17.19L77.69,16.55L81.05,19.74L80.45,20.38L79.15,19.15L75.74,22.73L74.99,22.01L78.39,18.43ZM78.35,25.22L84.25,23.44L85.03,24.52L81.54,29.62L80.87,28.69L82.71,26.08Q83,25.68 83.38,25.2Q83.76,24.72 84.26,24.11L84.38,24.29Q83.65,24.58 83.08,24.8Q82.5,25.02 82.05,25.18L79.02,26.14ZM80.21,25.33L80.89,24.84L82.69,27.32L82.01,27.81ZM83.46,33L85.51,32.06L87.85,28.61L88.36,29.72L87.12,31.43Q86.93,31.7 86.73,31.94Q86.54,32.17 86.24,32.46L86.12,32.21Q86.54,32.16 86.85,32.16Q87.15,32.16 87.47,32.19L89.56,32.35L90.07,33.45L85.94,33L83.89,33.94ZM88.96,42.61Q88.91,42.35 89.06,42.14Q89.21,41.93 89.47,41.89Q89.73,41.85 89.93,42Q90.14,42.15 90.19,42.41Q90.23,42.67 90.08,42.88Q89.93,43.09 89.67,43.13Q89.41,43.17 89.21,43.02Q89,42.87 88.96,42.61ZM87.59,50.62L93.39,51.13L93.2,53.3Q93.14,53.97 92.85,54.4Q92.56,54.83 92.11,55.03Q91.65,55.22 91.1,55.17Q90.54,55.13 90.13,54.85Q89.72,54.58 89.51,54.1Q89.3,53.62 89.36,52.95L89.49,51.51L90.34,51.59L90.23,52.89Q90.2,53.28 90.31,53.54Q90.42,53.81 90.65,53.95Q90.88,54.08 91.19,54.11Q91.5,54.14 91.75,54.04Q92,53.94 92.15,53.7Q92.31,53.46 92.34,53.06L92.43,52.09L87.5,51.66ZM87.08,56.72L92.12,60.27L91.76,61.54L85.59,61.95L85.9,60.85L89.09,60.68Q89.59,60.66 90.2,60.67Q90.81,60.67 91.59,60.68L91.53,60.89Q90.86,60.5 90.33,60.18Q89.8,59.87 89.4,59.61L86.76,57.82ZM88.14,58.25L88.95,58.48L88.11,61.43L87.3,61.2ZM89.44,67.93L84.17,65.46L84.61,64.52L89.88,66.98ZM82.87,68.36L87.68,71.65L87.01,72.63L83.23,72.48Q82.99,72.47 82.71,72.44Q82.42,72.42 82.08,72.36Q81.73,72.31 81.34,72.22L81.4,72.13Q81.69,72.29 81.99,72.47Q82.28,72.65 82.55,72.81Q82.81,72.98 82.99,73.1L85.5,74.82L84.91,75.7L80.1,72.41L80.77,71.43L84.18,71.57Q84.5,71.58 84.81,71.61Q85.12,71.63 85.5,71.68Q85.88,71.73 86.42,71.79L86.34,71.91Q85.97,71.69 85.65,71.5Q85.32,71.3 85.07,71.14Q84.81,70.98 84.66,70.87L82.27,69.24ZM81.81,78.29L82.42,78.92L79.08,82.14L78.47,81.5L79.76,80.26L76.33,76.7L77.09,75.98L80.51,79.54ZM69.98,84.25Q70.21,84.12 70.45,84.19Q70.7,84.26 70.83,84.49Q70.95,84.72 70.88,84.97Q70.81,85.21 70.58,85.34Q70.35,85.47 70.1,85.4Q69.85,85.33 69.73,85.1Q69.6,84.87 69.67,84.62Q69.75,84.38 69.98,84.25ZM59.88,86.09Q60.53,85.93 61.07,86.02Q61.6,86.1 61.97,86.43Q62.34,86.75 62.5,87.3L61.5,87.55Q61.41,87.26 61.2,87.1Q60.99,86.94 60.7,86.91Q60.42,86.88 60.1,86.96Q59.77,87.04 59.53,87.21Q59.3,87.37 59.21,87.59Q59.11,87.81 59.17,88.05Q59.22,88.27 59.38,88.39Q59.55,88.5 59.8,88.54Q60.05,88.58 60.38,88.59L61.06,88.59Q61.81,88.6 62.3,88.87Q62.79,89.14 62.94,89.74Q63.06,90.24 62.89,90.68Q62.71,91.12 62.29,91.45Q61.88,91.77 61.29,91.92Q60.68,92.06 60.18,91.97Q59.67,91.87 59.32,91.57Q58.98,91.26 58.85,90.79L59.83,90.55Q59.96,90.91 60.3,91.03Q60.63,91.16 61.09,91.05Q61.41,90.97 61.61,90.82Q61.82,90.67 61.9,90.47Q61.98,90.27 61.93,90.05Q61.87,89.82 61.69,89.7Q61.5,89.59 61.26,89.55Q61.02,89.51 60.78,89.51L60.21,89.51Q59.88,89.51 59.55,89.46Q59.23,89.4 58.94,89.27Q58.66,89.14 58.45,88.9Q58.24,88.66 58.15,88.3Q58.03,87.8 58.19,87.36Q58.35,86.92 58.78,86.59Q59.2,86.26 59.88,86.09ZM54.38,93.1L53.85,87.3L54.89,87.21L55.41,93.01ZM50.82,87.61L50.49,93.42L48.32,93.29Q47.65,93.26 47.21,92.98Q46.77,92.7 46.56,92.26Q46.35,91.81 46.38,91.25Q46.41,90.7 46.67,90.28Q46.93,89.86 47.41,89.64Q47.88,89.41 48.55,89.45L49.99,89.53L49.95,90.39L48.64,90.32Q48.25,90.29 47.99,90.42Q47.73,90.54 47.6,90.77Q47.46,91.01 47.45,91.31Q47.43,91.63 47.53,91.87Q47.64,92.11 47.88,92.26Q48.13,92.41 48.53,92.43L49.5,92.49L49.78,87.55ZM38.52,87.95Q38.77,88.03 38.89,88.26Q39,88.49 38.92,88.74Q38.84,88.99 38.61,89.1Q38.38,89.22 38.13,89.14Q37.88,89.05 37.76,88.82Q37.65,88.6 37.73,88.35Q37.81,88.1 38.04,87.98Q38.27,87.87 38.52,87.95ZM30.27,81.8Q30.84,82.17 31.14,82.62Q31.44,83.07 31.45,83.56Q31.47,84.05 31.17,84.54L30.31,83.98Q30.46,83.71 30.43,83.45Q30.4,83.19 30.23,82.96Q30.06,82.73 29.79,82.55Q29.5,82.36 29.22,82.3Q28.95,82.25 28.72,82.32Q28.49,82.4 28.35,82.61Q28.23,82.8 28.26,83Q28.28,83.19 28.43,83.41Q28.57,83.62 28.79,83.86L29.25,84.37Q29.75,84.92 29.89,85.47Q30.02,86.01 29.69,86.52Q29.4,86.95 28.96,87.13Q28.52,87.3 28,87.21Q27.48,87.13 26.97,86.79Q26.45,86.45 26.17,86.02Q25.9,85.58 25.89,85.12Q25.87,84.66 26.13,84.24L26.98,84.8Q26.8,85.13 26.94,85.47Q27.07,85.8 27.47,86.06Q27.74,86.24 27.99,86.29Q28.25,86.33 28.45,86.26Q28.65,86.18 28.77,86Q28.9,85.79 28.86,85.58Q28.82,85.37 28.68,85.16Q28.54,84.96 28.38,84.78L28,84.37Q27.77,84.13 27.59,83.85Q27.4,83.57 27.31,83.28Q27.21,82.98 27.24,82.66Q27.28,82.35 27.48,82.03Q27.77,81.61 28.2,81.42Q28.63,81.24 29.16,81.33Q29.69,81.42 30.27,81.8ZM22.84,82.75L22.23,83.38L18.88,80.18L19.49,79.55L20.78,80.79L24.19,77.21L24.95,77.93L21.54,81.51ZM21.59,74.71L15.69,76.48L14.91,75.4L18.41,70.31L19.08,71.24L17.24,73.85Q16.95,74.25 16.56,74.73Q16.18,75.21 15.69,75.81L15.56,75.63Q16.29,75.34 16.86,75.12Q17.44,74.9 17.89,74.75L20.93,73.79ZM19.73,74.6L19.05,75.09L17.26,72.61L17.94,72.12ZM16.5,66.92L14.45,67.86L12.1,71.3L11.6,70.19L12.83,68.48Q13.03,68.21 13.22,67.98Q13.42,67.75 13.72,67.46L13.84,67.71Q13.42,67.76 13.11,67.75Q12.81,67.75 12.49,67.73L10.4,67.56L9.89,66.46L14.02,66.91L16.07,65.98ZM11.03,57.3Q11.07,57.56 10.92,57.77Q10.77,57.98 10.51,58.02Q10.25,58.06 10.05,57.91Q9.84,57.76 9.8,57.5Q9.76,57.24 9.9,57.03Q10.05,56.82 10.31,56.78Q10.57,56.74 10.78,56.89Q10.98,57.04 11.03,57.3Z" fill="#3a3a3a"/><path d="M33.88,40.02L28.95,47.75L27.98,47.37L31.61,47.37Q31.93,47.37 32.18,47.31Q32.42,47.25 32.63,47.1Q32.83,46.95 33.01,46.67Q33.18,46.39 33.36,45.95L33.55,45.46Q33.61,45.31 33.72,45.26Q33.83,45.21 33.98,45.24Q34.13,45.26 34.19,45.38Q34.24,45.49 34.21,45.65L33.75,47.76Q33.7,47.99 33.59,48.1Q33.48,48.21 33.27,48.21Q33.14,48.21 33.02,48.16Q32.91,48.11 32.76,48.05Q32.61,48 32.39,48L27.3,48Q27.11,48 27.01,47.92Q26.92,47.83 26.92,47.69Q26.92,47.6 26.97,47.49Q27.01,47.38 27.1,47.24L32.05,39.47L32.27,39.88L29.58,39.88Q29.25,39.88 29,39.98Q28.74,40.08 28.54,40.32Q28.34,40.56 28.16,40.98L27.98,41.42Q27.91,41.58 27.79,41.64Q27.67,41.69 27.54,41.67Q27.39,41.64 27.32,41.53Q27.24,41.42 27.28,41.23L27.63,39.47Q27.68,39.22 27.8,39.11Q27.91,39 28.12,39Q28.25,39 28.37,39.06Q28.49,39.12 28.64,39.19Q28.79,39.25 29.01,39.25L33.69,39.25Q33.88,39.25 33.97,39.33Q34.07,39.42 34.07,39.56Q34.07,39.65 34.02,39.76Q33.97,39.88 33.88,40.02ZM37.41,43.76L37.13,43.46L37.37,43.24Q38.16,42.52 38.75,42.22Q39.34,41.93 39.87,41.93Q40.67,41.93 41.16,42.45Q41.66,42.96 41.66,43.82L41.66,46.98Q41.66,47.18 41.72,47.28Q41.78,47.37 41.89,47.41L42.11,47.47Q42.23,47.51 42.29,47.58Q42.35,47.65 42.35,47.74Q42.35,47.86 42.26,47.93Q42.18,48 42,48L39.59,48Q39.23,48 39.23,47.72Q39.23,47.55 39.43,47.47L39.67,47.41Q39.79,47.37 39.84,47.27Q39.9,47.18 39.9,46.98L39.9,44.08Q39.9,43.53 39.63,43.26Q39.36,42.99 38.91,42.99Q38.63,42.99 38.31,43.12Q38,43.25 37.66,43.54ZM37.6,39.11L37.6,46.99Q37.6,47.19 37.66,47.28Q37.71,47.37 37.83,47.41L38.05,47.47Q38.25,47.55 38.25,47.72Q38.25,48 37.9,48L35.49,48Q35.31,48 35.23,47.93Q35.15,47.86 35.15,47.74Q35.15,47.65 35.2,47.58Q35.26,47.51 35.38,47.47L35.62,47.41Q35.74,47.37 35.79,47.28Q35.84,47.19 35.84,47L35.84,40.16Q35.84,40 35.8,39.93Q35.75,39.86 35.64,39.85L35.31,39.82Q35.2,39.79 35.15,39.74Q35.1,39.68 35.1,39.59Q35.1,39.49 35.16,39.42Q35.22,39.36 35.39,39.3L36.55,38.88Q36.78,38.79 36.93,38.75Q37.08,38.71 37.2,38.71Q37.4,38.71 37.5,38.82Q37.6,38.93 37.6,39.11ZM46.45,41.93Q47.41,41.93 48.15,42.33Q48.88,42.72 49.29,43.43Q49.7,44.13 49.7,45.06Q49.7,45.94 49.28,46.64Q48.85,47.34 48.11,47.75Q47.37,48.15 46.39,48.15Q45.42,48.15 44.69,47.76Q43.96,47.36 43.55,46.65Q43.14,45.95 43.14,45.03Q43.14,44.14 43.56,43.44Q43.98,42.74 44.72,42.34Q45.47,41.93 46.45,41.93ZM46.89,47.5Q47.32,47.43 47.58,47.1Q47.84,46.78 47.91,46.2Q47.98,45.63 47.83,44.82Q47.68,44.02 47.41,43.5Q47.13,42.98 46.76,42.75Q46.38,42.52 45.94,42.59Q45.52,42.66 45.26,42.98Q45,43.31 44.93,43.88Q44.86,44.45 45.01,45.27Q45.15,46.06 45.43,46.59Q45.7,47.11 46.08,47.34Q46.45,47.57 46.89,47.5ZM53.1,42.36L53.1,46.99Q53.1,47.19 53.16,47.28Q53.21,47.37 53.33,47.41L53.55,47.47Q53.75,47.55 53.75,47.72Q53.75,48 53.4,48L50.99,48Q50.81,48 50.73,47.93Q50.65,47.86 50.65,47.74Q50.65,47.65 50.7,47.58Q50.76,47.51 50.88,47.47L51.12,47.41Q51.23,47.37 51.29,47.28Q51.34,47.19 51.34,47L51.34,43.42Q51.34,43.26 51.29,43.19Q51.25,43.12 51.14,43.1L50.81,43.08Q50.69,43.05 50.64,42.99Q50.59,42.94 50.59,42.85Q50.59,42.74 50.66,42.68Q50.72,42.62 50.88,42.55L52.04,42.13Q52.28,42.04 52.43,42Q52.57,41.96 52.7,41.96Q52.9,41.96 53,42.07Q53.1,42.18 53.1,42.36ZM52.91,43.76L52.62,43.46L52.87,43.24Q53.66,42.52 54.25,42.22Q54.84,41.93 55.36,41.93Q56.17,41.93 56.66,42.45Q57.15,42.96 57.15,43.82L57.15,46.98Q57.15,47.18 57.21,47.28Q57.27,47.37 57.39,47.41L57.61,47.47Q57.73,47.51 57.79,47.58Q57.84,47.65 57.84,47.74Q57.84,47.86 57.76,47.93Q57.68,48 57.5,48L55.08,48Q54.73,48 54.73,47.72Q54.73,47.55 54.93,47.47L55.17,47.41Q55.29,47.37 55.34,47.27Q55.39,47.18 55.39,46.98L55.39,44.08Q55.39,43.53 55.13,43.26Q54.86,42.99 54.41,42.99Q54.13,42.99 53.81,43.12Q53.49,43.25 53.16,43.54ZM62.65,47.42Q61.78,47.3 61.39,47.2Q61,47.11 60.9,47.02Q60.81,46.93 60.81,46.84Q60.81,46.74 60.89,46.65Q60.97,46.56 61.16,46.48L61.02,46.38Q60.4,46.44 60.05,46.61Q59.7,46.77 59.55,47Q59.4,47.24 59.4,47.5Q59.4,47.8 59.58,48.01Q59.76,48.23 60.25,48.39Q60.74,48.55 61.67,48.69Q62.44,48.81 62.86,48.93Q63.29,49.06 63.46,49.22Q63.63,49.38 63.63,49.6Q63.63,49.88 63.45,50.07Q63.28,50.27 62.89,50.37Q62.51,50.48 61.88,50.48Q60.78,50.48 60.34,50.15Q59.89,49.82 59.89,49.29Q59.89,49 60.14,48.76Q60.39,48.52 60.86,48.45L60.76,48.26Q59.51,48.41 59.03,48.79Q58.55,49.18 58.55,49.67Q58.55,50.07 58.84,50.39Q59.12,50.7 59.79,50.88Q60.46,51.06 61.59,51.06Q63.33,51.06 64.26,50.51Q65.18,49.97 65.18,49.11Q65.18,48.64 64.94,48.31Q64.69,47.98 64.14,47.76Q63.59,47.55 62.65,47.42ZM62.8,42.58L63.21,42.64Q63.44,42.18 63.59,42.03Q63.74,41.87 63.94,41.87Q64.12,41.87 64.22,41.96Q64.33,42.05 64.41,42.17Q64.49,42.29 64.6,42.38Q64.72,42.47 64.92,42.47Q65.2,42.47 65.37,42.26Q65.54,42.05 65.54,41.71Q65.54,41.32 65.29,41.1Q65.04,40.88 64.65,40.88Q64.17,40.88 63.74,41.19Q63.31,41.51 63.01,42.15ZM64.66,44.19Q64.66,43.56 64.31,43.05Q63.97,42.54 63.33,42.25Q62.68,41.95 61.8,41.95Q60.88,41.95 60.2,42.26Q59.51,42.57 59.13,43.11Q58.75,43.66 58.75,44.39Q58.75,45.02 59.1,45.53Q59.45,46.04 60.09,46.33Q60.74,46.63 61.62,46.63Q62.54,46.63 63.22,46.32Q63.91,46.01 64.28,45.47Q64.66,44.92 64.66,44.19ZM61.48,42.49Q62.02,42.45 62.36,42.91Q62.71,43.37 62.81,44.25Q62.9,45.1 62.68,45.57Q62.45,46.03 61.93,46.06Q61.58,46.09 61.3,45.89Q61.03,45.69 60.85,45.29Q60.67,44.88 60.61,44.3Q60.54,43.73 60.62,43.34Q60.7,42.94 60.92,42.73Q61.14,42.51 61.48,42.49ZM68.37,39.11L68.37,46.99Q68.37,47.19 68.42,47.28Q68.48,47.37 68.59,47.41L68.83,47.47Q68.95,47.51 69.01,47.58Q69.06,47.64 69.06,47.74Q69.06,47.86 68.98,47.93Q68.9,48 68.72,48L66.25,48Q66.08,48 66,47.93Q65.91,47.86 65.91,47.74Q65.91,47.65 65.97,47.58Q66.02,47.51 66.14,47.47L66.39,47.41Q66.5,47.37 66.56,47.28Q66.61,47.19 66.61,47L66.61,40.16Q66.61,40 66.56,39.93Q66.51,39.86 66.4,39.85L66.08,39.82Q65.96,39.79 65.91,39.74Q65.86,39.68 65.86,39.59Q65.86,39.49 65.92,39.42Q65.98,39.36 66.15,39.3L67.31,38.88Q67.56,38.78 67.7,38.75Q67.85,38.71 67.95,38.71Q68.16,38.71 68.27,38.82Q68.37,38.93 68.37,39.11ZM72.38,42.36L72.38,46.99Q72.38,47.19 72.43,47.28Q72.49,47.37 72.6,47.41L72.83,47.47Q72.96,47.51 73.01,47.58Q73.07,47.64 73.07,47.74Q73.07,47.86 72.99,47.93Q72.9,48 72.72,48L70.26,48Q70.08,48 70,47.93Q69.92,47.86 69.92,47.74Q69.92,47.65 69.97,47.58Q70.03,47.51 70.15,47.47L70.39,47.41Q70.51,47.37 70.56,47.28Q70.62,47.19 70.62,47L70.62,43.42Q70.62,43.26 70.57,43.19Q70.52,43.12 70.41,43.1L70.08,43.08Q69.97,43.05 69.92,42.99Q69.87,42.94 69.87,42.85Q69.87,42.74 69.93,42.68Q69.99,42.62 70.16,42.55L71.32,42.13Q71.56,42.04 71.71,42Q71.86,41.96 71.96,41.96Q72.17,41.96 72.27,42.07Q72.38,42.18 72.38,42.36ZM71.36,41.01Q70.86,41.01 70.55,40.75Q70.25,40.49 70.25,40.07Q70.25,39.65 70.55,39.4Q70.86,39.14 71.36,39.14Q71.86,39.14 72.17,39.4Q72.47,39.65 72.47,40.07Q72.47,40.49 72.17,40.75Q71.86,41.01 71.36,41.01Z" fill="#3a3a3a"/><path d="M29.16,55.8L29.16,55.27L32.73,55.27L32.73,55.8L31.25,55.8L31.25,60L30.65,60L30.65,55.8ZM34.23,60L35.94,55.27L36.64,55.27L38.38,60L37.75,60L36.74,57.19Q36.65,56.93 36.53,56.55Q36.41,56.16 36.23,55.55L36.35,55.55Q36.18,56.16 36.05,56.56Q35.93,56.95 35.84,57.19L34.87,60ZM35.09,58.68L35.09,58.15L37.52,58.15L37.52,58.68ZM42.41,60.06Q41.8,60.06 41.33,59.77Q40.86,59.48 40.58,58.93Q40.31,58.39 40.31,57.64Q40.31,56.89 40.58,56.34Q40.86,55.8 41.33,55.5Q41.8,55.21 42.41,55.21Q43.02,55.21 43.49,55.5Q43.96,55.8 44.23,56.34Q44.51,56.89 44.51,57.64Q44.51,58.39 44.23,58.93Q43.96,59.48 43.49,59.77Q43.02,60.06 42.41,60.06ZM42.41,59.5Q42.83,59.5 43.17,59.29Q43.52,59.08 43.72,58.66Q43.92,58.24 43.92,57.64Q43.92,57.03 43.72,56.61Q43.52,56.19 43.17,55.98Q42.83,55.77 42.41,55.77Q41.99,55.77 41.64,55.98Q41.3,56.2 41.1,56.62Q40.9,57.03 40.9,57.64Q40.9,58.24 41.1,58.66Q41.3,59.07 41.64,59.29Q41.99,59.5 42.41,59.5ZM48.17,60L48.17,58.06L46.44,55.27L47.13,55.27L48.07,56.8Q48.23,57.05 48.35,57.29Q48.47,57.52 48.6,57.88L48.36,57.88Q48.49,57.51 48.62,57.28Q48.74,57.04 48.89,56.8L49.82,55.27L50.52,55.27L48.78,58.06L48.78,60ZM54.69,60.08Q54.13,60.08 53.72,59.86Q53.3,59.64 53.07,59.26Q52.84,58.88 52.84,58.39L52.84,55.27L53.44,55.27L53.44,58.34Q53.44,58.68 53.6,58.95Q53.75,59.21 54.03,59.37Q54.3,59.52 54.69,59.52Q55.08,59.52 55.36,59.37Q55.63,59.21 55.78,58.95Q55.93,58.68 55.93,58.34L55.93,55.27L56.54,55.27L56.54,58.39Q56.54,58.88 56.31,59.26Q56.08,59.64 55.66,59.86Q55.25,60.08 54.69,60.08ZM58.74,60L60.45,55.27L61.15,55.27L62.89,60L62.26,60L61.25,57.19Q61.16,56.93 61.04,56.55Q60.92,56.16 60.74,55.55L60.86,55.55Q60.69,56.16 60.56,56.56Q60.43,56.95 60.35,57.19L59.38,60ZM59.6,58.68L59.6,58.15L62.03,58.15L62.03,58.68ZM65.21,60L65.21,55.27L65.92,55.27L67.85,58.3Q67.92,58.41 68.03,58.6Q68.14,58.78 68.26,59.01Q68.39,59.24 68.51,59.51L68.42,59.51Q68.4,59.24 68.38,58.99Q68.37,58.74 68.37,58.53Q68.36,58.32 68.36,58.17L68.36,55.27L68.97,55.27L68.97,60L68.25,60L66.54,57.31Q66.42,57.12 66.3,56.92Q66.18,56.72 66.03,56.45Q65.88,56.18 65.65,55.78L65.76,55.78Q65.78,56.13 65.79,56.43Q65.8,56.73 65.81,56.95Q65.82,57.18 65.82,57.3L65.82,60Z" fill="#3a3a3a"/></svg>
+                  </div>
+                </div>
+                <div class="b-mid">
+                  <h2 class="b-h">You paint.<br>We pour the <em>coffee.</em></h2>
+                  <p class="b-p">No talent needed. No time limit.</p>
+                </div>
+                <div class="b-foot">
+                  <p class="b-addr"><b>No. 12, Sanhe 1st St., Zhongli, Taoyuan</b><br>Mon–Fri 13:00–18:00 · Sat–Sun 12:00–19:00<br>By reservation · 03-283-0069</p>
+                  <div class="cta">
+                    <a class="primary" href="https://line.me/R/ti/p/@277xbsxj" target="_blank" rel="noopener">Book on LINE</a>
+                    <a href="https://www.google.com/maps/search/?api=1&query=Gray+Room+%E7%81%B0%E6%88%BF%E9%96%93+%E6%A1%83%E5%9C%92%E5%B8%82%E4%B8%AD%E5%A3%A2%E5%8D%80%E4%B8%89%E5%92%8C%E4%B8%80%E8%A1%9712%E8%99%9F" target="_blank" rel="noopener">Open in Maps</a>
+                    <a href="#menu" data-go="menu">See the menu</a>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+          <div class="forecard all-gray" id="forecard" aria-hidden="true"></div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="ui" id="ui">
+      <p class="hint" id="hint" aria-live="polite">Ten layers of paper, one gray room.</p>
+      <div class="chips" id="chips" role="group" aria-label="Layers" hidden></div>
+      <div class="btns">
+        <button class="btn primary" id="bColor" aria-pressed="false"><span class="dot" aria-hidden="true"></span><span class="lbl">Add your color</span></button>
+        <button class="btn" id="bLayers" aria-pressed="false">Pull the layers apart</button>
+      </div>
+      <a class="more" href="#ch1" data-go="ch1">Scroll for the story <i aria-hidden="true"></i></a>
+    </footer>
+
+    <div class="caps" id="caps">
+      <article class="cap" data-k="1">
+        <div class="cs"><div class="ci">
+        <p class="cap-n">01 <span>You paint</span></p>
+        <h2>You hold <em>the brush.</em></h2>
+        <p>No talent needed. The teacher pencils the outline of your picture, and you fill it with color.</p>
+        </div></div>
+      </article>
+      <article class="cap" data-k="2">
+        <div class="cs"><div class="ci">
+        <p class="cap-n">02 <span>No clock</span></p>
+        <h2>Stay as long <em>as you like.</em></h2>
+        <p>There is no time limit. The clock on our wall has no hands, and nobody will hurry you.</p>
+        </div></div>
+      </article>
+      <article class="cap" data-k="3">
+        <div class="cs"><div class="ci">
+        <p class="cap-n">03 <span>Paint and sip</span></p>
+        <h2>Coffee beside <em>the canvas.</em></h2>
+        <p>A latte and a croissant waffle sit next to your palette. Drinks start at NT$130.</p>
+        </div></div>
+      </article>
+      <article class="cap" data-k="4">
+        <div class="cs"><div class="ci">
+        <p class="cap-n">04 <span>Take it home</span></p>
+        <h2>Leave with <em>your own</em> painting.</h2>
+        <p>A canvas starts at NT$660, paint and brushes included. Friends, kids and dogs are welcome to watch.</p>
+        </div></div>
+      </article>
+      <article class="cap" data-k="5">
+        <div class="cs"><div class="ci">
+        <p class="cap-n">05 <span>Find us</span></p>
+        <h2>Turn the card. <em>Come paint.</em></h2>
+        <p>Five minutes from Chung Yuan Christian University, by reservation.</p>
+        <div class="btns">
+          <a class="btn primary" href="https://line.me/R/ti/p/@277xbsxj" target="_blank" rel="noopener">Book on LINE</a>
+          <a class="btn" href="#menu" data-go="menu">See the menu</a>
+        </div>
+        </div></div>
+      </article>
+    </div>
+    <div class="prog" aria-hidden="true"><i id="prog"></i></div>
+  </div>
+</div>
+
+<section class="sec about" id="shop" aria-labelledby="shopH">
+  <div class="wrap">
+    <p class="lab" data-rv><span>(01)</span> The shop</p>
+    <h2 class="disp" id="shopH" data-split>A café where you paint your <em>own</em> picture.</h2>
+    <div class="about-g">
+      <p class="lead" data-rv>Gray Room sits in a thirty-year-old house, a few minutes from Chung Yuan Christian University. Everything inside is gray on purpose: concrete walls, a plastered arch, black track lights. The only color in the room is what the guests paint.</p>
+      <ol class="steps">
+        <li data-rv><i>01</i><b>Book a seat</b><span>Message the shop on LINE or Instagram, or call. It is reservation only.</span></li>
+        <li data-rv style="--i:1"><i>02</i><b>Bring a picture</b><span>Choose a canvas. The teacher pencils the outline of your picture for you.</span></li>
+        <li data-rv style="--i:2"><i>03</i><b>Paint and sip</b><span>Order a drink and take your time. There is no time limit.</span></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<div class="band" aria-hidden="true"><div class="band-in" id="band"><span>Paint <i></i> <em>Sip</em> <i></i> Stay <i></i> <em>Take it home</em> <i></i></span><span>Paint <i></i> <em>Sip</em> <i></i> Stay <i></i> <em>Take it home</em> <i></i></span></div></div>
+
+<section class="sec menu-sec" id="menu" aria-labelledby="menuH">
+  <div class="wrap">
+    <p class="lab" data-rv><span>(02)</span> Menu</p>
+    <h2 class="disp" id="menuH" data-split>Pick a canvas. <em>Pick a drink.</em></h2>
+    <div class="menus">
+      <article class="menu" aria-labelledby="mPaint" data-rv>
+        <h3 id="mPaint">Paint <small>Canvas, paints and<br>brushes included</small></h3>
+        <h4>Free painting <span>自由繪畫</span></h4>
+        <ul>
+          <li><span>Canvas 20 × 20 cm</span><b>NT$660</b></li>
+          <li><span>Canvas 40 × 40 cm</span><b>NT$990</b></li>
+          <li><span>Round or heart canvas</span><b>NT$800–1,200</b></li>
+          <li><span>Oil pastel, A5 <small>white frame included</small></span><b>NT$660</b></li>
+        </ul>
+        <h4>Texture painting <span>肌理畫</span></h4>
+        <ul>
+          <li><span>Canvas 20 × 20 cm</span><b>NT$800</b></li>
+          <li><span>Canvas 40 × 40 cm</span><b>NT$1,600</b></li>
+          <li><span>Round or heart, 20 cm</span><b>NT$900</b></li>
+          <li><span>Round or heart, 30 cm</span><b>NT$1,200</b></li>
+        </ul>
+        <p class="note">Also on offer: clay painting, pet portraits and parent-and-child sessions. Add a frame from NT$500.</p>
+      </article>
+      <article class="menu" aria-labelledby="mCafe" data-rv style="--i:1">
+        <h3 id="mCafe">Café <small>Drinks from<br>NT$130</small></h3>
+        <h4>Guests' favorites</h4>
+        <ul>
+          <li><span>Black sesame milk <small>黑芝麻牛乳</small></span></li>
+          <li><span>Assam fresh milk tea <small>阿薩姆鮮奶茶</small></span></li>
+          <li><span>Croissant waffle <small>with house-made jam</small></span></li>
+          <li><span>Truffle mushroom baguette <small>松露蘑菇法國麵包</small></span></li>
+        </ul>
+        <p class="note">One drink per person, painters and companions alike. Please do not bring outside food.</p>
+      </article>
+    </div>
+
+    <div class="know">
+      <p class="lab" data-rv><span>(03)</span> Good to know</p>
+      <ol>
+        <li data-rv><b>Beginners welcome</b>No drawing experience is needed. The teacher helps you start.</li>
+        <li data-rv style="--i:1"><b>Birthday month</b>Say so when you book and take 10% off your painting session.</li>
+        <li data-rv style="--i:2"><b>Pets and children</b>Both are welcome in the room.</li>
+        <li data-rv><b>Drying time</b>Texture paintings need a day or two. The shop keeps your work for up to 90 days.</li>
+        <li data-rv style="--i:1"><b>Payment</b>Cash and cards are accepted.</li>
+        <li data-rv style="--i:2"><b>Parking</b>Zhongyuan Elementary School underground lot, a five-minute walk.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="sec visit" id="visit" aria-labelledby="visitH">
+  <div class="wrap">
+    <p class="lab" data-rv><span>(04)</span> Visit</p>
+    <h2 class="disp" id="visitH" data-split>Come add <em>your</em> color.</h2>
+    <div class="visit-g">
+      <div data-rv>
+        <h3>Address</h3>
+        <p><b>No. 12, Sanhe 1st St., Zhongli District, Taoyuan</b></p>
+        <p>桃園市中壢區三和一街12號</p>
+      </div>
+      <div data-rv style="--i:1">
+        <h3>Hours</h3>
+        <p><b>Mon–Fri 13:00–18:00<br>Sat–Sun 12:00–19:00</b></p>
+        <p>By reservation. Closing days vary, so check before you go.</p>
+      </div>
+      <div data-rv style="--i:2">
+        <h3>Book</h3>
+        <p><b><span class="tel">03-283-0069</span></b></p>
+        <p>LINE <span class="tel">@277xbsxj</span></p>
+        <div class="links">
+          <a href="https://www.google.com/maps/search/?api=1&query=Gray+Room+%E7%81%B0%E6%88%BF%E9%96%93+%E6%A1%83%E5%9C%92%E5%B8%82%E4%B8%AD%E5%A3%A2%E5%8D%80%E4%B8%89%E5%92%8C%E4%B8%80%E8%A1%9712%E8%99%9F" target="_blank" rel="noopener">Open in Maps</a>
+          <a href="https://www.instagram.com/grayroom_paintcafe/" target="_blank" rel="noopener">Instagram</a>
+        </div>
+      </div>
+      <div class="cta-cell" data-rv style="--i:3">
+        <a class="round" data-mag href="https://line.me/R/ti/p/@277xbsxj" target="_blank" rel="noopener"><span>LINE</span>Book<br>a seat</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <svg class="wordmark" viewBox="0 0 1000 122" role="img" aria-label="Gray Room"><text x="0" y="116" textLength="1000" lengthAdjust="spacing">GRAY ROOM</text></svg>
+    <div class="foot-row">
+      <p class="legal">Student project for Business English at Chung Yuan Christian University. This is not an official Gray Room page. Prices and menu items come from 2025 visitor reviews and opening hours from Google Maps in November 2026, so please confirm with the shop before you go.</p>
+      <a class="up" href="#top" data-go="top">Back to the postcard ↑</a>
+    </div>
+  </div>
+</footer>
+
+<script src="scene.js"></script>
+<script>
+(() => {
+  const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+  const body = document.body, app = $('#app'), stage = $('#stage'), rig = $('#rig'), card = $('#card'), fore = $('#forecard'), bfield = $('#backfield'), back = $('#back');
+  const hdr = $('#hdr'), ui = $('#ui'), capBox = $('#caps'), caps = $$('.cap'), prog = $('#prog'), shade = $('#shade');
+  const bigEl = $('#big'), floodEl = $('#flood'), floodI = floodEl ? [...floodEl.children] : [];
+  const Q = new URLSearchParams(location.search), PRINT = Q.get('print'), STATE = Q.get('state') || 'arch';
+  const reduce = PRINT ? true : matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (PRINT) body.classList.add('print', 'ready');
+  const P = PRINT ? 2.6 : 2.3;           // perspective distance in card widths
+  // card units (card width = 1000): depth of the room, how far the foreground floats, thickness of the paper,
+  // and how flat the stack is squeezed when it has to fit inside that thickness
+  const MAXD = 330, FRONTZ = 24, T = 14, CZ = 10 / MAXD, FOREL = 55;
+  const DEG = Math.PI / 180, TAU = Math.PI * 2;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const mk = (tag, cls) => { const e = document.createElement(tag); e.className = cls; return e; };
+  const later = (ms, fn) => ms > 0 ? setTimeout(fn, ms) : (fn(), 0);
+  const raf2 = fn => requestAnimationFrame(() => requestAnimationFrame(fn));
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  rig.style.setProperty('--P', P);
+
+  /* ---------- state ---------- */
+  let mode = 'front', focus = -1, W = 360, spreadL = 3.4, scaleL = .7, shiftL = [0, 0], yawL = -40, pitchL = 12;
+  let portal = !PRINT, flat = false, seq = 0, pv = 0, pvT = 0, chap = 0;
+  let A = { w: 1, h: 1 }, hs = null, hl = null, ss = null, sr = null;
+  // inside the room: the card is laid out large (so the picture stays sharp) and the camera sits in front of one thing at a time
+  let Wh = 360, Wb = 360, Wd = 360, big = false, dive = false, dv = 0, cam = null, tw = null, bakeT = 0;
+  // Safari keeps a scaled-up layer at the size it was laid out, so the card is laid out larger inside the room (setBig).
+  // Chrome and Firefox redraw a layer at its new size by themselves once it stops moving; there a change of layout size
+  // only costs a repaint of every sheet at the very moment the lens sets off, so they keep one size throughout.
+  const SELFSHARP = !(window.CSS && CSS.supports && CSS.supports('font', '-apple-system-body')) && Q.get('big') !== '1';
+  let colored = false, facingBack = false, intro = false, LITE = false;
+  let paint = 'gray', pending = '', splats = [], paintRaf = 0, paintN = 0, flooding = false, tapN = 0, hue = 0;
+  let yaw = 0, pitch = 0, vyaw = 0, vpitch = 0, goalYaw = null, goalPitch = null, rotK = .09;
+  let tx = 0, ty = 0, offX = 0, offY = 0, curRy = 0, curRx = 0;
+  let dragging = false, moved = false, px = 0, py = 0, sx0 = 0, sy0 = 0, lastInput = -1e9, lastTurn = -1e9;
+
+  /* ---------- build the card ---------- */
+  // The gray copy of a sheet is drawn in gray inks from the start. It gives the same picture as a
+  // grayscale + contrast + brightness filter on the sheet, without a filter pass per sheet on every frame.
+  const grayHex = h => {
+    if (h.length === 3) h = h.replace(/./g, '$&$&');
+    const n = parseInt(h, 16);
+    let v = (.2126 * (n >> 16) + .7152 * (n >> 8 & 255) + .0722 * (n & 255)) / 255;
+    v = Math.round(clamp(((v - .5) * .94 + .5) * .97, 0, 1) * 255);
+    return (v < 16 ? '0' : '') + v.toString(16);
+  };
+  const inGray = html => html.replace(/="#([0-9a-f]{3}|[0-9a-f]{6})"/gi, (m, h) => { const v = grayHex(h); return `="#${v}${v}${v}"`; });
+  const TEXT = Q.get('txt') === '1';                                  // keep the lettering as SVG text (to make the outlines from)
+  const layers = GR.layers({ print: !!PRINT, text: TEXT }), N = layers.length;
+  const win = mk('div', 'win'); card.insertBefore(win, back);
+  const els = layers.map((L, i) => {
+    const el = mk('div', 'layer ' + (L.kind === 'scene' ? 'scene-u' : L.id === 'fore' ? 'fore-u' : 'card-u'));
+    el.dataset.id = L.id;
+    // each copy needs its own gradient / clip / path ids
+    const ids = (html, sfx) => html.replace(/id="([\w-]+)"/g, `id="$1${sfx}"`).replace(/url\(#([\w-]+)\)/g, `url(#$1${sfx})`).replace(/href="#([\w-]+)"/g, `href="#$1${sfx}"`);
+    el.innerHTML = L.dual
+      ? `<div class="copy g">${inGray(ids(L.html, '-g'))}</div><div class="copy c">${ids(L.html, '-c')}</div>`
+      : `<div class="copy">${L.html}</div>`;
+    if (L.box) {      // a sheet that is mostly empty is cut down to what is drawn on it (less memory when the room fills the screen)
+      const [x0, y0, x1, y1] = L.box, w = x1 - x0, h = y1 - y0;
+      el.style.cssText = `left:${x0 / 10}%;top:${y0 / 13.73}%;width:${w / 10}%;height:${h / 13.73}%;` +
+        `--ax:${(-x0 / w * 100).toFixed(3)}%;--ay:${(-y0 / h * 100).toFixed(3)}%;--aw:${(1000 / w * 100).toFixed(3)}%;--ah:${(1373 / h * 100).toFixed(3)}%`;
+      el.querySelectorAll('svg').forEach(v => v.setAttribute('viewBox', `${x0} ${y0} ${w} ${h}`));
+    }
+    const tag = mk('span', 'tag');
+    tag.innerHTML = `<b>${String(i + 1).padStart(2, '0')}</b><span> ${L.name}</span>`;
+    el.appendChild(tag);
+    if (L.id === 'fore') fore.appendChild(el); else if (L.kind === 'scene') win.appendChild(el); else card.insertBefore(el, back);
+    return el;
+  });
+  const idx = id => layers.findIndex(L => L.id === id);
+  $('#photoSlot').innerHTML = GR.shopfront({ print: !!PRINT, text: TEXT });
+
+  // the room behind the window has two side walls, a ceiling and a floor; the card itself only has a paper edge
+  ['l', 'r', 't', 'b'].forEach(k => win.insertBefore(mk('div', 'box ' + k), win.firstChild));
+  if (!PRINT) ['l', 'r', 't', 'b'].forEach(k => card.insertBefore(mk('div', 'edge ' + k), card.firstChild));
+
+  /* dust motes drifting in the light, steam over the coffee */
+  const air = mk('div', 'air');
+  for (let i = 0, n = Math.min(innerWidth, innerHeight) < 700 ? 12 : 22; i < n; i++) {
+    const m = mk('i', 'mote'), size = 2 + rnd() * 2.5;
+    m.style.cssText = `left:${24 + rnd() * 52}%;top:${22 + rnd() * 48}%;width:${size}px;height:${size}px;` +
+      `--dx:${(rnd() * 26 - 13).toFixed(1)}px;--dy:${(-18 - rnd() * 34).toFixed(1)}px;` +
+      `--d:${(9 + rnd() * 9).toFixed(1)}s;--dl:${(-rnd() * 18).toFixed(1)}s;--o:${(.25 + rnd() * .45).toFixed(2)}`;
+    air.appendChild(m);
+  }
+  air.insertAdjacentHTML('beforeend', '<div class="steam"><span></span><span></span><span></span></div>');
+  win.appendChild(air);
+
+  /* light and atmosphere (screen only) */
+  const PAL = ['#ef6f4a', '#f8c865', '#46a9a4', '#d94a5c', '#7f9cf0'];
+  let rays = null, glare = null, fx = null, bokF = null, bokB = null;
+  if (!PRINT) {
+    rays = mk('div', 'rays');
+    {       // the sun rays are drawn once into a small bitmap (conic stripes that fade outwards) and only turned afterwards
+      const cv = mk('canvas', 'ry'), S = 768, R = S / 2, c = cv.getContext('2d');
+      cv.width = cv.height = S; c.translate(R, R);
+      const A = 'rgba(255,238,196,', B = 'rgba(255,214,150,';
+      if (c.createConicGradient) {
+        const g = c.createConicGradient(-Math.PI / 2, 0, 0);
+        for (let k = 0; k < 15; k++) {
+          const st = (deg, col) => g.addColorStop(Math.min(1, (k * 24 + deg) / 360), col);
+          st(0, A + '0)'); st(5, A + '.34)'); st(10, A + '0)'); st(15, A + '0)'); st(19, B + '.2)'); st(24, A + '0)');
+        }
+        c.fillStyle = g; c.fillRect(-R, -R, S, S);
+      } else {
+        const wedge = (a0, a1, col) => { c.beginPath(); c.moveTo(0, 0); c.arc(0, 0, S, (a0 - 90) * DEG, (a1 - 90) * DEG); c.closePath(); c.fillStyle = col; c.fill(); };
+        for (let k = 0; k < 15; k++) { const a = k * 24; wedge(a + 1, a + 9, A + '.12)'); wedge(a + 3, a + 7, A + '.12)'); wedge(a + 4.2, a + 5.8, A + '.1)'); wedge(a + 16, a + 22.5, B + '.1)'); wedge(a + 18, a + 20.5, B + '.1)'); }
+      }
+      c.globalCompositeOperation = 'destination-in';
+      const m = c.createRadialGradient(0, 0, 0, 0, 0, R * Math.SQRT2);
+      m.addColorStop(.06, 'rgba(0,0,0,1)'); m.addColorStop(.26, 'rgba(0,0,0,.5)'); m.addColorStop(.58, 'rgba(0,0,0,0)');
+      c.fillStyle = m; c.fillRect(-R, -R, S, S);
+      rays.appendChild(cv);
+    }
+    win.insertBefore(rays, els[1]);                        // between the mural and the wall
+    glare = mk('div', 'glare'); glare.appendChild(mk('i', '')); card.insertBefore(glare, back);
+    fx = mk('div', 'fx'); card.insertBefore(fx, back);
+    const field = (cls, n, s0, s1) => {
+      const f = mk('div', 'bokeh ' + cls);
+      for (let i = 0; i < n; i++) {
+        const d = mk('i', ''), size = s0 + rnd() * (s1 - s0);
+        d.style.cssText = `left:${(rnd() * 100).toFixed(1)}%;top:${(8 + rnd() * 88).toFixed(1)}%;width:${size.toFixed(2)}cqw;height:${size.toFixed(2)}cqw;` +
+          `--c:${i % 3 === 2 ? '#fff3d6' : PAL[i % PAL.length]};--o:${(.22 + rnd() * .5).toFixed(2)};` +
+          `--dx:${(rnd() * 16 - 8).toFixed(1)}cqw;--dy:${(-10 - rnd() * 22).toFixed(1)}cqw;--d:${(11 + rnd() * 13).toFixed(1)}s;--dl:${(-rnd() * 24).toFixed(1)}s`;
+        f.appendChild(d);
+      }
+      return f;
+    };
+    bokB = field('b', 10, 1.8, 4.6); bfield.appendChild(bokB);
+    bokF = field('f', 5, .9, 2.2); fore.appendChild(bokF);
+  }
+
+  /* ---------- where the card sits: under the header, above the controls or the story text ---------- */
+  function measure() {
+    const a = app.getBoundingClientRect();
+    A = { w: a.width, h: a.height };
+    const top = hdr.offsetHeight, wide = A.w / A.h > 1.1, shortWide = wide && A.h <= 540;
+    const rect = (x0, x1, y0, y1) => ({ w: x1 - x0, h: Math.max(60, y1 - y0), cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 });
+    hl = shortWide ? rect(0, A.w * .56, top, A.h - 8) : rect(0, A.w, top + 2, ui.offsetTop - 2);
+    hs = hl;
+    ss = wide ? rect(0, A.w * .54, top, A.h - 12) : rect(0, A.w, top + 2, capBox.offsetTop - 4);
+    sr = wide ? rect(0, A.w * .54, 0, A.h) : rect(0, A.w, 0, capBox.offsetTop);
+    // the headline: beside the card on a wide screen, above it on a phone (where the card gives it some room)
+    if (!shortWide) {
+      const gut = Math.max(20, A.w * .02);
+      if (wide) {
+        const w0 = Math.min(hl.w * .88, hl.h * .84 / 1.48, 560), gap = w0 * .16;
+        app.style.setProperty('--hy', hl.cy.toFixed(1) + 'px'); app.style.setProperty('--hg', gap.toFixed(1) + 'px');
+        fitBig((A.w - w0) / 2 - gut - gap, false, 30, A.h * .24);
+      } else {
+        app.style.setProperty('--hy', (top + 4).toFixed(1) + 'px');
+        const f = fitBig(A.w - 2 * gut, true, 26, 76);
+        hs = rect(0, A.w, top + 4 + f * .98, ui.offsetTop - 2);
+      }
+    }
+  }
+  // the headline is set as large as its space allows. The typeface changes its proportions with size, so it is measured at the size it is shown
+  function fitBig(avail, line, lo, hi) {
+    let f = clamp(avail / (line ? 7 : 3.6), lo, hi);
+    for (let i = 0; i < 3 && bigEl; i++) {
+      app.style.setProperty('--hf', f.toFixed(1) + 'px');
+      let w = 0;
+      bigEl.querySelectorAll(line ? '.bl' : '.bl span').forEach(b => {
+        if (line) { const r = document.createRange(); r.selectNodeContents(b); w = Math.max(w, r.getBoundingClientRect().width); } else w = Math.max(w, b.getBoundingClientRect().width);
+      });
+      if (w < 20) break;
+      f = clamp(f * avail / (w * 1.015), lo, hi);
+    }
+    app.style.setProperty('--hf', f.toFixed(1) + 'px');
+    return f;
+  }
+  const pivotL = sp => -(MAXD - FOREL) / 2 * sp;          // pulled apart, the stack turns around its middle
+  const lay = () => !PRINT && !portal && mode === 'layers';
+  const zs = () => PRINT ? 1 : portal ? (flat ? CZ : 1) : mode === 'layers' ? spreadL : CZ;
+  const setLT = s => rig.style.setProperty('--lt', (reduce ? .01 : s) + 's');
+
+  function size() {
+    if (PRINT) W = 500;
+    else {
+      measure();
+      Wh = clamp(Math.min(hs.w * .88, hs.h * .84 / 1.48, 560), 170, 560);
+      W = Wh; fitLayers(hl);
+      // inside the room the window has to cover the whole scene area; the layout size is capped so the layers stay affordable
+      Wd = Math.max(sr.w / .896, sr.h / 1.242) * 1.02;
+      Wb = LITE || SELFSHARP ? Wh : Math.max(Wh, Math.min(Wd * 1.3, 1442 / (window.devicePixelRatio || 1), 1500));
+      W = big ? Wb : Wh;
+      app.style.setProperty('--Wh', Wh.toFixed(1) + 'px');
+    }
+    applyW();
+  }
+  function applyW() {
+    rig.style.setProperty('--W', W.toFixed(1) + 'px');
+    rig.style.setProperty('--u', (W / 1000).toFixed(4));
+    rig.style.setProperty('--T', (T * W / 1000).toFixed(2) + 'px');
+    if (bokF) { bokF.style.transform = `translateZ(${(170 * W / 1000).toFixed(1)}px)`; bokB.style.transform = `translateZ(${(-420 * W / 1000).toFixed(1)}px)`; }
+    layout(0); layoutRig();
+    if (paint === 'partial' && !paintRaf) renderPaint(performance.now());
+  }
+
+  // pulled apart: as much air between the sheets as the screen has room for, measured through the perspective
+  function fitLayers(r) {
+    const wide = r.w > r.h * 1.1;
+    yawL = wide ? -48 : -40; pitchL = wide ? 8 : 12;
+    const u = W / 1000, D = P * W, o = -0.04 * 1480 * u, minK = wide ? .7 : .66;
+    const cy = Math.cos(yawL * DEG), sy = Math.sin(yawL * DEG), cp = Math.cos(pitchL * DEG), sn = Math.sin(pitchL * DEG);
+    const box = spread => {
+      let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+      for (const z of [FOREL, 0, -MAXD]) for (const X of [-500, 500]) for (const Y of [-740, 740]) {
+        const x = X * u, y = Y * u, zz = (z * spread - pivotL(spread)) * u;
+        const xr = x * cy + zz * sy, zr = -x * sy + zz * cy, yr = y * cp - zr * sn, zf = y * sn + zr * cp, f = D / (D - zf);
+        const qx = xr * f, qy = (yr - o) * f + o;
+        x0 = Math.min(x0, qx); x1 = Math.max(x1, qx); y0 = Math.min(y0, qy); y1 = Math.max(y1, qy);
+      }
+      return [x0, x1, y0, y1];
+    };
+    let best = null;
+    for (let sp = 4.4; sp > 2.99; sp -= .2) {
+      const [x0, x1, y0, y1] = box(sp), k = Math.min(1, r.w * .95 / (x1 - x0), r.h * .93 / (y1 - y0));
+      best = { sp, k, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+      if (k >= minK) break;
+    }
+    spreadL = best.sp; scaleL = best.k; shiftL = [-best.cx * best.k, -best.cy * best.k];
+  }
+
+  // stag: 1 = the sheets leave one after another, -1 = they come back one after another
+  function layout(stag) {
+    const z = zs(), u = W / 1000, L1 = lay();
+    if (reduce || body.classList.contains('no-anim')) stag = 0;
+    layers.forEach((L, i) => {
+      const zz = L.kind === 'scene' ? L.z * z : L.id === 'fore' ? (PRINT ? FOREL : L1 ? FOREL * spreadL : FRONTZ) : 0;
+      els[i].style.transitionDelay = stag ? ((stag > 0 ? i : N - 1 - i) * 45) + 'ms' : '0ms';
+      els[i].style.transform = `translateZ(${(zz * u).toFixed(2)}px)`;
+    });
+    card.style.setProperty('--D', (MAXD * z * u).toFixed(2) + 'px');
+    air.style.transform = `translateZ(${(-110 * z * u).toFixed(2)}px)`;
+    if (rays) rays.style.transform = `translateZ(${(-322 * z * u).toFixed(2)}px)`;
+    back.style.transform = `rotateY(180deg) translateZ(${((PRINT ? MAXD + 1 : L1 ? (MAXD + 46) * spreadL : T) * u).toFixed(2)}px)`;
+    // one sheet picked out: the stack turns around that sheet
+    pvT = L1 ? (focus >= 0 ? layers[focus].z * (layers[focus].kind === 'scene' ? spreadL : layers[focus].id === 'fore' ? spreadL : 0) : pivotL(spreadL)) * u : 0;
+  }
+  // where the card goes and how wide it is shown; the layout width W may differ, the scale makes up for it
+  function rigGoal() {
+    if (dive) {
+      const sh = SHOTS[chap], w = Wd * sh.zoom, k = w / 1000;
+      let x = sr.cx - (sh.at[0] - 500) * k, y = sr.cy - (sh.at[1] - 740) * k;
+      // the window (36..964 x 36..1310 of the card) must keep covering the scene area
+      x = clamp(x, sr.cx + sr.w / 2 - 448 * k, sr.cx - sr.w / 2 + 448 * k);
+      y = clamp(y, sr.cy + sr.h / 2 - 554 * k, sr.cy - sr.h / 2 + 688 * k);
+      return { x: x - A.w / 2, y: y - A.h / 2, w };
+    }
+    const lay1 = mode === 'layers', c = chap > 0 ? ss : lay1 ? hl : hs;
+    let x = c.cx - A.w / 2, y = c.cy - A.h / 2, s = 1;
+    if (chap > 0) s = Math.min(1.12, c.w * .78 / Wh, c.h * .84 / (1.48 * Wh));
+    else if (lay1) {
+      if (focus >= 0) s = Math.min(1, Math.max(scaleL, .9));
+      else { x += shiftL[0]; y += shiftL[1]; s = scaleL; }
+    }
+    return { x, y, w: Wh * s };
+  }
+  const rigCSS = g => `translate(${g.x.toFixed(1)}px,${g.y.toFixed(1)}px) scale(${(g.w / W).toFixed(4)})`;
+  const rigNow = () => { const m = new DOMMatrix(getComputedStyle(rig).transform); return { x: m.e, y: m.f, w: m.a * W }; };
+  /* Between chapters the script moves the card itself, frame by frame, together with the lens (rigTw). A CSS transition
+     here would be a compositor animation above every sheet, and Chrome redraws all of them at a new resolution in the
+     middle of such an animation: a stall right in the move. Moved by script, the sheets keep their textures until it stops. */
+  let rigTw = null, settleN = 0;
+  function layoutRig() {
+    if (PRINT || !hs) return;
+    const g = rigGoal();
+    if (rigTw) { rigTw.r1 = g; return; }                          // on its way: only the destination changes
+    rig.style.transform = rigCSS(g);
+  }
+  // switch the layout size without anything moving on screen: the scale takes up the difference in the same frame
+  function setBig(on) {
+    if (PRINT || big === on) return;
+    if (Wb === Wh) { big = on; return; }
+    const m = new DOMMatrix(getComputedStyle(rig).transform), old = W;
+    big = on; W = on ? Wb : Wh;
+    body.classList.add('no-anim');
+    applyW();
+    rig.style.transform = `translate(${m.e.toFixed(1)}px,${m.f.toFixed(1)}px) scale(${(m.a * old / W).toFixed(4)})`;
+    void rig.offsetWidth;
+    body.classList.remove('no-anim');
+  }
+
+  /* the portal: the room is drawn through the window from wherever the eye is, so nothing sticks out behind the paper */
+  const ORG = { x: 500, y: 0.46 * 1480 };                         // perspective origin, card units
+  const inv = v => {                                              // a point in front of the screen, in the turned card's own space
+    const u = W / 1000;
+    let x = v[0] - 500, y = v[1] - 740, z = v[2];
+    const cx = Math.cos(-curRx * DEG), sx = Math.sin(-curRx * DEG), cy = Math.cos(-curRy * DEG), sy = Math.sin(-curRy * DEG);
+    [y, z] = [y * cx - z * sx, y * sx + z * cx];
+    [x, z] = [x * cy + z * sy, -x * sy + z * cy];
+    return [x + 500, y + 740, z + pv / u];
+  };
+  function setPortal(on) {
+    portal = on; card.classList.toggle('portal', on);
+    if (on) aimPortal(); else { win.style.perspective = ''; win.style.perspectiveOrigin = ''; }
+  }
+  function aimPortal() {
+    const u = W / 1000;
+    let E = inv([ORG.x, ORG.y, P * 1000]);
+    if (dv > .0005 && cam) {          // inside the room the eye leaves its place in front of the card and goes to the shot
+      const lx = cam.x + offX * 120, ly = cam.y + offY * 80;
+      E = [E[0] + (lx - E[0]) * dv, E[1] + (ly - E[1]) * dv, E[2] + (cam.d - E[2]) * dv];
+    }
+    if (E[2] < 6) return;                                         // seen from behind: the window is not visible anyway
+    win.style.perspective = (Math.max(E[2], 70) * u).toFixed(1) + 'px';
+    win.style.perspectiveOrigin = `${((E[0] - 36) * u).toFixed(1)}px ${((E[1] - 36) * u).toFixed(1)}px`;
+  }
+
+  /* ---------- hint line and layer chips ---------- */
+  const hint = $('#hint'), chipBox = $('#chips'), bLayers = $('#bLayers'), bColor = $('#bColor');
+  const HINTS = {
+    intro: 'Ten layers of paper, one gray room.',
+    gray: 'The room is gray. <b>Tap it</b> to paint it. <b>Drag sideways</b> to turn the card.',
+    color: '<b>Drag sideways</b> to turn the card around and read the back.',
+    back: 'Drag to turn it back. The story continues as you scroll.',
+  };
+  function setHint() {
+    const L1 = mode === 'layers' && !intro;
+    hint.hidden = L1; chipBox.hidden = !L1;
+    if (!L1) hint.innerHTML = intro ? HINTS.intro : facingBack ? HINTS.back : colored ? HINTS.color : HINTS.gray;
+  }
+  const chips = [];
+  [-1, ...layers.keys()].forEach(i => {
+    const b = mk('button', 'chip');
+    b.type = 'button';
+    b.innerHTML = i < 0 ? 'All layers' : `<b>${String(i + 1).padStart(2, '0')}</b> ${layers[i].name}`;
+    b.addEventListener('click', () => { stopWalk(); setFocus(focus === i ? -1 : i); });
+    chipBox.appendChild(b); chips.push(b);
+  });
+  const near = t => t + Math.round((yaw - t) / 360) * 360;       // the same angle, without spinning the long way round
+  function setFocus(i, keepView) {
+    focus = i;
+    els.forEach((el, j) => { el.classList.toggle('dim', i >= 0 && j !== i); el.classList.toggle('bk', i >= 0 && j < i); el.classList.toggle('on', j === i); });
+    if (rays) rays.classList.toggle('dim', i > 0);
+    chips.forEach((c, j) => c.setAttribute('aria-pressed', j - 1 === i));
+    if (!chipBox.hidden) { const c = chips[i + 1]; chipBox.scrollTo({ left: i < 0 ? 0 : c.offsetLeft - (chipBox.clientWidth - c.offsetWidth) / 2, behavior: reduce ? 'auto' : 'smooth' }); }
+    if (!keepView && mode === 'layers') {      // one sheet on its own is shown more head-on
+      if (chap === 0) { goalYaw = near(i >= 0 ? yawL * .55 : yawL); goalPitch = i >= 0 ? pitchL * .6 : pitchL; vyaw = vpitch = 0; }
+      layout(0); layoutRig();
+    }
+  }
+  let walkT = 0, walked = false;
+  const stopWalk = () => clearTimeout(walkT);
+  function walk() {          // first time the layers open: light them up one by one
+    let i = 0;
+    const step = () => {
+      if (mode !== 'layers' || chap > 0) return;
+      if (i >= N) { setFocus(-1); return; }
+      setFocus(i++); walkT = setTimeout(step, 1000);
+    };
+    walkT = setTimeout(step, 2500);
+  }
+
+  /* open: the room flattens into the paper, then the sheets slide out of it. close: the reverse. */
+  // the page's own colour steps back while the layers are apart, so the sheets read against the dark
+  let inkOn = false;
+  const inkSync = () => body.classList.toggle('ink', inkOn && mode !== 'layers');
+  function setMode(next) {
+    if (next === mode) return;
+    mode = next; stopWalk();
+    const my = ++seq;
+    body.classList.toggle('mode-front', mode === 'front');
+    body.classList.toggle('mode-layers', mode === 'layers');
+    bLayers.setAttribute('aria-pressed', mode === 'layers');
+    inkSync();
+    bLayers.textContent = mode === 'layers' ? 'Close the layers' : 'Pull the layers apart';
+    setFocus(-1, true);
+    if (mode === 'layers') {
+      if (chap === 0) { goalYaw = near(yawL); goalPitch = pitchL; if (!walked && !reduce && !intro) { walked = true; walk(); } }
+      if (portal) {
+        flat = true; setLT(.42); layout(0);
+        later(reduce ? 0 : 430, () => { if (my !== seq) return; setPortal(false); setLT(1.5); layout(1); });
+      } else { setLT(1.5); layout(1); }
+    } else {
+      if (chap === 0) { goalYaw = near(0); goalPitch = 0; }
+      if (!portal) {
+        setLT(1.3); layout(-1);
+        later(reduce ? 0 : 1300 + 45 * N, () => {
+          if (my !== seq) return;
+          flat = true; setPortal(true); setLT(0); layout(0);
+          raf2(() => { if (my !== seq) return; flat = false; setLT(1.05); layout(0); });
+        });
+      } else { flat = false; setLT(1.05); layout(0); }
+    }
+    vyaw = vpitch = 0;
+    layoutRig(); setHint();
+  }
+  bLayers.addEventListener('click', () => { if (endIntro()) return; setMode(mode === 'layers' ? 'front' : 'layers'); });
+
+  /* ---------- paint: colour lands as splats where the card is touched ---------- */
+  const DUAL = layers.map((L, i) => L.dual ? { L, c: els[i].querySelector('.copy.c') } : null).filter(Boolean);
+  const boxOf = L => L.kind === 'scene' ? (L.box ? [36 + .928 * L.box[0], 36 + .928 * L.box[1]] : [36, 36]) : L.id === 'fore' ? [-150, -222] : [0, 0];
+  const FULL = 'none';          // fully painted: no clip, so the sheet needs no mask
+  const clipAll = v => { for (const { c } of DUAL) { c._clip = v; c.style.webkitClipPath = v; c.style.clipPath = v; } };
+  // the colour copy is always there, only clipped; the gray copy fades instead of being switched off, so nothing pops
+  const setAll = st => {
+    for (const c of [card, fore]) { c.classList.toggle('all-gray', st === 'gray'); c.classList.toggle('all-color', st === 'color'); }
+    if (st === 'gray') clipAll('inset(50%)'); else if (st === 'color') clipAll(FULL);
+  };
+  const outCubic = t => 1 - Math.pow(1 - t, 3), inOut = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  const f1 = v => v.toFixed(1);
+
+  function blob(x, y, R, sp, t, bw, bh) {  // a wobbly closed curve, drawn clockwise; kept close to the sheet so the clip never gets huge
+    const n = 14, pt = [], mg = .6 * Math.max(bw, bh);
+    for (let i = 0; i < n; i++) {
+      const a = i / n * TAU;
+      const rr = R * (1 + sp.a[0] * Math.sin(2 * a + sp.p[0] + t * 1.4) + sp.a[1] * Math.sin(3 * a + sp.p[1] - t * 1.1) + sp.a[2] * Math.sin(5 * a + sp.p[2] + t * .8));
+      pt.push([clamp(x + Math.cos(a) * rr, -mg, bw + mg), clamp(y + Math.sin(a) * rr, -mg, bh + mg)]);
+    }
+    const mid = i => [(pt[i % n][0] + pt[(i + 1) % n][0]) / 2, (pt[i % n][1] + pt[(i + 1) % n][1]) / 2];
+    let m = mid(0), d = `M${f1(m[0])},${f1(m[1])}`;
+    for (let i = 1; i <= n; i++) { const c = pt[i % n]; m = mid(i); d += `Q${f1(c[0])},${f1(c[1])} ${f1(m[0])},${f1(m[1])}`; }
+    return d + 'Z';
+  }
+  const dot = (x, y, r) => `M${f1(x - r)},${f1(y)}a${f1(r)},${f1(r)} 0 1,1 ${f1(2 * r)},0a${f1(r)},${f1(r)} 0 1,1 ${f1(-2 * r)},0Z`;
+
+  function renderPaint(now) {
+    const u = W / 1000, t = now / 1000, dist = P * 1000;
+    for (const { L, c } of DUAL) {
+      // a sheet further back looks smaller, so its share of the splat is drawn larger: on screen the edges line up
+      const zz = L.kind === 'scene' ? L.z : L.id === 'fore' ? FRONTZ : 0;
+      const s = dist / (dist - zz), [bx, by] = boxOf(L), k = u / s;
+      const bw = c.offsetWidth, bh = c.offsetHeight;
+      let d = '', full = false;
+      for (const sp of splats) {
+        if (sp.r < 1) continue;
+        const X = ORG.x + (sp.x - ORG.x) / s - bx, Y = ORG.y + (sp.y - ORG.y) / s - by;
+        // once a splat reaches past every corner of the sheet, the sheet is simply all colour
+        if (Math.hypot(Math.max(X * u, bw - X * u), Math.max(Y * u, bh - Y * u)) < sp.r * k * .76) { full = true; break; }
+        d += blob(X * u, Y * u, sp.r * k, sp, t, bw, bh);
+        if (sp.drops) {
+          const g = clamp((sp.r / sp.R - .5) / .5, 0, 1);
+          if (g > 0) for (const q of sp.drops) d += dot((X + Math.cos(q[0]) * q[1] * sp.R / s) * u, (Y + Math.sin(q[0]) * q[1] * sp.R / s) * u, q[2] * sp.R * g * k);
+        }
+      }
+      const v = full ? FULL : d ? `path("${d}")` : 'inset(50%)';
+      if (c._clip !== v) { c._clip = v; c.style.webkitClipPath = v; c.style.clipPath = v; }
+    }
+  }
+  function paintTick(now) {
+    let live = false;
+    for (const sp of splats) {
+      const tt = (now - sp.t0) / sp.dur;
+      if (tt < 0) { live = true; continue; }
+      sp.r = sp.from + (sp.to - sp.from) * sp.ease(Math.min(1, tt));
+      if (tt < 1) live = true;
+    }
+    if (!live || (paintN++ & 1) === 0) renderPaint(now);           // redraw the paint edge every other frame: plenty for a spreading blob
+    const ps = splats.find(q => q.page);
+    if (ps) pagePaint(ps);
+    if (live) { paintRaf = requestAnimationFrame(paintTick); return; }
+    paintRaf = 0;
+    if (pending === 'color') { paint = 'color'; setAll('color'); splats = []; flooding = false; pageSet(true); }
+    if (pending === 'gray') { paint = 'gray'; setAll('gray'); splats = []; tapN = 0; pageSet(false); }
+    pending = '';
+  }
+  /* the same splat keeps going past the edge of the card and paints the page: three rings of colour, the last one stays */
+  const pageAt = (x, y) => { const b = rig.getBoundingClientRect(), a = app.getBoundingClientRect(), k = b.width / 1000; return [b.left - a.left + x * k, b.top - a.top + y * k, k]; };
+  const pageBand = () => clamp(Math.min(A.w, A.h) * .08, 26, 80);
+  function pageReach(x, y) {             // how far (card units) a splat must grow to cover the whole screen
+    const [cx, cy, k] = pageAt(x, y);
+    return (Math.hypot(Math.max(cx, A.w - cx), Math.max(cy, A.h - cy)) + 2 * pageBand() + 24) / k * (chap > 0 ? 1.5 : 1);
+  }
+  function pagePaint(sp) {
+    const [cx, cy, k] = pageAt(sp.x, sp.y), band = pageBand(), at = ` at ${cx.toFixed(1)}px ${cy.toFixed(1)}px)`;
+    floodEl.classList.remove('full'); floodEl.classList.add('on');
+    floodI.forEach((el, i) => { const v = `circle(${Math.max(0, sp.r * k - i * band).toFixed(1)}px` + at; el.style.webkitClipPath = v; el.style.clipPath = v; });
+    // what is written on the page turns to ink once the paint has reached most of it
+    const far = Math.hypot(Math.max(cx, A.w - cx), Math.max(cy, A.h - cy));
+    inkOn = sp.r * k - 2 * band > far * .6; inkSync();
+  }
+  function pageSet(on) {
+    if (!floodEl) return;
+    inkOn = on; inkSync();
+    floodEl.classList.toggle('full', on); floodEl.classList.toggle('on', on);
+    floodI.forEach(el => { el.style.webkitClipPath = ''; el.style.clipPath = ''; });
+  }
+  const kick = () => { if (!paintRaf) paintRaf = requestAnimationFrame(paintTick); };
+  function addSplat(x, y, R, delay, isFlood) {
+    if (paint === 'gray') { paint = 'partial'; setAll('partial'); }
+    const sp = {
+      x, y, R, r: 0, from: 0, to: R, page: !!isFlood, t0: performance.now() + (delay || 0), dur: reduce ? 1 : isFlood ? 1900 : 1050, ease: isFlood ? inOut : outCubic,
+      a: [.05 + rnd() * .05, .03 + rnd() * .04, .02 + rnd() * .025], p: [rnd() * TAU, rnd() * TAU, rnd() * TAU],
+      drops: isFlood ? null : [0, 1, 2].map(i => [(i + rnd()) / 3 * TAU, 1.14 + rnd() * .3, .05 + rnd() * .07]),
+    };
+    splats.push(sp); kick();
+  }
+  function ring(x, y, R, delay) {
+    if (reduce || !fx) return;
+    const el = mk('i', 'ring'), col = PAL[hue++ % PAL.length];
+    el.style.cssText = `left:${x / 10}%;top:${y / 14.8}%;width:${R / 5}%;border-color:${col};background:${col}2b;animation-delay:${delay || 0}ms`;
+    fx.appendChild(el);
+    el.addEventListener('animationend', () => el.remove());
+  }
+  const coverage = () => {
+    let n = 0, tot = 0;
+    for (let gx = 50; gx < 1000; gx += 100) for (let gy = 50; gy < 1480; gy += 100) { tot++; if (splats.some(s => Math.hypot(gx - s.x, gy - s.y) < s.R)) n++; }
+    return n / tot;
+  };
+  function setColored(v) {
+    colored = v;
+    body.classList.toggle('is-color', v);
+    bColor.setAttribute('aria-pressed', v);
+    bColor.querySelector('.lbl').textContent = v ? 'Back to gray' : 'Add your color';
+    setHint();
+  }
+  function reach(x, y) {                 // how far a splat at this point must grow before every sheet is all colour
+    const u = W / 1000, dist = P * 1000;
+    let m = 0;
+    for (const { L, c } of DUAL) {
+      const zz = L.kind === 'scene' ? L.z : L.id === 'fore' ? FRONTZ : 0;
+      const s = dist / (dist - zz), [bx, by] = boxOf(L), k = u / s;
+      const X = (ORG.x + (x - ORG.x) / s - bx) * u, Y = (ORG.y + (y - ORG.y) / s - by) * u;
+      m = Math.max(m, Math.hypot(Math.max(X, c.offsetWidth - X), Math.max(Y, c.offsetHeight - Y)) / (k * .76));
+    }
+    return m * 1.03 + 10;
+  }
+  function flood(x, y, delay) {          // the colour takes over the whole card
+    if (flooding || paint === 'color') return;
+    flooding = true; pending = 'color';
+    addSplat(x, y, Math.max(reach(x, y), pageReach(x, y)), delay, true);
+    setTimeout(() => { if (flooding || paint === 'color') setColored(true); }, reduce ? 0 : (delay || 0) + 250);
+  }
+  /* Scrolling into the story while the card is still gray: the colour simply comes up everywhere at once. A spreading
+     splat would have every sheet's mask redrawn on each frame of the dive, at a size that changes on each frame too. */
+  let washT = 0;
+  const washEnd = () => { clearTimeout(washT); washT = 0; body.classList.remove('wash'); };
+  function wash() {
+    if (flooding || paint === 'color') return;
+    clipAll(FULL);                                           // the colour copies are whole now, and still transparent
+    body.classList.add('wash', 'wash0');
+    pageSet(true);
+    void card.offsetWidth;
+    body.classList.remove('wash0');
+    for (const c of [card, fore]) { c.classList.remove('all-gray'); c.classList.add('all-color'); }
+    paint = 'color'; splats = []; pending = ''; tapN = 0; setColored(true);
+    washT = setTimeout(washEnd, 1000);
+  }
+  function uncolor() {
+    const now = performance.now();
+    if (washT) washEnd();
+    flooding = false; setColored(false);
+    if (paint === 'color') {
+      paint = 'partial'; setAll('partial'); splats = [];
+      const R = Math.max(reach(500, 700), pageReach(500, 700));          // the page drains first, then the card, then the canvas
+      addSplat(500, 700, R, 0, true);
+      Object.assign(splats[0], { r: R, from: R, to: 0, dur: reduce ? 1 : 1500, ease: t => 1 - (1 - t) * (1 - t) });
+    } else for (const s of splats) Object.assign(s, { from: s.r, to: 0, t0: now, dur: reduce ? 1 : 800, ease: inOut });
+    pending = 'gray'; kick();
+  }
+  const AUTO = [[500, 650, 340], [240, 1190, 300], [830, 430, 280], [170, 320, 250], [810, 1240, 270]];
+  bColor.addEventListener('click', () => {
+    endIntro(); askGyro();
+    if (colored || flooding) { uncolor(); return; }
+    if (paint === 'gray' && !reduce) {
+      AUTO.forEach(([x, y, R], i) => { addSplat(x, y, R, i * 210); ring(x, y, R, i * 210); });
+      flood(500, 650, 1150);
+    } else flood(500, 650, 0);
+  });
+  function tap(e) {
+    if (PRINT || mode !== 'front' || Math.cos(curRy * DEG) < .35) return;
+    const [x, y] = toCard(e);
+    if (x < 8 || x > 992 || y < 8 || y > 1472) return;
+    const R = 300 + rnd() * 70;
+    ring(x, y, R);
+    if (paint === 'color' || flooding) return;
+    addSplat(x, y, R); tapN++;
+    if (coverage() > .5 || tapN >= 6) flood(x, y, 380);
+  }
+
+  /* ---------- turning the card: drag to spin it freely, with a little momentum ---------- */
+  function toCard(e) {       // where a screen point lands on the paper, through the perspective and the current turn
+    const b = rig.getBoundingClientRect(), u = b.width / 1000;
+    const E = inv([ORG.x, ORG.y, P * 1000]), S = inv([(e.clientX - b.left) / u, (e.clientY - b.top) / u, 0]);
+    const t = E[2] / (E[2] - S[2]);
+    return [E[0] + (S[0] - E[0]) * t, E[1] + (S[1] - E[1]) * t];
+  }
+  stage.addEventListener('pointerdown', e => {
+    if (e.target.closest('a,.cap')) return;        // the words beside the scene are not a handle
+    endIntro(); stopWalk();
+    dragging = true; moved = false; px = sx0 = e.clientX; py = sy0 = e.clientY; vyaw = vpitch = 0;
+    try { stage.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  stage.addEventListener('pointermove', e => {
+    if (dragging) {
+      const dx = e.clientX - sx0, dy = e.clientY - sy0;
+      // a finger that moves up or down is scrolling the page; sideways (or any mouse drag) turns the card
+      if (!moved && Math.hypot(dx, dy) > 7 && (e.pointerType === 'mouse' || Math.abs(dx) > Math.abs(dy))) { moved = true; goalYaw = goalPitch = null; stage.classList.add('dragging'); }
+      if (moved && dive) { tx = clamp((e.clientX - sx0) / (A.w * .35), -1, 1); ty = clamp((e.clientY - sy0) / (A.h * .35), -1, 1); }
+      else if (moved) {
+        const k = 165 / (Wh * 1.05);
+        vyaw = (e.clientX - px) * k; vpitch = -(e.clientY - py) * k * .8;
+        yaw += vyaw; pitch = clamp(pitch + vpitch, -55, 55);
+        lastTurn = performance.now();
+      }
+      px = e.clientX; py = e.clientY; lastInput = performance.now();
+    } else if (e.pointerType === 'mouse') {
+      tx = clamp(e.clientX / A.w * 2 - 1, -1, 1);
+      ty = clamp((e.clientY - app.getBoundingClientRect().top) / A.h * 2 - 1, -1, 1);
+      lastInput = performance.now();
+    }
+  });
+  const endDrag = e => {
+    if (!dragging) return;
+    dragging = false; stage.classList.remove('dragging');
+    if (!moved && e.type === 'pointerup') tap(e);
+    if (performance.now() - lastInput > 80) vyaw = vpitch = 0;      // held still before letting go: no throw
+  };
+  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointercancel', endDrag);
+  stage.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse' && !dragging) { tx = 0; ty = 0; } });
+  stage.addEventListener('click', () => askGyro());
+  addEventListener('keydown', e => {
+    const d = { ArrowLeft: [-30, 0], ArrowRight: [30, 0] }[e.key];
+    if (!d || dive || e.target.closest('.chips')) return;
+    endIntro();
+    goalYaw = (goalYaw == null ? yaw : goalYaw) + d[0]; goalPitch = goalPitch == null ? pitch : goalPitch;
+    lastTurn = performance.now(); e.preventDefault();
+  });
+
+  let gyroOn = false, gyroAsked = false, g0 = null;
+  function onGyro(e) {
+    if (e.gamma == null || e.beta == null || dragging) return;
+    if (!g0) g0 = { g: e.gamma, b: e.beta };
+    tx = clamp((e.gamma - g0.g) / 22, -1, 1);
+    ty = clamp((e.beta - g0.b) / 26, -1, 1);
+    lastInput = performance.now();
+  }
+  function askGyro() {
+    if (gyroOn || gyroAsked || typeof DeviceOrientationEvent === 'undefined') return;
+    gyroAsked = true;
+    const start = () => { gyroOn = true; addEventListener('deviceorientation', onGyro); };
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().then(s => { if (s === 'granted') start(); }).catch(() => {});
+    } else start();
+  }
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission !== 'function') askGyro();
+
+  /* ---------- the story: scrolling moves through five moments while the card stays on screen ---------- */
+  const CH = caps.length;
+  // the shots: what the camera looks at (window coordinates of the artwork), how close, and how wide the lens is
+  const sc = (x, y) => [36 + .928 * x, 36 + .928 * y];
+  const SHOTS = {
+    1: { at: sc(455, 800), zoom: 1, d: 1150 },      // the guest at the easel, the dog beside her
+    2: { at: sc(112, 800), zoom: 1.9, d: 1000 },    // the clock with no hands
+    3: { at: sc(520, 1190), zoom: 1.35, d: 1150 },  // palette, coffee and waffle on the table
+    4: { at: sc(500, 720), zoom: 1.45, d: 1250 },   // the finished canvas
+  };
+  const bez = (x1, y1, x2, y2) => t => {          // the same curve the CSS transitions use, so the lens moves with the card
+    let q = t;
+    for (let i = 0; i < 8; i++) {
+      const x = 3 * (1 - q) * (1 - q) * q * x1 + 3 * (1 - q) * q * q * x2 + q * q * q - t;
+      const dx = 3 * (1 - q) * (1 - q) * x1 + 6 * (1 - q) * q * (x2 - x1) + 3 * q * q * (1 - x2);
+      if (Math.abs(dx) < 1e-6) break;
+      q = clamp(q - x / dx, 0, 1);
+    }
+    return 3 * (1 - q) * (1 - q) * q * y1 + 3 * (1 - q) * q * q * y2 + q * q * q;
+  };
+  const EASE = bez(.65, 0, .25, 1), RIGT = 1400;
+  let underT = 0;
+  // Laying the card out larger repaints every sheet. A computer does that in a frame or two, so it happens as the lens sets off
+  // and the room is sharp all the way in. A phone needs much longer, so there it waits until the lens has stopped.
+  const LAZYBIG = !!(window.matchMedia && matchMedia('(pointer:coarse)').matches);
+  function syncBig() {
+    if (big === dive) return;
+    if (dive && (paintRaf || tw)) { bakeT = setTimeout(syncBig, 400); return; }       // not while paint is spreading or the lens is moving
+    setBig(dive); layoutRig();
+  }
+  let reprobe = () => {};
+  function setChap(k) {
+    const was = chap, wasDive = dive; chap = k; dive = !!SHOTS[k];
+    setTimeout(() => reprobe(), 450); setTimeout(() => reprobe(), 1600);    // the thing under a resting pointer has changed
+    body.classList.toggle('in-story', k > 0);
+    body.classList.toggle('in-dive', dive);
+    app.dataset.chap = k;
+    // the sheet of colour with the words: the new one wipes over the old one, or the old one wipes away
+    caps.forEach(c => {
+      const on = +c.dataset.k === k, wasOn = c.classList.contains('on');
+      c.classList.toggle('on', on);
+      if (wasOn && !on && dive && wasDive) c.classList.add('under');
+    });
+    clearTimeout(underT); underT = setTimeout(() => caps.forEach(c => c.classList.remove('under')), 1300);
+    // the lens: from wherever it is to the new shot, over the same time the card takes
+    const sh = SHOTS[k], to = sh ? { x: sh.at[0], y: sh.at[1], d: sh.d } : cam;
+    if (to) tw = { t0: performance.now(), dur: reduce ? 1 : RIGT, dv0: dv, c0: cam && dv > .01 ? { ...cam } : to, c1: to };
+    clearTimeout(bakeT);
+    if (dive && !big && !LAZYBIG) setBig(true);
+    else if (big !== dive) bakeT = setTimeout(syncBig, reduce ? 0 : RIGT + 180);
+    stopWalk(); walked = true;
+    if (k > 0 && paint !== 'color' && !flooding) {               // the story is told in colour
+      if (reduce) { splats = []; paint = 'color'; setAll('color'); setColored(true); pageSet(true); }
+      else if (paint === 'gray' && !splats.length) wash(); else flood(500, 650, 150);
+    }
+    setMode('front');
+    if (k === CH) { goalYaw = near(192); goalPitch = 3; } else { goalYaw = near(0); goalPitch = 0; }
+    vyaw = vpitch = 0; rotK = dive ? .1 : .06;
+    if (!reduce && !PRINT && hs) {
+      rigTw = { t0: performance.now(), dur: RIGT, r0: rigNow(), r1: rigGoal() };
+      rig.classList.add('led'); rig.style.transform = rigCSS(rigTw.r0);
+    } else layoutRig();
+    setHint();
+    if (was === 0 || k === 0) lastTurn = performance.now();
+  }
+  document.addEventListener('click', e => {          // links that glide to a part of the page
+    const a = e.target.closest('[data-go]');
+    if (!a) return;
+    e.preventDefault(); endIntro();
+    const id = a.dataset.go, beh = reduce ? 'auto' : 'smooth';
+    if (id === 'top') scrollTo({ top: 0, behavior: beh }); else document.getElementById(id).scrollIntoView({ behavior: beh, block: 'start' });
+  });
+
+  let slow = 0, lastF = 0, onScreen = true, progV = 0;
+  if (!PRINT && window.IntersectionObserver) new IntersectionObserver(en => { onScreen = en[0].isIntersecting; body.classList.toggle('away', !onScreen); }).observe(app);
+  function frame(now) {
+    if (!onScreen) { lastF = 0; requestAnimationFrame(frame); return; }      // scrolled down to the menu: let the card rest
+    // a device that cannot keep up gets the picture without the floating extras
+    if (!PRINT && Q.get('fx') !== '1' && lastF && !paintRaf && !tw && now - lastF < 400) {
+      slow = now - lastF > 24 ? slow + 2 : Math.max(0, slow - 1);
+      if (slow > 120) { body.classList.add('lite'); LITE = true; if (!big) Wb = Wh; slow = -1e9; }
+    }
+    // easing is written per 60 Hz frame; fq stretches it so a slow or a 120 Hz screen moves at the same speed
+    const fq = lastF ? clamp((now - lastF) / 16.667, .25, 5) : 1, ek = k => 1 - Math.pow(1 - k, fq);
+    lastF = now;
+    if (PRINT) { yaw = pitch = tx = ty = offX = offY = pv = 0; goalYaw = goalPitch = null; }   // a still: never turned
+    else {
+      const s = clamp(scrollY / A.h, 0, CH + 1), k = clamp(Math.round(s), 0, CH);
+      if (k !== chap && body.classList.contains('ready')) { if (intro) endIntro(); setChap(k); }
+      if (tw) {
+        const t = clamp((now - tw.t0) / tw.dur, 0, 1), e = EASE(t);
+        dv = tw.dv0 + ((dive ? 1 : 0) - tw.dv0) * e;
+        cam = { x: tw.c0.x + (tw.c1.x - tw.c0.x) * e, y: tw.c0.y + (tw.c1.y - tw.c0.y) * e, d: tw.c0.d + (tw.c1.d - tw.c0.d) * e };
+        if (t >= 1) tw = null;
+      }
+      if (rigTw) {
+        const t = clamp((now - rigTw.t0) / rigTw.dur, 0, 1), e = EASE(t), a = rigTw.r0, z = rigTw.r1;
+        rig.style.transform = rigCSS({ x: a.x + (z.x - a.x) * e, y: a.y + (z.y - a.y) * e, w: a.w + (z.w - a.w) * e });
+        if (t >= 1) { rigTw = null; rig.classList.remove('led'); if (SELFSHARP) settleN = 3; }
+      }
+      // the move is over: for one frame the sheets may be redrawn at the size they now have on screen
+      if (settleN && !--settleN) { body.classList.add('settle'); requestAnimationFrame(() => requestAnimationFrame(() => body.classList.remove('settle'))); }
+      progV += (clamp(s / CH, 0, 1) - progV) * ek(.14);
+      prog.style.transform = `scaleX(${progV.toFixed(4)})`;
+      if (!dragging) {
+        if (goalYaw == null) {
+          yaw += vyaw * fq; pitch = clamp(pitch + vpitch * fq, -55, 55); vyaw *= Math.pow(.94, fq); vpitch *= Math.pow(.9, fq);
+          if (Math.abs(vyaw) > .05) lastTurn = now;
+          // left nearly face-on, the closed card squares itself up; at any other angle it stays where you put it
+          const face = Math.round(yaw / 180) * 180;
+          if (chap === 0 && mode === 'front' && now - lastTurn > 1500 && Math.abs(vyaw) < .05 && Math.abs(yaw - face) < 40 && (Math.abs(yaw - face) > .05 || Math.abs(pitch) > .05)) { goalYaw = face; goalPitch = 0; }
+        } else {
+          const rk = ek(rotK); yaw += (goalYaw - yaw) * rk; pitch += (goalPitch - pitch) * rk;
+        }
+      }
+      let gx = tx, gy = ty;
+      if (!reduce && !dragging && now - lastInput > 2600) {      // slow sway so the depth shows on its own
+        const t = now / 1000;
+        gx = Math.sin(t * 0.42) * 0.5; gy = Math.sin(t * 0.31 + 1.2) * 0.34;
+        tx += (gx - tx) * ek(.02); ty += (gy - ty) * ek(.02);
+      }
+      offX += (gx - offX) * ek(.075); offY += (gy - offY) * ek(.075);
+      pv += (pvT - pv) * ek(.07);
+    }
+    const fb = Math.cos(yaw * DEG) < 0;
+    if (fb !== facingBack) { facingBack = fb; body.classList.toggle('facing-back', fb); setHint(); }
+    const ax = (fb ? 6 : mode === 'layers' ? 9 : 14) * (1 - dv), ay = (fb ? 4 : mode === 'layers' ? 6 : 8) * (1 - dv);
+    curRy = yaw + offX * ax; curRx = pitch - offY * ay;
+    const tf = `rotateX(${curRx.toFixed(3)}deg) rotateY(${curRy.toFixed(3)}deg) translateZ(${(-pv).toFixed(2)}px)`;
+    card.style.transform = tf; fore.style.transform = tf; bfield.style.transform = tf;
+    if (portal) aimPortal();
+    if (glare) {
+      const g = clamp(-.55 + curRy / 13 - curRx / 30, -3, 3);
+      glare.firstChild.style.transform = `translate3d(${(g * 25).toFixed(2)}%,0,0)`;
+      shade.style.transform = `scaleX(${Math.max(.1, Math.abs(Math.cos(curRy * DEG))).toFixed(3)})`;
+    }
+    requestAnimationFrame(frame);
+  }
+
+  /* ---------- opening: a curtain with a counter, then the layers settle into one card ---------- */
+  let introT = [];
+  function endIntro() {
+    if (!intro) return false;
+    introT.forEach(clearTimeout);
+    intro = false; body.classList.remove('intro'); rotK = .09;
+    if (mode === 'layers' && chap === 0) setMode('front'); else setHint();      // interrupted: the card simply closes
+    return true;
+  }
+  const INTRO = !PRINT && !reduce && Q.get('intro') !== '0';
+  body.classList.add('no-anim');
+  if (INTRO) {
+    intro = true; body.classList.add('intro');
+    document.documentElement.classList.add('loading');
+    mode = 'layers'; portal = false; body.classList.remove('mode-front'); body.classList.add('mode-layers');
+    bLayers.setAttribute('aria-pressed', 'true'); bLayers.textContent = 'Close the layers';
+  }
+  if (portal) card.classList.add('portal');
+  addEventListener('resize', () => { size(); setHint(); });
+  if (!PRINT && window.ResizeObserver) {
+    let sw = 0, sh = 0;
+    new ResizeObserver(en => { const c = en[0].contentRect; if (Math.abs(c.width - sw) > 1 || Math.abs(c.height - sh) > 1) { sw = c.width; sh = c.height; size(); } }).observe(app);
+  }
+  size(); setAll('gray'); setHint();
+  if (INTRO) { yaw = yawL - 13; pitch = pitchL + 4; goalYaw = yawL; goalPitch = pitchL; rotK = .012; }
+  pv = pvT;
+
+  const loader = $('#loader');
+  if (PRINT) {
+    // paper version: a still of the card. "arch" = the room stays gray, colour waits behind the arch.
+    if (STATE === 'color') { body.classList.add('is-color'); setAll('color'); }
+    if (STATE === 'arch') {
+      body.classList.add('arch-gray');
+      els.forEach((el, i) => { if (['mural', 'frame', 'fore', 'words'].includes(layers[i].id)) el.classList.add('force-c'); });
+    }
+    if (PRINT === 'back') {
+      body.classList.add('print-back');
+      const sc = document.createElement('script');
+      sc.src = 'qr.js';
+      sc.onload = () => {
+        const q = window.GR_QR;
+        $('.b-p').textContent = 'No talent needed. No time limit.';
+        $('.b-foot').insertAdjacentHTML('beforebegin', `<div class="pscan"><div class="qr"><svg viewBox="-0.5 -0.5 ${q.n + 1} ${q.n + 1}" shape-rendering="crispEdges" role="img" aria-label="QR code"><path d="${q.d}" stroke="#1d1d1d" stroke-width="1.02" fill="none"/></svg></div>` +
+          `<div><p class="scan">Scan the card.<em>Add your color.</em></p>` +
+          `<p class="scan-s">${q.url.replace('https://', '').replace(/\/$/, '')}</p></div></div>`);
+        $('.b-foot').innerHTML = '<p class="poffer">Canvas from NT$660 · 10% off in your birthday month</p>' +
+          '<p class="b-addr"><b>No. 12, Sanhe 1st St., Zhongli, Taoyuan</b> · near CYCU<br>By reservation · LINE @277xbsxj · 03-283-0069</p>' +
+          '<p class="pfine">Student project for Business English, Chung Yuan Christian University. Not an official Gray Room advertisement. Please confirm prices, offers and hours with the shop.</p>';
+        body.dataset.ready = '1';
+      };
+      document.head.appendChild(sc);
+    } else body.dataset.ready = '1';
+  } else {
+    const go = () => {
+      if (body.classList.contains('ready')) return;
+      raf2(() => {
+        size();
+        body.classList.remove('no-anim'); body.classList.add('ready');
+        document.documentElement.classList.remove('loading');
+        if (INTRO && intro) {
+          introT.push(setTimeout(() => { rotK = .045; setMode('front'); }, 1500));
+          introT.push(setTimeout(endIntro, 4700));
+        }
+      });
+    };
+    const fonts = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+    if (!INTRO) { loader.remove(); fonts.then(go); setTimeout(go, 1500); }
+    else {
+      // the counter runs to 100 while the fonts arrive, then the curtain lifts
+      const num = $('#ldNum'), bar = $('#ldBar');
+      let v = 0, ok = false, done = false;
+      fonts.then(() => { ok = true; }); setTimeout(() => { ok = true; }, 2500);
+      const tick = () => {
+        if (done) return;
+        const target = ok ? 100 : 88;
+        v = Math.min(target, v + (target - v) * .055 + .22);
+        num.textContent = Math.round(v); bar.style.transform = `scaleX(${(v / 100).toFixed(3)})`;
+        if (v >= 99.6) {
+          done = true; num.textContent = '100'; bar.style.transform = 'scaleX(1)'; loader.classList.add('full');
+          setTimeout(() => { loader.classList.add('out'); go(); }, 420);
+          setTimeout(() => loader.remove(), 1800);
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }
+  }
+  requestAnimationFrame(frame);
+
+  /* ---------- the rest of the page: words that rise into place, a band that moves with the scroll ---------- */
+  if (!PRINT) {
+    $$('[data-split]').forEach(h => {
+      let wi = 0;
+      const out = document.createDocumentFragment();
+      const walkText = (node, shell) => {
+        for (const n of [...node.childNodes]) {
+          if (n.nodeType !== 3) { walkText(n, n); continue; }
+          n.textContent.split(/(\s+)/).forEach(tok => {
+            if (!tok) return;
+            if (/^\s+$/.test(tok)) { out.appendChild(document.createTextNode(' ')); return; }
+            const w = mk('span', 'w'), s = document.createElement('span');
+            s.style.setProperty('--wi', wi++);
+            if (shell) { const e = shell.cloneNode(false); e.textContent = tok; s.appendChild(e); } else s.textContent = tok;
+            w.appendChild(s); out.appendChild(w);
+          });
+        }
+      };
+      walkText(h, null);
+      h.textContent = ''; h.appendChild(out);
+    });
+    const shown = $$('[data-rv],[data-split]');
+    if (reduce || !window.IntersectionObserver) shown.forEach(e => e.classList.add('in'));
+    else {
+      const io = new IntersectionObserver(en => en.forEach(x => { if (x.isIntersecting) { x.target.classList.add('in'); io.unobserve(x.target); } }), { rootMargin: '0px 0px -10% 0px', threshold: .12 });
+      shown.forEach(e => io.observe(e));
+    }
+    const band = $('#band');
+    let ticking = false;
+    const onScroll = () => {
+      ticking = false;
+      const r = band.parentNode.getBoundingClientRect(), vh = innerHeight;
+      if (r.bottom > -40 && r.top < vh + 40) band.style.transform = `translate3d(${(-clamp((vh - r.top) / (vh + r.height), 0, 1) * 30).toFixed(2)}%,0,0)`;
+    };
+    addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(onScroll); } }, { passive: true });
+    onScroll();
+
+    /* mouse only: a dot that follows, a ring that says what the card does, a button that leans towards the pointer */
+    if (matchMedia('(hover:hover) and (pointer:fine)').matches) {
+      const cur = $('#cur'), cd = cur.firstElementChild, cr = cur.lastElementChild;
+      stage.style.cursor = 'none';
+      let mx = -200, my = -200, rx = -200, ry = -200, run = false;
+      const loop = () => {
+        rx += (mx - rx) * .18; ry += (my - ry) * .18;
+        // position goes in `translate`, which sits outside `scale`: the ring grows in place instead of sliding in from the corner
+        cd.style.translate = `${mx}px ${my}px`;
+        cr.style.translate = `${rx.toFixed(1)}px ${ry.toFixed(1)}px`;
+        if (Math.abs(mx - rx) + Math.abs(my - ry) > .3) requestAnimationFrame(loop); else run = false;
+      };
+      addEventListener('pointermove', e => {
+        if (e.pointerType !== 'mouse') return;
+        const shown = cur.classList.contains('on') && cur.classList.contains('card');
+        mx = e.clientX; my = e.clientY; cur.classList.add('on');
+        probe(e.target);
+        // a hidden ring waits under the pointer, so it grows out of the pointer instead of travelling to it
+        if (!shown) { rx = mx; ry = my; cr.style.translate = `${rx.toFixed(1)}px ${ry.toFixed(1)}px`; }
+        if (!run) { run = true; requestAnimationFrame(loop); }
+      }, { passive: true });
+      // what is under the pointer can change without the pointer moving (scrolling, a button that hides)
+      const probe = t => {
+        t = t || document.elementFromPoint(mx, my);
+        const link = !!(t && t.closest && t.closest('a,button')) && !(chap > 0 && ui.contains(t));   // the hero buttons are fading out
+        let onCard = false;
+        const cb = chap > 0 ? capBox.getBoundingClientRect() : null, inCap = !!cb && mx > cb.left && my > cb.top && mx < cb.right && my < cb.bottom;
+        if (!link && !inCap && t && t.closest && t.closest('#stage') && !t.closest('.cap')) { const b = rig.getBoundingClientRect(); onCard = mx > b.left - 30 && mx < b.right + 30 && my > b.top - 30 && my < b.bottom + 30; }
+        cur.classList.toggle('card', onCard); cur.classList.toggle('link', link);
+        cr.textContent = onCard && mode === 'front' && !colored && !facingBack && chap === 0 ? 'Tap' : 'Drag';
+      };
+      let pq = 0;
+      const later = () => { clearTimeout(pq); pq = setTimeout(() => probe(), 140); };
+      addEventListener('scroll', later, { passive: true });
+      reprobe = () => probe();
+      capBox.addEventListener('transitionend', e => { if (e.propertyName === 'transform' && e.target.classList.contains('cap')) probe(); });
+      addEventListener('click', () => { later(); setTimeout(() => probe(), 700); });
+      addEventListener('pointerdown', () => cur.classList.add('grab'));
+      addEventListener('pointerup', () => cur.classList.remove('grab'));
+      document.documentElement.addEventListener('mouseleave', () => cur.classList.remove('on'));
+      $$('[data-mag]').forEach(el => {
+        el.addEventListener('pointermove', e => {
+          const b = el.getBoundingClientRect();
+          el.style.transition = 'background .4s,color .4s,transform .25s cubic-bezier(.16,1,.3,1)';
+          el.style.transform = `translate(${((e.clientX - b.left - b.width / 2) * .28).toFixed(1)}px,${((e.clientY - b.top - b.height / 2) * .28).toFixed(1)}px)`;
+        });
+        el.addEventListener('pointerleave', () => { el.style.transition = 'background .4s,color .4s,transform .9s cubic-bezier(.16,1,.3,1)'; el.style.transform = ''; });
+      });
+    }
+  }
+
+  /* hooks used to take the screenshots */
+  window.__gr = {
+    setMode: m => { endIntro(); walked = true; setMode(m); }, setFocus: i => { stopWalk(); setFocus(i); }, endIntro,
+    view: (y, p, x = 0, yy = 0) => { endIntro(); yaw = y; pitch = p; goalYaw = y; goalPitch = p; vyaw = vpitch = 0; tx = offX = x; ty = offY = yy; lastInput = 1e15; lastTurn = 1e15; pv = pvT; },
+    color: () => { endIntro(); splats = []; paint = 'color'; setAll('color'); setColored(true); pageSet(true); },
+    state: () => ({ mode, paint, colored, yaw, pitch, W, Wh, Wb, big, dive, dv, spreadL, scaleL, facingBack, portal, flat, chap, n: splats.length }),
+  };
+})();
+</script>
+</body>
+</html>
