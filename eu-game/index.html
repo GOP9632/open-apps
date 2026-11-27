@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>第 22 輪制裁：全班一致決</title>
+<meta name="description" content="歐盟概論課堂連線遊戲：用手機加入，代表一個歐盟會員國作答。">
+<meta name="theme-color" content="#05071a">
+<link rel="icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://ptocokzxpwwautnbbuup.supabase.co" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="style.css">
+<style>
+body{font-size:16px}
+.app{max-width:520px;margin:0 auto;height:100dvh}
+.screen{padding:calc(env(safe-area-inset-top) + 18px) 18px calc(env(safe-area-inset-bottom) + 18px)}
+.top{position:absolute;left:18px;right:18px;top:calc(env(safe-area-inset-top) + 14px);display:flex;justify-content:space-between;align-items:center;font-size:14px;color:var(--ink2)}
+.me{display:flex;align-items:center;gap:.5em;font-weight:700;color:var(--ink)}
+.me .fi{width:1.6em;height:1.2em}
+.score{font-family:var(--display);font-weight:800;color:var(--gold)}
+
+/* 加入 */
+#join .logo{width:120px;height:120px;margin-bottom:10px}
+#join h1{font-family:var(--display);font-size:34px;line-height:1.05;margin:.2em 0 .1em;text-align:center;font-weight:800}
+#join h1 small{display:block;font-family:var(--body);font-size:.55em;font-weight:900;margin-top:.3em}
+#join .kicker{text-align:center}
+.form{width:100%;margin-top:26px;display:flex;flex-direction:column;gap:12px}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:13px;color:var(--ink2);padding-left:4px}
+.field input{width:100%;padding:16px 18px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.07);outline:none;font-size:20px;font-weight:700;transition:border-color .2s,box-shadow .2s}
+.field input:focus{border-color:var(--gold);box-shadow:0 0 0 4px rgba(255,204,51,.18)}
+.field input.code{font-family:var(--display);letter-spacing:.5em;text-align:center;font-size:30px;padding:12px 18px}
+.form .btn{padding:18px;font-size:18px;border-radius:18px;margin-top:6px}
+.err{color:#ff8fa3;font-size:14px;min-height:1.2em;text-align:center}
+.foot{position:absolute;bottom:calc(env(safe-area-inset-bottom) + 14px);font-size:12px;color:var(--mute);text-align:center;left:18px;right:18px}
+
+/* 國家卡 */
+.passport{perspective:900px;width:min(78vw,300px);aspect-ratio:3/4;margin-bottom:22px}
+.pin{position:relative;width:100%;height:100%;transform-style:preserve-3d;transition:transform 1s cubic-bezier(.3,1.3,.4,1)}
+.pin.flip{transform:rotateY(180deg)}
+.pf,.pb{position:absolute;inset:0;border-radius:24px;backface-visibility:hidden;-webkit-backface-visibility:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;border:1px solid rgba(255,255,255,.18);overflow:hidden}
+.pf{background:linear-gradient(160deg,#1f3cff,#0b1a8f);box-shadow:0 30px 60px -25px rgba(42,75,255,.8)}
+.pf .r{width:62%;aspect-ratio:1}
+.pf b{font-family:var(--display);letter-spacing:.3em;font-size:12px;color:var(--gold)}
+.pb{transform:rotateY(180deg);background:linear-gradient(170deg,#141c55,#070b2a);box-shadow:0 30px 60px -25px rgba(0,0,0,.9)}
+#pFlag{display:block;width:62%}
+.pb .fi{display:block;width:100%;height:auto;aspect-ratio:4/3;border-radius:12px;box-shadow:0 14px 30px -10px #000}
+.pb .cn{font-size:34px;font-weight:900}
+.pb .nm{color:var(--ink2);font-size:15px}
+.pb .kicker{font-size:11px}
+.wait{text-align:center;color:var(--ink2);line-height:1.6}
+.wait b{color:var(--ink)}
+.dots::after{content:'';animation:dots 1.4s steps(4) infinite}
+@keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+.tip{margin-top:18px;font-size:13px;color:var(--ink2);padding:12px 14px;border-radius:14px;background:var(--glass);border:1px solid var(--line);line-height:1.6}
+
+/* 章節 */
+#chapter .r{width:110px;aspect-ratio:1;margin-bottom:18px}
+#chapter h2{font-family:var(--display);font-size:38px;margin:.2em 0 0;text-align:center;line-height:1}
+#chapter h3{margin:.3em 0 0;font-size:24px}
+
+/* 題目 */
+#question{justify-content:flex-start;padding-top:calc(env(safe-area-inset-top) + 52px)}
+.tbar{width:100%;height:8px;border-radius:99px;background:rgba(255,255,255,.1);overflow:hidden;margin-bottom:14px}
+.tbar i{display:block;height:100%;width:100%;background:linear-gradient(90deg,var(--gold),#ff8a00);transform-origin:left;border-radius:99px}
+.qmeta{width:100%;display:flex;justify-content:space-between;font-size:13px;color:var(--ink2);margin-bottom:8px}
+.qmeta .dbl{color:#ffb703;font-weight:900}
+.qtext{width:100%;font-size:19px;font-weight:900;line-height:1.45;margin-bottom:14px}
+.ans{width:100%;flex:1;display:grid;grid-template-rows:repeat(4,1fr);gap:10px;min-height:0}
+.ans.two{grid-template-rows:1fr 1fr}
+.a{position:relative;display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:18px;background:var(--c);color:#fff;font-weight:800;font-size:16px;text-align:left;line-height:1.35;box-shadow:inset 0 -5px 0 rgba(0,0,0,.2);transition:transform .12s,opacity .3s;animation:rise .4s both}
+.a:nth-child(2){animation-delay:.05s}.a:nth-child(3){animation-delay:.1s}.a:nth-child(4){animation-delay:.15s}
+.a:active{transform:scale(.97)}
+.a .shape{display:grid;place-items:center;width:38px;height:38px;flex:none;border-radius:12px;background:rgba(0,0,0,.2);font-size:18px}
+.abst{margin-top:10px;width:100%;padding:12px;border-radius:16px;border:1px dashed rgba(255,255,255,.35);color:var(--ink2);font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center;gap:8px}
+.abst:active{background:var(--glass)}
+.abst[hidden]{display:none}
+
+/* 已送出 */
+#sent .chosen{display:flex;align-items:center;gap:12px;padding:16px 18px;border-radius:18px;background:var(--c);font-weight:800;font-size:17px;max-width:100%;animation:pop .5s both;box-shadow:0 20px 40px -20px var(--c)}
+#sent .chosen .shape{font-size:22px}
+#sent .r{width:120px;aspect-ratio:1;margin-bottom:26px}
+#sent .wait{margin-top:20px}
+
+/* 結果 */
+.res{text-align:center}
+.res .big{font-size:96px;line-height:1;animation:pop .6s cubic-bezier(.2,1.5,.4,1) both}
+.res h2{font-family:var(--display);font-size:40px;margin:.25em 0 .1em;font-weight:800}
+.res .pts{display:inline-block;margin-top:8px;padding:10px 22px;border-radius:999px;background:rgba(0,0,0,.3);font-family:var(--display);font-weight:800;font-size:26px;animation:pop .5s .3s both}
+.res .sub{color:var(--ink2);margin-top:14px;line-height:1.6}
+.res .streak{display:inline-block;margin-top:10px;color:#ffb703;font-weight:900;animation:pulse 1s ease-in-out infinite}
+.rank{margin-top:26px;display:flex;gap:10px;justify-content:center}
+.rank div{padding:12px 18px;border-radius:16px;background:var(--glass);border:1px solid var(--line);min-width:110px}
+.rank small{display:block;font-size:12px;color:var(--ink2)}
+.rank b{font-family:var(--display);font-size:28px}
+#result.ok h2{color:var(--ok)}
+#result.bad h2{color:var(--bad)}
+#result.bad .big{animation:shake .6s both}
+
+/* 終局 */
+#final .medal{font-size:110px;line-height:1;animation:pop .8s cubic-bezier(.2,1.5,.4,1) both}
+#final h2{font-family:var(--display);font-size:44px;margin:.2em 0 0;font-weight:800}
+#confetti{position:fixed;inset:0;width:100%;height:100%;z-index:40;pointer-events:none}
+</style>
+</head>
+<body>
+<div class="sky" id="sky"></div>
+<canvas id="confetti"></canvas>
+<div class="conn" id="conn">重新連線中…</div>
+<div class="app">
+
+  <div class="top" id="top" hidden><span class="me" id="me"></span><span class="score" id="myScore"></span></div>
+
+  <section class="screen on" id="join">
+    <div class="logo" id="logo"></div>
+    <div class="kicker">EU Sanctions · 歐盟概論</div>
+    <h1><span class="grad">第 22 輪制裁</span><small>全班一致決大挑戰</small></h1>
+    <form class="form" id="form" autocomplete="off">
+      <div class="field"><label for="room">房號（看大螢幕）</label><input id="room" class="code" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="0000" required></div>
+      <div class="field"><label for="name">你的暱稱</label><input id="name" maxlength="12" placeholder="最多 12 個字" required enterkeyhint="go"></div>
+      <button class="btn" id="go" type="submit">入席 →</button>
+      <div class="err" id="err"></div>
+    </form>
+    <div class="foot">要主持遊戲？<a href="host.html" style="color:var(--ink2)">打開主持畫面</a></div>
+  </section>
+
+  <section class="screen" id="lobby">
+    <div class="passport"><div class="pin" id="pin">
+      <div class="pf"><div class="r" id="pRing"></div><b>EUROPEAN UNION</b></div>
+      <div class="pb"><div class="kicker">你代表的會員國</div><span id="pFlag"></span><div class="cn" id="pCountry"></div><div class="nm" id="pName"></div></div>
+    </div></div>
+    <div class="wait"><b>已入席！</b>抬頭看大螢幕，等主持人開始<span class="dots"></span></div>
+    <div class="tip">🛡️ 你有一張「建設性棄權」卡：沒把握時可以用，不得分也不扣分，連勝不會斷，也不會擋下全班的一致決。整場只能用一次。</div>
+  </section>
+
+  <section class="screen" id="chapter">
+    <div class="r" id="cRing"></div>
+    <div class="kicker" id="cTag"></div>
+    <h2 class="grad" id="cEn"></h2>
+    <h3 id="cZh"></h3>
+  </section>
+
+  <section class="screen" id="question">
+    <div class="tbar"><i id="tbar"></i></div>
+    <div class="qmeta"><span id="qN"></span><span id="qDbl" class="dbl"></span></div>
+    <div class="qtext" id="qText"></div>
+    <div class="ans" id="ans"></div>
+    <button class="abst" id="abst">🛡️ 使用建設性棄權卡（剩 1 張）</button>
+  </section>
+
+  <section class="screen" id="sent">
+    <div class="r" id="sRing"></div>
+    <div class="chosen" id="chosen"></div>
+    <div class="wait">已送出！等其他國家作答<span class="dots"></span></div>
+  </section>
+
+  <section class="screen res" id="result">
+    <div class="big" id="rBig"></div>
+    <h2 id="rTitle"></h2>
+    <div class="pts" id="rPts"></div>
+    <div><span class="streak" id="rStreak"></span></div>
+    <div class="sub" id="rSub"></div>
+    <div class="rank"><div><small>目前名次</small><b id="rRank"></b></div><div><small>總分</small><b id="rTotal"></b></div></div>
+  </section>
+
+  <section class="screen res" id="final">
+    <div class="medal" id="fMedal"></div>
+    <h2 class="grad" id="fTitle"></h2>
+    <div class="sub" id="fSub"></div>
+    <div class="rank"><div><small>最終名次</small><b id="fRank"></b></div><div><small>總分</small><b id="fTotal"></b></div></div>
+  </section>
+
+  <section class="screen res" id="kicked">
+    <div class="big">🚪</div>
+    <h2>你已離席</h2>
+    <div class="sub">主持人請你離開這個房間。<br>可以換個暱稱重新加入。</div>
+    <button class="btn" style="margin-top:24px" onclick="location.href=location.pathname">回到首頁</button>
+  </section>
+</div>
+
+<script src="vendor/supabase.js"></script>
+<script src="data.js"></script>
+<script src="common.js"></script>
+<script>
+(function () {
+  var U = EU_UTIL, $ = function (s) { return document.querySelector(s); };
+  EU_sky($('#sky'), 6000);
+  EU_ring($('#logo')).set(12); $('#logo').classList.add('spin');
+  EU_ring($('#pRing')).set(12);
+  var cRing = EU_ring($('#cRing')); $('#cRing').classList.add('spin');
+  EU_ring($('#sRing')).set(12); $('#sRing').classList.add('spin');
+
+  var K = 'eu-player-v1', me = null, net = null, last = null, cur = '', sentStep = -1, sentChoice = null, lastResult = -1, gotAt = 0, joinedOk = false;
+  try { me = JSON.parse(localStorage.getItem(K) || 'null'); } catch (e) {}
+  var qp = new URLSearchParams(location.search).get('room');
+  if (qp) $('#room').value = qp.replace(/\D/g, '').slice(0, 4);
+  if (me && me.name) $('#name').value = me.name;
+
+  function show(id) { if (cur === id) return; cur = id; document.querySelectorAll('.screen').forEach(function (s) { s.classList.toggle('on', s.id === id); }); }
+  function flash(cls) { document.body.classList.remove('flash-ok', 'flash-bad'); if (cls) document.body.classList.add(cls); }
+  function buzz(p) { try { navigator.vibrate && navigator.vibrate(p); } catch (e) {} }
+
+  $('#form').onsubmit = function (e) {
+    e.preventDefault();
+    var room = $('#room').value.replace(/\D/g, ''), name = $('#name').value.trim();
+    if (room.length !== 4) { $('#err').textContent = '房號是 4 位數字'; return; }
+    if (!name) { $('#err').textContent = '請輸入暱稱'; return; }
+    if (!me || me.room !== room) me = { pid: Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4), room: room };
+    me.name = name; me.room = room;
+    try { localStorage.setItem(K, JSON.stringify(me)); } catch (e) {}
+    start();
+  };
+
+  var helloTimer;
+  function start() {
+    $('#go').disabled = true; $('#go').textContent = '連線中…'; $('#err').textContent = '';
+    joinedOk = false;
+    net = EU_connect(me.room, onMsg, function (st) {
+      $('#conn').classList.toggle('show', joinedOk && st !== 'SUBSCRIBED');
+      if (st === 'SUBSCRIBED') hello();
+    });
+    clearTimeout(helloTimer);
+    helloTimer = setTimeout(function () {
+      if (!joinedOk) { $('#go').disabled = false; $('#go').textContent = '入席 →'; $('#err').textContent = '找不到房間 ' + me.room + '，確認房號、或請主持人打開主持畫面'; net = null; }
+    }, 7000);
+  }
+  function hello() { net && net.send({ t: 'hello', pid: me.pid, name: me.name }); }
+
+  function onMsg(m) {
+    if (!m || m.t !== 'state') return;
+    var mine = m.pl[me.pid];
+    if (!mine) {
+      if (joinedOk) { show('kicked'); $('#top').hidden = true; net = null; return; }
+      hello(); return;
+    }
+    if (!joinedOk) { joinedOk = true; clearTimeout(helloTimer); buzz(30); try { sessionStorage.setItem('eu-joined', me.room); } catch (e) {} }
+    last = m; render(m, mine);
+  }
+
+  function ranking(m) {
+    var ids = Object.keys(m.pl).sort(function (a, b) { return m.pl[b][2] - m.pl[a][2]; });
+    return { rank: ids.indexOf(me.pid) + 1, n: ids.length };
+  }
+
+  var qTimer, flipped = false;
+  function render(m, p) {
+    $('#top').hidden = m.phase === 'lobby' || cur === 'join' && m.phase === 'lobby';
+    $('#me').innerHTML = U.flag(p[1]) + U.esc(p[0]);
+    $('#myScore').textContent = p[2] + ' 分';
+    if (m.phase !== 'reveal') flash('');
+
+    if (m.phase === 'lobby') {
+      $('#pFlag').innerHTML = U.flag(p[1]); $('#pCountry').textContent = U.countryName(p[1]); $('#pName').textContent = p[0];
+      show('lobby');
+      if (!flipped) { flipped = true; setTimeout(function () { $('#pin').classList.add('flip'); buzz([20, 60, 20]); }, 700); }
+    } else if (m.phase === 'chapter' || m.phase === 'board') {
+      if (m.phase === 'board') {
+        var r = ranking(m);
+        $('#cTag').textContent = 'LEADERBOARD'; $('#cEn').textContent = '第 ' + r.rank + ' 名'; $('#cZh').textContent = '共 ' + r.n + ' 國 · ' + p[2] + ' 分';
+      } else { $('#cTag').textContent = m.ch.tag; $('#cEn').textContent = m.ch.en; $('#cZh').textContent = m.ch.zh; }
+      if (cur !== 'chapter') { cRing.set(0); var k = 0, iv = setInterval(function () { cRing.set(++k); if (k >= 12) clearInterval(iv); }, 60); }
+      show('chapter');
+    } else if (m.phase === 'q') {
+      var answered = sentStep === m.step || (m.got && m.got.indexOf(me.pid) >= 0);
+      if (answered) {
+        showSent(m);
+        // 主持端還沒收到就重送
+        if (sentStep === m.step && m.got && m.got.indexOf(me.pid) < 0 && Date.now() - gotAt > 2500) { gotAt = Date.now(); net.send({ t: 'ans', pid: me.pid, step: m.step, c: sentChoice }); }
+      } else showQuestion(m, p);
+    } else if (m.phase === 'reveal') {
+      showResult(m, p);
+    } else if (m.phase === 'final') {
+      showFinal(m, p);
+    }
+  }
+
+  var qStep = -1, qDeadline = 0, qDur = 1;
+  function showQuestion(m, p) {
+    if (qStep !== m.step || cur !== 'question') {
+      qStep = m.step;
+      $('#qN').textContent = m.q.poll ? '🗳️ 全班投票（不計分）' : '第 ' + m.q.n + ' / ' + m.q.total + ' 題';
+      $('#qDbl').textContent = m.q.dbl ? '分數 ×2' : '';
+      $('#qText').textContent = m.q.text;
+      $('#ans').className = 'ans' + (m.q.a.length === 2 ? ' two' : '');
+      $('#ans').innerHTML = m.q.a.map(function (t, i) { return '<button class="a o' + i + '" data-i="' + i + '"><span class="shape">' + U.shapes[i] + '</span><span>' + U.esc(t) + '</span></button>'; }).join('');
+      $('#ans').querySelectorAll('.a').forEach(function (b) { b.onclick = function () { answer(+b.dataset.i); }; });
+      show('question'); buzz(40);
+    }
+    $('#abst').hidden = m.q.poll || !!p[4];
+    qDeadline = Date.now() + m.left; qDur = m.dur || 20000;
+    clearInterval(qTimer);
+    qTimer = setInterval(function () {
+      var left = Math.max(0, qDeadline - Date.now());
+      $('#tbar').style.transform = 'scaleX(' + (left / qDur) + ')';
+      if (!left) clearInterval(qTimer);
+    }, 100);
+  }
+  $('#abst').onclick = function () { answer('ab'); };
+  function answer(c) {
+    if (!last || last.phase !== 'q') return;
+    sentStep = last.step; sentChoice = c; gotAt = Date.now();
+    net.send({ t: 'ans', pid: me.pid, step: last.step, c: c });
+    buzz(25); showSent(last);
+  }
+  function showSent(m) {
+    var c = sentStep === m.step ? sentChoice : null;
+    if (c === 'ab') $('#chosen').outerHTML = '<div class="chosen" id="chosen" style="--c:#4a5290"><span class="shape">🛡️</span>建設性棄權</div>';
+    else if (c !== null) $('#chosen').outerHTML = '<div class="chosen o' + c + '" id="chosen"><span class="shape">' + U.shapes[c] + '</span>' + U.esc(m.q.a[c]) + '</div>';
+    else $('#chosen').outerHTML = '<div class="chosen" id="chosen" style="--c:#2a4bff">已作答</div>';
+    show('sent');
+  }
+
+  function showResult(m, p) {
+    if (lastResult === m.step && cur === 'result') return;
+    lastResult = m.step; clearInterval(qTimer);
+    var r = ranking(m), el = $('#result'), lr = p[6], mine = sentStep === m.step ? sentChoice : null;
+    el.className = 'screen res';
+    $('#rStreak').textContent = p[3] >= 2 ? '🔥 ' + p[3] + ' 連勝' : '';
+    $('#rRank').textContent = r.rank + ' / ' + r.n; $('#rTotal').textContent = p[2];
+    $('#rPts').style.display = '';
+    if (m.q.poll) {
+      var s = m.counts.reduce(function (a, b) { return a + b; }, 0);
+      $('#rBig').textContent = '🗳️'; $('#rTitle').textContent = '投票結果';
+      $('#rPts').innerHTML = m.counts.map(function (c, i) { return U.shapes[i] + ' ' + (s ? Math.round(c / s * 100) : 0) + '%'; }).join('　');
+      $('#rSub').textContent = mine === null ? '這題你沒投票' : '你選了「' + m.q.a[mine] + '」';
+      flash('');
+    } else if (lr === 'ok') {
+      el.classList.add('ok'); $('#rBig').textContent = '✅'; $('#rTitle').textContent = '答對了！';
+      $('#rPts').textContent = '+' + p[5]; $('#rSub').textContent = m.unan ? '全班一致決通過 🇪🇺' : '可惜有其他國家答錯，決議被否決';
+      flash('flash-ok'); buzz([30, 40, 30]);
+    } else if (lr === 'ab') {
+      $('#rBig').textContent = '🛡️'; $('#rTitle').textContent = '建設性棄權';
+      $('#rPts').textContent = '+0'; $('#rSub').textContent = '正確答案：' + U.shapes[m.correct] + ' ' + m.q.a[m.correct] + '\n連勝保留，也沒有擋下決議。';
+      flash('');
+    } else {
+      el.classList.add('bad'); $('#rBig').textContent = lr === 'none' ? '⌛' : '❌'; $('#rTitle').textContent = lr === 'none' ? '時間到' : '投下反對票';
+      $('#rPts').textContent = '+0'; $('#rSub').textContent = '正確答案：' + U.shapes[m.correct] + ' ' + m.q.a[m.correct];
+      flash('flash-bad'); buzz([80, 50, 80]);
+    }
+    $('#rSub').style.whiteSpace = 'pre-line';
+    show('result');
+  }
+
+  var finalShown = false;
+  function showFinal(m, p) {
+    var r = ranking(m);
+    $('#fMedal').textContent = r.rank === 1 ? '🥇' : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : '🇪🇺';
+    $('#fTitle').textContent = r.rank <= 3 ? '最佳代表！' : '辛苦了，代表！';
+    $('#fSub').innerHTML = '你代表 ' + U.flag(p[1]) + ' ' + U.countryName(p[1]) + (m.unanTotal ? '<br>全班一致決通過 ' + m.unanTotal[0] + ' / ' + m.unanTotal[1] + ' 題' : '');
+    $('#fRank').textContent = r.rank + ' / ' + r.n; $('#fTotal').textContent = p[2];
+    show('final');
+    if (!finalShown) { finalShown = true; if (r.rank <= 3) EU_confetti($('#confetti'), 5000); buzz([50, 50, 50, 50, 200]); }
+  }
+
+  // 回到前景時重新打招呼（手機鎖屏後）
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && net && joinedOk) hello(); });
+
+  // 從 QR code 進來、而且之前加入過同一房 → 自動重新入席
+  if (me && me.name && me.room && (!qp || qp === me.room) && sessionStorage.getItem('eu-joined') === me.room) start();
+})();
+</script>
+</body>
+</html>
