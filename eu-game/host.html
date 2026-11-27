@@ -45,6 +45,7 @@ body{font-size:clamp(14px,1.05vw,22px)}
 /* 底部控制列 */
 .ctl{position:fixed;z-index:20;left:0;right:0;bottom:0;height:11vh;min-height:70px;display:flex;align-items:center;justify-content:space-between;padding:0 3vw;background:linear-gradient(0deg,rgba(5,7,26,.92),rgba(5,7,26,0))}
 .ctl .l,.ctl .r{display:flex;gap:.7em;align-items:center}
+.ctl .r{margin-left:auto}
 .seg{display:inline-flex;padding:4px;border-radius:14px;background:var(--glass);border:1px solid var(--line)}
 .seg button{padding:.5em .95em;border-radius:10px;color:var(--ink2);font-weight:700;font-size:.9em}
 .seg button.on{background:#fff;color:#0b1033}
@@ -141,6 +142,115 @@ body{font-size:clamp(14px,1.05vw,22px)}
 .p3 .pblock{background:linear-gradient(180deg,#ffc29a,#d9733b)}
 .fstat{display:flex;gap:1.2em;margin-top:2vh}
 #confetti{position:fixed;inset:0;width:100%;height:100%;z-index:40;pointer-events:none}
+
+/* ===== 小螢幕（手機、平板直向、手機橫向）：每個畫面可以捲動，字級改用固定值 ===== */
+@media (max-width:900px),(max-height:560px){
+  body{font-size:15px}
+  .wrap{width:100%}
+  .screen{padding-left:16px!important;padding-right:16px!important;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;justify-content:flex-start;padding:calc(env(safe-area-inset-top) + 16px) 0 120px}
+  .kicker{letter-spacing:.18em;font-size:11px}
+  .ctl{height:auto;min-height:0;padding:10px 16px calc(env(safe-area-inset-bottom) + 10px);gap:8px;flex-wrap:wrap;background:rgba(5,7,26,.94);backdrop-filter:blur(10px);border-top:1px solid var(--line)}
+  .ctl .l{flex-wrap:wrap;gap:6px}
+  .ctl .meta{display:none}
+  .seg button{padding:.45em .7em;font-size:13px}
+  .ico{width:40px;height:40px;border-radius:12px}
+  .btn{padding:.75em 1.2em;border-radius:14px}
+  #nextBtn kbd{display:none}
+  .resume{width:calc(100% - 32px);flex-wrap:wrap;font-size:14px}
+
+  /* 大廳 */
+  #lobby{padding-top:calc(env(safe-area-inset-top) + 20px)}
+  .lob h1{font-size:44px}
+  .lob .lead{font-size:14px;line-height:1.7}
+  .howto{margin-top:12px;gap:6px}
+  .howto .pill{font-size:13px}
+  .joincard{border-radius:22px;padding:16px;gap:16px}
+  .qr{width:120px;padding:8px;border-radius:12px}
+  .joincard .url{font-size:13px;margin-bottom:.6em}
+  .code span{font-size:40px}
+  .seats{flex:none;margin-top:20px}
+  .seats .hd b{font-size:1.8em}
+  .seats .hd span{font-size:13px}
+  .chip{padding:.35em .75em .35em .45em;font-size:14px}
+
+  /* 章節卡 */
+  #chapter{justify-content:center;padding-bottom:90px}
+  #chapter h2{font-size:46px}
+  #chapter h3{font-size:26px}
+  #chapter p{font-size:15px;padding:0 8px}
+  #chapter .bigring{width:min(86vw,80vh)}
+
+  /* 題目與公布 */
+  #question,#reveal{padding-top:calc(env(safe-area-inset-top) + 14px)}
+  .qtop{flex-wrap:wrap;gap:8px}
+  .qtop .tag{flex-wrap:wrap;gap:6px}
+  .qtop .tag .n{font-size:16px}
+  .qtop .pill{font-size:12px;padding:.35em .8em}
+  .answered b{font-size:1.5em}
+  .answered .flags{display:none}
+  .qmid{flex:none;gap:16px;margin:16px 0}
+  .timer,.verdict{width:96px}
+  .timer .num{font-size:34px}
+  .verdict .stamp{font-size:20px}
+  .qtext,.qtext.long{font-size:21px;line-height:1.4}
+  .vtext{font-size:14px}
+  .meter{height:10px}
+  .opts{gap:10px}
+  .opt{min-height:56px;padding:.7em .9em;font-size:16px;border-radius:16px;gap:.7em}
+  .opts.poll .opt{min-height:64px}
+  .opt .shape{width:1.8em;height:1.8em;border-radius:10px}
+  .why{font-size:14px;margin-top:12px;padding:.8em 1em}
+
+  /* 排行榜 */
+  #board h2{font-size:34px;margin-bottom:.4em}
+  .rows{width:100%;flex:none;height:calc(var(--rh,56px) * 7)}
+  .row{font-size:15px;padding:0 .9em;gap:.6em;border-radius:14px}
+  .row .nm small{display:none}
+  .row .fire{font-size:.75em}
+  .row .dl,.row .sc{min-width:3.6em}
+  .unan{font-size:14px}
+
+  /* 頒獎台 */
+  #final{justify-content:flex-end;padding-bottom:110px}
+  #final .kicker{top:calc(env(safe-area-inset-top) + 16px)}
+  #final h2{font-size:36px;top:calc(env(safe-area-inset-top) + 36px)}
+  .podium{gap:8px;height:auto;margin-top:110px}
+  .pcol{width:30vw;max-width:200px}
+  .pwho .fi{width:2.8em;height:2.1em}
+  .pwho .pn{font-size:16px;word-break:break-all}
+  .pwho .ps{font-size:12px}
+  .pblock{font-size:40px;border-radius:14px 14px 0 0}
+  .fstat{flex-wrap:wrap;justify-content:center;gap:6px;font-size:13px}
+}
+/* 手機直向：改成上下排 */
+@media (max-width:640px){
+  .lob{grid-template-columns:minmax(0,1fr);gap:20px}
+  .joincard{grid-template-columns:auto minmax(0,1fr)}
+  .opts,.opts.poll{grid-template-columns:1fr}
+}
+@media (max-width:380px){
+  .qr{width:96px}
+  .code{gap:4px}
+  .code span{font-size:30px}
+  .timer,.verdict{width:72px}
+  .timer .num{font-size:26px}
+  .qtext,.qtext.long{font-size:19px}
+  .lob h1{font-size:38px}
+}
+/* 手機橫向：高度很矮 */
+@media (max-height:560px) and (min-width:641px){
+  .lob{grid-template-columns:1.2fr 1fr;gap:20px}
+  .lob h1{font-size:34px}
+  .lob .lead{display:none}
+  .opt{min-height:46px;font-size:15px}
+  .qmid{margin:10px 0}
+  #final .kicker{display:none}
+  #final h2{display:none}
+  #final{justify-content:center;padding-bottom:80px}
+  .podium{margin-top:0}
+  .pwho{margin-bottom:.4em}
+  .pblock{font-size:24px;padding-top:.2em}
+}
 </style>
 </head>
 <body>
@@ -497,7 +607,8 @@ body{font-size:clamp(14px,1.05vw,22px)}
   }
   function renderBoard() {
     var ids = ranked(), top = ids.slice(0, 7), box = $('#rows');
-    var rh = Math.min(box.clientHeight / 7, innerHeight * .085) || 70; box.style.setProperty('--rh', rh + 'px');
+    var small = innerWidth <= 900 || innerHeight <= 560;
+    var rh = small ? Math.max(48, Math.min(60, innerHeight * .08)) : (Math.min(box.clientHeight / 7, innerHeight * .085) || 70); box.style.setProperty('--rh', rh + 'px');
     box.innerHTML = '';
     var st = S.steps[S.step - 1] || {};
     $('#bKick').textContent = st.n ? 'LEADERBOARD · 第 ' + st.n + ' / ' + st.total + ' 題後' : 'LEADERBOARD';
@@ -521,7 +632,7 @@ body{font-size:clamp(14px,1.05vw,22px)}
   }
 
   function renderFinal() {
-    var ids = ranked(), order = [1, 0, 2], hs = ['44vh', '32vh', '24vh'];
+    var ids = ranked(), order = [1, 0, 2], hs = innerHeight <= 560 ? ['20vh', '14vh', '9vh'] : innerWidth <= 900 ? ['30vh', '21vh', '15vh'] : ['44vh', '32vh', '24vh'];
     $('#podium').innerHTML = order.map(function (k) {
       var id = ids[k]; if (!id) return '<div class="pcol"></div>';
       var p = S.players[id];
@@ -550,7 +661,7 @@ body{font-size:clamp(14px,1.05vw,22px)}
   function enter(resume) {
     var st = S.steps[S.step];
     document.body.classList.toggle('playing', S.phase !== 'lobby');
-    $('#ctlL').style.visibility = S.phase === 'lobby' ? 'visible' : 'hidden';
+    $('#ctlL').style.display = S.phase === 'lobby' ? '' : 'none';
     if (S.phase === 'lobby') { show('lobby'); $('#nextBtn').innerHTML = '開始遊戲<kbd>空白鍵</kbd>'; }
     else if (S.phase === 'chapter') renderChapter();
     else if (S.phase === 'q') renderQuestion(resume);
