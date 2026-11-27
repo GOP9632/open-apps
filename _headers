@@ -1,0 +1,3 @@
+# iPhone 讀這個檔決定哪些連結直接開 Bitemap App，必須是 JSON
+/.well-known/apple-app-site-association
+  Content-Type: application/json

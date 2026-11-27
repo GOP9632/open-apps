@@ -1,0 +1,10 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["LDW76KJBP8.io.github.gop9632.foodmap"],
+        "components": [{ "/": "/join*", "comment": "美食收藏群組邀請連結" }]
+      }
+    ]
+  }
+}
